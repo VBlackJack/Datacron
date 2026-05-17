@@ -115,6 +115,13 @@ class Chunk(BaseModel):
         content_hash: SHA-256 hex of `content` (UTF-8, LF).
         token_count: Approximate token count. Use a deterministic heuristic
             (e.g., `len(content) // 4`); precision is not required.
+        line_start: 1-indexed starting line number in the parent note's
+            raw_content. Used by RipgrepWrapper to resolve `(file_path,
+            line_number)` search matches back to the owning Chunk without
+            re-parsing the note or maintaining a side-table.
+        line_end: 1-indexed ending line number in the parent note's raw_content,
+            inclusive. Used together with line_start for ripgrep result → chunk
+            resolution in Sem 3.
         wikilinks_out: List of raw wikilink targets found inside the chunk.
             Resolution to note IDs is the WikilinksExtractor's job, not the chunker's.
         lang: Programming language identifier for `ChunkType.CODE`, else None.
@@ -132,6 +139,8 @@ class Chunk(BaseModel):
     ordinal: int = Field(ge=0)
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     token_count: int = Field(ge=0)
+    line_start: int = Field(ge=1)
+    line_end: int = Field(ge=1)
     wikilinks_out: list[str] = Field(default_factory=list)
     lang: str | None = None
 ```
@@ -523,7 +532,7 @@ insufficient:
 
 | Section | Frozen since | Last amendment |
 |---|---|---|
-| §1 Pydantic models | 2026-05-17 | 2026-05-22 — §1.3 Chunk.ordinal clarified: scoped to (header_path) only, not (header_path, chunk_type), to preserve chunk_id uniqueness |
+| §1 Pydantic models | 2026-05-17 | 2026-05-24 — §1.3 Chunk.line_start/line_end added for ripgrep result → chunk resolution; prior 2026-05-22 amendment clarified Chunk.ordinal scope |
 | §2 Protocols | 2026-05-17 | 2026-05-23 — §2.6 VaultReader: bound at construction, removed `vault_root` from method signatures, made `resolve_alias` priority explicitly global (strict order title→filename→aliases across all notes) |
 | §3 Ownership matrix | 2026-05-17 | — |
 | §4 Reserved config keys | 2026-05-17 | — |

@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -261,3 +262,40 @@ def test_escaped_wikilinks_are_not_extracted_by_chunker() -> None:
     chunks = _chunks_for("no-headings.md", content=content)
 
     assert chunks[0].wikilinks_out == ["Real Link"]
+
+
+def test_paragraph_chunks_capture_line_ranges() -> None:
+    content = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph."
+    chunks = _chunks_for("no-headings.md", content=content)
+
+    assert [(chunk.line_start, chunk.line_end) for chunk in chunks] == [
+        (1, 2),
+        (3, 4),
+        (5, 5),
+    ]
+
+
+def test_code_block_line_range_spans_entire_fence() -> None:
+    content = "# Code\n\n```python\na = 1\nb = 2\nc = 3\n```"
+    chunks = _chunks_for("code-blocks.md", content=content)
+    code_chunk = chunks[1]
+
+    assert code_chunk.chunk_type is ChunkType.CODE
+    assert code_chunk.line_end - code_chunk.line_start + 1 == 5
+
+
+def test_nested_heading_line_ranges_do_not_overlap() -> None:
+    content = "# Alpha\n\nText alpha.\n\n## Beta\n\nText beta.\n\n### Gamma\n\nText gamma."
+    chunks = _chunks_for("nested-headings.md", content=content)
+
+    for previous, current in pairwise(chunks):
+        assert previous.line_end < current.line_start
+
+
+def test_line_ranges_are_relative_to_raw_content() -> None:
+    raw_content = "---\ntitle: Lines\n---\n\nFirst paragraph.\n\nSecond paragraph."
+    note = _make_note("no-headings.md", content="First paragraph.\n\nSecond paragraph.")
+    note = note.model_copy(update={"raw_content": raw_content})
+    chunks = MarkdownChunker().chunk(note)
+
+    assert [(chunk.line_start, chunk.line_end) for chunk in chunks] == [(5, 6), (7, 7)]

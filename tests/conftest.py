@@ -179,6 +179,8 @@ def chunk_factory(note_factory: NoteFactory) -> ChunkFactory:
             "ordinal": ordinal,
             "content_hash": hash_text(content),
             "token_count": max(1, len(content) // 4),
+            "line_start": 1,
+            "line_end": 1,
             "wikilinks_out": [],
             "lang": None,
         }
