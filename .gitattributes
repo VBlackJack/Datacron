@@ -1,0 +1,9 @@
+# Force LF line endings for all text files (matches FileLogger + hash spec).
+* text=auto eol=lf
+
+# Force binary handling for known binaries.
+*.png binary
+*.jpg binary
+*.svg binary
+*.ico binary
+*.db binary
