@@ -15,12 +15,12 @@
 
 from __future__ import annotations
 
-import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from datacron.core.hashing import hash_text
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.indexing.chunker import MarkdownChunker, _slug_header_path
 
@@ -219,9 +219,8 @@ def test_chunk_metadata_is_propagated_from_note() -> None:
 
 def test_chunk_hash_uses_lf_normalized_content() -> None:
     chunks = _chunks_for("code-blocks.md")
-    expected = hashlib.sha256(chunks[2].content.encode("utf-8")).hexdigest()
 
-    assert chunks[2].content_hash == expected
+    assert chunks[2].content_hash == hash_text(chunks[2].content)
 
 
 def test_token_count_uses_deterministic_divisor() -> None:

@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 import unicodedata
 from collections.abc import Iterable
@@ -23,6 +22,7 @@ from typing import Any, Final, final
 
 from mistletoe import block_token
 
+from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, ChunkType, Note
 
@@ -121,7 +121,7 @@ class MarkdownChunker:
             chunk_type=chunk_type,
             content=content,
             ordinal=ordinal,
-            content_hash=_hash_content(content),
+            content_hash=hash_text(content),
             token_count=len(content) // _TOKEN_ESTIMATE_DIVISOR,
             wikilinks_out=_extract_wikilink_targets(content),
             lang=lang,
@@ -223,11 +223,6 @@ def _append_token_text(token: Any, parts: list[str]) -> None:
     content = getattr(token, "content", None)
     if isinstance(content, str):
         parts.append(content)
-
-
-def _hash_content(content: str) -> str:
-    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def _extract_wikilink_targets(content: str) -> list[str]:
