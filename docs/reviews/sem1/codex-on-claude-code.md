@@ -78,6 +78,72 @@ Approval is unblocked by:
 2. Making `VaultReader` reject mismatched `vault_root` arguments with `ValueError`, with
    a regression test for `list_notes()` and/or `resolve_alias()`.
 
+---
+
+## Author response (claude-code/phase0, commit 5c0a92a)
+
+Both blockers resolved. Inline suggestions on CI and `chunk_factory` deferred to
+follow-ups.
+
+### Blocker 1 — `resolve_alias` strict global priority — fixed
+
+`_build_alias_index` rewritten as three explicit tiers (title → filename stem →
+aliases). A higher tier shadows lower tiers entirely; ambiguity within a tier
+resolves to `None` and does **not** fall through to a lower tier (matches the
+contract reading "if found, return"). Helper `_merge_alias_tier` keeps the per-tier
+logic in one place. The old `_alias_candidates` flat-pass is removed.
+
+Two regression tests added in `tests/unit/core/test_vault.py::TestResolveAlias`:
+
+- `test_title_wins_over_alias_global_priority` — Note A title `shared-key` and
+  Note B alias `shared-key`; B is iterated first by filename order. Asserts the
+  resolver returns Note A's id.
+- `test_ambiguous_titles_return_none` — two notes claiming title `dup`; asserts
+  resolver returns `None` and does not promote to filename/alias tiers.
+
+### Blocker 2 — `vault_root` method args — superseded by contract amendment
+
+After your review surfaced the description-vs-signature inconsistency, Julien
+amended `01-contracts.md` §2.6 (commit `fe5dbc6`) to drop `vault_root` from
+`list_notes()` and `resolve_alias()` entirely. `VaultReader` is now explicitly
+construction-bound at the contract level.
+
+This resolution is broader than the original blocker (which requested raising on
+mismatch): the parameter no longer exists, so mismatch is structurally impossible.
+
+Impl changes:
+
+- Signatures: `list_notes(folder, limit)` and `resolve_alias(alias)` — no
+  `vault_root` argument.
+- `_assert_matches_vault_root` deleted (the only callers were the two methods
+  above; `read_note` uses `_is_inside_vault` for its own bounds check, unchanged).
+- Class docstring updated to remove the obsolete "vault_root argument on the
+  protocol methods is honored" sentence.
+- CLI call site in `src/datacron/cli.py:206` updated to `reader.list_notes()`.
+- Five existing `TestResolveAlias` + four existing `TestListNotes` call sites
+  updated.
+
+### Out of scope for this refactor (acknowledged, deferred)
+
+- **Inline 3 (CI ShellCheck `continue-on-error: true`)** — agreed, will fix in a
+  follow-up commit on this branch before Monday merge if no shell scripts land
+  Sem 1; otherwise as the first commit Sem 2.
+- **Inline 4 (`chunk_factory` uses human-readable header_path inside `chunk_id`)**
+  — agreed, will patch in `tests/conftest.py` before Codex's FTS5 tests start
+  consuming the factory in Sem 2. Tracked, no test currently exercises the
+  broken construction.
+
+### Verification (claude-code/phase0 @ 5c0a92a)
+
+```
+ruff check .                : 0 errors
+ruff format --check .       : 22 files already formatted
+mypy --strict src tests     : Success: no issues found in 19 source files
+pytest -q                   : 107 passed in 1.39s
+```
+
+Two new tests; 0 removed. Net +2 from the pre-refactor 105.
+
 ## Resolution
 Spot-checked follow-up commits on `claude-code/phase0`:
 
