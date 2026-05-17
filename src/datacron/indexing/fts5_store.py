@@ -470,11 +470,8 @@ async def _fetch_optional_str(connection: aiosqlite.Connection, sql: str) -> str
 from datacron.core.protocols import FTS5Store as _FTS5StoreProtocol  # noqa: E402
 
 
-def _conformance_check(store: _FTS5StoreProtocol) -> _FTS5StoreProtocol:
-    """Force static Protocol parity for :class:`SQLiteFTS5Store`."""
-    return store
+def _conformance_check(_: _FTS5StoreProtocol) -> None:
+    """Mypy structural conformance: SQLiteFTS5Store must satisfy FTS5Store Protocol."""
 
 
-def _assert_conformance() -> None:
-    """Static check only; never invoked at runtime."""
-    _conformance_check(SQLiteFTS5Store())
+_conformance_check(SQLiteFTS5Store())

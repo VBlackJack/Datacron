@@ -227,3 +227,14 @@ def _append_token_text(token: Any, parts: list[str]) -> None:
 
 def _extract_wikilink_targets(content: str) -> list[str]:
     return [match.group(1).strip() for match in _WIKILINK_TARGET_PATTERN.finditer(content)]
+
+
+# Structural conformance check for mypy.
+from datacron.core.protocols import ASTChunker as _ASTChunkerProtocol  # noqa: E402
+
+
+def _conformance_check(_: _ASTChunkerProtocol) -> None:
+    """Mypy structural conformance: MarkdownChunker must satisfy ASTChunker Protocol."""
+
+
+_conformance_check(MarkdownChunker())
