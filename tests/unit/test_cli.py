@@ -78,6 +78,9 @@ class TestStatus:
 
 
 class TestStubs:
+    """Commands still pending in Sem 3-4. ``mcp serve`` moved to TestMcpServe
+    once it was wired in Sem 2."""
+
     @pytest.mark.parametrize(
         "cmd",
         [
@@ -85,7 +88,6 @@ class TestStubs:
             ["reindex"],
             ["ask", "anything"],
             ["eval", "--questions", "nope.yaml"],
-            ["mcp", "serve"],
             ["mcp", "install", "--client", "claude-desktop"],
         ],
     )
@@ -95,3 +97,19 @@ class TestStubs:
         assert "not implemented" in result.stderr.lower() or "not implemented" in (
             result.stdout.lower()
         )
+
+
+class TestMcpServe:
+    """`datacron mcp serve` is wired in Sem 2. Spinning the full stdio loop
+    requires an MCP client on the other end of the pipe, which lives in the
+    integration tests (tests/integration/test_mcp_e2e.py). Here we only
+    assert that the dispatcher resolves the vault and would launch the
+    server (no vault → exit 1 with a clear message)."""
+
+    def test_serve_without_vault_fails_clean(self, runner: CliRunner, tmp_path: Path) -> None:
+        # tmp_path is empty: no .datacron/VAULT.yaml, no env var, no --vault.
+        # The dispatcher must refuse instead of starting the server.
+        result = runner.invoke(app, ["mcp", "serve", "--vault", str(tmp_path / "missing")])
+        assert result.exit_code != 0
+        combined = (result.stdout + result.stderr).lower()
+        assert "vault" in combined or "not found" in combined
