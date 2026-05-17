@@ -27,7 +27,7 @@ import asyncio
 import json
 import os
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Final, final
@@ -169,9 +169,9 @@ class JsonIdStore:
 class VaultReader:
     """Filesystem-backed implementation of the ``VaultReader`` protocol.
 
-    A reader is bound to a single ``vault_root``. The ``vault_root`` argument
-    on the protocol methods is honored but must match the binding; mismatches
-    are logged and rejected to keep the ULID sidecar consistent.
+    A reader is bound to a single ``vault_root`` at construction (contracts
+    §2.6 amendment fe5dbc6). All methods operate on that bound root; there
+    is no per-call override.
     """
 
     def __init__(
@@ -235,11 +235,9 @@ class VaultReader:
 
     async def list_notes(
         self,
-        vault_root: Path,
         folder: str | None = None,
         limit: int | None = None,
     ) -> list[Note]:
-        self._assert_matches_vault_root(vault_root)
         root = self._scope_root(folder)
         if not root.exists():
             return []
@@ -255,8 +253,7 @@ class VaultReader:
                 raise
         return notes
 
-    async def resolve_alias(self, alias: str, vault_root: Path) -> str | None:
-        self._assert_matches_vault_root(vault_root)
+    async def resolve_alias(self, alias: str) -> str | None:
         normalized = alias.strip().lower()
         if not normalized:
             return None
@@ -271,14 +268,6 @@ class VaultReader:
         except ValueError:
             return False
         return True
-
-    def _assert_matches_vault_root(self, requested: Path) -> None:
-        if requested.expanduser().resolve() != self._vault_root:
-            _LOGGER.warning(
-                "VaultReader bound to %s received request for %s; using binding.",
-                self._vault_root,
-                requested,
-            )
 
     def _scope_root(self, folder: str | None) -> Path:
         if folder is None:
@@ -314,38 +303,46 @@ class VaultReader:
                 return self._alias_cache
 
             paths = await asyncio.to_thread(self._collect_markdown_paths, self._vault_root)
-            index: dict[str, str | None] = {}
-            duplicates: set[str] = set()
-
+            notes: list[Note] = []
             for path in paths:
                 try:
-                    note = await self.read_note(path)
+                    notes.append(await self.read_note(path))
                 except (OSError, ValueError) as exc:
                     _LOGGER.warning("Alias index: skipping %s: %s", path, exc)
-                    continue
-                candidates = self._alias_candidates(note)
-                for candidate in candidates:
-                    key = candidate.strip().lower()
-                    if not key:
-                        continue
-                    if key in duplicates:
-                        continue
-                    if key in index and index[key] != note.id:
-                        _LOGGER.warning(
-                            "Alias %r ambiguous between %s and existing match; marking unresolved.",
-                            candidate,
-                            note.id,
-                        )
-                        duplicates.add(key)
-                        index[key] = None
-                        continue
-                    index[key] = note.id
+
+            index: dict[str, str | None] = {}
+            # Strict global priority per contracts §2.6: title → filename stem
+            # → aliases. A higher tier shadows lower tiers entirely. Within a
+            # tier, multiple notes claiming the same key resolve to None
+            # (ambiguous within that tier).
+            self._merge_alias_tier(index, notes, lambda n: (n.title,))
+            self._merge_alias_tier(index, notes, lambda n: (Path(n.rel_path).stem,))
+            self._merge_alias_tier(index, notes, lambda n: tuple(n.aliases))
 
             self._alias_cache = index
             return index
 
     @staticmethod
-    def _alias_candidates(note: Note) -> Iterable[str]:
-        yield note.title
-        yield Path(note.rel_path).stem
-        yield from note.aliases
+    def _merge_alias_tier(
+        index: dict[str, str | None],
+        notes: list[Note],
+        extract: Callable[[Note], Iterable[str]],
+    ) -> None:
+        tier: dict[str, str | None] = {}
+        for note in notes:
+            for raw in extract(note):
+                key = raw.strip().lower()
+                if not key or key in index:
+                    continue
+                if key in tier:
+                    if tier[key] != note.id:
+                        tier[key] = None
+                else:
+                    tier[key] = note.id
+        for key, value in tier.items():
+            if value is None:
+                _LOGGER.warning(
+                    "Alias %r ambiguous within priority tier; marking unresolved.",
+                    key,
+                )
+            index[key] = value

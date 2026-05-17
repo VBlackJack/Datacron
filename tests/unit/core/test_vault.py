@@ -70,7 +70,7 @@ class TestReadNote:
 @pytest.mark.asyncio
 class TestListNotes:
     async def test_lists_all_markdown(self, vault_reader: VaultReader) -> None:
-        notes = await vault_reader.list_notes(vault_reader.vault_root)
+        notes = await vault_reader.list_notes()
         rel_paths = {n.rel_path for n in notes}
         assert {
             "welcome.md",
@@ -93,44 +93,72 @@ class TestListNotes:
         node_modules.mkdir()
         (node_modules / "ignored.md").write_text("# nope", encoding="utf-8")
 
-        notes = await vault_reader.list_notes(vault_root)
+        notes = await vault_reader.list_notes()
         for note in notes:
             assert ".obsidian" not in note.rel_path
             assert "node_modules" not in note.rel_path
 
     async def test_folder_scope(self, vault_reader: VaultReader) -> None:
-        notes = await vault_reader.list_notes(vault_reader.vault_root, folder="subfolder")
+        notes = await vault_reader.list_notes(folder="subfolder")
         assert {n.rel_path for n in notes} == {"subfolder/nested-thoughts.md"}
 
     async def test_limit_truncates(self, vault_reader: VaultReader) -> None:
-        notes = await vault_reader.list_notes(vault_reader.vault_root, limit=2)
+        notes = await vault_reader.list_notes(limit=2)
         assert len(notes) == 2
 
     async def test_folder_escape_rejected(self, vault_reader: VaultReader) -> None:
         with pytest.raises(ValueError, match="escapes vault root"):
-            await vault_reader.list_notes(vault_reader.vault_root, folder="..")
+            await vault_reader.list_notes(folder="..")
 
 
 @pytest.mark.asyncio
 class TestResolveAlias:
     async def test_resolves_title(self, vault_reader: VaultReader) -> None:
-        target = await vault_reader.resolve_alias("Important Note", vault_reader.vault_root)
+        target = await vault_reader.resolve_alias("Important Note")
         assert target is not None
         assert len(target) == 26
 
     async def test_resolves_alias_field(self, vault_reader: VaultReader) -> None:
-        target = await vault_reader.resolve_alias("Hello", vault_reader.vault_root)
+        target = await vault_reader.resolve_alias("Hello")
         assert target is not None
 
     async def test_resolves_filename_stem(self, vault_reader: VaultReader) -> None:
-        target = await vault_reader.resolve_alias("no-frontmatter", vault_reader.vault_root)
+        target = await vault_reader.resolve_alias("no-frontmatter")
         assert target is not None
 
     async def test_missing_alias_returns_none(self, vault_reader: VaultReader) -> None:
-        assert await vault_reader.resolve_alias("Phantom Note", vault_reader.vault_root) is None
+        assert await vault_reader.resolve_alias("Phantom Note") is None
 
     async def test_empty_alias_returns_none(self, vault_reader: VaultReader) -> None:
-        assert await vault_reader.resolve_alias("   ", vault_reader.vault_root) is None
+        assert await vault_reader.resolve_alias("   ") is None
+
+    async def test_title_wins_over_alias_global_priority(self, tmp_path: Path) -> None:
+        """Strict global priority per contracts §2.6: a title match on ANY note wins
+        over an alias match on ANY other note, regardless of file iteration order.
+        """
+        # Note A: title "shared-key" (filename ordered AFTER B alphabetically)
+        (tmp_path / "z-note.md").write_text(
+            "---\ntitle: shared-key\n---\n# Body A\n", encoding="utf-8"
+        )
+        # Note B: alias "shared-key" (filename ordered BEFORE A → iterated first)
+        (tmp_path / "a-note.md").write_text(
+            "---\ntitle: Note B\naliases: [shared-key]\n---\n# Body B\n",
+            encoding="utf-8",
+        )
+        reader = VaultReader(tmp_path)
+        target = await reader.resolve_alias("shared-key")
+        assert target is not None
+        # Resolves to Note A (title-tier match), not Note B (alias-tier match)
+        note_a = await reader.read_note(tmp_path / "z-note.md")
+        assert target == note_a.id
+
+    async def test_ambiguous_titles_return_none(self, tmp_path: Path) -> None:
+        """Two notes claiming the same title at tier 1 → unresolved, do not fall
+        through to lower tiers."""
+        (tmp_path / "one.md").write_text("---\ntitle: dup\n---\n# Body\n", encoding="utf-8")
+        (tmp_path / "two.md").write_text("---\ntitle: dup\n---\n# Body\n", encoding="utf-8")
+        reader = VaultReader(tmp_path)
+        assert await reader.resolve_alias("dup") is None
 
 
 @pytest.mark.asyncio
