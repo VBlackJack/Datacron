@@ -120,6 +120,12 @@ class Chunk(BaseModel):
         content_hash: SHA-256 hex of ``content`` (UTF-8, LF).
         token_count: Approximate token count. Deterministic heuristic
             (e.g., ``len(content) // 4``); precision is not required.
+        line_start: 1-indexed starting line number in the parent note's
+            ``raw_content``. Used by RipgrepWrapper to resolve a
+            ``(file_path, line_number)`` match back to a Chunk without
+            re-parsing or side tables.
+        line_end: 1-indexed ending line number in the parent note's
+            ``raw_content``, inclusive.
         wikilinks_out: List of raw wikilink targets found inside the chunk.
             Resolution to note IDs is the WikilinksExtractor's job, not the
             chunker's.
@@ -139,6 +145,8 @@ class Chunk(BaseModel):
     ordinal: int = Field(ge=0)
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     token_count: int = Field(ge=0)
+    line_start: int = Field(ge=1)
+    line_end: int = Field(ge=1)
     wikilinks_out: list[str] = Field(default_factory=list)
     lang: str | None = None
 

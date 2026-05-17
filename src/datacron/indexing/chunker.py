@@ -66,10 +66,21 @@ class MarkdownChunker:
 
     def _chunk(self, note: Note) -> list[Chunk]:
         source_lines = note.content.splitlines(keepends=True)
+        line_offset = _content_line_offset(note)
         document = block_token.Document(source_lines)
         blocks = list(document.children or [])
         if not blocks:
-            return [self._build_chunk(note, [], ChunkType.NARRATIVE, "")]
+            line_number = max(1, line_offset + 1)
+            return [
+                self._build_chunk(
+                    note,
+                    [],
+                    ChunkType.NARRATIVE,
+                    "",
+                    line_start=line_number,
+                    line_end=line_number,
+                )
+            ]
 
         chunks: list[Chunk] = []
         headings: list[str] = []
@@ -77,6 +88,7 @@ class MarkdownChunker:
 
         for index, token in enumerate(blocks):
             content = _raw_block_content(source_lines, blocks, index)
+            line_start, line_end = _block_line_range(source_lines, blocks, index)
             chunk_type = _chunk_type_for_token(token)
             lang = _code_language(token) if chunk_type is ChunkType.CODE else None
 
@@ -93,6 +105,8 @@ class MarkdownChunker:
                 headings=chunk_headings,
                 chunk_type=chunk_type,
                 content=content,
+                line_start=line_start + line_offset,
+                line_end=line_end + line_offset,
                 ordinal_counters=ordinal_counters,
                 lang=lang,
             )
@@ -106,6 +120,8 @@ class MarkdownChunker:
         headings: list[str],
         chunk_type: ChunkType,
         content: str,
+        line_start: int,
+        line_end: int,
         ordinal_counters: dict[str, int] | None = None,
         lang: str | None = None,
     ) -> Chunk:
@@ -123,6 +139,8 @@ class MarkdownChunker:
             ordinal=ordinal,
             content_hash=hash_text(content),
             token_count=len(content) // _TOKEN_ESTIMATE_DIVISOR,
+            line_start=line_start,
+            line_end=line_end,
             wikilinks_out=_extract_wikilink_targets(content),
             lang=lang,
         )
@@ -190,12 +208,29 @@ def _code_language(token: Any) -> str | None:
 
 
 def _raw_block_content(source_lines: list[str], blocks: list[Any], index: int) -> str:
-    start = max(int(getattr(blocks[index], "line_number", 1)) - 1, 0)
-    if index + 1 < len(blocks):
-        end = max(int(getattr(blocks[index + 1], "line_number", len(source_lines) + 1)) - 1, start)
-    else:
-        end = len(source_lines)
+    line_start, line_end = _block_line_range(source_lines, blocks, index)
+    start = line_start - 1
+    end = line_end
     return _join_without_outer_blank_lines(source_lines[start:end])
+
+
+def _block_line_range(source_lines: list[str], blocks: list[Any], index: int) -> tuple[int, int]:
+    line_start = max(int(getattr(blocks[index], "line_number", 1)), 1)
+    if index + 1 < len(blocks):
+        next_line_start = int(getattr(blocks[index + 1], "line_number", len(source_lines) + 1))
+        line_end = max(next_line_start - 1, line_start)
+    else:
+        line_end = max(len(source_lines), line_start)
+    return line_start, line_end
+
+
+def _content_line_offset(note: Note) -> int:
+    if not note.content:
+        return 0
+    content_start = note.raw_content.find(note.content)
+    if content_start < 0:
+        return 0
+    return note.raw_content[:content_start].count("\n")
 
 
 def _join_without_outer_blank_lines(lines: list[str]) -> str:
