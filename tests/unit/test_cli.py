@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -158,7 +159,14 @@ class TestMcpInstall:
         import json
 
         data = json.loads(config_target.read_text(encoding="utf-8"))
-        assert data["mcpServers"]["datacron"]["command"] == "datacron-mcp"
+        # CLI does not expose --command, so the installer resolves an absolute
+        # path (PATH lookup, then current venv's Scripts/ dir). The exact path
+        # depends on the test runner's environment; assert only that it ends
+        # with the expected binary name and is absolute.
+        command = data["mcpServers"]["datacron"]["command"]
+        expected_binary = "datacron-mcp.exe" if sys.platform == "win32" else "datacron-mcp"
+        assert Path(command).is_absolute()
+        assert Path(command).name == expected_binary
         assert data["mcpServers"]["datacron"]["env"]["DATACRON_VAULT_ROOT"] == str(
             tmp_vault.resolve()
         )
