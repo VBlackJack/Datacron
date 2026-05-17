@@ -16,5 +16,6 @@
 from __future__ import annotations
 
 from datacron.indexing.chunker import MarkdownChunker
+from datacron.indexing.fts5_store import SQLiteFTS5Store
 
-__all__ = ["MarkdownChunker"]
+__all__ = ["MarkdownChunker", "SQLiteFTS5Store"]
