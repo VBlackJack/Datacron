@@ -235,18 +235,67 @@ def _not_implemented(command: str, since: str) -> NoReturn:
 def index(
     vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
 ) -> None:
-    """Build or refresh the FTS5 index (Phase 0 Sem 3)."""
-    _ = vault
-    _not_implemented("index", since="Sem 3 (depends on indexing/fts5_store.py)")
+    """Build or refresh the FTS5 index for the vault."""
+    configure_logging()
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    asyncio.run(_run_index(vault_root, drop_first=False))
 
 
 @app.command()
 def reindex(
     vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
 ) -> None:
-    """Drop and rebuild the FTS5 index (Phase 0 Sem 3)."""
-    _ = vault
-    _not_implemented("reindex", since="Sem 3 (depends on indexing/fts5_store.py)")
+    """Drop the FTS5 database and rebuild from scratch."""
+    configure_logging()
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    asyncio.run(_run_index(vault_root, drop_first=True))
+
+
+async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
+    """Orchestrate VaultReader + MarkdownChunker + SQLiteFTS5Store."""
+    from datacron.core.paths import sidecar_index_db  # noqa: PLC0415
+    from datacron.core.vault import FilesystemVaultReader  # noqa: PLC0415
+    from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
+    from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
+
+    db_path = sidecar_index_db(vault_root)
+    if drop_first and db_path.exists():
+        _LOGGER.info("Dropping existing index at %s before rebuild", db_path)
+        db_path.unlink()
+        for suffix in ("-wal", "-shm"):
+            db_path.with_suffix(db_path.suffix + suffix).unlink(missing_ok=True)
+
+    reader = FilesystemVaultReader(vault_root)
+    chunker = MarkdownChunker()
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    started = time.perf_counter()
+    note_count = 0
+    chunk_count = 0
+    try:
+        notes = await reader.list_notes()
+        for note in notes:
+            chunks = chunker.chunk(note)
+            await store.upsert_note(note, chunks)
+            note_count += 1
+            chunk_count += len(chunks)
+    finally:
+        await store.close()
+
+    duration_ms = (time.perf_counter() - started) * 1000.0
+    _print(
+        f"Indexed {note_count} notes / {chunk_count} chunks into {db_path} ({duration_ms:.0f} ms)"
+    )
+    _LOGGER.info(
+        "cli.index completed (vault=%s notes=%d chunks=%d drop_first=%s duration_ms=%.1f)",
+        vault_root,
+        note_count,
+        chunk_count,
+        drop_first,
+        duration_ms,
+    )
 
 
 @app.command(name="ask")
@@ -306,12 +355,46 @@ def mcp_install(
     client: str = typer.Option(
         ...,
         "--client",
-        help="Client identifier (e.g. claude-desktop).",
+        help="Client identifier (claude-desktop).",
+    ),
+    vault: Path | None = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Vault root. Defaults to DATACRON_VAULT_ROOT or current directory.",
+    ),
+    config_path: Path | None = typer.Option(
+        None,
+        "--config-path",
+        help="Override the target config file (for testing or non-standard installs).",
     ),
 ) -> None:
-    """Write the MCP client configuration (Phase 0 Sem 3)."""
-    _ = client
-    _not_implemented("mcp install", since="Sem 3 (depends on installers/)")
+    """Write the Datacron MCP server entry into a target client's config."""
+    configure_logging()
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+
+    if client != "claude-desktop":
+        _error(f"Unknown client: {client!r}. Supported: claude-desktop.")
+
+    from datacron.installers.claude_desktop import (  # noqa: PLC0415
+        ClaudeDesktopConfigError,
+        install_claude_desktop_config,
+    )
+
+    try:
+        target = install_claude_desktop_config(vault_root, config_path=config_path)
+    except ClaudeDesktopConfigError as exc:
+        _error(f"Could not write Claude Desktop config: {exc}")
+
+    _print(f"Wrote Datacron MCP entry to {target}")
+    _print("Restart Claude Desktop for the change to take effect.")
+    _LOGGER.info(
+        "cli.mcp_install completed (client=%s vault=%s config=%s)",
+        client,
+        vault_root,
+        target,
+    )
 
 
 def mcp_entry() -> None:
