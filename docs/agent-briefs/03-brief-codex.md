@@ -69,8 +69,16 @@ You import `Note`, `Chunk`, `ChunkType` from there.
   (which excludes frontmatter).
 - A note with no headings produces one chunk per "paragraph unit" (separated by blank lines)
   with empty `header_path` and `section_title=None`.
-- `header_path` is the slash-joined slugged (kebab-case, lowercase, ASCII) parent headings.
-  E.g. headings `["Architecture", "Chunking strategy"]` → `header_path="architecture/chunking-strategy"`.
+- `header_path` is the **human-readable** breadcrumb of parent headings, joined with ` / `
+  (space-slash-space), per the frozen contract in `01-contracts.md` §1.3.
+  E.g. headings `["Architecture", "Chunking strategy"]` → `header_path="Architecture / Chunking strategy"`.
+- For **`chunk_id` construction only**, you also compute a slugged form (kebab-case,
+  lowercase, ASCII) of the same headings, joined with `/`. Keep this in a private helper
+  function `_slug_header_path(headings: list[str]) -> str` returning e.g. `"architecture/chunking-strategy"`.
+  The slugged form is NEVER stored on the Chunk — it lives only inside the `chunk_id` string.
+- Slugging rules for `_slug_header_path`: lowercase, ASCII-fold via `unicodedata.normalize`,
+  replace non-alphanumeric with `-`, collapse repeats, strip leading/trailing `-`. Empty
+  headings list → empty string (top-level content). Unit-test the helper independently.
 - `ordinal` is zero-indexed within the same `(note_id, header_path, chunk_type)` group.
   Format with `f"{ordinal:04d}"` in the chunk_id.
 - `token_count`: deterministic heuristic `len(content) // 4`. Don't import tiktoken.
