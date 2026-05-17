@@ -103,8 +103,15 @@ class Chunk(BaseModel):
             outside any heading.
         chunk_type: See ChunkType.
         content: The chunk's raw text content.
-        ordinal: Zero-indexed position within the (header_path, chunk_type) sequence
-            for the parent Note. Used in chunk_id.
+        ordinal: Zero-indexed position within the parent Note, ordered by document
+            position, scoped to (note_id, header_path) only — NOT scoped to chunk_type.
+            Two chunks of different types under the same heading share the
+            (header_path) sequence and receive consecutive ordinals based on which
+            appears first in the document. This guarantees chunk_id uniqueness given
+            that the chunk_id format does NOT include chunk_type.
+
+            Example: under heading "Architecture / Chunking", a narrative chunk
+            followed by a code chunk → narrative.ordinal=0, code.ordinal=1 (NOT both 0).
         content_hash: SHA-256 hex of `content` (UTF-8, LF).
         token_count: Approximate token count. Use a deterministic heuristic
             (e.g., `len(content) // 4`); precision is not required.
@@ -507,7 +514,7 @@ insufficient:
 
 | Section | Frozen since | Last amendment |
 |---|---|---|
-| §1 Pydantic models | 2026-05-17 | — |
+| §1 Pydantic models | 2026-05-17 | 2026-05-22 — §1.3 Chunk.ordinal clarified: scoped to (header_path) only, not (header_path, chunk_type), to preserve chunk_id uniqueness |
 | §2 Protocols | 2026-05-17 | — |
 | §3 Ownership matrix | 2026-05-17 | — |
 | §4 Reserved config keys | 2026-05-17 | — |
