@@ -23,6 +23,7 @@ the file and to stderr (WARNING and above). All loggers obtained via
 from __future__ import annotations
 
 import atexit
+import contextlib
 import logging
 import queue
 import sys
@@ -122,10 +123,8 @@ def shutdown_logging() -> None:
 
         root = logging.getLogger(_ROOT_LOGGER_NAME)
         for handler in list(root.handlers):
-            try:
+            with contextlib.suppress(Exception):
                 handler.close()
-            except Exception:  # noqa: BLE001 — never fail teardown
-                pass
         root.handlers.clear()
 
         if listener is not None:
