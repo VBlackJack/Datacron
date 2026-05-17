@@ -44,7 +44,14 @@ from mcp.server.fastmcp import FastMCP
 from datacron import __version__
 from datacron.core.config import Settings, get_settings
 from datacron.core.logger import configure_logging, get_logger, shutdown_logging
-from datacron.core.protocols import ASTChunker, VaultReader
+from datacron.core.paths import sidecar_index_db
+from datacron.core.protocols import (
+    ASTChunker,
+    FTS5Store,
+    RipgrepWrapper,
+    VaultReader,
+    WikilinksExtractor,
+)
 from datacron.core.vault import FilesystemVaultReader
 
 __all__ = [
@@ -71,13 +78,21 @@ class DatacronApp:
     """Bundle of resolved dependencies shared by tools and resources.
 
     Built once at startup and held in the FastMCP lifespan context so each
-    tool invocation can read the same VaultReader, chunker, and Settings.
+    tool invocation can read the same VaultReader, chunker, store, ripgrep
+    wrapper, wikilinks extractor, and Settings.
+
+    The ``store`` is constructed unopened by :func:`build_app`; the
+    lifespan in :func:`create_server` opens it on startup and closes it
+    on shutdown.
     """
 
     settings: Settings
     vault_root: Path
     vault_reader: VaultReader
     chunker: ASTChunker
+    store: FTS5Store
+    ripgrep: RipgrepWrapper
+    wikilinks: WikilinksExtractor
 
 
 def build_app(
@@ -86,6 +101,9 @@ def build_app(
     vault_root: Path,
     vault_reader: VaultReader | None = None,
     chunker: ASTChunker | None = None,
+    store: FTS5Store | None = None,
+    ripgrep: RipgrepWrapper | None = None,
+    wikilinks: WikilinksExtractor | None = None,
 ) -> DatacronApp:
     """Resolve dependencies into a :class:`DatacronApp` bundle.
 
@@ -95,9 +113,17 @@ def build_app(
         vault_reader: Optional pre-built :class:`VaultReader`. Defaults to
             :class:`FilesystemVaultReader` bound to ``vault_root``.
         chunker: Optional pre-built :class:`ASTChunker`. Defaults to
-            ``MarkdownChunker`` (imported lazily so :mod:`datacron.mcp`
-            keeps building even before Codex's indexing module lands —
-            in practice it already has).
+            ``MarkdownChunker``.
+        store: Optional pre-built :class:`FTS5Store`. Defaults to a fresh
+            ``SQLiteFTS5Store()`` (unopened — the lifespan calls ``open``).
+        ripgrep: Optional pre-built :class:`RipgrepWrapper`. Defaults to
+            a fresh ``RipgrepWrapper()`` (stateless).
+        wikilinks: Optional pre-built :class:`WikilinksExtractor`. Defaults
+            to ``RegexWikilinksExtractor()`` (stateless).
+
+    Concrete indexing classes are imported lazily inside the function so a
+    test that supplies its own doubles never triggers the heavyweight
+    aiosqlite/mistletoe imports.
     """
     resolved_settings = settings or get_settings()
     resolved_root = vault_root.expanduser().resolve()
@@ -106,11 +132,26 @@ def build_app(
         from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
 
         chunker = MarkdownChunker()
+    if store is None:
+        from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
+
+        store = SQLiteFTS5Store()
+    if ripgrep is None:
+        from datacron.indexing.ripgrep import RipgrepWrapper as _RipgrepWrapper  # noqa: PLC0415
+
+        ripgrep = _RipgrepWrapper()
+    if wikilinks is None:
+        from datacron.indexing.wikilinks import RegexWikilinksExtractor  # noqa: PLC0415
+
+        wikilinks = RegexWikilinksExtractor()
     return DatacronApp(
         settings=resolved_settings,
         vault_root=resolved_root,
         vault_reader=resolved_reader,
         chunker=chunker,
+        store=store,
+        ripgrep=ripgrep,
+        wikilinks=wikilinks,
     )
 
 
@@ -129,10 +170,16 @@ def create_server(app: DatacronApp) -> FastMCP[DatacronApp]:
         if not app.vault_root.is_dir():
             _LOGGER.error("Vault root %s does not exist or is not a directory", app.vault_root)
             raise FileNotFoundError(f"Vault root not found: {app.vault_root}")
+        db_path = sidecar_index_db(app.vault_root)
+        await app.store.open(db_path)
+        _LOGGER.info("FTS5 store opened at %s", db_path)
         try:
             yield app
         finally:
-            _LOGGER.info("datacron-mcp v%s shutting down", __version__)
+            try:
+                await app.store.close()
+            finally:
+                _LOGGER.info("datacron-mcp v%s shutting down", __version__)
 
     server: FastMCP[DatacronApp] = FastMCP(
         name=SERVER_NAME,
