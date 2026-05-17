@@ -59,6 +59,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     ordinal UNINDEXED,
     content_hash UNINDEXED,
     token_count UNINDEXED,
+    line_start UNINDEXED,
+    line_end UNINDEXED,
     wikilinks_out_json UNINDEXED,
     lang UNINDEXED,
     tokenize = 'unicode61 remove_diacritics 2'
@@ -105,9 +107,11 @@ INSERT INTO chunks_fts (
     ordinal,
     content_hash,
     token_count,
+    line_start,
+    line_end,
     wikilinks_out_json,
     lang
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 _SELECT_CHUNK_COLUMNS: Final[str] = """
@@ -121,6 +125,8 @@ content,
 ordinal,
 content_hash,
 token_count,
+line_start,
+line_end,
 wikilinks_out_json,
 lang
 """
@@ -137,6 +143,8 @@ SELECT
     ordinal,
     content_hash,
     token_count,
+    line_start,
+    line_end,
     wikilinks_out_json,
     lang,
     bm25(chunks_fts) AS raw_score,
@@ -166,6 +174,8 @@ SELECT
     ordinal,
     content_hash,
     token_count,
+    line_start,
+    line_end,
     wikilinks_out_json,
     lang
 FROM chunks_fts
@@ -185,6 +195,8 @@ SELECT
     ordinal,
     content_hash,
     token_count,
+    line_start,
+    line_end,
     wikilinks_out_json,
     lang
 FROM chunks_fts
@@ -384,7 +396,7 @@ def _note_row(note: Note, indexed_at: str) -> tuple[str, str, str, str, str, str
 
 def _chunk_row(
     chunk: Chunk,
-) -> tuple[str, str, str, str, str | None, str, str, int, str, int, str, str | None]:
+) -> tuple[str, str, str, str, str | None, str, str, int, str, int, int, int, str, str | None]:
     return (
         chunk.chunk_id,
         chunk.note_id,
@@ -396,6 +408,8 @@ def _chunk_row(
         chunk.ordinal,
         chunk.content_hash,
         chunk.token_count,
+        chunk.line_start,
+        chunk.line_end,
         json.dumps(chunk.wikilinks_out, ensure_ascii=False),
         chunk.lang,
     )
@@ -413,6 +427,8 @@ def _chunk_from_row(row: sqlite3.Row) -> Chunk:
         ordinal=int(row["ordinal"]),
         content_hash=str(row["content_hash"]),
         token_count=int(row["token_count"]),
+        line_start=int(row["line_start"]),
+        line_end=int(row["line_end"]),
         wikilinks_out=_wikilinks_from_json(row["wikilinks_out_json"]),
         lang=_optional_str(row["lang"]),
     )
