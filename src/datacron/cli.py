@@ -44,7 +44,7 @@ from datacron.core.paths import (
     sidecar_index_dir,
     sidecar_vault_config,
 )
-from datacron.core.vault import VaultReader
+from datacron.core.vault import FilesystemVaultReader
 
 __all__ = ["app", "mcp_entry"]
 
@@ -202,7 +202,7 @@ def status(
     initialized = bool(config)
 
     if initialized:
-        reader = VaultReader(vault_root)
+        reader = FilesystemVaultReader(vault_root)
         notes = asyncio.run(reader.list_notes())
         note_count = len(notes)
     else:
@@ -281,9 +281,24 @@ def eval_(
 def mcp_serve(
     vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
 ) -> None:
-    """Run the FastMCP stdio server (Phase 0 Sem 2)."""
-    _ = vault
-    _not_implemented("mcp serve", since="Sem 2 (depends on mcp/server.py)")
+    """Run the FastMCP stdio server.
+
+    Reads MCP JSON-RPC messages from stdin and replies on stdout. The
+    server exposes the Sem-2 read-only catalog: ``list_notes``,
+    ``get_note``, and the three vault resources. Logs go to the
+    configured FileLogger; stdout is reserved for the MCP framing
+    protocol.
+    """
+    configure_logging()
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    _LOGGER.info("cli.mcp_serve starting (vault=%s)", vault_root)
+    from datacron.mcp.server import run_stdio  # noqa: PLC0415
+
+    try:
+        asyncio.run(run_stdio(settings=settings, vault_root=vault_root))
+    except KeyboardInterrupt:
+        _LOGGER.info("cli.mcp_serve received KeyboardInterrupt; exiting cleanly")
 
 
 @mcp_app.command("install")
@@ -302,11 +317,21 @@ def mcp_install(
 def mcp_entry() -> None:
     """``datacron-mcp`` script entry — direct stdio MCP server.
 
-    Used by ``installers/claude_desktop.py`` so the Claude Desktop config does
-    not need to know about the ``datacron mcp serve`` subcommand. Phase-0
-    Sem-1 stub.
+    Used by ``installers/claude_desktop.py`` (Sem 3) so the Claude Desktop
+    config can launch the server without going through the ``datacron mcp
+    serve`` subcommand. Reads the vault root from ``DATACRON_VAULT_ROOT``
+    (set by the installer) or falls back to the current directory.
     """
-    _not_implemented("mcp serve", since="Sem 2 (depends on mcp/server.py)")
+    configure_logging()
+    settings = get_settings()
+    vault_root = _resolve_vault_root(None, settings)
+    _LOGGER.info("datacron-mcp script entry starting (vault=%s)", vault_root)
+    from datacron.mcp.server import run_stdio  # noqa: PLC0415
+
+    try:
+        asyncio.run(run_stdio(settings=settings, vault_root=vault_root))
+    except KeyboardInterrupt:
+        _LOGGER.info("datacron-mcp received KeyboardInterrupt; exiting cleanly")
 
 
 if __name__ == "__main__":  # pragma: no cover

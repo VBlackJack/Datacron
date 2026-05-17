@@ -14,12 +14,12 @@ from pathlib import Path
 
 import pytest
 
-from datacron.core.vault import JsonIdStore, VaultReader
+from datacron.core.vault import FilesystemVaultReader, JsonIdStore
 
 
 @pytest.mark.asyncio
 class TestReadNote:
-    async def test_with_frontmatter(self, vault_reader: VaultReader) -> None:
+    async def test_with_frontmatter(self, vault_reader: FilesystemVaultReader) -> None:
         note = await vault_reader.read_note(vault_reader.vault_root / "welcome.md")
         assert note.title == "Welcome to the Demo Vault"
         assert "welcome" in note.tags
@@ -30,31 +30,33 @@ class TestReadNote:
         assert note.content_hash != ""
         assert len(note.content_hash) == 64
 
-    async def test_no_frontmatter_uses_h1(self, vault_reader: VaultReader) -> None:
+    async def test_no_frontmatter_uses_h1(self, vault_reader: FilesystemVaultReader) -> None:
         note = await vault_reader.read_note(vault_reader.vault_root / "no-frontmatter.md")
         assert note.title == "No Frontmatter Here"
         assert note.frontmatter == {}
         assert "code" in note.tags
 
-    async def test_empty_note(self, vault_reader: VaultReader) -> None:
+    async def test_empty_note(self, vault_reader: FilesystemVaultReader) -> None:
         note = await vault_reader.read_note(vault_reader.vault_root / "empty.md")
         assert note.title == "empty"
         assert note.content == ""
         assert note.frontmatter == {}
 
-    async def test_subfolder_uses_posix_separator(self, vault_reader: VaultReader) -> None:
+    async def test_subfolder_uses_posix_separator(
+        self, vault_reader: FilesystemVaultReader
+    ) -> None:
         note = await vault_reader.read_note(
             vault_reader.vault_root / "subfolder" / "nested-thoughts.md"
         )
         assert note.rel_path == "subfolder/nested-thoughts.md"
 
-    async def test_important_flag_preserved(self, vault_reader: VaultReader) -> None:
+    async def test_important_flag_preserved(self, vault_reader: FilesystemVaultReader) -> None:
         note = await vault_reader.read_note(vault_reader.vault_root / "important-note.md")
         assert note.frontmatter.get("important") is True
 
     async def test_rejects_path_outside_vault(
         self,
-        vault_reader: VaultReader,
+        vault_reader: FilesystemVaultReader,
         tmp_path: Path,
     ) -> None:
         outside = tmp_path / "outside.md"
@@ -62,14 +64,14 @@ class TestReadNote:
         with pytest.raises(ValueError, match="outside the vault root"):
             await vault_reader.read_note(outside)
 
-    async def test_missing_file_raises(self, vault_reader: VaultReader) -> None:
+    async def test_missing_file_raises(self, vault_reader: FilesystemVaultReader) -> None:
         with pytest.raises(FileNotFoundError):
             await vault_reader.read_note(vault_reader.vault_root / "does-not-exist.md")
 
 
 @pytest.mark.asyncio
 class TestListNotes:
-    async def test_lists_all_markdown(self, vault_reader: VaultReader) -> None:
+    async def test_lists_all_markdown(self, vault_reader: FilesystemVaultReader) -> None:
         notes = await vault_reader.list_notes()
         rel_paths = {n.rel_path for n in notes}
         assert {
@@ -83,7 +85,7 @@ class TestListNotes:
 
     async def test_skips_hidden_and_node_modules(
         self,
-        vault_reader: VaultReader,
+        vault_reader: FilesystemVaultReader,
     ) -> None:
         vault_root = vault_reader.vault_root
         hidden = vault_root / ".obsidian"
@@ -98,38 +100,38 @@ class TestListNotes:
             assert ".obsidian" not in note.rel_path
             assert "node_modules" not in note.rel_path
 
-    async def test_folder_scope(self, vault_reader: VaultReader) -> None:
+    async def test_folder_scope(self, vault_reader: FilesystemVaultReader) -> None:
         notes = await vault_reader.list_notes(folder="subfolder")
         assert {n.rel_path for n in notes} == {"subfolder/nested-thoughts.md"}
 
-    async def test_limit_truncates(self, vault_reader: VaultReader) -> None:
+    async def test_limit_truncates(self, vault_reader: FilesystemVaultReader) -> None:
         notes = await vault_reader.list_notes(limit=2)
         assert len(notes) == 2
 
-    async def test_folder_escape_rejected(self, vault_reader: VaultReader) -> None:
+    async def test_folder_escape_rejected(self, vault_reader: FilesystemVaultReader) -> None:
         with pytest.raises(ValueError, match="escapes vault root"):
             await vault_reader.list_notes(folder="..")
 
 
 @pytest.mark.asyncio
 class TestResolveAlias:
-    async def test_resolves_title(self, vault_reader: VaultReader) -> None:
+    async def test_resolves_title(self, vault_reader: FilesystemVaultReader) -> None:
         target = await vault_reader.resolve_alias("Important Note")
         assert target is not None
         assert len(target) == 26
 
-    async def test_resolves_alias_field(self, vault_reader: VaultReader) -> None:
+    async def test_resolves_alias_field(self, vault_reader: FilesystemVaultReader) -> None:
         target = await vault_reader.resolve_alias("Hello")
         assert target is not None
 
-    async def test_resolves_filename_stem(self, vault_reader: VaultReader) -> None:
+    async def test_resolves_filename_stem(self, vault_reader: FilesystemVaultReader) -> None:
         target = await vault_reader.resolve_alias("no-frontmatter")
         assert target is not None
 
-    async def test_missing_alias_returns_none(self, vault_reader: VaultReader) -> None:
+    async def test_missing_alias_returns_none(self, vault_reader: FilesystemVaultReader) -> None:
         assert await vault_reader.resolve_alias("Phantom Note") is None
 
-    async def test_empty_alias_returns_none(self, vault_reader: VaultReader) -> None:
+    async def test_empty_alias_returns_none(self, vault_reader: FilesystemVaultReader) -> None:
         assert await vault_reader.resolve_alias("   ") is None
 
     async def test_title_wins_over_alias_global_priority(self, tmp_path: Path) -> None:
@@ -145,7 +147,7 @@ class TestResolveAlias:
             "---\ntitle: Note B\naliases: [shared-key]\n---\n# Body B\n",
             encoding="utf-8",
         )
-        reader = VaultReader(tmp_path)
+        reader = FilesystemVaultReader(tmp_path)
         target = await reader.resolve_alias("shared-key")
         assert target is not None
         # Resolves to Note A (title-tier match), not Note B (alias-tier match)
@@ -157,19 +159,19 @@ class TestResolveAlias:
         through to lower tiers."""
         (tmp_path / "one.md").write_text("---\ntitle: dup\n---\n# Body\n", encoding="utf-8")
         (tmp_path / "two.md").write_text("---\ntitle: dup\n---\n# Body\n", encoding="utf-8")
-        reader = VaultReader(tmp_path)
+        reader = FilesystemVaultReader(tmp_path)
         assert await reader.resolve_alias("dup") is None
 
 
 @pytest.mark.asyncio
 class TestIdPersistence:
-    async def test_id_is_stable_across_reads(self, vault_reader: VaultReader) -> None:
+    async def test_id_is_stable_across_reads(self, vault_reader: FilesystemVaultReader) -> None:
         note_a = await vault_reader.read_note(vault_reader.vault_root / "welcome.md")
         note_b = await vault_reader.read_note(vault_reader.vault_root / "welcome.md")
         assert note_a.id == note_b.id
 
     async def test_id_persisted_to_sidecar(self, tmp_vault: Path) -> None:
-        reader = VaultReader(tmp_vault)
+        reader = FilesystemVaultReader(tmp_vault)
         note = await reader.read_note(tmp_vault / "welcome.md")
         sidecar = tmp_vault / ".datacron" / "ulids.json"
         assert sidecar.exists()
@@ -185,7 +187,7 @@ class TestIdPersistence:
         )
         target.write_text(new_content, encoding="utf-8")
 
-        reader = VaultReader(tmp_vault)
+        reader = FilesystemVaultReader(tmp_vault)
         note = await reader.read_note(target)
         assert note.id == fixed_id
 
