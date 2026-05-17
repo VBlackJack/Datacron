@@ -1,0 +1,107 @@
+<svg viewBox="0 0 1100 720" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', system-ui, sans-serif">
+  <title>Datacron v2.1 — Architecture du MVP read-only</title>
+  <desc>Serveur MCP local stdio entre Claude Desktop/Code et un vault Markdown, avec sidecar .datacron/ pour l'index SQLite FTS5</desc>
+
+  <!-- Background -->
+  <rect width="1100" height="720" fill="#282a36"/>
+
+  <!-- Title -->
+  <text x="550" y="40" text-anchor="middle" font-size="22" font-weight="700" fill="#f8f8f2">Datacron v2.1 — Architecture MVP</text>
+  <text x="550" y="62" text-anchor="middle" font-size="13" fill="#6272a4">Read-only · 4 semaines · économie tokens 20-50× · Claude Desktop &amp; Code uniquement</text>
+
+  <!-- Layer 1 — MCP Clients (v1 scope) -->
+  <rect x="40" y="90" width="1020" height="100" rx="10" fill="#1e1f29" stroke="#ff79c6" stroke-width="2"/>
+  <text x="60" y="115" font-size="14" font-weight="700" fill="#ff79c6">Clients MCP v1 (local stdio)</text>
+
+  <rect x="270" y="130" width="240" height="50" rx="6" fill="#282a36" stroke="#bd93f9"/>
+  <text x="390" y="155" text-anchor="middle" font-size="14" font-weight="600" fill="#f8f8f2">Claude Desktop</text>
+  <text x="390" y="172" text-anchor="middle" font-size="11" fill="#50fa7b">✓ testé E2E</text>
+
+  <rect x="590" y="130" width="240" height="50" rx="6" fill="#282a36" stroke="#bd93f9"/>
+  <text x="710" y="155" text-anchor="middle" font-size="14" font-weight="600" fill="#f8f8f2">Claude Code</text>
+  <text x="710" y="172" text-anchor="middle" font-size="11" fill="#50fa7b">✓ testé E2E</text>
+
+  <!-- Future clients -->
+  <text x="60" y="172" font-size="10" fill="#6272a4">Roadmap : Cursor (v1.1) · Cowork via tunnel HTTPS (v1.x) · ChatGPT/Gemini (v2)</text>
+
+  <!-- Arrow down -->
+  <line x1="550" y1="190" x2="550" y2="226" stroke="#ff79c6" stroke-width="2" marker-end="url(#arrow-pink)"/>
+  <text x="570" y="212" font-size="11" fill="#ff79c6">MCP stdio · JSON-RPC</text>
+
+  <!-- Layer 2 — Datacron MCP Server (the hero) -->
+  <rect x="40" y="230" width="1020" height="200" rx="10" fill="#1e1f29" stroke="#50fa7b" stroke-width="3"/>
+  <text x="60" y="256" font-size="15" font-weight="700" fill="#50fa7b">⭐ Datacron MCP server (FastMCP Python, stdio, read-only v1)</text>
+  <text x="60" y="274" font-size="11" fill="#6272a4">Le hero — exposé directement aux clients, ~500 lignes Python total</text>
+
+  <!-- Tools -->
+  <rect x="60" y="290" width="480" height="125" rx="6" fill="#282a36" stroke="#8be9fd"/>
+  <text x="300" y="312" text-anchor="middle" font-size="13" font-weight="600" fill="#8be9fd">Tools MCP (5 read-only)</text>
+  <text x="300" y="334" text-anchor="middle" font-size="11" fill="#f8f8f2">list_notes(folder?, tags?, limit?)</text>
+  <text x="300" y="352" text-anchor="middle" font-size="11" fill="#f8f8f2">get_note(id_or_path, format=full|map)</text>
+  <text x="300" y="370" text-anchor="middle" font-size="11" fill="#f8f8f2">search_text(query, limit)  →  SQLite FTS5/BM25</text>
+  <text x="300" y="388" text-anchor="middle" font-size="11" fill="#f8f8f2">search_regex(pattern, glob?)  →  ripgrep wrapper</text>
+  <text x="300" y="406" text-anchor="middle" font-size="11" fill="#f8f8f2">get_backlinks(target)</text>
+
+  <!-- Resources + Security -->
+  <rect x="560" y="290" width="480" height="125" rx="6" fill="#282a36" stroke="#ff5555"/>
+  <text x="800" y="312" text-anchor="middle" font-size="13" font-weight="600" fill="#ff5555">Resources + Garde-fous</text>
+  <text x="800" y="334" text-anchor="middle" font-size="11" fill="#f8f8f2">datacron://vault/map  · /info  · /policy</text>
+  <text x="800" y="352" text-anchor="middle" font-size="11" fill="#f8f8f2">Path confinement strict (DATACRON_READ_PATHS)</text>
+  <text x="800" y="370" text-anchor="middle" font-size="11" fill="#f8f8f2">Sandbox &lt;vault_content&gt;...&lt;/vault_content&gt;</text>
+  <text x="800" y="388" text-anchor="middle" font-size="11" fill="#f8f8f2">Bounded results (max 20 hits, 8k tokens)</text>
+  <text x="800" y="406" text-anchor="middle" font-size="11" fill="#f8f8f2">Audit log NDJSON append-only</text>
+
+  <!-- Arrows to layers below -->
+  <line x1="280" y1="432" x2="280" y2="475" stroke="#6272a4" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="290" y="460" font-size="10" fill="#6272a4">read FS</text>
+
+  <line x1="820" y1="432" x2="820" y2="475" stroke="#6272a4" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="830" y="460" font-size="10" fill="#6272a4">read index</text>
+
+  <!-- Layer 3 — Vault (canonical) -->
+  <rect x="40" y="480" width="510" height="180" rx="10" fill="#1e1f29" stroke="#bd93f9" stroke-width="2"/>
+  <text x="60" y="506" font-size="14" font-weight="700" fill="#bd93f9">Vault Markdown (n'importe quel dossier .md)</text>
+  <text x="60" y="524" font-size="11" fill="#6272a4">Lecture seule en v1 · aucune migration · structure libre (PARA, Zettel, rien…)</text>
+
+  <rect x="60" y="540" width="220" height="50" rx="6" fill="#282a36" stroke="#6272a4"/>
+  <text x="170" y="562" text-anchor="middle" font-size="12" font-weight="600" fill="#f8f8f2">Notes existantes</text>
+  <text x="170" y="580" text-anchor="middle" font-size="10" fill="#8be9fd">.md + frontmatter optionnel</text>
+
+  <rect x="290" y="540" width="240" height="50" rx="6" fill="#282a36" stroke="#6272a4"/>
+  <text x="410" y="562" text-anchor="middle" font-size="12" font-weight="600" fill="#f8f8f2">Wikilinks Obsidian-compat</text>
+  <text x="410" y="580" text-anchor="middle" font-size="10" fill="#bd93f9">[[note]] · [[note#header]]</text>
+
+  <rect x="60" y="600" width="470" height="45" rx="6" fill="#282a36" stroke="#ffb86c"/>
+  <text x="295" y="620" text-anchor="middle" font-size="12" fill="#f8f8f2">⚠️ Datacron v1 n'écrit RIEN dans le vault — write tools reportés v0.2+</text>
+  <text x="295" y="638" text-anchor="middle" font-size="10" fill="#ffb86c">concurrence/file-locks + HITL UX = report motivé (cf. decisions-tranchees-v2.1.md)</text>
+
+  <!-- Layer 4 — .datacron/ sidecar -->
+  <rect x="570" y="480" width="490" height="180" rx="10" fill="#1e1f29" stroke="#8be9fd" stroke-width="2"/>
+  <text x="590" y="506" font-size="14" font-weight="700" fill="#8be9fd">.datacron/ (sidecar, gitignorable)</text>
+  <text x="590" y="524" font-size="11" fill="#6272a4">Métadonnées Datacron — n'altère jamais les notes utilisateur</text>
+
+  <rect x="590" y="540" width="220" height="50" rx="6" fill="#282a36" stroke="#50fa7b"/>
+  <text x="700" y="562" text-anchor="middle" font-size="12" font-weight="600" fill="#f8f8f2">SQLite FTS5</text>
+  <text x="700" y="580" text-anchor="middle" font-size="10" fill="#50fa7b">BM25 index + ULID side-table</text>
+
+  <rect x="820" y="540" width="220" height="50" rx="6" fill="#282a36" stroke="#ff79c6"/>
+  <text x="930" y="562" text-anchor="middle" font-size="12" font-weight="600" fill="#f8f8f2">logs + audit NDJSON</text>
+  <text x="930" y="580" text-anchor="middle" font-size="10" fill="#ff79c6">FileLogger journalier</text>
+
+  <rect x="590" y="600" width="450" height="45" rx="6" fill="#282a36" stroke="#bd93f9"/>
+  <text x="815" y="620" text-anchor="middle" font-size="12" fill="#f8f8f2">VAULT.yaml : datacron_version, vault_id ULID, folders configurables</text>
+  <text x="815" y="638" text-anchor="middle" font-size="10" fill="#bd93f9">→ utilisateur peut mapper _drafts/ sur son propre 00-Inbox/AI-Drafts/</text>
+
+  <!-- Markers -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 5 9 L 10 0 z" fill="#6272a4"/>
+    </marker>
+    <marker id="arrow-pink" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 5 9 L 10 0 z" fill="#ff79c6"/>
+    </marker>
+  </defs>
+
+  <!-- Bottom note -->
+  <text x="550" y="700" text-anchor="middle" font-size="11" fill="#6272a4">★ Hors scope v1 : LangGraph · Studio Tauri · embeddings/LanceDB · Contextual Retrieval · write tools · multi-client wide</text>
+</svg>
