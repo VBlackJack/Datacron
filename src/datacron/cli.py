@@ -203,7 +203,7 @@ def status(
 
     if initialized:
         reader = VaultReader(vault_root)
-        notes = asyncio.run(reader.list_notes(vault_root))
+        notes = asyncio.run(reader.list_notes())
         note_count = len(notes)
     else:
         note_count = 0
