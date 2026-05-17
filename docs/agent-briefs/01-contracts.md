@@ -400,13 +400,23 @@ class VaultReader(Protocol):
 
     Implementation lives in `src/datacron/core/vault.py`.
 
+    VaultReader is **construction-bound to a single vault_root**. Implementations
+    MUST accept `vault_root` as a constructor parameter and MUST NOT take it as a
+    method argument. The bound vault_root governs every method call.
+
     Required behavior:
     - read_note: parses frontmatter (using python-frontmatter), generates or reads
-      ULID, computes content_hash, returns a fully-populated Note.
-    - list_notes: yields Notes from the vault. May be lazy/iterable.
-    - resolve_alias: matches a raw wikilink target to a Note by, in order:
-      exact frontmatter `title`, filename without `.md`, frontmatter `aliases` entries.
-      Returns None if unresolved or ambiguous.
+      ULID, computes content_hash, returns a fully-populated Note. The `path`
+      argument must be inside the bound vault_root; otherwise raise ValueError.
+    - list_notes: yields Notes from the bound vault. May be lazy/iterable.
+    - resolve_alias: matches a raw wikilink target to a Note by **strict global
+      priority order**:
+      (1) exact frontmatter `title` match across ALL notes — if found, return.
+      (2) else filename without `.md` match across ALL notes — if found, return.
+      (3) else frontmatter `aliases` entries across ALL notes — if found, return.
+      Priority is global, NOT per-note. A title match on Note A wins over an
+      alias match on Note B even if B is iterated first. Returns None if
+      unresolved or ambiguous (multiple notes match at the same priority level).
     """
 
     async def read_note(self, path: Path) -> Note:
@@ -414,13 +424,12 @@ class VaultReader(Protocol):
 
     async def list_notes(
         self,
-        vault_root: Path,
         folder: str | None = None,
         limit: int | None = None,
     ) -> list[Note]:
         ...
 
-    async def resolve_alias(self, alias: str, vault_root: Path) -> str | None:
+    async def resolve_alias(self, alias: str) -> str | None:
         """Returns note_id or None."""
         ...
 ```
@@ -515,7 +524,7 @@ insufficient:
 | Section | Frozen since | Last amendment |
 |---|---|---|
 | §1 Pydantic models | 2026-05-17 | 2026-05-22 — §1.3 Chunk.ordinal clarified: scoped to (header_path) only, not (header_path, chunk_type), to preserve chunk_id uniqueness |
-| §2 Protocols | 2026-05-17 | — |
+| §2 Protocols | 2026-05-17 | 2026-05-23 — §2.6 VaultReader: bound at construction, removed `vault_root` from method signatures, made `resolve_alias` priority explicitly global (strict order title→filename→aliases across all notes) |
 | §3 Ownership matrix | 2026-05-17 | — |
 | §4 Reserved config keys | 2026-05-17 | — |
 | §5 Test fixtures | 2026-05-17 | — |
