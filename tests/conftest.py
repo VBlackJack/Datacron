@@ -35,7 +35,7 @@ from datacron.core.config import reset_settings_cache
 from datacron.core.hashing import hash_text
 from datacron.core.logger import shutdown_logging
 from datacron.core.models import Chunk, ChunkType, Note
-from datacron.core.vault import VaultReader
+from datacron.core.vault import FilesystemVaultReader
 
 NoteFactory = Callable[..., Note]
 ChunkFactory = Callable[..., Chunk]
@@ -86,9 +86,9 @@ def tmp_vault(demo_vault_source: Path, tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def vault_reader(tmp_vault: Path) -> VaultReader:
-    """A :class:`VaultReader` bound to a freshly-copied demo vault."""
-    return VaultReader(tmp_vault)
+def vault_reader(tmp_vault: Path) -> FilesystemVaultReader:
+    """A :class:`FilesystemVaultReader` bound to a freshly-copied demo vault."""
+    return FilesystemVaultReader(tmp_vault)
 
 
 @pytest.fixture

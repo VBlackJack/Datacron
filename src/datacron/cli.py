@@ -44,7 +44,7 @@ from datacron.core.paths import (
     sidecar_index_dir,
     sidecar_vault_config,
 )
-from datacron.core.vault import VaultReader
+from datacron.core.vault import FilesystemVaultReader
 
 __all__ = ["app", "mcp_entry"]
 
@@ -202,7 +202,7 @@ def status(
     initialized = bool(config)
 
     if initialized:
-        reader = VaultReader(vault_root)
+        reader = FilesystemVaultReader(vault_root)
         notes = asyncio.run(reader.list_notes())
         note_count = len(notes)
     else:

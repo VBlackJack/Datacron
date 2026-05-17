@@ -40,7 +40,7 @@ from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
 
-__all__ = ["JsonIdStore", "VaultReader"]
+__all__ = ["FilesystemVaultReader", "JsonIdStore"]
 
 _LOGGER = get_logger(__name__)
 
@@ -166,12 +166,17 @@ class JsonIdStore:
 
 
 @final
-class VaultReader:
-    """Filesystem-backed implementation of the ``VaultReader`` protocol.
+class FilesystemVaultReader:
+    """Filesystem-backed implementation of the :class:`VaultReader` protocol.
 
     A reader is bound to a single ``vault_root`` at construction (contracts
     §2.6 amendment fe5dbc6). All methods operate on that bound root; there
     is no per-call override.
+
+    The concrete class deliberately differs in name from the Protocol so
+    that consumers can write ``reader: VaultReader = FilesystemVaultReader(...)``
+    without a self-shadowing import. Structural conformance is checked at the
+    bottom of this module.
     """
 
     def __init__(
@@ -346,3 +351,25 @@ class VaultReader:
                     key,
                 )
             index[key] = value
+
+
+# ---------------------------------------------------------------------------
+# Structural conformance check
+# ---------------------------------------------------------------------------
+#
+# mypy validates that FilesystemVaultReader satisfies the VaultReader Protocol.
+# Drift in either direction (Protocol method renamed, concrete class signature
+# changed) fails type-check before runtime. No cost at import time beyond the
+# variable assignment.
+
+from datacron.core.protocols import VaultReader as _VaultReaderProtocol  # noqa: E402
+
+
+def _conformance_check(reader: _VaultReaderProtocol) -> _VaultReaderProtocol:
+    """Force mypy to verify :class:`FilesystemVaultReader` ↔ Protocol parity."""
+    return reader
+
+
+def _assert_conformance() -> None:
+    """Static check only — never invoked at runtime."""
+    _conformance_check(FilesystemVaultReader(Path()))
