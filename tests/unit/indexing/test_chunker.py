@@ -138,6 +138,14 @@ def test_code_block_content_preserves_fences() -> None:
     assert chunks[3].content == '```bash\nset -euo pipefail\necho "index"\n```'
 
 
+def test_bare_code_fence_has_no_language() -> None:
+    content = "# Untagged Code\n\n```\nplain text\n```"
+    chunks = _chunks_for("code-blocks.md", content=content)
+
+    assert chunks[1].chunk_type is ChunkType.CODE
+    assert chunks[1].lang is None
+
+
 def test_tables_are_atomic_chunks() -> None:
     chunks = _chunks_for("gfm-table.md")
 
