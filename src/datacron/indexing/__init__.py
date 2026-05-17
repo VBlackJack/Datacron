@@ -16,5 +16,7 @@
 from __future__ import annotations
 
 from datacron.indexing.chunker import MarkdownChunker
+from datacron.indexing.fts5_store import SQLiteFTS5Store
+from datacron.indexing.wikilinks import RegexWikilinksExtractor
 
-__all__ = ["MarkdownChunker"]
+__all__ = ["MarkdownChunker", "RegexWikilinksExtractor", "SQLiteFTS5Store"]

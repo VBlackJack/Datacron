@@ -61,6 +61,8 @@ def _build_chunk(**overrides: object) -> Chunk:
         "ordinal": 0,
         "content_hash": VALID_HASH,
         "token_count": 3,
+        "line_start": 1,
+        "line_end": 1,
     }
     defaults.update(overrides)
     return Chunk.model_validate(defaults)
@@ -109,6 +111,12 @@ class TestChunk:
     def test_negative_token_count_rejected(self) -> None:
         with pytest.raises(ValidationError):
             _build_chunk(token_count=-1)
+
+    def test_invalid_line_ranges_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            _build_chunk(line_start=0)
+        with pytest.raises(ValidationError):
+            _build_chunk(line_end=0)
 
     def test_lang_optional(self) -> None:
         chunk = _build_chunk(chunk_type=ChunkType.CODE, lang="python")

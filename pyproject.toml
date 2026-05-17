@@ -177,6 +177,10 @@ testpaths = ["tests"]
 addopts = [
     "-ra",
     "--strict-markers",
+    # Disable the cacheprovider plugin: .pytest_cache writes via the same shared
+    # path on Windows have hit ACL errors in this project; we don't rely on
+    # --last-failed/--ff so the cache is pure overhead. Restore if needed.
+    "-p", "no:cacheprovider",
     "--strict-config",
 ]
 asyncio_mode = "auto"
