@@ -2,7 +2,7 @@
 
 **Reviewed commits**: 5e5eb17..c5d0a0a (5 commits)
 **Date**: 2026-05-17
-**Verdict**: Request changes
+**Verdict**: Approve
 
 ## Verification
 - ruff: ✓ `ruff check .`
@@ -77,3 +77,32 @@ Approval is unblocked by:
    frozen contract order, with tests for title-vs-alias and filename-vs-alias collisions.
 2. Making `VaultReader` reject mismatched `vault_root` arguments with `ValueError`, with
    a regression test for `list_notes()` and/or `resolve_alias()`.
+
+## Resolution
+Spot-checked follow-up commits on `claude-code/phase0`:
+
+- `5c0a92a refactor(core): VaultReader drops vault_root method args; resolve_alias strict global priority`
+- `41bc97f docs(review): author response to codex blockers`
+
+Both blockers are resolved:
+
+1. `resolve_alias()` now uses a strict three-tier alias index: title, then filename stem,
+   then aliases. Higher-priority tiers shadow lower-priority tiers globally, and ambiguity
+   within the same tier returns `None`. The new tests
+   `test_title_wins_over_alias_global_priority` and `test_ambiguous_titles_return_none`
+   exercise the contract correctly. `_alias_candidates` has been removed.
+2. `list_notes()` and `resolve_alias()` no longer accept per-call `vault_root` arguments.
+   `_assert_matches_vault_root` is gone. `read_note(path)` still raises `ValueError` for
+   paths outside the bound `vault_root`, matching amendment `fe5dbc6`.
+
+Verification after the fixes:
+
+- `ruff check .`: passed
+- `ruff format --check .`: passed
+- `mypy --strict src tests`: passed
+- `pytest`: collected and ran all 107 tests, then failed only while writing a
+  workspace-local `.pytest_cache` path with a Windows ACL error.
+- `pytest -p no:cacheprovider`: 107 passed
+
+`41bc97f` documents the author response and confirms the fixes. Verdict updated to
+Approve.
