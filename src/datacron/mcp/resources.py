@@ -114,6 +114,7 @@ async def _build_vault_info(app: DatacronApp) -> str:
     sidecar = sidecar_dir(app.vault_root)
     index_db = sidecar_index_dir(app.vault_root) / INDEX_DB_FILENAME
     vault_config = sidecar / VAULT_CONFIG_FILENAME
+    indexed_notes, indexed_chunks, last_indexed_at, stats_error = await _safe_store_stats(app)
 
     info: dict[str, Any] = {
         "datacron_version": __version__,
@@ -122,9 +123,15 @@ async def _build_vault_info(app: DatacronApp) -> str:
         "vault_config": str(vault_config) if vault_config.is_file() else None,
         "note_count": note_count,
         "index": {
-            "built": index_db.is_file(),
+            # "built" reflects whether the FTS5 store holds indexed notes —
+            # not just whether the file exists. Opening the store at server
+            # startup creates an empty database; that's not yet "built".
+            "built": indexed_notes > 0,
             "path": str(index_db),
             "size_bytes": index_db.stat().st_size if index_db.is_file() else 0,
+            "indexed_notes": indexed_notes,
+            "indexed_chunks": indexed_chunks,
+            "last_indexed_at": last_indexed_at,
         },
         "limits": {
             "max_result_count": app.settings.max_result_count,
@@ -133,6 +140,8 @@ async def _build_vault_info(app: DatacronApp) -> str:
     }
     if list_error is not None:
         info["list_error"] = list_error
+    if stats_error is not None:
+        info["index"]["stats_error"] = stats_error
     return json.dumps(info, indent=2, sort_keys=True)
 
 
@@ -174,6 +183,26 @@ async def _safe_note_count(app: DatacronApp) -> tuple[int, str | None]:
         _LOGGER.warning("vault info: list_notes failed: %s", exc)
         return 0, str(exc)
     return len(notes), None
+
+
+async def _safe_store_stats(
+    app: DatacronApp,
+) -> tuple[int, int, str | None, str | None]:
+    """Return ``(indexed_notes, indexed_chunks, last_indexed_at_iso, error)``.
+
+    Any FTS5 error is captured and surfaced via the ``stats_error`` field on
+    the resource payload — vault/info must remain queryable even when the
+    index is broken so users can diagnose the problem.
+    """
+    try:
+        stats = await app.store.stats()
+    except Exception as exc:
+        _LOGGER.warning("vault info: store.stats failed: %s", exc)
+        return 0, 0, None, str(exc)
+    last_indexed_at_iso = (
+        stats.last_indexed_at.isoformat() if stats.last_indexed_at is not None else None
+    )
+    return stats.note_count, stats.chunk_count, last_indexed_at_iso, None
 
 
 def _group_by_folder(notes: list[Note]) -> dict[str, list[Note]]:

@@ -78,17 +78,14 @@ class TestStatus:
 
 
 class TestStubs:
-    """Commands still pending in Sem 3-4. ``mcp serve`` moved to TestMcpServe
-    once it was wired in Sem 2."""
+    """Commands still pending in Sem 4. ``index`` / ``reindex`` / ``mcp install``
+    moved to their own test classes once they were wired in Sem 3."""
 
     @pytest.mark.parametrize(
         "cmd",
         [
-            ["index"],
-            ["reindex"],
             ["ask", "anything"],
             ["eval", "--questions", "nope.yaml"],
-            ["mcp", "install", "--client", "claude-desktop"],
         ],
     )
     def test_stub_exits_with_error(self, runner: CliRunner, cmd: list[str]) -> None:
@@ -97,6 +94,89 @@ class TestStubs:
         assert "not implemented" in result.stderr.lower() or "not implemented" in (
             result.stdout.lower()
         )
+
+
+class TestIndex:
+    def test_index_builds_fts5_store_on_demo_vault(
+        self, runner: CliRunner, tmp_vault: Path
+    ) -> None:
+        result = runner.invoke(app, ["index", "--vault", str(tmp_vault)])
+        assert result.exit_code == 0, result.stdout + result.stderr
+
+        from datacron.core.paths import sidecar_index_db
+
+        db_path = sidecar_index_db(tmp_vault)
+        assert db_path.is_file(), "index() must create the FTS5 database"
+        # The demo vault has 6 notes; the stdout summary should reflect that.
+        assert "Indexed 6 notes" in result.stdout
+
+    def test_reindex_drops_then_rebuilds(self, runner: CliRunner, tmp_vault: Path) -> None:
+        from datacron.core.paths import sidecar_index_db
+
+        db_path = sidecar_index_db(tmp_vault)
+        # First build
+        first = runner.invoke(app, ["index", "--vault", str(tmp_vault)])
+        assert first.exit_code == 0
+        first_size = db_path.stat().st_size
+
+        # Touch a marker file to confirm the parent dir survives the rebuild.
+        marker = db_path.parent / "marker.txt"
+        marker.write_text("kept", encoding="utf-8")
+
+        second = runner.invoke(app, ["reindex", "--vault", str(tmp_vault)])
+        assert second.exit_code == 0
+        assert db_path.is_file()
+        assert marker.is_file(), "reindex must not touch unrelated files"
+        # File size after rebuild should be sane (non-zero, comparable to first build).
+        assert db_path.stat().st_size > 0
+        # Within an order of magnitude of the first build.
+        assert db_path.stat().st_size <= first_size * 4
+
+
+class TestMcpInstall:
+    def test_install_writes_config_with_explicit_path(
+        self, runner: CliRunner, tmp_vault: Path, tmp_path: Path
+    ) -> None:
+        config_target = tmp_path / "claude_desktop_config.json"
+        result = runner.invoke(
+            app,
+            [
+                "mcp",
+                "install",
+                "--client",
+                "claude-desktop",
+                "--vault",
+                str(tmp_vault),
+                "--config-path",
+                str(config_target),
+            ],
+        )
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert "Wrote Datacron MCP entry" in result.stdout
+        assert config_target.is_file()
+
+        import json
+
+        data = json.loads(config_target.read_text(encoding="utf-8"))
+        assert data["mcpServers"]["datacron"]["command"] == "datacron-mcp"
+        assert data["mcpServers"]["datacron"]["env"]["DATACRON_VAULT_ROOT"] == str(
+            tmp_vault.resolve()
+        )
+
+    def test_install_rejects_unknown_client(self, runner: CliRunner, tmp_vault: Path) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "mcp",
+                "install",
+                "--client",
+                "cursor",
+                "--vault",
+                str(tmp_vault),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "Unknown client" in result.stderr
 
 
 class TestMcpServe:
