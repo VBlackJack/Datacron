@@ -26,7 +26,6 @@ import json
 import os
 import shutil
 import sys
-from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +44,7 @@ _DEMO_VAULT = Path(__file__).parents[1] / "fixtures" / "demo-vault"
 
 
 @pytest.fixture
-async def indexed_vault(tmp_path: Path) -> AsyncIterator[Path]:
+async def indexed_vault(tmp_path: Path) -> Path:
     """Copy the demo vault into tmp_path and build the FTS5 index in-process.
 
     The Sem-2 FTS5 store migration renames ``.datacron/ulids.json`` to
@@ -83,7 +82,7 @@ async def indexed_vault(tmp_path: Path) -> AsyncIterator[Path]:
     if migrated.is_file():
         shutil.copyfile(migrated, vault / ".datacron" / "ulids.json")
 
-    yield vault
+    return vault
 
 
 def _server_params(vault: Path, log_dir: Path) -> StdioServerParameters:
