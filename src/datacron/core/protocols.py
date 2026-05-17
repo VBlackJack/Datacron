@@ -173,7 +173,7 @@ class EvalHarness(Protocol):
         eval_questions: list[EvalQuestion],
         store: FTS5Store,
         ripgrep: RipgrepWrapper,
-        k_values: list[int] = [5, 10, 20],  # noqa: B006 - mirrors frozen contract §2.5
+        k_values: list[int] = [5, 10, 20],  # noqa: B006 — Protocol default is documentation, not runtime state
     ) -> list[EvalResult]:
         """Execute the eval; return one :class:`EvalResult` per question."""
         ...
