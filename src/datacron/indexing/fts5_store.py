@@ -347,9 +347,17 @@ class SQLiteFTS5Store:
             return []
         and_query = _join_fts5_terms(terms, operator=" ")
         rows = await _fetch_search_rows(connection, and_query, limit)
-        if not rows and len(terms) > 1:
+        if len(rows) < limit and len(terms) > 1:
             or_query = _join_fts5_terms(terms, operator=" OR ")
-            rows = await _fetch_search_rows(connection, or_query, limit)
+            seen_chunk_ids = {str(row["chunk_id"]) for row in rows}
+            for row in await _fetch_search_rows(connection, or_query, limit):
+                chunk_id = str(row["chunk_id"])
+                if chunk_id in seen_chunk_ids:
+                    continue
+                rows.append(row)
+                seen_chunk_ids.add(chunk_id)
+                if len(rows) >= limit:
+                    break
 
         return [
             SearchResult(
