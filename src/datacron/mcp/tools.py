@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Final
 from mcp.server.fastmcp import FastMCP
 
 from datacron.core.logger import get_logger
-from datacron.core.models import Chunk, ChunkType, Note, SearchResult
+from datacron.core.models import ChunkType, Note, SearchResult
 from datacron.core.paths import PathConfinementError, assert_within_paths
 from datacron.mcp.sandbox import wrap_vault_content
 
@@ -53,6 +53,8 @@ GetNoteFormat = str  # "full" | "map" — kept loose for FastMCP schema
 _VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map"})
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
+_CHUNK_ID_SEPARATOR: Final[str] = "::"
+_TOKEN_ESTIMATE_DIVISOR: Final[int] = 4
 
 
 def register_tools(server: FastMCP[Any], app: Any) -> None:
@@ -82,16 +84,25 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         name="get_note",
         title="Get a note",
         description=(
-            "Fetch a single note by its ULID or vault-relative path. format='full' "
-            "returns the sandbox-wrapped body; format='map' returns the heading "
-            "outline only (cheap to scan before requesting full content)."
+            "Fetch a single note by its ULID, indexed chunk_id, or vault-relative path. "
+            "format='full' returns the sandbox-wrapped body; offset/limit page large "
+            "notes by character range. format='map' returns the heading outline only "
+            "(cheap to scan before requesting full content)."
         ),
     )
     async def get_note(
         id_or_path: str,
         format: GetNoteFormat = "full",
+        offset: int = 0,
+        limit: int | None = None,
     ) -> dict[str, Any]:
-        return await _get_note_impl(app, id_or_path=id_or_path, fmt=format)
+        return await _get_note_impl(
+            app,
+            id_or_path=id_or_path,
+            fmt=format,
+            offset=offset,
+            limit=limit,
+        )
 
     @server.tool(
         name="search_text",
@@ -188,15 +199,20 @@ async def _get_note_impl(
     *,
     id_or_path: str,
     fmt: str,
+    offset: int = 0,
+    limit: int | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    if fmt not in _VALID_FORMATS:
+    validation_error = _validate_get_note_request(fmt=fmt, offset=offset, limit=limit)
+    if validation_error is not None:
+        exc, fields = validation_error
         return _error_response(
             "get_note",
-            ValueError(f"format must be one of {sorted(_VALID_FORMATS)}"),
+            exc,
             started,
             id_or_path=id_or_path,
             fmt=fmt,
+            **fields,
         )
 
     try:
@@ -218,13 +234,19 @@ async def _get_note_impl(
             fmt=fmt,
         )
 
-    payload = _build_map_payload(app, note) if fmt == "map" else _build_full_payload(app, note)
+    payload = (
+        _build_map_payload(app, note)
+        if fmt == "map"
+        else _build_full_payload(app, note, offset=offset, limit=limit)
+    )
 
     _audit(
         "get_note",
         started,
         id_or_path=id_or_path,
         fmt=fmt,
+        offset=offset if fmt == "full" else None,
+        limit=limit if fmt == "full" else None,
         note_id=note.id,
         note_rel_path=note.rel_path,
         truncated=bool(payload.get("truncated", False)),
@@ -241,6 +263,25 @@ def _bounded_count(requested: int, ceiling: int) -> int:
     if requested <= 0:
         return ceiling
     return min(requested, ceiling)
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, len(text) // _TOKEN_ESTIMATE_DIVISOR)
+
+
+def _validate_get_note_request(
+    *,
+    fmt: str,
+    offset: int,
+    limit: int | None,
+) -> tuple[BaseException, dict[str, int | None]] | None:
+    if fmt not in _VALID_FORMATS:
+        return ValueError(f"format must be one of {sorted(_VALID_FORMATS)}"), {}
+    if offset < 0:
+        return ValueError("offset must be >= 0"), {"offset": offset}
+    if limit is not None and limit <= 0:
+        return ValueError("limit must be > 0"), {"limit": limit}
+    return None
 
 
 def _filter_by_tags(notes: list[Note], tags: list[str] | None) -> list[Note]:
@@ -267,28 +308,51 @@ def _note_summary(note: Note) -> dict[str, Any]:
 
 async def _resolve_note(app: DatacronApp, id_or_path: str) -> Note | None:
     """Return the Note for either a ULID or a vault-relative path."""
+    if _CHUNK_ID_SEPARATOR in id_or_path:
+        chunk = None
+        try:
+            chunk = await app.store.get_chunk(id_or_path)
+        except RuntimeError:
+            chunk = None
+        if chunk is not None:
+            return await _read_note_by_rel_path(app, chunk.note_rel_path)
+
+        note_id = id_or_path.split(_CHUNK_ID_SEPARATOR, 1)[0]
+        if _ULID_PATTERN.match(note_id):
+            return await _resolve_note(app, note_id)
+        return None
+
     if _ULID_PATTERN.match(id_or_path):
         for note in await app.vault_reader.list_notes():
             if note.id == id_or_path:
                 return note
         return None
-    candidate = (app.vault_root / id_or_path).expanduser()
+    return await _read_note_by_rel_path(app, id_or_path)
+
+
+async def _read_note_by_rel_path(app: DatacronApp, rel_path: str) -> Note:
+    candidate = (app.vault_root / rel_path).expanduser()
     resolved = assert_within_paths(candidate, [app.vault_root], kind="read")
     return await app.vault_reader.read_note(resolved)
 
 
-def _build_full_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
+def _build_full_payload(
+    app: DatacronApp,
+    note: Note,
+    *,
+    offset: int,
+    limit: int | None,
+) -> dict[str, Any]:
     max_tokens = app.settings.max_result_tokens
-    estimated_tokens = max(1, len(note.content) // 4)
-    content = note.content
-    truncated = False
-    if estimated_tokens > max_tokens:
-        # Truncate at the character boundary corresponding to max_tokens (* 4
-        # is the same heuristic used for token_count). The model still sees a
-        # complete envelope but the content field carries truncated=True.
-        char_budget = max_tokens * 4
-        content = note.content[:char_budget]
-        truncated = True
+    max_chars = max_tokens * _TOKEN_ESTIMATE_DIVISOR
+    total_chars = len(note.content)
+    start = min(offset, total_chars)
+    requested_limit = limit if limit is not None else max_chars
+    limit_applied = min(requested_limit, max_chars)
+    end = min(start + limit_applied, total_chars)
+    content = note.content[start:end]
+    truncated = start > 0 or end < total_chars
+    next_offset = end if end < total_chars else None
 
     wrapped = wrap_vault_content(note.rel_path, content)
     return {
@@ -303,7 +367,13 @@ def _build_full_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
         "content_hash": note.content_hash,
         "format": "full",
         "content": wrapped,
-        "estimated_tokens": min(estimated_tokens, max_tokens),
+        "estimated_tokens": _estimate_tokens(note.content),
+        "returned_estimated_tokens": _estimate_tokens(content),
+        "offset": start,
+        "limit_applied": limit_applied,
+        "total_chars": total_chars,
+        "returned_chars": len(content),
+        "next_offset": next_offset,
         "truncated": truncated,
     }
 
@@ -372,6 +442,7 @@ async def _search_text_impl(
         )
     bounded_limit = _bounded_count(limit, app.settings.max_result_count)
     try:
+        repair = await _repair_index_on_read(app)
         raw_results = await app.store.search(cleaned, limit=bounded_limit)
     except Exception:
         _LOGGER.exception("search_text failed (query=%r)", query)
@@ -380,13 +451,15 @@ async def _search_text_impl(
     results, truncated_for_tokens = _apply_token_budget(
         raw_results, max_tokens=app.settings.max_result_tokens
     )
-    payload = {
+    payload: dict[str, Any] = {
         "query": cleaned,
         "results": [_search_result_summary(r) for r in results],
         "returned": len(results),
         "limit_applied": bounded_limit,
         "truncated_for_tokens": truncated_for_tokens,
     }
+    if repair["reindexed_notes"] or repair["deleted_notes"]:
+        payload["index_repair"] = repair
     _audit(
         "search_text",
         started,
@@ -394,6 +467,8 @@ async def _search_text_impl(
         limit=limit,
         bounded_limit=bounded_limit,
         returned=len(results),
+        reindexed_notes=repair["reindexed_notes"],
+        deleted_notes=repair["deleted_notes"],
         truncated_for_tokens=truncated_for_tokens,
     )
     return payload
@@ -425,12 +500,14 @@ async def _search_regex_impl(
         )
     bounded_limit = _bounded_count(limit, app.settings.max_result_count)
     try:
+        repair = await _repair_index_on_read(app)
         raw_results = await app.ripgrep.search(
             pattern=pattern,
             vault_root=app.vault_root,
             glob=glob,
             limit=bounded_limit,
             store=app.store,
+            rg_path=app.settings.ripgrep_path,
         )
     except FileNotFoundError as exc:
         return _error_response("search_regex", exc, started, pattern=pattern, glob=glob)
@@ -447,7 +524,7 @@ async def _search_regex_impl(
     results, truncated_for_tokens = _apply_token_budget(
         raw_results, max_tokens=app.settings.max_result_tokens
     )
-    payload = {
+    payload: dict[str, Any] = {
         "pattern": pattern,
         "glob": glob,
         "results": [_search_result_summary(r) for r in results],
@@ -455,6 +532,8 @@ async def _search_regex_impl(
         "limit_applied": bounded_limit,
         "truncated_for_tokens": truncated_for_tokens,
     }
+    if repair["reindexed_notes"] or repair["deleted_notes"]:
+        payload["index_repair"] = repair
     _audit(
         "search_regex",
         started,
@@ -463,6 +542,8 @@ async def _search_regex_impl(
         limit=limit,
         bounded_limit=bounded_limit,
         returned=len(results),
+        reindexed_notes=repair["reindexed_notes"],
+        deleted_notes=repair["deleted_notes"],
         truncated_for_tokens=truncated_for_tokens,
     )
     return payload
@@ -511,6 +592,7 @@ async def _get_backlinks_impl(
         return payload_unresolved
 
     try:
+        repair = await _repair_index_on_read(app)
         sources = await _find_backlink_sources(app, resolved_id, cleaned, bounded_limit)
     except Exception:
         _LOGGER.exception("get_backlinks scan failed (target=%r id=%r)", target, resolved_id)
@@ -522,19 +604,23 @@ async def _get_backlinks_impl(
             resolved_note_id=resolved_id,
         )
 
-    payload = {
+    payload: dict[str, Any] = {
         "target": cleaned,
         "resolved_note_id": resolved_id,
         "results": sources,
         "returned": len(sources),
         "limit_applied": bounded_limit,
     }
+    if repair["reindexed_notes"] or repair["deleted_notes"]:
+        payload["index_repair"] = repair
     _audit(
         "get_backlinks",
         started,
         target=cleaned,
         resolved_note_id=resolved_id,
         returned=len(sources),
+        reindexed_notes=repair["reindexed_notes"],
+        deleted_notes=repair["deleted_notes"],
     )
     return payload
 
@@ -578,6 +664,39 @@ def _search_result_summary(result: SearchResult) -> dict[str, Any]:
     }
 
 
+async def _repair_index_on_read(app: DatacronApp) -> dict[str, int]:
+    """Synchronize the FTS index with the live vault before index-backed reads."""
+    indexed = await app.store.list_indexed_notes()
+    notes = await app.vault_reader.list_notes()
+    live_paths: set[str] = set()
+    reindexed_notes = 0
+    deleted_notes = 0
+
+    for note in notes:
+        live_paths.add(note.rel_path)
+        indexed_entry = indexed.get(note.rel_path)
+        if indexed_entry == (note.id, note.content_hash):
+            continue
+        if indexed_entry is not None and indexed_entry[0] != note.id:
+            await app.store.delete_note(indexed_entry[0])
+            deleted_notes += 1
+        await app.store.upsert_note(note, app.chunker.chunk(note))
+        reindexed_notes += 1
+
+    for rel_path, (note_id, _content_hash) in indexed.items():
+        if rel_path in live_paths:
+            continue
+        await app.store.delete_note(note_id)
+        deleted_notes += 1
+
+    return {
+        "checked_notes": len(notes),
+        "indexed_notes_before": len(indexed),
+        "reindexed_notes": reindexed_notes,
+        "deleted_notes": deleted_notes,
+    }
+
+
 async def _resolve_backlink_target(app: DatacronApp, target: str) -> str | None:
     """Return a note_id from a ULID or an alias, or None if unresolved."""
     if _ULID_PATTERN.match(target):
@@ -591,64 +710,57 @@ async def _find_backlink_sources(
     target_alias: str,
     limit: int,
 ) -> list[dict[str, Any]]:
-    """Walk every note's chunks, extract wikilinks, return source chunks pointing at the target.
+    """Scan indexed wikilink metadata and return source chunks pointing at the target.
 
-    A chunk is considered a backlink source if any of its extracted wikilinks
+    A chunk is considered a backlink source if any of its indexed wikilinks
     resolves (via :meth:`VaultReader.resolve_alias`) to ``target_note_id``.
     A small alias-resolution cache amortizes the per-link cost when multiple
     chunks reference the same target string.
     """
-    notes = await app.vault_reader.list_notes()
     target_alias_lower = target_alias.strip().lower()
     alias_cache: dict[str, str | None] = {target_alias_lower: target_note_id}
     seen_chunk_ids: set[str] = set()
     sources: list[dict[str, Any]] = []
 
-    for note in notes:
-        if note.id == target_note_id:
+    for chunk in await app.store.list_chunks_with_wikilinks():
+        if chunk.note_id == target_note_id:
             continue
-        chunks: list[Chunk] = await app.store.list_chunks_for_note(note.id)
-        for chunk in chunks:
-            if chunk.chunk_id in seen_chunk_ids:
-                continue
-            wikilinks = app.wikilinks.extract(chunk)
-            if not wikilinks:
-                continue
-            if not await _chunk_links_to(app, wikilinks, target_note_id, alias_cache):
-                continue
-            seen_chunk_ids.add(chunk.chunk_id)
-            sources.append(
-                {
-                    "source_chunk_id": chunk.chunk_id,
-                    "source_note_id": chunk.note_id,
-                    "source_note_rel_path": chunk.note_rel_path,
-                    "header_path": chunk.header_path,
-                    "section_title": chunk.section_title,
-                }
-            )
-            if len(sources) >= limit:
-                return sources
+        if chunk.chunk_id in seen_chunk_ids:
+            continue
+        if not await _chunk_links_to(app, chunk.wikilinks_out, target_note_id, alias_cache):
+            continue
+        seen_chunk_ids.add(chunk.chunk_id)
+        sources.append(
+            {
+                "source_chunk_id": chunk.chunk_id,
+                "source_note_id": chunk.note_id,
+                "source_note_rel_path": chunk.note_rel_path,
+                "header_path": chunk.header_path,
+                "section_title": chunk.section_title,
+            }
+        )
+        if len(sources) >= limit:
+            return sources
     return sources
 
 
 async def _chunk_links_to(
     app: DatacronApp,
-    wikilinks: list[Any],
+    wikilinks: list[str],
     target_note_id: str,
     alias_cache: dict[str, str | None],
 ) -> bool:
     """Return True if any wikilink in ``wikilinks`` resolves to ``target_note_id``.
 
-    Wikilinks always carry ``resolved_note_id=None`` per the extractor's
-    contract; resolution happens here via :meth:`VaultReader.resolve_alias`,
-    cached across the scan.
+    Indexed wikilinks are raw target aliases; resolution happens here via
+    :meth:`VaultReader.resolve_alias`, cached across the scan.
     """
-    for link in wikilinks:
-        key = link.target_alias.strip().lower()
+    for target_alias in wikilinks:
+        key = target_alias.strip().lower()
         if not key:
             continue
         if key not in alias_cache:
-            alias_cache[key] = await app.vault_reader.resolve_alias(link.target_alias)
+            alias_cache[key] = await app.vault_reader.resolve_alias(target_alias)
         if alias_cache[key] == target_note_id:
             return True
     return False

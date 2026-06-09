@@ -334,6 +334,18 @@ class FTS5Store(Protocol):
         """Return all chunks for a note in ordinal order."""
         ...
 
+    async def list_chunks_with_wikilinks(self) -> list[Chunk]:
+        """Return all chunks whose indexed wikilink list is non-empty."""
+        ...
+
+    async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
+        """Return rel_path -> (note_id, content_hash) for index freshness checks."""
+        ...
+
+    def iter_all_chunks(self) -> AsyncIterator[Chunk]:
+        """Stream all indexed chunks in insertion/document order."""
+        ...
+
     async def stats(self) -> IndexStats:
         """Aggregate stats."""
         ...
@@ -357,6 +369,9 @@ class RipgrepWrapper(Protocol):
     - Score = 1.0 / (1.0 + rank_index), where rank_index is the result index in the
       output order.
     - Snippet = the matched line with **<match>** highlighting.
+    - If the ripgrep binary is missing, falls back to scanning indexed chunk bodies
+      from FTS5Store.iter_all_chunks(); this fallback excludes frontmatter and depends
+      on index freshness.
     """
 
     async def search(
@@ -366,6 +381,7 @@ class RipgrepWrapper(Protocol):
         glob: str | None = None,
         limit: int = 20,
         store: FTS5Store | None = None,  # used for chunk resolution
+        rg_path: str | None = None,
     ) -> list[SearchResult]:
         ...
 ```

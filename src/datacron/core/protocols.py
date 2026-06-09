@@ -32,6 +32,7 @@ work.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -130,6 +131,18 @@ class FTS5Store(Protocol):
         """Return all chunks for a note in ordinal order."""
         ...
 
+    async def list_chunks_with_wikilinks(self) -> list[Chunk]:
+        """Return all chunks whose indexed wikilink list is non-empty."""
+        ...
+
+    async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
+        """Return ``rel_path -> (note_id, content_hash)`` for index freshness checks."""
+        ...
+
+    def iter_all_chunks(self) -> AsyncIterator[Chunk]:
+        """Stream all indexed chunks in insertion/document order."""
+        ...
+
     async def stats(self) -> IndexStats:
         """Aggregate stats."""
         ...
@@ -152,6 +165,7 @@ class RipgrepWrapper(Protocol):
         glob: str | None = None,
         limit: int = 20,
         store: FTS5Store | None = None,
+        rg_path: str | None = None,
     ) -> list[SearchResult]:
         """Run ripgrep against ``vault_root`` and resolve matches."""
         ...

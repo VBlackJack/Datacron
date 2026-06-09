@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import fnmatch
 import json
 import os
+import re
 from asyncio.subprocess import PIPE
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, final
@@ -47,20 +49,36 @@ class RipgrepWrapper:
         glob: str | None = None,
         limit: int = 20,
         store: FTS5Store | None = None,
+        rg_path: str | None = None,
     ) -> list[SearchResult]:
-        """Search ``vault_root`` with ripgrep and return resolved chunk hits."""
+        """Search with ripgrep, falling back to indexed chunks if the binary is absent.
+
+        The fallback scans indexed chunk bodies only. That excludes frontmatter and
+        depends on index freshness; MCP ``search_regex`` repairs the index before
+        calling this wrapper.
+        """
         if limit <= 0:
             return []
         if store is None:
             _LOGGER.info("ripgrep search skipped: no FTS5Store supplied for chunk resolution")
             return []
 
-        rg_path = os.environ.get(_RIPGREP_PATH_ENV, DEFAULT_RIPGREP_PATH)
-        command = _build_command(rg_path, pattern, vault_root, glob, limit)
+        resolved_rg_path = os.environ.get(_RIPGREP_PATH_ENV, rg_path or DEFAULT_RIPGREP_PATH)
+        command = _build_command(resolved_rg_path, pattern, vault_root, glob, limit)
         try:
             proc = await asyncio.create_subprocess_exec(*command, stdout=PIPE, stderr=PIPE)
         except FileNotFoundError as exc:
-            raise FileNotFoundError(f"ripgrep binary not found: {rg_path}") from exc
+            _LOGGER.warning(
+                "ripgrep binary not found (%s); falling back to indexed Python regex scan: %s",
+                resolved_rg_path,
+                exc,
+            )
+            return await _fallback_indexed_regex_search(
+                pattern=pattern,
+                glob=glob,
+                limit=limit,
+                store=store,
+            )
 
         if proc.stdout is None or proc.stderr is None:
             raise RuntimeError("ripgrep subprocess was not created with stdout/stderr pipes")
@@ -136,6 +154,47 @@ def _build_command(
         command.extend(["--glob", glob])
     command.extend([pattern, str(vault_root)])
     return command
+
+
+async def _fallback_indexed_regex_search(
+    *,
+    pattern: str,
+    glob: str | None,
+    limit: int,
+    store: FTS5Store,
+) -> list[SearchResult]:
+    compiled = re.compile(pattern)
+    results: list[SearchResult] = []
+    async for chunk in store.iter_all_chunks():
+        if glob and not fnmatch.fnmatch(chunk.note_rel_path, glob):
+            continue
+        snippet = _first_matching_line_snippet(chunk.content, compiled)
+        if snippet is None:
+            continue
+        rank_index = len(results)
+        results.append(
+            SearchResult(
+                chunk=chunk,
+                score=1.0 / (1.0 + rank_index),
+                snippet=snippet,
+            )
+        )
+        if len(results) >= limit:
+            break
+    return results
+
+
+def _first_matching_line_snippet(content: str, pattern: re.Pattern[str]) -> str | None:
+    lines = content.splitlines() or [content]
+    for line in lines:
+        match = pattern.search(line)
+        if match is not None:
+            return _highlight_text_span(line, match.start(), match.end())
+    return None
+
+
+def _highlight_text_span(line: str, start: int, end: int) -> str:
+    return f"{line[:start]}**{line[start:end]}**{line[end:]}".rstrip("\r\n")
 
 
 def _parse_json_line(raw_line: bytes) -> dict[str, Any] | None:

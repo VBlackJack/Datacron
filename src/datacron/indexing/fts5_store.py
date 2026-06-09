@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, cast, final
@@ -204,6 +205,54 @@ WHERE note_id = ?
 ORDER BY rowid;
 """
 
+_LIST_CHUNKS_WITH_WIKILINKS_SQL: Final[str] = """
+SELECT
+    chunk_id,
+    note_id,
+    note_rel_path,
+    header_path,
+    section_title,
+    chunk_type,
+    content,
+    ordinal,
+    content_hash,
+    token_count,
+    line_start,
+    line_end,
+    wikilinks_out_json,
+    lang
+FROM chunks_fts
+WHERE wikilinks_out_json IS NOT NULL
+  AND wikilinks_out_json != '[]'
+ORDER BY rowid;
+"""
+
+_LIST_INDEXED_NOTES_SQL: Final[str] = """
+SELECT rel_path, note_id, content_hash
+FROM notes
+ORDER BY indexed_at ASC;
+"""
+
+_ITER_ALL_CHUNKS_SQL: Final[str] = """
+SELECT
+    chunk_id,
+    note_id,
+    note_rel_path,
+    header_path,
+    section_title,
+    chunk_type,
+    content,
+    ordinal,
+    content_hash,
+    token_count,
+    line_start,
+    line_end,
+    wikilinks_out_json,
+    lang
+FROM chunks_fts
+ORDER BY rowid;
+"""
+
 
 @final
 class SQLiteFTS5Store:
@@ -248,8 +297,15 @@ class SQLiteFTS5Store:
         indexed_at = datetime.now(tz=UTC).isoformat()
         await connection.execute("BEGIN")
         try:
+            await connection.execute(
+                "DELETE FROM chunks_fts WHERE note_id = ? OR note_rel_path = ?",
+                (note.id, note.rel_path),
+            )
+            await connection.execute(
+                "DELETE FROM notes WHERE rel_path = ? AND note_id != ?",
+                (note.rel_path, note.id),
+            )
             await connection.execute(_INSERT_NOTE_SQL, _note_row(note, indexed_at))
-            await connection.execute("DELETE FROM chunks_fts WHERE note_id = ?", (note.id,))
             await connection.execute(
                 "DELETE FROM ulid_paths WHERE rel_path = ? OR note_id = ?",
                 (note.rel_path, note.id),
@@ -284,7 +340,8 @@ class SQLiteFTS5Store:
             return []
 
         connection = self._require_connection()
-        async with connection.execute(_SEARCH_SQL, (query.strip(), limit)) as cursor:
+        fts_query = _quote_fts5_query(query.strip())
+        async with connection.execute(_SEARCH_SQL, (fts_query, limit)) as cursor:
             rows = cast("list[sqlite3.Row]", await cursor.fetchall())
 
         return [
@@ -309,6 +366,29 @@ class SQLiteFTS5Store:
         async with connection.execute(_LIST_CHUNKS_FOR_NOTE_SQL, (note_id,)) as cursor:
             rows = cast("list[sqlite3.Row]", await cursor.fetchall())
         return [_chunk_from_row(row) for row in rows]
+
+    async def list_chunks_with_wikilinks(self) -> list[Chunk]:
+        """Return all chunks whose indexed wikilink list is non-empty."""
+        connection = self._require_connection()
+        async with connection.execute(_LIST_CHUNKS_WITH_WIKILINKS_SQL) as cursor:
+            rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+        return [_chunk_from_row(row) for row in rows]
+
+    async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
+        """Return ``rel_path -> (note_id, content_hash)`` for the current index."""
+        connection = self._require_connection()
+        async with connection.execute(_LIST_INDEXED_NOTES_SQL) as cursor:
+            rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+        return {
+            str(row["rel_path"]): (str(row["note_id"]), str(row["content_hash"])) for row in rows
+        }
+
+    async def iter_all_chunks(self) -> AsyncIterator[Chunk]:
+        """Stream all indexed chunks in insertion/document order."""
+        connection = self._require_connection()
+        async with connection.execute(_ITER_ALL_CHUNKS_SQL) as cursor:
+            async for row in cursor:
+                yield _chunk_from_row(row)
 
     async def stats(self) -> IndexStats:
         """Return aggregate index statistics."""
@@ -349,18 +429,22 @@ class SQLiteFTS5Store:
         ulids_path = sidecar_dir / _ULID_SIDECAR_FILENAME
         migrated_path = sidecar_dir / _MIGRATED_ULID_SIDECAR_FILENAME
 
-        if migrated_path.exists() or not ulids_path.exists():
+        source_path = ulids_path if ulids_path.exists() else migrated_path
+        if not source_path.exists():
             return
 
-        mappings = await asyncio.to_thread(_read_ulid_mappings, ulids_path)
+        mappings = await asyncio.to_thread(_read_ulid_mappings, source_path)
         rows = list(mappings.items())
         await connection.executemany(
             "INSERT OR IGNORE INTO ulid_paths(rel_path, note_id) VALUES (?, ?)",
             rows,
         )
         await connection.commit()
-        await asyncio.to_thread(ulids_path.rename, migrated_path)
-        _LOGGER.info("Migrated %s ULID mappings from JsonIdStore", len(rows))
+        if not ulids_path.exists():
+            await asyncio.to_thread(_write_ulid_mappings, ulids_path, mappings)
+        if not migrated_path.exists():
+            await asyncio.to_thread(_write_ulid_mappings, migrated_path, mappings)
+        _LOGGER.info("Imported %s ULID mappings from JsonIdStore", len(rows))
 
     def _require_connection(self) -> aiosqlite.Connection:
         if self._conn is None:
@@ -443,6 +527,19 @@ def _wikilinks_from_json(value: Any) -> list[str]:
     return [str(item) for item in parsed]
 
 
+def _quote_fts5_query(query: str) -> str:
+    """Treat user input as literal tokens while preserving FTS5 implicit AND."""
+    tokens = query.split()
+    if not tokens:
+        return '""'
+    return " ".join(_quote_fts5_token(token) for token in tokens)
+
+
+def _quote_fts5_token(token: str) -> str:
+    escaped = token.replace('"', '""')
+    return f'"{escaped}"'
+
+
 def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
@@ -464,6 +561,12 @@ def _read_ulid_mappings(path: Path) -> dict[str, str]:
     if not isinstance(data, dict):
         raise ValueError(f"ULID sidecar {path} is not a JSON object (found {type(data).__name__}).")
     return {str(rel_path): str(note_id) for rel_path, note_id in data.items()}
+
+
+def _write_ulid_mappings(path: Path, mappings: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(mappings, indent=2, sort_keys=True, ensure_ascii=False)
+    path.write_text(serialized + "\n", encoding="utf-8")
 
 
 async def _fetch_int(connection: aiosqlite.Connection, sql: str) -> int:

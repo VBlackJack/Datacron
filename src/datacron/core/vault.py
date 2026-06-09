@@ -49,6 +49,7 @@ SKIPPED_FOLDERS: Final[frozenset[str]] = frozenset(
     {SIDECAR_DIR_NAME, ".git", ".obsidian", ".hg", ".svn", "node_modules"}
 )
 ULID_SIDECAR_FILENAME: Final[str] = "ulids.json"
+MIGRATED_ULID_SIDECAR_FILENAME: Final[str] = "ulids.json.migrated"
 _H1_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}#\s+(.+?)\s*$", re.MULTILINE)
 
 
@@ -100,6 +101,16 @@ def _resolve_title(metadata: dict[str, object], body: str, path: Path) -> str:
     return path.stem
 
 
+def _read_id_mapping(path: Path) -> dict[str, str]:
+    raw = path.read_text(encoding="utf-8")
+    if not raw.strip():
+        return {}
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError(f"ULID sidecar {path} is not a JSON object (found {type(data).__name__}).")
+    return {str(k): str(v) for k, v in data.items()}
+
+
 @final
 class JsonIdStore:
     """JSON-backed mapping from vault-relative paths to ULIDs.
@@ -120,21 +131,36 @@ class JsonIdStore:
         return self._path
 
     def _load_sync(self) -> dict[str, str]:
-        if not self._path.exists():
-            return {}
+        primary_exists = self._path.exists()
         try:
-            raw = self._path.read_text(encoding="utf-8")
+            primary = _read_id_mapping(self._path) if primary_exists else {}
         except OSError as exc:
             _LOGGER.error("Failed to read ULID sidecar %s: %s", self._path, exc)
             raise
-        if not raw.strip():
-            return {}
-        data = json.loads(raw)
-        if not isinstance(data, dict):
-            raise ValueError(
-                f"ULID sidecar {self._path} is not a JSON object (found {type(data).__name__})."
+
+        migrated_path = self._path.with_name(MIGRATED_ULID_SIDECAR_FILENAME)
+        if not migrated_path.exists():
+            return primary
+
+        try:
+            migrated = _read_id_mapping(migrated_path)
+        except OSError as exc:
+            _LOGGER.error("Failed to read migrated ULID sidecar %s: %s", migrated_path, exc)
+            raise
+        if not migrated:
+            return primary
+
+        merged = dict(primary)
+        merged.update(migrated)
+        if merged != primary:
+            self._write_sync(merged)
+            _LOGGER.info(
+                "Repaired ULID sidecar %s from %s (%s mappings)",
+                self._path,
+                migrated_path,
+                len(merged),
             )
-        return {str(k): str(v) for k, v in data.items()}
+        return merged
 
     def _write_sync(self, data: dict[str, str]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
