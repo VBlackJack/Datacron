@@ -209,6 +209,19 @@ class IndexStats(BaseModel):
 
 ### 1.7 `EvalQuestion` and `EvalResult`
 
+> **AMENDMENT PENDING — 2026-06-09 (cross-review on `claude-code/phase0`, not yet
+> approved by Codex).** Eval metrics operate at **path level**, not chunk level.
+> Rationale: `chunk_id = {note_id}::{header_slug}::{ordinal}` is unstable across
+> reindex (any header edit rechunks), so a chunk-pinned golden set rots on the first
+> `datacron reindex`. The answerable unit is the *note*. Therefore:
+> - `EvalQuestion.expected_paths` is the **primary** ground truth.
+> - `EvalQuestion.expected_chunk_ids` is retained for an optional strict mode, **not required**.
+> - `EvalResult.recall_at_k` values = path-level recall (an expected note is "found"
+>   if any of its chunks appears in the top-k retrieved).
+> - `EvalResult.citation_precision` = fraction of retrieved chunks whose
+>   `note_rel_path` is in `expected_paths`.
+> Mapping key is `SearchResult.chunk.note_rel_path` (verified present, §1.3).
+
 ```python
 class EvalQuestion(BaseModel):
     """A single eval input."""
@@ -391,6 +404,29 @@ must implement both, and `RipgrepWrapper` may import `FTS5Store` concrete class.
 
 ### 2.5 `EvalHarness` (implemented by **Codex**)
 
+> **AMENDMENT PENDING — 2026-06-09 (see §1.7).** In `run`, after
+> `store.search(...)`, build `retrieved_paths = [r.chunk.note_rel_path for r in
+> results]` (parallel to `retrieved_chunk_ids`, order preserved, duplicates allowed —
+> a note may contribute several chunks). Compute metrics against
+> `EvalQuestion.expected_paths` via the frozen `metrics.py` signatures:
+>
+> ```python
+> def recall_at_k(expected_paths: list[str], retrieved_paths: list[str], k: int) -> float:
+>     """Fraction of expected paths present among the paths of the top-k retrieved chunks."""
+>     if not expected_paths:
+>         return 1.0
+>     top_k = set(retrieved_paths[:k])
+>     return sum(1 for p in expected_paths if p in top_k) / len(expected_paths)
+>
+>
+> def citation_precision(expected_paths: list[str], retrieved_paths: list[str]) -> float:
+>     """Fraction of retrieved chunks whose path is in the expected set. 1.0 if none retrieved."""
+>     if not retrieved_paths:
+>         return 1.0
+>     expected = set(expected_paths)
+>     return sum(1 for p in retrieved_paths if p in expected) / len(retrieved_paths)
+> ```
+
 ```python
 class EvalHarness(Protocol):
     """Runs an evaluation suite against the live MCP server.
@@ -548,8 +584,8 @@ insufficient:
 
 | Section | Frozen since | Last amendment |
 |---|---|---|
-| §1 Pydantic models | 2026-05-17 | 2026-05-24 — §1.3 Chunk.line_start/line_end added for ripgrep result → chunk resolution; prior 2026-05-22 amendment clarified Chunk.ordinal scope |
-| §2 Protocols | 2026-05-17 | 2026-05-23 — §2.6 VaultReader: bound at construction, removed `vault_root` from method signatures, made `resolve_alias` priority explicitly global (strict order title→filename→aliases across all notes) |
+| §1 Pydantic models | 2026-05-17 | 2026-05-24 — §1.3 Chunk.line_start/line_end added for ripgrep result → chunk resolution; prior 2026-05-22 amendment clarified Chunk.ordinal scope. **PENDING 2026-06-09** — §1.7 eval metrics path-level (cross-review on `claude-code/phase0`) |
+| §2 Protocols | 2026-05-17 | 2026-05-23 — §2.6 VaultReader: bound at construction, removed `vault_root` from method signatures, made `resolve_alias` priority explicitly global (strict order title→filename→aliases across all notes). **PENDING 2026-06-09** — §2.5 EvalHarness path-level metrics + frozen `metrics.py` signatures (cross-review on `claude-code/phase0`) |
 | §3 Ownership matrix | 2026-05-17 | — |
 | §4 Reserved config keys | 2026-05-17 | — |
 | §5 Test fixtures | 2026-05-17 | — |

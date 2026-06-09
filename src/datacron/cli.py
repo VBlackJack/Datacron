@@ -312,13 +312,37 @@ def eval_(
     questions: Path = typer.Option(
         ...,
         "--questions",
-        exists=False,
+        exists=True,
         help="Path to an eval-questions YAML file.",
     ),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
 ) -> None:
     """Run the eval harness against the configured vault (Phase 0 Sem 4)."""
-    _ = questions
-    _not_implemented("eval", since="Sem 4 (depends on eval/harness.py)")
+    configure_logging()
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    asyncio.run(_run_eval(vault_root, questions))
+
+
+async def _run_eval(vault_root: Path, questions_path: Path) -> None:
+    """Open the existing index and run the local eval harness."""
+    from datacron.core.paths import sidecar_index_db  # noqa: PLC0415
+    from datacron.eval.harness import LocalEvalHarness, load_eval_questions  # noqa: PLC0415
+    from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
+    from datacron.indexing.ripgrep import RipgrepWrapper  # noqa: PLC0415
+
+    db_path = sidecar_index_db(vault_root)
+    if not db_path.exists():
+        _print("No index found. Run `datacron index` first.")
+        raise typer.Exit(code=1)
+
+    questions = load_eval_questions(questions_path)
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    try:
+        await LocalEvalHarness().run(questions, store, RipgrepWrapper())
+    finally:
+        await store.close()
 
 
 # ---------------------------------------------------------------------------

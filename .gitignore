@@ -24,6 +24,9 @@ env/
 *.db-wal
 *.db-shm
 
+# Private eval data (vault paths)
+local/
+
 # OS
 .DS_Store
 Thumbs.db
