@@ -106,6 +106,7 @@ class TestSearchText:
     async def test_malformed_fts5_syntax_is_treated_as_literal_text(
         self, indexed_app: DatacronApp
     ) -> None:
+        """FTS5 special syntax must be tokenized as user text, not operators."""
         result = await _search_text_impl(indexed_app, query='"unterminated', limit=5)
         assert "error" not in result
         assert result["returned"] == 0

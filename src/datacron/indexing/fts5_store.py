@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sqlite3
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -32,6 +33,7 @@ __all__ = ["SQLiteFTS5Store"]
 
 _LOGGER = get_logger(__name__)
 
+_FTS5_TERM_PATTERN: Final[re.Pattern[str]] = re.compile(r"\w+", flags=re.UNICODE)
 _ULID_SIDECAR_FILENAME: Final[str] = "ulids.json"
 _MIGRATED_ULID_SIDECAR_FILENAME: Final[str] = "ulids.json.migrated"
 
@@ -340,9 +342,14 @@ class SQLiteFTS5Store:
             return []
 
         connection = self._require_connection()
-        fts_query = _quote_fts5_query(query.strip())
-        async with connection.execute(_SEARCH_SQL, (fts_query, limit)) as cursor:
-            rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+        terms = _fts5_terms(query)
+        if not terms:
+            return []
+        and_query = _join_fts5_terms(terms, operator=" ")
+        rows = await _fetch_search_rows(connection, and_query, limit)
+        if not rows and len(terms) > 1:
+            or_query = _join_fts5_terms(terms, operator=" OR ")
+            rows = await _fetch_search_rows(connection, or_query, limit)
 
         return [
             SearchResult(
@@ -457,6 +464,27 @@ class SQLiteFTS5Store:
         return self._db_path
 
 
+async def _fetch_search_rows(
+    connection: aiosqlite.Connection,
+    fts_query: str,
+    limit: int,
+) -> list[sqlite3.Row]:
+    async with connection.execute(_SEARCH_SQL, (fts_query, limit)) as cursor:
+        return cast("list[sqlite3.Row]", await cursor.fetchall())
+
+
+def _fts5_terms(query: str) -> list[str]:
+    return _FTS5_TERM_PATTERN.findall(query)
+
+
+def _join_fts5_terms(terms: list[str], *, operator: str) -> str:
+    return operator.join(_quote_fts5_term(term) for term in terms)
+
+
+def _quote_fts5_term(term: str) -> str:
+    return f'"{term.replace(chr(34), chr(34) * 2)}"'
+
+
 def _validate_chunks_belong_to_note(note: Note, chunks: list[Chunk]) -> None:
     for chunk in chunks:
         if chunk.note_id != note.id:
@@ -525,19 +553,6 @@ def _wikilinks_from_json(value: Any) -> list[str]:
     if not isinstance(parsed, list):
         raise ValueError("Stored wikilinks_out_json is not a JSON array.")
     return [str(item) for item in parsed]
-
-
-def _quote_fts5_query(query: str) -> str:
-    """Treat user input as literal tokens while preserving FTS5 implicit AND."""
-    tokens = query.split()
-    if not tokens:
-        return '""'
-    return " ".join(_quote_fts5_token(token) for token in tokens)
-
-
-def _quote_fts5_token(token: str) -> str:
-    escaped = token.replace('"', '""')
-    return f'"{escaped}"'
 
 
 def _optional_str(value: Any) -> str | None:
