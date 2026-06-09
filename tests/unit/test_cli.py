@@ -82,13 +82,7 @@ class TestStubs:
     """Commands still pending in Sem 4. ``index`` / ``reindex`` / ``mcp install``
     moved to their own test classes once they were wired in Sem 3."""
 
-    @pytest.mark.parametrize(
-        "cmd",
-        [
-            ["ask", "anything"],
-            ["eval", "--questions", "nope.yaml"],
-        ],
-    )
+    @pytest.mark.parametrize("cmd", [["ask", "anything"]])
     def test_stub_exits_with_error(self, runner: CliRunner, cmd: list[str]) -> None:
         result = runner.invoke(app, cmd)
         assert result.exit_code == 1
@@ -132,6 +126,60 @@ class TestIndex:
         assert db_path.stat().st_size > 0
         # Within an order of magnitude of the first build.
         assert db_path.stat().st_size <= first_size * 4
+
+
+class TestEval:
+    def test_eval_runs_against_existing_index(
+        self, runner: CliRunner, tmp_vault: Path, tmp_path: Path
+    ) -> None:
+        indexed = runner.invoke(app, ["index", "--vault", str(tmp_vault)])
+        assert indexed.exit_code == 0, indexed.stdout + indexed.stderr
+
+        questions = tmp_path / "eval-questions.yaml"
+        questions.write_text(
+            """
+- id: q-welcome
+  question: welcome
+  expected_paths:
+    - welcome.md
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "eval",
+                "--vault",
+                str(tmp_vault),
+                "--questions",
+                str(questions),
+            ],
+        )
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert "Datacron Eval Summary" in result.stdout
+        assert "q-welcome" in result.stdout
+
+    def test_eval_requires_existing_index(
+        self, runner: CliRunner, tmp_vault: Path, tmp_path: Path
+    ) -> None:
+        questions = tmp_path / "eval-questions.yaml"
+        questions.write_text("[]\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "eval",
+                "--vault",
+                str(tmp_vault),
+                "--questions",
+                str(questions),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "No index found" in result.stdout
 
 
 class TestMcpInstall:
