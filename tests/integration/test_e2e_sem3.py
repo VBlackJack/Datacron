@@ -47,18 +47,9 @@ _DEMO_VAULT = Path(__file__).parents[1] / "fixtures" / "demo-vault"
 async def indexed_vault(tmp_path: Path) -> Path:
     """Copy the demo vault into tmp_path and build the FTS5 index in-process.
 
-    The Sem-2 FTS5 store migration renames ``.datacron/ulids.json`` to
-    ``ulids.json.migrated`` after importing its contents into the
-    ``ulid_paths`` table. The server process's new ``FilesystemVaultReader``
-    would then generate fresh ULIDs and lose alignment with the indexed
-    chunks (breaking ``get_backlinks``). To keep both processes consistent
-    in this Phase-0 layout, we restore a copy of ``ulids.json`` from the
-    migrated sidecar after the indexing pass closes. The presence of the
-    ``.migrated`` marker keeps the server-side store from re-migrating;
-    the server's ``JsonIdStore`` then sees the same ULIDs as the index.
-
-    (The proper fix — bridge ``FilesystemVaultReader`` to ``ulid_paths`` —
-    is queued as a Sem-4 cleanup; see docs/reviews/sem3/.)
+    The store imports ``.datacron/ulids.json`` into ``ulid_paths`` without
+    removing the JSON sidecar, so the server process sees the same live note
+    IDs as the prebuilt index.
     """
     vault = tmp_path / "vault"
     shutil.copytree(_DEMO_VAULT, vault)
@@ -77,10 +68,6 @@ async def indexed_vault(tmp_path: Path) -> Path:
             await store.upsert_note(note, chunker.chunk(note))
     finally:
         await store.close()
-
-    migrated = vault / ".datacron" / "ulids.json.migrated"
-    if migrated.is_file():
-        shutil.copyfile(migrated, vault / ".datacron" / "ulids.json")
 
     return vault
 
@@ -241,25 +228,21 @@ class TestSem3E2E:
         for row in payload["results"]:
             assert row["snippet"].startswith('<vault_content path="')
 
-    async def test_search_regex_returns_clear_error_when_rg_missing(
+    async def test_search_regex_falls_back_when_rg_missing(
         self,
         indexed_vault: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """If ``rg`` cannot be found, the tool must return a structured error
-        (FileNotFoundError) rather than crashing the server.
-
-        We force the path to a sentinel that surely doesn't exist on either
-        OS so the test is deterministic regardless of whether rg is
-        installed on the host.
-        """
+        """If ``rg`` cannot be found, the tool falls back to indexed chunks."""
         monkeypatch.setenv("DATACRON_RIPGREP_PATH", "rg-does-not-exist-xyzzy")
         session, streams = await _open_session(indexed_vault, tmp_path)
         try:
-            result = await session.call_tool("search_regex", {"pattern": "foo", "limit": 5})
+            result = await session.call_tool("search_regex", {"pattern": "Welcome", "limit": 5})
         finally:
             await _close_session(session, streams)
         payload = _parse_tool_payload(result)
-        assert "error" in payload
-        assert payload["error"]["type"] == "FileNotFoundError"
+        assert "error" not in payload
+        assert payload["returned"] >= 1
+        assert payload["results"][0]["snippet"].startswith('<vault_content path="')
+        assert "**Welcome**" in payload["results"][0]["snippet"]

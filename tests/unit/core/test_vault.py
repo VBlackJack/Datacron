@@ -201,3 +201,25 @@ class TestIdPersistence:
 
         reloaded = JsonIdStore(path)
         assert await reloaded.get("a.md") == "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+
+    async def test_id_store_repairs_from_migrated_sidecar(self, tmp_path: Path) -> None:
+        path = tmp_path / "ulids.json"
+        migrated = tmp_path / "ulids.json.migrated"
+        migrated.write_text(json.dumps({"a.md": "01HQXR7K9YZ8M2N3PQRSTV4WX5"}), encoding="utf-8")
+
+        store = JsonIdStore(path)
+
+        assert await store.get("a.md") == "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+        assert json.loads(path.read_text(encoding="utf-8")) == {
+            "a.md": "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+        }
+
+    async def test_migrated_sidecar_wins_over_generated_duplicate(self, tmp_path: Path) -> None:
+        path = tmp_path / "ulids.json"
+        migrated = tmp_path / "ulids.json.migrated"
+        path.write_text(json.dumps({"a.md": "01HQXR7K9YZ8M2N3PQRSTV4WX6"}), encoding="utf-8")
+        migrated.write_text(json.dumps({"a.md": "01HQXR7K9YZ8M2N3PQRSTV4WX5"}), encoding="utf-8")
+
+        store = JsonIdStore(path)
+
+        assert await store.get("a.md") == "01HQXR7K9YZ8M2N3PQRSTV4WX5"

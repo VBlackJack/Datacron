@@ -15,6 +15,7 @@ import pytest
 
 from datacron.core.config import Settings
 from datacron.indexing.chunker import MarkdownChunker
+from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.mcp.server import DatacronApp, build_app
 
 
@@ -116,8 +117,56 @@ class TestGetNoteFull:
 
         result = await _get_note_impl(small_app, id_or_path="welcome.md", fmt="full")
         assert result["truncated"] is True
-        # estimated_tokens is capped at max_result_tokens (50)
-        assert result["estimated_tokens"] <= 50
+        assert result["estimated_tokens"] > result["returned_estimated_tokens"]
+        assert result["returned_estimated_tokens"] <= 50
+        assert result["next_offset"] is not None
+
+    @pytest.mark.asyncio
+    async def test_full_accepts_offset_and_limit(self, app: DatacronApp) -> None:
+        from datacron.mcp.tools import _get_note_impl
+
+        result = await _get_note_impl(
+            app,
+            id_or_path="welcome.md",
+            fmt="full",
+            offset=10,
+            limit=25,
+        )
+
+        assert result["offset"] == 10
+        assert result["limit_applied"] == 25
+        assert result["returned_chars"] == 25
+        assert result["next_offset"] == 35
+
+    @pytest.mark.asyncio
+    async def test_full_accepts_chunk_id(self, tmp_vault: Path) -> None:
+        from datacron.mcp.tools import _get_note_impl
+
+        settings = Settings(
+            read_paths=[tmp_vault],
+            vault_root=tmp_vault,
+            max_result_count=20,
+            max_result_tokens=8000,
+        )
+        store = SQLiteFTS5Store()
+        await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+        app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+        note = next(n for n in await app.vault_reader.list_notes() if n.rel_path == "welcome.md")
+        chunks = app.chunker.chunk(note)
+        await app.store.upsert_note(note, chunks)
+
+        try:
+            result = await _get_note_impl(app, id_or_path=chunks[0].chunk_id, fmt="full")
+        finally:
+            await store.close()
+
+        assert result["rel_path"] == "welcome.md"
+        assert result["id"] == note.id
 
     @pytest.mark.asyncio
     async def test_full_accepts_ulid(self, app: DatacronApp) -> None:
