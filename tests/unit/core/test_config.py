@@ -17,12 +17,15 @@ from pydantic import ValidationError
 
 from datacron.core.config import (
     DEFAULT_CHUNK_MAX_TOKENS,
+    DEFAULT_EXCLUDED_FOLDERS,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MAX_RESULT_COUNT,
     DEFAULT_MAX_RESULT_TOKENS,
     DEFAULT_RIPGREP_PATH,
     Settings,
+    VaultConfig,
     get_settings,
+    load_vault_config,
     reset_settings_cache,
 )
 
@@ -37,6 +40,10 @@ class TestDefaults:
         assert settings.chunk_max_tokens == DEFAULT_CHUNK_MAX_TOKENS
         assert settings.read_paths == []
         assert settings.vault_root is None
+
+    def test_vault_config_excluded_folders_default(self) -> None:
+        config = VaultConfig()
+        assert config.excluded_folders == list(DEFAULT_EXCLUDED_FOLDERS)
 
 
 class TestEnvLoading:
@@ -89,6 +96,34 @@ class TestProgrammatic:
     def test_max_result_count_positive(self) -> None:
         with pytest.raises(ValidationError):
             Settings(max_result_count=0)
+
+
+class TestVaultConfig:
+    def test_load_vault_config_applies_excluded_folder_default(self, tmp_path: Path) -> None:
+        path = tmp_path / "VAULT.yaml"
+        path.write_text("vault_id: 01HQ\n", encoding="utf-8")
+
+        config = load_vault_config(path)
+
+        assert config is not None
+        assert config.vault_id == "01HQ"
+        assert config.excluded_folders == list(DEFAULT_EXCLUDED_FOLDERS)
+
+    def test_load_vault_config_reads_excluded_folders(self, tmp_path: Path) -> None:
+        path = tmp_path / "VAULT.yaml"
+        path.write_text(
+            """
+excluded_folders:
+  - _attachments
+  - custom-trash
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        config = load_vault_config(path)
+
+        assert config is not None
+        assert config.excluded_folders == ["_attachments", "custom-trash"]
 
 
 class TestSingleton:

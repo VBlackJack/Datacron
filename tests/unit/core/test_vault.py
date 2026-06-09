@@ -100,6 +100,27 @@ class TestListNotes:
             assert ".obsidian" not in note.rel_path
             assert "node_modules" not in note.rel_path
 
+    async def test_skips_configured_excluded_folders(self, tmp_vault: Path) -> None:
+        attachments = tmp_vault / "_attachments"
+        attachments.mkdir()
+        (attachments / "ignored.md").write_text("# ignored", encoding="utf-8")
+        nested = tmp_vault / "nested" / "_attachments"
+        nested.mkdir(parents=True)
+        (nested / "also-ignored.md").write_text("# ignored", encoding="utf-8")
+        kept = tmp_vault / "nested" / "kept.md"
+        kept.write_text("# kept", encoding="utf-8")
+        reader = FilesystemVaultReader(
+            tmp_vault,
+            excluded_folders=frozenset({"_attachments"}),
+        )
+
+        notes = await reader.list_notes()
+        rel_paths = {note.rel_path for note in notes}
+
+        assert "nested/kept.md" in rel_paths
+        assert "_attachments/ignored.md" not in rel_paths
+        assert "nested/_attachments/also-ignored.md" not in rel_paths
+
     async def test_folder_scope(self, vault_reader: FilesystemVaultReader) -> None:
         notes = await vault_reader.list_notes(folder="subfolder")
         assert {n.rel_path for n in notes} == {"subfolder/nested-thoughts.md"}

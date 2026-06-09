@@ -33,10 +33,13 @@ from ulid import ULID
 
 from datacron import __version__
 from datacron.core.config import (
+    DEFAULT_EXCLUDED_FOLDERS,
     INDEX_DB_FILENAME,
     LOG_FILENAME_PATTERN,
     Settings,
+    VaultConfig,
     get_settings,
+    load_vault_config,
 )
 from datacron.core.logger import configure_logging, get_logger
 from datacron.core.paths import (
@@ -44,7 +47,7 @@ from datacron.core.paths import (
     sidecar_index_dir,
     sidecar_vault_config,
 )
-from datacron.core.vault import FilesystemVaultReader
+from datacron.core.vault import build_configured_reader
 
 __all__ = ["app", "mcp_entry"]
 
@@ -105,19 +108,13 @@ def _format_vault_yaml(vault_id: str, created: datetime) -> str:
             "drafts": DEFAULT_DRAFTS_FOLDER,
             "journal": DEFAULT_JOURNAL_FOLDER,
         },
+        "excluded_folders": list(DEFAULT_EXCLUDED_FOLDERS),
     }
     return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
 
 
-def _load_vault_yaml(vault_root: Path) -> dict[str, object]:
-    config_path = sidecar_vault_config(vault_root)
-    if not config_path.exists():
-        return {}
-    with config_path.open(encoding=ENCODING_UTF8) as fh:
-        data = yaml.safe_load(fh) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"{config_path} must be a YAML mapping; found {type(data).__name__}.")
-    return data
+def _load_vault_yaml(vault_root: Path) -> VaultConfig | None:
+    return load_vault_config(sidecar_vault_config(vault_root))
 
 
 def _log_invocation(name: str, **details: object) -> float:
@@ -199,10 +196,10 @@ def status(
     started = _log_invocation("status", vault=str(vault_root))
 
     config = _load_vault_yaml(vault_root)
-    initialized = bool(config)
+    initialized = config is not None
 
-    if initialized:
-        reader = FilesystemVaultReader(vault_root)
+    if config is not None:
+        reader = build_configured_reader(vault_root)
         notes = asyncio.run(reader.list_notes())
         note_count = len(notes)
     else:
@@ -215,9 +212,9 @@ def status(
     _print(f"Datacron {__version__}")
     _print(f"  vault_root: {vault_root}")
     _print(f"  initialized: {'yes' if initialized else 'no (run `datacron init`)'}")
-    if initialized:
-        _print(f"  vault_id:   {config.get('vault_id', '<unknown>')}")
-        _print(f"  created:    {config.get('created', '<unknown>')}")
+    if config is not None:
+        _print(f"  vault_id:   {config.vault_id or '<unknown>'}")
+        _print(f"  created:    {config.created or '<unknown>'}")
     _print(f"  notes:      {note_count}")
     _print(f"  index:      {'built' if db_path.exists() else 'not built'} ({db_path})")
     _print(f"  log file:   {log_dir / today_log}")
@@ -256,7 +253,6 @@ def reindex(
 async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
     """Orchestrate VaultReader + MarkdownChunker + SQLiteFTS5Store."""
     from datacron.core.paths import sidecar_index_db  # noqa: PLC0415
-    from datacron.core.vault import FilesystemVaultReader  # noqa: PLC0415
     from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
     from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
 
@@ -267,7 +263,7 @@ async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
         for suffix in ("-wal", "-shm"):
             db_path.with_suffix(db_path.suffix + suffix).unlink(missing_ok=True)
 
-    reader = FilesystemVaultReader(vault_root)
+    reader = build_configured_reader(vault_root)
     chunker = MarkdownChunker()
     store = SQLiteFTS5Store()
     await store.open(db_path)

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -39,6 +40,12 @@ class TestInit:
         assert config["encoding"] == "utf-8"
         assert config["line_endings"] == "lf"
         assert config["folders"]["drafts"] == "_drafts"
+        assert config["excluded_folders"] == [
+            "_attachments",
+            "zzz_Corbeille",
+            "_trash",
+            "_archive",
+        ]
 
     def test_init_refuses_overwrite_without_force(self, runner: CliRunner, tmp_path: Path) -> None:
         vault = tmp_path / "my-vault"
@@ -126,6 +133,28 @@ class TestIndex:
         assert db_path.stat().st_size > 0
         # Within an order of magnitude of the first build.
         assert db_path.stat().st_size <= first_size * 4
+
+    def test_index_uses_vault_excluded_folders(self, runner: CliRunner, tmp_vault: Path) -> None:
+        from datacron.core.paths import sidecar_index_db, sidecar_vault_config
+
+        initialized = runner.invoke(app, ["init", str(tmp_vault)])
+        assert initialized.exit_code == 0, initialized.stdout + initialized.stderr
+        config_path = sidecar_vault_config(tmp_vault)
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        config["excluded_folders"] = ["custom-trash"]
+        config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+        trash = tmp_vault / "custom-trash"
+        trash.mkdir()
+        (trash / "ignored.md").write_text("# ignored", encoding="utf-8")
+
+        indexed = runner.invoke(app, ["index", "--vault", str(tmp_vault)])
+        assert indexed.exit_code == 0, indexed.stdout + indexed.stderr
+
+        with sqlite3.connect(sidecar_index_db(tmp_vault)) as connection:
+            rel_paths = {row[0] for row in connection.execute("SELECT rel_path FROM notes")}
+
+        assert "custom-trash/ignored.md" not in rel_paths
 
 
 class TestEval:
