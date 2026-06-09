@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,6 +32,7 @@ __all__ = ["SQLiteFTS5Store"]
 
 _LOGGER = get_logger(__name__)
 
+_FTS5_TERM_PATTERN: Final[re.Pattern[str]] = re.compile(r"\w+", flags=re.UNICODE)
 _ULID_SIDECAR_FILENAME: Final[str] = "ulids.json"
 _MIGRATED_ULID_SIDECAR_FILENAME: Final[str] = "ulids.json.migrated"
 
@@ -284,8 +286,14 @@ class SQLiteFTS5Store:
             return []
 
         connection = self._require_connection()
-        async with connection.execute(_SEARCH_SQL, (query.strip(), limit)) as cursor:
-            rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+        terms = _fts5_terms(query)
+        if not terms:
+            return []
+        and_query = _join_fts5_terms(terms, operator=" ")
+        rows = await _fetch_search_rows(connection, and_query, limit)
+        if not rows and len(terms) > 1:
+            or_query = _join_fts5_terms(terms, operator=" OR ")
+            rows = await _fetch_search_rows(connection, or_query, limit)
 
         return [
             SearchResult(
@@ -371,6 +379,27 @@ class SQLiteFTS5Store:
         if self._db_path is None:
             raise RuntimeError("SQLiteFTS5Store is not open.")
         return self._db_path
+
+
+async def _fetch_search_rows(
+    connection: aiosqlite.Connection,
+    fts_query: str,
+    limit: int,
+) -> list[sqlite3.Row]:
+    async with connection.execute(_SEARCH_SQL, (fts_query, limit)) as cursor:
+        return cast("list[sqlite3.Row]", await cursor.fetchall())
+
+
+def _fts5_terms(query: str) -> list[str]:
+    return _FTS5_TERM_PATTERN.findall(query)
+
+
+def _join_fts5_terms(terms: list[str], *, operator: str) -> str:
+    return operator.join(_quote_fts5_term(term) for term in terms)
+
+
+def _quote_fts5_term(term: str) -> str:
+    return f'"{term.replace(chr(34), chr(34) * 2)}"'
 
 
 def _validate_chunks_belong_to_note(note: Note, chunks: list[Chunk]) -> None:
