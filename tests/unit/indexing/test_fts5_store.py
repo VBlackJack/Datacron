@@ -289,7 +289,7 @@ async def test_search_multi_term_query_preserves_and_when_hits_exist(
     await store.open(_db_path(tmp_path))
     await store.upsert_note(note, [both_terms, one_term])
 
-    results = await store.search("OSCARE tenant", limit=10)
+    results = await store.search("OSCARE tenant", limit=1)
 
     assert [result.chunk for result in results] == [both_terms]
     await store.close()
@@ -321,6 +321,36 @@ async def test_search_multi_term_query_falls_back_to_or_when_and_has_no_hits(
 
     assert results
     assert target in [result.chunk for result in results]
+    await store.close()
+
+
+async def test_search_multi_term_query_tops_up_sparse_and_results_with_or(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    note = note_factory(id=_NOTE_ID, rel_path="oscare.md")
+    false_positive = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::false-positive::0000",
+        content="demander tenant OSCARE cle API support log",
+        ordinal=0,
+    )
+    target = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::target::0001",
+        content="OSCARE tenant setup guide",
+        ordinal=1,
+    )
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+    await store.upsert_note(note, [false_positive, target])
+
+    results = await store.search("demander tenant OSCARE cle API", limit=5)
+
+    assert results[0].chunk == false_positive
+    assert target in [result.chunk for result in results[1:]]
+    assert len({result.chunk.chunk_id for result in results}) == len(results)
     await store.close()
 
 
