@@ -267,6 +267,84 @@ async def test_search_empty_query_and_non_positive_limit_are_empty(tmp_path: Pat
     await store.close()
 
 
+async def test_search_multi_term_query_preserves_and_when_hits_exist(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    note = note_factory(id=_NOTE_ID, rel_path="infra.md")
+    both_terms = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::both::0000",
+        content="OSCARE tenant setup guide",
+        ordinal=0,
+    )
+    one_term = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::one::0001",
+        content="OSCARE request workflow",
+        ordinal=1,
+    )
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+    await store.upsert_note(note, [both_terms, one_term])
+
+    results = await store.search("OSCARE tenant", limit=10)
+
+    assert [result.chunk for result in results] == [both_terms]
+    await store.close()
+
+
+async def test_search_multi_term_query_falls_back_to_or_when_and_has_no_hits(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    note = note_factory(id=_NOTE_ID, rel_path="oscare.md")
+    target = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::target::0000",
+        content="OSCARE tenant setup guide",
+        ordinal=0,
+    )
+    other = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::other::0001",
+        content="API key rotation",
+        ordinal=1,
+    )
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+    await store.upsert_note(note, [target, other])
+
+    results = await store.search("demander tenant OSCARE cle API", limit=10)
+
+    assert results
+    assert target in [result.chunk for result in results]
+    await store.close()
+
+
+async def test_search_special_characters_are_treated_as_literals(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    note = note_factory(id=_NOTE_ID, rel_path="syntax.md")
+    chunk = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::syntax::0000",
+        content='literal "unterminated token',
+    )
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+    await store.upsert_note(note, [chunk])
+
+    results = await store.search('"unterminated', limit=10)
+
+    assert [result.chunk for result in results] == [chunk]
+    await store.close()
+
+
 async def test_upsert_rejects_chunk_for_different_note(
     tmp_path: Path,
     note_factory: NoteFactory,
