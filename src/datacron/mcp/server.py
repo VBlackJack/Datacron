@@ -52,7 +52,7 @@ from datacron.core.protocols import (
     VaultReader,
     WikilinksExtractor,
 )
-from datacron.core.vault import FilesystemVaultReader
+from datacron.core.vault import build_configured_reader
 
 __all__ = [
     "DatacronApp",
@@ -111,7 +111,7 @@ def build_app(
         settings: Datacron runtime config. Defaults to the cached singleton.
         vault_root: Absolute path to the vault root. Required.
         vault_reader: Optional pre-built :class:`VaultReader`. Defaults to
-            :class:`FilesystemVaultReader` bound to ``vault_root``.
+            the configured filesystem reader bound to ``vault_root``.
         chunker: Optional pre-built :class:`ASTChunker`. Defaults to
             ``MarkdownChunker``.
         store: Optional pre-built :class:`FTS5Store`. Defaults to a fresh
@@ -127,7 +127,7 @@ def build_app(
     """
     resolved_settings = settings or get_settings()
     resolved_root = vault_root.expanduser().resolve()
-    resolved_reader = vault_reader or FilesystemVaultReader(resolved_root)
+    resolved_reader = vault_reader or build_configured_reader(resolved_root)
     if chunker is None:
         from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
 

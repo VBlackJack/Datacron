@@ -34,13 +34,18 @@ from typing import Final, final
 
 from ulid import ULID
 
-from datacron.core.config import SIDECAR_DIR_NAME
+from datacron.core.config import (
+    SIDECAR_DIR_NAME,
+    VAULT_CONFIG_FILENAME,
+    VaultConfig,
+    load_vault_config,
+)
 from datacron.core.frontmatter import extract_tags, parse
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
 
-__all__ = ["FilesystemVaultReader", "JsonIdStore"]
+__all__ = ["FilesystemVaultReader", "JsonIdStore", "build_configured_reader"]
 
 _LOGGER = get_logger(__name__)
 
@@ -53,14 +58,26 @@ MIGRATED_ULID_SIDECAR_FILENAME: Final[str] = "ulids.json.migrated"
 _H1_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}#\s+(.+?)\s*$", re.MULTILINE)
 
 
+def build_configured_reader(
+    vault_root: Path,
+    *,
+    id_store: JsonIdStore | None = None,
+) -> FilesystemVaultReader:
+    """Build a reader honoring ``excluded_folders`` from ``.datacron/VAULT.yaml``."""
+    resolved_root = vault_root.expanduser().resolve()
+    config_path = resolved_root / SIDECAR_DIR_NAME / VAULT_CONFIG_FILENAME
+    config = load_vault_config(config_path) or VaultConfig()
+    return FilesystemVaultReader(
+        resolved_root,
+        id_store=id_store,
+        excluded_folders=frozenset(config.excluded_folders),
+    )
+
+
 def _normalize_rel_path(path: Path, vault_root: Path) -> str:
     """Return ``path`` relative to ``vault_root`` with POSIX separators."""
     rel = path.resolve().relative_to(vault_root.resolve())
     return str(PurePosixPath(*rel.parts))
-
-
-def _should_skip_dir(name: str) -> bool:
-    return name in SKIPPED_FOLDERS or name.startswith(".")
 
 
 def _coerce_aliases(value: object) -> list[str]:
@@ -210,10 +227,12 @@ class FilesystemVaultReader:
         vault_root: Path,
         *,
         id_store: JsonIdStore | None = None,
+        excluded_folders: frozenset[str] | None = None,
     ) -> None:
         self._vault_root = vault_root.expanduser().resolve()
         sidecar = self._vault_root / SIDECAR_DIR_NAME / ULID_SIDECAR_FILENAME
         self._id_store = id_store or JsonIdStore(sidecar)
+        self._skipped_folders = SKIPPED_FOLDERS | frozenset(excluded_folders or ())
         self._alias_cache: dict[str, str | None] | None = None
         self._alias_lock = asyncio.Lock()
 
@@ -311,11 +330,14 @@ class FilesystemVaultReader:
     def _collect_markdown_paths(self, root: Path) -> list[Path]:
         results: list[Path] = []
         for current_dir, dirnames, filenames in os.walk(root):
-            dirnames[:] = sorted(d for d in dirnames if not _should_skip_dir(d))
+            dirnames[:] = sorted(d for d in dirnames if not self._should_skip_dir(d))
             for filename in sorted(filenames):
                 if filename.lower().endswith(".md"):
                     results.append(Path(current_dir) / filename)
         return results
+
+    def _should_skip_dir(self, name: str) -> bool:
+        return name in self._skipped_folders or name.startswith(".")
 
     async def _resolve_id(self, metadata: dict[str, object], rel_path: str) -> str:
         front_id = metadata.get("id")
