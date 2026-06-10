@@ -166,21 +166,26 @@ class TestSearchText:
         assert result["index_repair"]["reindexed_notes"] == 6
 
     @pytest.mark.asyncio
-    async def test_search_text_repair_respects_configured_excluded_folders(
-        self, tmp_vault: Path
-    ) -> None:
+    async def test_search_text_repair_respects_configured_exclusions(self, tmp_vault: Path) -> None:
         sidecar = tmp_vault / ".datacron"
         sidecar.mkdir(exist_ok=True)
         (sidecar / "VAULT.yaml").write_text(
             """
 excluded_folders:
   - _attachments
+excluded_files:
+  - 00_INDEX.md
 """.lstrip(),
             encoding="utf-8",
         )
         attachments = tmp_vault / "_attachments"
         attachments.mkdir()
         (attachments / "ignored.md").write_text("# Welcome ignored", encoding="utf-8")
+        (tmp_vault / "00_INDEX.md").write_text("# Welcome ignored", encoding="utf-8")
+        (tmp_vault / "subfolder" / "00_INDEX.md").write_text(
+            "# Welcome ignored",
+            encoding="utf-8",
+        )
         settings = Settings(
             read_paths=[tmp_vault],
             vault_root=tmp_vault,
@@ -207,6 +212,8 @@ excluded_folders:
         assert result["index_repair"]["reindexed_notes"] == 6
         assert "_attachments/ignored.md" not in indexed
         assert all("/_attachments/" not in rel_path for rel_path in indexed)
+        assert "00_INDEX.md" not in indexed
+        assert "subfolder/00_INDEX.md" not in indexed
 
 
 # ---------------------------------------------------------------------------
