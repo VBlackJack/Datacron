@@ -46,6 +46,7 @@ class TestInit:
             "_trash",
             "_archive",
         ]
+        assert config["excluded_files"] == ["00_INDEX.md"]
 
     def test_init_refuses_overwrite_without_force(self, runner: CliRunner, tmp_path: Path) -> None:
         vault = tmp_path / "my-vault"
@@ -155,6 +156,32 @@ class TestIndex:
             rel_paths = {row[0] for row in connection.execute("SELECT rel_path FROM notes")}
 
         assert "custom-trash/ignored.md" not in rel_paths
+
+    def test_index_uses_vault_excluded_files(self, runner: CliRunner, tmp_vault: Path) -> None:
+        from datacron.core.paths import sidecar_index_db, sidecar_vault_config
+
+        initialized = runner.invoke(app, ["init", str(tmp_vault)])
+        assert initialized.exit_code == 0, initialized.stdout + initialized.stderr
+        config_path = sidecar_vault_config(tmp_vault)
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        config["excluded_files"] = ["00_INDEX.md"]
+        config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+        (tmp_vault / "00_INDEX.md").write_text("# ignored", encoding="utf-8")
+        nested = tmp_vault / "nested-index"
+        nested.mkdir()
+        (nested / "00_INDEX.md").write_text("# also ignored", encoding="utf-8")
+        (nested / "kept.md").write_text("# kept", encoding="utf-8")
+
+        indexed = runner.invoke(app, ["index", "--vault", str(tmp_vault)])
+        assert indexed.exit_code == 0, indexed.stdout + indexed.stderr
+
+        with sqlite3.connect(sidecar_index_db(tmp_vault)) as connection:
+            rel_paths = {row[0] for row in connection.execute("SELECT rel_path FROM notes")}
+
+        assert "nested-index/kept.md" in rel_paths
+        assert "00_INDEX.md" not in rel_paths
+        assert "nested-index/00_INDEX.md" not in rel_paths
 
 
 class TestEval:
