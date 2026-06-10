@@ -41,6 +41,7 @@ DEFAULT_EXCLUDED_FOLDERS: Final[tuple[str, ...]] = (
     "_trash",
     "_archive",
 )
+DEFAULT_EXCLUDED_FILES: Final[tuple[str, ...]] = ("00_INDEX.md",)
 
 SIDECAR_DIR_NAME: Final[str] = ".datacron"
 INDEX_DIR_NAME: Final[str] = "index"
@@ -67,6 +68,7 @@ class VaultConfig(BaseModel):
     line_endings: str = "lf"
     folders: dict[str, str] = Field(default_factory=dict)
     excluded_folders: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FOLDERS))
+    excluded_files: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FILES))
 
     @field_validator("excluded_folders", mode="before")
     @classmethod
@@ -75,6 +77,15 @@ class VaultConfig(BaseModel):
             return list(DEFAULT_EXCLUDED_FOLDERS)
         if not isinstance(value, list):
             raise TypeError("excluded_folders must be a list of folder names")
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    @field_validator("excluded_files", mode="before")
+    @classmethod
+    def _normalize_excluded_files(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return list(DEFAULT_EXCLUDED_FILES)
+        if not isinstance(value, list):
+            raise TypeError("excluded_files must be a list of file names")
         return [str(item).strip() for item in value if str(item).strip()]
 
 

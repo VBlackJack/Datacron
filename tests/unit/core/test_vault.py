@@ -121,6 +121,27 @@ class TestListNotes:
         assert "_attachments/ignored.md" not in rel_paths
         assert "nested/_attachments/also-ignored.md" not in rel_paths
 
+    async def test_skips_configured_excluded_files(self, tmp_vault: Path) -> None:
+        root_index = tmp_vault / "00_INDEX.md"
+        root_index.write_text("# ignored", encoding="utf-8")
+        nested = tmp_vault / "nested"
+        nested.mkdir()
+        nested_index = nested / "00_INDEX.md"
+        nested_index.write_text("# also ignored", encoding="utf-8")
+        kept = nested / "kept.md"
+        kept.write_text("# kept", encoding="utf-8")
+        reader = FilesystemVaultReader(
+            tmp_vault,
+            excluded_files=frozenset({"00_INDEX.md"}),
+        )
+
+        notes = await reader.list_notes()
+        rel_paths = {note.rel_path for note in notes}
+
+        assert "nested/kept.md" in rel_paths
+        assert "00_INDEX.md" not in rel_paths
+        assert "nested/00_INDEX.md" not in rel_paths
+
     async def test_folder_scope(self, vault_reader: FilesystemVaultReader) -> None:
         notes = await vault_reader.list_notes(folder="subfolder")
         assert {n.rel_path for n in notes} == {"subfolder/nested-thoughts.md"}
