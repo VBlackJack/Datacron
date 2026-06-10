@@ -33,6 +33,7 @@ from ulid import ULID
 
 from datacron import __version__
 from datacron.core.config import (
+    DEFAULT_EXCLUDED_FILES,
     DEFAULT_EXCLUDED_FOLDERS,
     INDEX_DB_FILENAME,
     LOG_FILENAME_PATTERN,
@@ -109,6 +110,7 @@ def _format_vault_yaml(vault_id: str, created: datetime) -> str:
             "journal": DEFAULT_JOURNAL_FOLDER,
         },
         "excluded_folders": list(DEFAULT_EXCLUDED_FOLDERS),
+        "excluded_files": list(DEFAULT_EXCLUDED_FILES),
     }
     return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
 

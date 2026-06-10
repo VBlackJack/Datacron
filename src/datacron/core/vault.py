@@ -63,7 +63,7 @@ def build_configured_reader(
     *,
     id_store: JsonIdStore | None = None,
 ) -> FilesystemVaultReader:
-    """Build a reader honoring ``excluded_folders`` from ``.datacron/VAULT.yaml``."""
+    """Build a reader honoring vault exclusions from ``.datacron/VAULT.yaml``."""
     resolved_root = vault_root.expanduser().resolve()
     config_path = resolved_root / SIDECAR_DIR_NAME / VAULT_CONFIG_FILENAME
     config = load_vault_config(config_path) or VaultConfig()
@@ -71,6 +71,7 @@ def build_configured_reader(
         resolved_root,
         id_store=id_store,
         excluded_folders=frozenset(config.excluded_folders),
+        excluded_files=frozenset(config.excluded_files),
     )
 
 
@@ -228,11 +229,13 @@ class FilesystemVaultReader:
         *,
         id_store: JsonIdStore | None = None,
         excluded_folders: frozenset[str] | None = None,
+        excluded_files: frozenset[str] | None = None,
     ) -> None:
         self._vault_root = vault_root.expanduser().resolve()
         sidecar = self._vault_root / SIDECAR_DIR_NAME / ULID_SIDECAR_FILENAME
         self._id_store = id_store or JsonIdStore(sidecar)
         self._skipped_folders = SKIPPED_FOLDERS | frozenset(excluded_folders or ())
+        self._skipped_files = frozenset(excluded_files or ())
         self._alias_cache: dict[str, str | None] | None = None
         self._alias_lock = asyncio.Lock()
 
@@ -332,12 +335,15 @@ class FilesystemVaultReader:
         for current_dir, dirnames, filenames in os.walk(root):
             dirnames[:] = sorted(d for d in dirnames if not self._should_skip_dir(d))
             for filename in sorted(filenames):
-                if filename.lower().endswith(".md"):
+                if filename.lower().endswith(".md") and not self._should_skip_file(filename):
                     results.append(Path(current_dir) / filename)
         return results
 
     def _should_skip_dir(self, name: str) -> bool:
         return name in self._skipped_folders or name.startswith(".")
+
+    def _should_skip_file(self, name: str) -> bool:
+        return name in self._skipped_files
 
     async def _resolve_id(self, metadata: dict[str, object], rel_path: str) -> str:
         front_id = metadata.get("id")
