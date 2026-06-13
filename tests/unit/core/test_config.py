@@ -17,12 +17,17 @@ from pydantic import ValidationError
 
 from datacron.core.config import (
     DEFAULT_CHUNK_MAX_TOKENS,
+    DEFAULT_EXCLUDED_FILES,
+    DEFAULT_EXCLUDED_FOLDERS,
+    DEFAULT_GET_NOTE_MAX_TOKENS,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MAX_RESULT_COUNT,
     DEFAULT_MAX_RESULT_TOKENS,
     DEFAULT_RIPGREP_PATH,
     Settings,
+    VaultConfig,
     get_settings,
+    load_vault_config,
     reset_settings_cache,
 )
 
@@ -35,8 +40,14 @@ class TestDefaults:
         assert settings.max_result_count == DEFAULT_MAX_RESULT_COUNT
         assert settings.ripgrep_path == DEFAULT_RIPGREP_PATH
         assert settings.chunk_max_tokens == DEFAULT_CHUNK_MAX_TOKENS
+        assert settings.get_note_max_tokens == DEFAULT_GET_NOTE_MAX_TOKENS
         assert settings.read_paths == []
         assert settings.vault_root is None
+
+    def test_vault_config_excluded_folders_default(self) -> None:
+        config = VaultConfig()
+        assert config.excluded_folders == list(DEFAULT_EXCLUDED_FOLDERS)
+        assert config.excluded_files == list(DEFAULT_EXCLUDED_FILES)
 
 
 class TestEnvLoading:
@@ -49,6 +60,11 @@ class TestEnvLoading:
         monkeypatch.setenv("DATACRON_LOG_LEVEL", "TRACE")
         with pytest.raises(ValidationError):
             Settings()
+
+    def test_env_get_note_max_tokens(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATACRON_GET_NOTE_MAX_TOKENS", "12345")
+        settings = Settings()
+        assert settings.get_note_max_tokens == 12345
 
     def test_read_paths_split_by_os_sep(
         self,
@@ -89,6 +105,39 @@ class TestProgrammatic:
     def test_max_result_count_positive(self) -> None:
         with pytest.raises(ValidationError):
             Settings(max_result_count=0)
+
+
+class TestVaultConfig:
+    def test_load_vault_config_applies_excluded_folder_default(self, tmp_path: Path) -> None:
+        path = tmp_path / "VAULT.yaml"
+        path.write_text("vault_id: 01HQ\n", encoding="utf-8")
+
+        config = load_vault_config(path)
+
+        assert config is not None
+        assert config.vault_id == "01HQ"
+        assert config.excluded_folders == list(DEFAULT_EXCLUDED_FOLDERS)
+        assert config.excluded_files == list(DEFAULT_EXCLUDED_FILES)
+
+    def test_load_vault_config_reads_exclusions(self, tmp_path: Path) -> None:
+        path = tmp_path / "VAULT.yaml"
+        path.write_text(
+            """
+excluded_folders:
+  - _attachments
+  - custom-trash
+excluded_files:
+  - 00_INDEX.md
+  - custom-index.md
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        config = load_vault_config(path)
+
+        assert config is not None
+        assert config.excluded_folders == ["_attachments", "custom-trash"]
+        assert config.excluded_files == ["00_INDEX.md", "custom-index.md"]
 
 
 class TestSingleton:

@@ -34,13 +34,18 @@ from typing import Final, final
 
 from ulid import ULID
 
-from datacron.core.config import SIDECAR_DIR_NAME
+from datacron.core.config import (
+    SIDECAR_DIR_NAME,
+    VAULT_CONFIG_FILENAME,
+    VaultConfig,
+    load_vault_config,
+)
 from datacron.core.frontmatter import extract_tags, parse
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
 
-__all__ = ["FilesystemVaultReader", "JsonIdStore"]
+__all__ = ["FilesystemVaultReader", "JsonIdStore", "build_configured_reader"]
 
 _LOGGER = get_logger(__name__)
 
@@ -49,17 +54,31 @@ SKIPPED_FOLDERS: Final[frozenset[str]] = frozenset(
     {SIDECAR_DIR_NAME, ".git", ".obsidian", ".hg", ".svn", "node_modules"}
 )
 ULID_SIDECAR_FILENAME: Final[str] = "ulids.json"
+MIGRATED_ULID_SIDECAR_FILENAME: Final[str] = "ulids.json.migrated"
 _H1_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}#\s+(.+?)\s*$", re.MULTILINE)
+
+
+def build_configured_reader(
+    vault_root: Path,
+    *,
+    id_store: JsonIdStore | None = None,
+) -> FilesystemVaultReader:
+    """Build a reader honoring vault exclusions from ``.datacron/VAULT.yaml``."""
+    resolved_root = vault_root.expanduser().resolve()
+    config_path = resolved_root / SIDECAR_DIR_NAME / VAULT_CONFIG_FILENAME
+    config = load_vault_config(config_path) or VaultConfig()
+    return FilesystemVaultReader(
+        resolved_root,
+        id_store=id_store,
+        excluded_folders=frozenset(config.excluded_folders),
+        excluded_files=frozenset(config.excluded_files),
+    )
 
 
 def _normalize_rel_path(path: Path, vault_root: Path) -> str:
     """Return ``path`` relative to ``vault_root`` with POSIX separators."""
     rel = path.resolve().relative_to(vault_root.resolve())
     return str(PurePosixPath(*rel.parts))
-
-
-def _should_skip_dir(name: str) -> bool:
-    return name in SKIPPED_FOLDERS or name.startswith(".")
 
 
 def _coerce_aliases(value: object) -> list[str]:
@@ -100,6 +119,16 @@ def _resolve_title(metadata: dict[str, object], body: str, path: Path) -> str:
     return path.stem
 
 
+def _read_id_mapping(path: Path) -> dict[str, str]:
+    raw = path.read_text(encoding="utf-8")
+    if not raw.strip():
+        return {}
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError(f"ULID sidecar {path} is not a JSON object (found {type(data).__name__}).")
+    return {str(k): str(v) for k, v in data.items()}
+
+
 @final
 class JsonIdStore:
     """JSON-backed mapping from vault-relative paths to ULIDs.
@@ -120,21 +149,36 @@ class JsonIdStore:
         return self._path
 
     def _load_sync(self) -> dict[str, str]:
-        if not self._path.exists():
-            return {}
+        primary_exists = self._path.exists()
         try:
-            raw = self._path.read_text(encoding="utf-8")
+            primary = _read_id_mapping(self._path) if primary_exists else {}
         except OSError as exc:
             _LOGGER.error("Failed to read ULID sidecar %s: %s", self._path, exc)
             raise
-        if not raw.strip():
-            return {}
-        data = json.loads(raw)
-        if not isinstance(data, dict):
-            raise ValueError(
-                f"ULID sidecar {self._path} is not a JSON object (found {type(data).__name__})."
+
+        migrated_path = self._path.with_name(MIGRATED_ULID_SIDECAR_FILENAME)
+        if not migrated_path.exists():
+            return primary
+
+        try:
+            migrated = _read_id_mapping(migrated_path)
+        except OSError as exc:
+            _LOGGER.error("Failed to read migrated ULID sidecar %s: %s", migrated_path, exc)
+            raise
+        if not migrated:
+            return primary
+
+        merged = dict(primary)
+        merged.update(migrated)
+        if merged != primary:
+            self._write_sync(merged)
+            _LOGGER.info(
+                "Repaired ULID sidecar %s from %s (%s mappings)",
+                self._path,
+                migrated_path,
+                len(merged),
             )
-        return {str(k): str(v) for k, v in data.items()}
+        return merged
 
     def _write_sync(self, data: dict[str, str]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,10 +228,14 @@ class FilesystemVaultReader:
         vault_root: Path,
         *,
         id_store: JsonIdStore | None = None,
+        excluded_folders: frozenset[str] | None = None,
+        excluded_files: frozenset[str] | None = None,
     ) -> None:
         self._vault_root = vault_root.expanduser().resolve()
         sidecar = self._vault_root / SIDECAR_DIR_NAME / ULID_SIDECAR_FILENAME
         self._id_store = id_store or JsonIdStore(sidecar)
+        self._skipped_folders = SKIPPED_FOLDERS | frozenset(excluded_folders or ())
+        self._skipped_files = frozenset(excluded_files or ())
         self._alias_cache: dict[str, str | None] | None = None
         self._alias_lock = asyncio.Lock()
 
@@ -258,6 +306,22 @@ class FilesystemVaultReader:
                 raise
         return notes
 
+    async def stat_notes(self) -> dict[str, tuple[Path, int]]:
+        """Return ``rel_path -> (absolute_path, st_mtime_ns)`` for every live note.
+
+        Mirrors :meth:`list_notes` enumeration (same exclusions) but only
+        ``stat()``s each file. The read-repair uses this to skip the read+hash
+        of notes whose filesystem mtime is unchanged.
+        """
+        return await asyncio.to_thread(self._stat_markdown_paths)
+
+    def _stat_markdown_paths(self) -> dict[str, tuple[Path, int]]:
+        result: dict[str, tuple[Path, int]] = {}
+        for path in self._collect_markdown_paths(self._vault_root):
+            rel_path = _normalize_rel_path(path, self._vault_root)
+            result[rel_path] = (path, path.stat().st_mtime_ns)
+        return result
+
     async def resolve_alias(self, alias: str) -> str | None:
         normalized = alias.strip().lower()
         if not normalized:
@@ -285,11 +349,17 @@ class FilesystemVaultReader:
     def _collect_markdown_paths(self, root: Path) -> list[Path]:
         results: list[Path] = []
         for current_dir, dirnames, filenames in os.walk(root):
-            dirnames[:] = sorted(d for d in dirnames if not _should_skip_dir(d))
+            dirnames[:] = sorted(d for d in dirnames if not self._should_skip_dir(d))
             for filename in sorted(filenames):
-                if filename.lower().endswith(".md"):
+                if filename.lower().endswith(".md") and not self._should_skip_file(filename):
                     results.append(Path(current_dir) / filename)
         return results
+
+    def _should_skip_dir(self, name: str) -> bool:
+        return name in self._skipped_folders or name.startswith(".")
+
+    def _should_skip_file(self, name: str) -> bool:
+        return name in self._skipped_files
 
     async def _resolve_id(self, metadata: dict[str, object], rel_path: str) -> str:
         front_id = metadata.get("id")

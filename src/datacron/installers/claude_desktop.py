@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -50,6 +51,37 @@ DATACRON_SERVER_KEY: Final[str] = "datacron"
 _MCP_SERVERS_KEY: Final[str] = "mcpServers"
 _DATACRON_MCP_COMMAND: Final[str] = "datacron-mcp"
 _DATACRON_MCP_ARGS: Final[tuple[str, ...]] = ()  # script entry runs the stdio loop
+
+
+def _resolve_mcp_command() -> str:
+    """Return an absolute path Claude Desktop can spawn as the MCP server.
+
+    Claude Desktop launches MCP servers as subprocesses without inheriting
+    the caller's shell PATH (and certainly not a project venv). A bare
+    ``"datacron-mcp"`` command in the config produces a silent
+    "executable not found" at startup. Resolution order:
+
+    1. ``shutil.which("datacron-mcp")`` — picks up a system-wide or pipx install.
+    2. The same ``Scripts/`` (Windows) or ``bin/`` (POSIX) directory as the
+       currently-running interpreter — picks up the venv that invoked this
+       installer (typical dev workflow).
+    3. Raise :class:`ClaudeDesktopConfigError` with an actionable message.
+    """
+    on_path = shutil.which(_DATACRON_MCP_COMMAND)
+    if on_path:
+        return str(Path(on_path).resolve())
+
+    binary = "datacron-mcp.exe" if sys.platform == "win32" else _DATACRON_MCP_COMMAND
+    candidate = Path(sys.executable).parent / binary
+    if candidate.is_file():
+        return str(candidate.resolve())
+
+    raise ClaudeDesktopConfigError(
+        f"Cannot locate the {_DATACRON_MCP_COMMAND!r} executable. Looked on PATH "
+        f"(shutil.which) and in {candidate.parent!s}. Install Datacron with "
+        "`pip install -e .` inside an activated venv, or pass `command` "
+        "explicitly with an absolute path."
+    )
 
 
 class ClaudeDesktopConfigError(RuntimeError):
@@ -101,7 +133,7 @@ def install_claude_desktop_config(
     vault_root: Path,
     *,
     config_path: Path | None = None,
-    command: str = _DATACRON_MCP_COMMAND,
+    command: str | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> Path:
     """Install Datacron into the Claude Desktop ``claude_desktop_config.json``.
@@ -112,8 +144,11 @@ def install_claude_desktop_config(
             in the launched subprocess's environment.
         config_path: Override for the config file location (testing).
             Defaults to :func:`config_path_for_platform`.
-        command: The executable Claude Desktop will spawn. Defaults to
-            ``datacron-mcp`` — installed as a script by pyproject.toml.
+        command: The executable Claude Desktop will spawn. ``None``
+            (default) triggers :func:`_resolve_mcp_command` to produce an
+            absolute path — required because Claude Desktop does not
+            inherit the caller's PATH. Pass an explicit string to bypass
+            resolution.
         extra_env: Optional additional env vars to merge into the
             subprocess environment.
 
@@ -122,11 +157,18 @@ def install_claude_desktop_config(
 
     Raises:
         ClaudeDesktopConfigError: If the config cannot be located, parsed,
-            or written.
+            or written, or if ``command`` is ``None`` and the
+            ``datacron-mcp`` executable cannot be resolved.
     """
     resolved_vault = vault_root.expanduser().resolve()
     target = (config_path or config_path_for_platform()).expanduser()
-    _LOGGER.info("Installing Datacron entry into %s (vault=%s)", target, resolved_vault)
+    resolved_command = command if command is not None else _resolve_mcp_command()
+    _LOGGER.info(
+        "Installing Datacron entry into %s (vault=%s, command=%s)",
+        target,
+        resolved_vault,
+        resolved_command,
+    )
 
     config = _load_existing_config(target)
     servers = config.setdefault(_MCP_SERVERS_KEY, {})
@@ -144,7 +186,7 @@ def install_claude_desktop_config(
         env.update(extra_env)
 
     servers[DATACRON_SERVER_KEY] = {
-        "command": command,
+        "command": resolved_command,
         "args": list(_DATACRON_MCP_ARGS),
         "env": env,
     }

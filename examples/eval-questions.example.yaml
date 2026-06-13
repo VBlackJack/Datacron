@@ -1,0 +1,15 @@
+- id: sem4-example-index-freshness
+  question: How does Datacron decide whether the index is stale?
+  expected_paths:
+    - docs/agent-briefs/01-contracts.md
+
+- id: sem4-example-read-only-scope
+  question: Why are write tools out of scope for v1?
+  expected_paths:
+    - docs/ARCHITECTURE.md
+    - docs/decisions-tranchees-v2.1.md
+
+- id: sem4-example-ripgrep-fallback
+  question: What happens when the ripgrep binary is missing?
+  expected_paths:
+    - docs/agent-briefs/01-contracts.md

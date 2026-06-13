@@ -25,7 +25,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Final, final
 
-from pydantic import Field, field_validator
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 DEFAULT_LOG_LEVEL: Final[str] = "INFO"
@@ -34,6 +35,18 @@ DEFAULT_MAX_RESULT_TOKENS: Final[int] = 8000
 DEFAULT_MAX_RESULT_COUNT: Final[int] = 20
 DEFAULT_RIPGREP_PATH: Final[str] = "rg"
 DEFAULT_CHUNK_MAX_TOKENS: Final[int] = 1024
+# get_note(full) budget, decoupled from the search budget (max_result_tokens).
+# Search returns many snippets and must stay bounded; reading one note can be
+# generous, so a single get_note returns most notes whole while pagination
+# (offset/limit/next_offset) remains the safety valve for pathologically large notes.
+DEFAULT_GET_NOTE_MAX_TOKENS: Final[int] = 25000
+DEFAULT_EXCLUDED_FOLDERS: Final[tuple[str, ...]] = (
+    "_attachments",
+    "zzz_Corbeille",
+    "_trash",
+    "_archive",
+)
+DEFAULT_EXCLUDED_FILES: Final[tuple[str, ...]] = ("00_INDEX.md",)
 
 SIDECAR_DIR_NAME: Final[str] = ".datacron"
 INDEX_DIR_NAME: Final[str] = "index"
@@ -46,6 +59,50 @@ LOG_DATE_FORMAT: Final[str] = "%Y-%m-%d %H:%M:%S"
 VALID_LOG_LEVELS: Final[frozenset[str]] = frozenset(
     {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 )
+
+
+class VaultConfig(BaseModel):
+    """Typed model for ``.datacron/VAULT.yaml``."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    datacron_version: str | None = None
+    vault_id: str | None = None
+    created: str | None = None
+    encoding: str = "utf-8"
+    line_endings: str = "lf"
+    folders: dict[str, str] = Field(default_factory=dict)
+    excluded_folders: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FOLDERS))
+    excluded_files: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FILES))
+
+    @field_validator("excluded_folders", mode="before")
+    @classmethod
+    def _normalize_excluded_folders(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return list(DEFAULT_EXCLUDED_FOLDERS)
+        if not isinstance(value, list):
+            raise TypeError("excluded_folders must be a list of folder names")
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    @field_validator("excluded_files", mode="before")
+    @classmethod
+    def _normalize_excluded_files(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return list(DEFAULT_EXCLUDED_FILES)
+        if not isinstance(value, list):
+            raise TypeError("excluded_files must be a list of file names")
+        return [str(item).strip() for item in value if str(item).strip()]
+
+
+def load_vault_config(path: Path) -> VaultConfig | None:
+    """Load ``.datacron/VAULT.yaml`` from ``path`` if it exists."""
+    if not path.exists():
+        return None
+    with path.open(encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must be a YAML mapping; found {type(data).__name__}.")
+    return VaultConfig.model_validate(data)
 
 
 def _split_path_list(value: str | list[str | Path] | None) -> list[Path]:
@@ -89,6 +146,7 @@ class Settings(BaseSettings):
     max_result_count: int = Field(default=DEFAULT_MAX_RESULT_COUNT, ge=1)
     ripgrep_path: str = Field(default=DEFAULT_RIPGREP_PATH)
     chunk_max_tokens: int = Field(default=DEFAULT_CHUNK_MAX_TOKENS, ge=1)
+    get_note_max_tokens: int = Field(default=DEFAULT_GET_NOTE_MAX_TOKENS, ge=1)
 
     @field_validator("log_level", mode="before")
     @classmethod

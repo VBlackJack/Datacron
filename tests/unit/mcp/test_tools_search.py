@@ -103,14 +103,13 @@ class TestSearchText:
         assert result["results"] == []
 
     @pytest.mark.asyncio
-    async def test_malformed_fts5_syntax_returns_structured_error(
+    async def test_malformed_fts5_syntax_is_treated_as_literal_text(
         self, indexed_app: DatacronApp
     ) -> None:
-        """FTS5 special syntax (e.g. unmatched ``"``) must surface as a
-        structured error, not crash the server."""
+        """FTS5 special syntax must be tokenized as user text, not operators."""
         result = await _search_text_impl(indexed_app, query='"unterminated', limit=5)
-        assert "error" in result
-        assert result["error"]["type"] == "RuntimeError"
+        assert "error" not in result
+        assert result["returned"] == 0
 
     @pytest.mark.asyncio
     async def test_limit_bounded_by_max_result_count(self, tmp_vault: Path) -> None:
@@ -140,6 +139,82 @@ class TestSearchText:
         assert result["limit_applied"] == 2
         assert result["returned"] <= 2
 
+    @pytest.mark.asyncio
+    async def test_search_text_repairs_empty_index_on_read(self, tmp_vault: Path) -> None:
+        settings = Settings(
+            read_paths=[tmp_vault],
+            vault_root=tmp_vault,
+            max_result_count=20,
+            max_result_tokens=8000,
+        )
+        store = SQLiteFTS5Store()
+        await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+        app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+
+        try:
+            result = await _search_text_impl(app, query="Welcome", limit=5)
+        finally:
+            await store.close()
+
+        assert "error" not in result
+        assert result["returned"] >= 1
+        assert result["index_repair"]["reindexed_notes"] == 6
+
+    @pytest.mark.asyncio
+    async def test_search_text_repair_respects_configured_exclusions(self, tmp_vault: Path) -> None:
+        sidecar = tmp_vault / ".datacron"
+        sidecar.mkdir(exist_ok=True)
+        (sidecar / "VAULT.yaml").write_text(
+            """
+excluded_folders:
+  - _attachments
+excluded_files:
+  - 00_INDEX.md
+""".lstrip(),
+            encoding="utf-8",
+        )
+        attachments = tmp_vault / "_attachments"
+        attachments.mkdir()
+        (attachments / "ignored.md").write_text("# Welcome ignored", encoding="utf-8")
+        (tmp_vault / "00_INDEX.md").write_text("# Welcome ignored", encoding="utf-8")
+        (tmp_vault / "subfolder" / "00_INDEX.md").write_text(
+            "# Welcome ignored",
+            encoding="utf-8",
+        )
+        settings = Settings(
+            read_paths=[tmp_vault],
+            vault_root=tmp_vault,
+            max_result_count=20,
+            max_result_tokens=8000,
+        )
+        store = SQLiteFTS5Store()
+        await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+        app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+
+        try:
+            result = await _search_text_impl(app, query="Welcome", limit=5)
+            indexed = await store.list_indexed_notes()
+        finally:
+            await store.close()
+
+        assert "error" not in result
+        assert result["index_repair"]["checked_notes"] == 6
+        assert result["index_repair"]["reindexed_notes"] == 6
+        assert "_attachments/ignored.md" not in indexed
+        assert all("/_attachments/" not in rel_path for rel_path in indexed)
+        assert "00_INDEX.md" not in indexed
+        assert "subfolder/00_INDEX.md" not in indexed
+
 
 # ---------------------------------------------------------------------------
 # search_regex
@@ -160,8 +235,9 @@ class _StubRipgrep:
         glob: str | None = None,
         limit: int = 20,
         store: Any = None,
+        rg_path: str | None = None,
     ) -> list[SearchResult]:
-        self.calls.append({"pattern": pattern, "glob": glob, "limit": limit})
+        self.calls.append({"pattern": pattern, "glob": glob, "limit": limit, "rg_path": rg_path})
         return self._results[:limit]
 
 
@@ -210,7 +286,12 @@ class TestSearchRegex:
         assert isinstance(stub, _StubRipgrep)
         await _search_regex_impl(stubbed_app, pattern="kafka", glob="*.md", limit=999)
         assert stub.calls == [
-            {"pattern": "kafka", "glob": "*.md", "limit": 20}
+            {
+                "pattern": "kafka",
+                "glob": "*.md",
+                "limit": 20,
+                "rg_path": "rg",
+            }
         ]  # limit bounded by max_result_count
 
     @pytest.mark.asyncio
