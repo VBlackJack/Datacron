@@ -33,10 +33,14 @@ from ulid import ULID
 
 from datacron import __version__
 from datacron.core.config import (
+    DEFAULT_EXCLUDED_FILES,
+    DEFAULT_EXCLUDED_FOLDERS,
     INDEX_DB_FILENAME,
     LOG_FILENAME_PATTERN,
     Settings,
+    VaultConfig,
     get_settings,
+    load_vault_config,
 )
 from datacron.core.logger import configure_logging, get_logger
 from datacron.core.paths import (
@@ -44,7 +48,7 @@ from datacron.core.paths import (
     sidecar_index_dir,
     sidecar_vault_config,
 )
-from datacron.core.vault import FilesystemVaultReader
+from datacron.core.vault import build_configured_reader
 
 __all__ = ["app", "mcp_entry"]
 
@@ -105,19 +109,14 @@ def _format_vault_yaml(vault_id: str, created: datetime) -> str:
             "drafts": DEFAULT_DRAFTS_FOLDER,
             "journal": DEFAULT_JOURNAL_FOLDER,
         },
+        "excluded_folders": list(DEFAULT_EXCLUDED_FOLDERS),
+        "excluded_files": list(DEFAULT_EXCLUDED_FILES),
     }
     return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
 
 
-def _load_vault_yaml(vault_root: Path) -> dict[str, object]:
-    config_path = sidecar_vault_config(vault_root)
-    if not config_path.exists():
-        return {}
-    with config_path.open(encoding=ENCODING_UTF8) as fh:
-        data = yaml.safe_load(fh) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"{config_path} must be a YAML mapping; found {type(data).__name__}.")
-    return data
+def _load_vault_yaml(vault_root: Path) -> VaultConfig | None:
+    return load_vault_config(sidecar_vault_config(vault_root))
 
 
 def _log_invocation(name: str, **details: object) -> float:
@@ -199,10 +198,10 @@ def status(
     started = _log_invocation("status", vault=str(vault_root))
 
     config = _load_vault_yaml(vault_root)
-    initialized = bool(config)
+    initialized = config is not None
 
-    if initialized:
-        reader = FilesystemVaultReader(vault_root)
+    if config is not None:
+        reader = build_configured_reader(vault_root)
         notes = asyncio.run(reader.list_notes())
         note_count = len(notes)
     else:
@@ -215,9 +214,9 @@ def status(
     _print(f"Datacron {__version__}")
     _print(f"  vault_root: {vault_root}")
     _print(f"  initialized: {'yes' if initialized else 'no (run `datacron init`)'}")
-    if initialized:
-        _print(f"  vault_id:   {config.get('vault_id', '<unknown>')}")
-        _print(f"  created:    {config.get('created', '<unknown>')}")
+    if config is not None:
+        _print(f"  vault_id:   {config.vault_id or '<unknown>'}")
+        _print(f"  created:    {config.created or '<unknown>'}")
     _print(f"  notes:      {note_count}")
     _print(f"  index:      {'built' if db_path.exists() else 'not built'} ({db_path})")
     _print(f"  log file:   {log_dir / today_log}")
@@ -254,11 +253,18 @@ def reindex(
 
 
 async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
-    """Orchestrate VaultReader + MarkdownChunker + SQLiteFTS5Store."""
+    """Reconcile the FTS5 index with the vault (incremental unless ``drop_first``).
+
+    Both ``datacron index`` and the MCP read-repair go through the shared
+    :func:`reconcile`, so the CLI gets the same mtime-gated incremental behavior:
+    unchanged notes are skipped, changed ones re-chunked, vanished ones deleted.
+    ``reindex`` (``drop_first``) drops the database first, so every note is
+    re-indexed from scratch.
+    """
     from datacron.core.paths import sidecar_index_db  # noqa: PLC0415
-    from datacron.core.vault import FilesystemVaultReader  # noqa: PLC0415
     from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
     from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
+    from datacron.indexing.reconcile import reconcile  # noqa: PLC0415
 
     db_path = sidecar_index_db(vault_root)
     if drop_first and db_path.exists():
@@ -267,32 +273,30 @@ async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
         for suffix in ("-wal", "-shm"):
             db_path.with_suffix(db_path.suffix + suffix).unlink(missing_ok=True)
 
-    reader = FilesystemVaultReader(vault_root)
-    chunker = MarkdownChunker()
+    settings = get_settings()
+    reader = build_configured_reader(vault_root)
+    chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
     store = SQLiteFTS5Store()
     await store.open(db_path)
     started = time.perf_counter()
-    note_count = 0
-    chunk_count = 0
     try:
-        notes = await reader.list_notes()
-        for note in notes:
-            chunks = chunker.chunk(note)
-            await store.upsert_note(note, chunks)
-            note_count += 1
-            chunk_count += len(chunks)
+        stats = await reconcile(store, reader, chunker, mtime_gate=True)
     finally:
         await store.close()
 
     duration_ms = (time.perf_counter() - started) * 1000.0
     _print(
-        f"Indexed {note_count} notes / {chunk_count} chunks into {db_path} ({duration_ms:.0f} ms)"
+        f"Indexed {stats['reindexed_notes']} notes "
+        f"({stats['skipped_notes']} unchanged, {stats['deleted_notes']} removed) "
+        f"into {db_path} ({duration_ms:.0f} ms)"
     )
     _LOGGER.info(
-        "cli.index completed (vault=%s notes=%d chunks=%d drop_first=%s duration_ms=%.1f)",
+        "cli.index completed (vault=%s reindexed=%d skipped=%d deleted=%d "
+        "drop_first=%s duration_ms=%.1f)",
         vault_root,
-        note_count,
-        chunk_count,
+        stats["reindexed_notes"],
+        stats["skipped_notes"],
+        stats["deleted_notes"],
         drop_first,
         duration_ms,
     )
@@ -312,13 +316,37 @@ def eval_(
     questions: Path = typer.Option(
         ...,
         "--questions",
-        exists=False,
+        exists=True,
         help="Path to an eval-questions YAML file.",
     ),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
 ) -> None:
     """Run the eval harness against the configured vault (Phase 0 Sem 4)."""
-    _ = questions
-    _not_implemented("eval", since="Sem 4 (depends on eval/harness.py)")
+    configure_logging()
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    asyncio.run(_run_eval(vault_root, questions))
+
+
+async def _run_eval(vault_root: Path, questions_path: Path) -> None:
+    """Open the existing index and run the local eval harness."""
+    from datacron.core.paths import sidecar_index_db  # noqa: PLC0415
+    from datacron.eval.harness import LocalEvalHarness, load_eval_questions  # noqa: PLC0415
+    from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
+    from datacron.indexing.ripgrep import RipgrepWrapper  # noqa: PLC0415
+
+    db_path = sidecar_index_db(vault_root)
+    if not db_path.exists():
+        _print("No index found. Run `datacron index` first.")
+        raise typer.Exit(code=1)
+
+    questions = load_eval_questions(questions_path)
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    try:
+        await LocalEvalHarness().run(questions, store, RipgrepWrapper())
+    finally:
+        await store.close()
 
 
 # ---------------------------------------------------------------------------

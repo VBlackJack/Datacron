@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -38,6 +40,13 @@ class TestInit:
         assert config["encoding"] == "utf-8"
         assert config["line_endings"] == "lf"
         assert config["folders"]["drafts"] == "_drafts"
+        assert config["excluded_folders"] == [
+            "_attachments",
+            "zzz_Corbeille",
+            "_trash",
+            "_archive",
+        ]
+        assert config["excluded_files"] == ["00_INDEX.md"]
 
     def test_init_refuses_overwrite_without_force(self, runner: CliRunner, tmp_path: Path) -> None:
         vault = tmp_path / "my-vault"
@@ -81,13 +90,7 @@ class TestStubs:
     """Commands still pending in Sem 4. ``index`` / ``reindex`` / ``mcp install``
     moved to their own test classes once they were wired in Sem 3."""
 
-    @pytest.mark.parametrize(
-        "cmd",
-        [
-            ["ask", "anything"],
-            ["eval", "--questions", "nope.yaml"],
-        ],
-    )
+    @pytest.mark.parametrize("cmd", [["ask", "anything"]])
     def test_stub_exits_with_error(self, runner: CliRunner, cmd: list[str]) -> None:
         result = runner.invoke(app, cmd)
         assert result.exit_code == 1
@@ -132,6 +135,108 @@ class TestIndex:
         # Within an order of magnitude of the first build.
         assert db_path.stat().st_size <= first_size * 4
 
+    def test_index_uses_vault_excluded_folders(self, runner: CliRunner, tmp_vault: Path) -> None:
+        from datacron.core.paths import sidecar_index_db, sidecar_vault_config
+
+        initialized = runner.invoke(app, ["init", str(tmp_vault)])
+        assert initialized.exit_code == 0, initialized.stdout + initialized.stderr
+        config_path = sidecar_vault_config(tmp_vault)
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        config["excluded_folders"] = ["custom-trash"]
+        config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+        trash = tmp_vault / "custom-trash"
+        trash.mkdir()
+        (trash / "ignored.md").write_text("# ignored", encoding="utf-8")
+
+        indexed = runner.invoke(app, ["index", "--vault", str(tmp_vault)])
+        assert indexed.exit_code == 0, indexed.stdout + indexed.stderr
+
+        with sqlite3.connect(sidecar_index_db(tmp_vault)) as connection:
+            rel_paths = {row[0] for row in connection.execute("SELECT rel_path FROM notes")}
+
+        assert "custom-trash/ignored.md" not in rel_paths
+
+    def test_index_uses_vault_excluded_files(self, runner: CliRunner, tmp_vault: Path) -> None:
+        from datacron.core.paths import sidecar_index_db, sidecar_vault_config
+
+        initialized = runner.invoke(app, ["init", str(tmp_vault)])
+        assert initialized.exit_code == 0, initialized.stdout + initialized.stderr
+        config_path = sidecar_vault_config(tmp_vault)
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        config["excluded_files"] = ["00_INDEX.md"]
+        config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+        (tmp_vault / "00_INDEX.md").write_text("# ignored", encoding="utf-8")
+        nested = tmp_vault / "nested-index"
+        nested.mkdir()
+        (nested / "00_INDEX.md").write_text("# also ignored", encoding="utf-8")
+        (nested / "kept.md").write_text("# kept", encoding="utf-8")
+
+        indexed = runner.invoke(app, ["index", "--vault", str(tmp_vault)])
+        assert indexed.exit_code == 0, indexed.stdout + indexed.stderr
+
+        with sqlite3.connect(sidecar_index_db(tmp_vault)) as connection:
+            rel_paths = {row[0] for row in connection.execute("SELECT rel_path FROM notes")}
+
+        assert "nested-index/kept.md" in rel_paths
+        assert "00_INDEX.md" not in rel_paths
+        assert "nested-index/00_INDEX.md" not in rel_paths
+
+
+class TestEval:
+    def test_eval_runs_against_existing_index(
+        self, runner: CliRunner, tmp_vault: Path, tmp_path: Path
+    ) -> None:
+        indexed = runner.invoke(app, ["index", "--vault", str(tmp_vault)])
+        assert indexed.exit_code == 0, indexed.stdout + indexed.stderr
+
+        questions = tmp_path / "eval-questions.yaml"
+        questions.write_text(
+            """
+- id: q-welcome
+  question: welcome
+  expected_paths:
+    - welcome.md
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "eval",
+                "--vault",
+                str(tmp_vault),
+                "--questions",
+                str(questions),
+            ],
+        )
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert "Datacron Eval Summary" in result.stdout
+        assert "q-welcome" in result.stdout
+
+    def test_eval_requires_existing_index(
+        self, runner: CliRunner, tmp_vault: Path, tmp_path: Path
+    ) -> None:
+        questions = tmp_path / "eval-questions.yaml"
+        questions.write_text("[]\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "eval",
+                "--vault",
+                str(tmp_vault),
+                "--questions",
+                str(questions),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "No index found" in result.stdout
+
 
 class TestMcpInstall:
     def test_install_writes_config_with_explicit_path(
@@ -158,7 +263,14 @@ class TestMcpInstall:
         import json
 
         data = json.loads(config_target.read_text(encoding="utf-8"))
-        assert data["mcpServers"]["datacron"]["command"] == "datacron-mcp"
+        # CLI does not expose --command, so the installer resolves an absolute
+        # path (PATH lookup, then current venv's Scripts/ dir). The exact path
+        # depends on the test runner's environment; assert only that it ends
+        # with the expected binary name and is absolute.
+        command = data["mcpServers"]["datacron"]["command"]
+        expected_binary = "datacron-mcp.exe" if sys.platform == "win32" else "datacron-mcp"
+        assert Path(command).is_absolute()
+        assert Path(command).name == expected_binary
         assert data["mcpServers"]["datacron"]["env"]["DATACRON_VAULT_ROOT"] == str(
             tmp_vault.resolve()
         )

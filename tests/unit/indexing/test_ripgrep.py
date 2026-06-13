@@ -266,19 +266,64 @@ async def test_no_matches_exit_code_one_returns_empty(
     assert process.killed is False
 
 
-async def test_missing_binary_raises_clear_file_not_found(
+async def test_missing_binary_falls_back_to_indexed_regex_scan(
     indexed: _IndexedFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DATACRON_RIPGREP_PATH", "missing-rg")
+    import datacron.indexing.ripgrep as ripgrep_module
+
+    logger = _LoggerSpy()
+    monkeypatch.setattr(ripgrep_module, "_LOGGER", logger)
 
     async def _create(*_args: str, **_kwargs: object) -> _FakeProcess:
         raise FileNotFoundError("missing")
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _create)
 
-    with pytest.raises(FileNotFoundError, match="ripgrep binary not found: missing-rg"):
-        await RipgrepWrapper().search("kafka", indexed.vault_root, store=indexed.store)
+    results = await RipgrepWrapper().search(
+        "later",
+        indexed.vault_root,
+        store=indexed.store,
+        rg_path="missing-rg",
+    )
+
+    assert len(results) == 1
+    assert results[0].chunk == indexed.chunks["alpha_later"]
+    assert results[0].score == 1.0
+    assert results[0].snippet == "Alpha **later**"
+    assert any("falling back" in message for message, _args in logger.warning_calls)
+
+
+async def test_fallback_honors_glob_limit_score_and_snippet(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _create(*_args: str, **_kwargs: object) -> _FakeProcess:
+        raise FileNotFoundError("missing")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _create)
+
+    limited = await RipgrepWrapper().search(
+        "intro",
+        indexed.vault_root,
+        limit=1,
+        store=indexed.store,
+        rg_path="missing-rg",
+    )
+    scoped = await RipgrepWrapper().search(
+        "intro",
+        indexed.vault_root,
+        glob="folder/*.md",
+        limit=5,
+        store=indexed.store,
+        rg_path="missing-rg",
+    )
+
+    assert [result.chunk for result in limited] == [indexed.chunks["alpha_intro"]]
+    assert limited[0].score == 1.0
+    assert limited[0].snippet == "Alpha **intro**"
+    assert [result.chunk for result in scoped] == [indexed.chunks["beta"]]
+    assert scoped[0].snippet == "Beta **intro**"
 
 
 async def test_rg_error_exit_returns_empty_and_logs_warning(

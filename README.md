@@ -143,6 +143,17 @@ Redémarre Claude Desktop, puis pose ta question dans une conversation :
 Claude appellera Datacron en arrière-plan, recevra les chunks pertinents, te répondra avec
 citations. Tu peux cliquer sur les citations pour ouvrir les notes correspondantes.
 
+> **Indexation incrémentale.** `datacron index` ne réindexe que les notes modifiées
+> (comparaison `content_hash`, court-circuit par `mtime`) et supprime les notes disparues —
+> relancer la commande sur un vault inchangé est quasi instantané. L'index se répare aussi
+> seul au premier `search_*` suivant une édition : pas besoin de réindexer manuellement après
+> chaque modification (`datacron reindex` force une reconstruction complète si besoin).
+>
+> **Réglages** (variables d'environnement, optionnelles) :
+> `DATACRON_CHUNK_MAX_TOKENS` (taille max d'un chunk, défaut `1024`),
+> `DATACRON_GET_NOTE_MAX_TOKENS` (budget de `get_note(format=full)`, défaut `25000`),
+> `DATACRON_MAX_RESULT_TOKENS` (budget des résultats de recherche, défaut `8000`).
+
 ---
 
 ## Démarrage rapide (5 minutes)

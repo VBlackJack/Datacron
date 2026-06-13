@@ -209,6 +209,19 @@ class IndexStats(BaseModel):
 
 ### 1.7 `EvalQuestion` and `EvalResult`
 
+> **AMENDMENT PENDING — 2026-06-09 (cross-review on `claude-code/phase0`, not yet
+> approved by Codex).** Eval metrics operate at **path level**, not chunk level.
+> Rationale: `chunk_id = {note_id}::{header_slug}::{ordinal}` is unstable across
+> reindex (any header edit rechunks), so a chunk-pinned golden set rots on the first
+> `datacron reindex`. The answerable unit is the *note*. Therefore:
+> - `EvalQuestion.expected_paths` is the **primary** ground truth.
+> - `EvalQuestion.expected_chunk_ids` is retained for an optional strict mode, **not required**.
+> - `EvalResult.recall_at_k` values = path-level recall (an expected note is "found"
+>   if any of its chunks appears in the top-k retrieved).
+> - `EvalResult.citation_precision` = fraction of retrieved chunks whose
+>   `note_rel_path` is in `expected_paths`.
+> Mapping key is `SearchResult.chunk.note_rel_path` (verified present, §1.3).
+
 ```python
 class EvalQuestion(BaseModel):
     """A single eval input."""
@@ -312,13 +325,20 @@ class FTS5Store(Protocol):
         """Close the database. Idempotent."""
         ...
 
-    async def upsert_note(self, note: Note, chunks: list[Chunk]) -> None:
+    async def upsert_note(
+        self, note: Note, chunks: list[Chunk], fs_mtime_ns: int | None = None
+    ) -> None:
         """Insert or update a Note and its Chunks atomically. Replaces all chunks
-        for the note_id."""
+        for the note_id. fs_mtime_ns is the file st_mtime_ns stored for the
+        read-repair mtime gate."""
         ...
 
     async def delete_note(self, note_id: str) -> None:
         """Remove a Note and all its Chunks. No error if absent."""
+        ...
+
+    async def record_mtime(self, note_id: str, fs_mtime_ns: int) -> None:
+        """Update only the stored filesystem mtime for note_id (no re-chunk)."""
         ...
 
     async def search(self, query: str, limit: int = 20) -> list[SearchResult]:
@@ -332,6 +352,25 @@ class FTS5Store(Protocol):
 
     async def list_chunks_for_note(self, note_id: str) -> list[Chunk]:
         """Return all chunks for a note in ordinal order."""
+        ...
+
+    async def list_chunks_with_wikilinks(self) -> list[Chunk]:
+        """Return all chunks whose indexed wikilink list is non-empty."""
+        ...
+
+    async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
+        """Return rel_path -> (note_id, content_hash) for index freshness checks."""
+        ...
+
+    async def list_indexed_notes_with_mtime(
+        self,
+    ) -> dict[str, tuple[str, str, int | None]]:
+        """Return rel_path -> (note_id, content_hash, fs_mtime_ns). fs_mtime_ns is
+        None for rows indexed before the column existed (treat as always-re-read)."""
+        ...
+
+    def iter_all_chunks(self) -> AsyncIterator[Chunk]:
+        """Stream all indexed chunks in insertion/document order."""
         ...
 
     async def stats(self) -> IndexStats:
@@ -357,6 +396,9 @@ class RipgrepWrapper(Protocol):
     - Score = 1.0 / (1.0 + rank_index), where rank_index is the result index in the
       output order.
     - Snippet = the matched line with **<match>** highlighting.
+    - If the ripgrep binary is missing, falls back to scanning indexed chunk bodies
+      from FTS5Store.iter_all_chunks(); this fallback excludes frontmatter and depends
+      on index freshness.
     """
 
     async def search(
@@ -366,6 +408,7 @@ class RipgrepWrapper(Protocol):
         glob: str | None = None,
         limit: int = 20,
         store: FTS5Store | None = None,  # used for chunk resolution
+        rg_path: str | None = None,
     ) -> list[SearchResult]:
         ...
 ```
@@ -374,6 +417,29 @@ Note: `RipgrepWrapper.search` depends on `FTS5Store` for chunk resolution. **Cod
 must implement both, and `RipgrepWrapper` may import `FTS5Store` concrete class.**
 
 ### 2.5 `EvalHarness` (implemented by **Codex**)
+
+> **AMENDMENT PENDING — 2026-06-09 (see §1.7).** In `run`, after
+> `store.search(...)`, build `retrieved_paths = [r.chunk.note_rel_path for r in
+> results]` (parallel to `retrieved_chunk_ids`, order preserved, duplicates allowed —
+> a note may contribute several chunks). Compute metrics against
+> `EvalQuestion.expected_paths` via the frozen `metrics.py` signatures:
+>
+> ```python
+> def recall_at_k(expected_paths: list[str], retrieved_paths: list[str], k: int) -> float:
+>     """Fraction of expected paths present among the paths of the top-k retrieved chunks."""
+>     if not expected_paths:
+>         return 1.0
+>     top_k = set(retrieved_paths[:k])
+>     return sum(1 for p in expected_paths if p in top_k) / len(expected_paths)
+>
+>
+> def citation_precision(expected_paths: list[str], retrieved_paths: list[str]) -> float:
+>     """Fraction of retrieved chunks whose path is in the expected set. 1.0 if none retrieved."""
+>     if not retrieved_paths:
+>         return 1.0
+>     expected = set(expected_paths)
+>     return sum(1 for p in retrieved_paths if p in expected) / len(retrieved_paths)
+> ```
 
 ```python
 class EvalHarness(Protocol):
@@ -438,6 +504,12 @@ class VaultReader(Protocol):
     ) -> list[Note]:
         ...
 
+    async def stat_notes(self) -> dict[str, tuple[Path, int]]:
+        """Return rel_path -> (absolute_path, st_mtime_ns) for every live note,
+        with the same exclusions as list_notes but without reading content. Used
+        by the read-repair mtime gate."""
+        ...
+
     async def resolve_alias(self, alias: str) -> str | None:
         """Returns note_id or None."""
         ...
@@ -493,6 +565,7 @@ Both agents must use these env var / config key names exactly (zero hardcoding r
 | `DATACRON_MAX_RESULT_COUNT` | `20` | mcp.tools, indexing.* |
 | `DATACRON_RIPGREP_PATH` | `rg` (PATH lookup) | indexing.ripgrep |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | indexing.chunker |
+| `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | mcp.tools |
 
 ---
 
@@ -532,8 +605,8 @@ insufficient:
 
 | Section | Frozen since | Last amendment |
 |---|---|---|
-| §1 Pydantic models | 2026-05-17 | 2026-05-24 — §1.3 Chunk.line_start/line_end added for ripgrep result → chunk resolution; prior 2026-05-22 amendment clarified Chunk.ordinal scope |
-| §2 Protocols | 2026-05-17 | 2026-05-23 — §2.6 VaultReader: bound at construction, removed `vault_root` from method signatures, made `resolve_alias` priority explicitly global (strict order title→filename→aliases across all notes) |
+| §1 Pydantic models | 2026-05-17 | 2026-05-24 — §1.3 Chunk.line_start/line_end added for ripgrep result → chunk resolution; prior 2026-05-22 amendment clarified Chunk.ordinal scope. **PENDING 2026-06-09** — §1.7 eval metrics path-level (cross-review on `claude-code/phase0`) |
+| §2 Protocols | 2026-05-17 | 2026-05-23 — §2.6 VaultReader: bound at construction, removed `vault_root` from method signatures, made `resolve_alias` priority explicitly global (strict order title→filename→aliases across all notes). **PENDING 2026-06-09** — §2.5 EvalHarness path-level metrics + frozen `metrics.py` signatures (cross-review on `claude-code/phase0`). **2026-06-13 (P1 mtime gate)** — §2.3 FTS5Store: `upsert_note` gains `fs_mtime_ns`, added `record_mtime` and `list_indexed_notes_with_mtime`; §2.6 VaultReader: added `stat_notes`. Additive, backward-compatible. |
 | §3 Ownership matrix | 2026-05-17 | — |
 | §4 Reserved config keys | 2026-05-17 | — |
 | §5 Test fixtures | 2026-05-17 | — |

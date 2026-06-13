@@ -100,6 +100,48 @@ class TestListNotes:
             assert ".obsidian" not in note.rel_path
             assert "node_modules" not in note.rel_path
 
+    async def test_skips_configured_excluded_folders(self, tmp_vault: Path) -> None:
+        attachments = tmp_vault / "_attachments"
+        attachments.mkdir()
+        (attachments / "ignored.md").write_text("# ignored", encoding="utf-8")
+        nested = tmp_vault / "nested" / "_attachments"
+        nested.mkdir(parents=True)
+        (nested / "also-ignored.md").write_text("# ignored", encoding="utf-8")
+        kept = tmp_vault / "nested" / "kept.md"
+        kept.write_text("# kept", encoding="utf-8")
+        reader = FilesystemVaultReader(
+            tmp_vault,
+            excluded_folders=frozenset({"_attachments"}),
+        )
+
+        notes = await reader.list_notes()
+        rel_paths = {note.rel_path for note in notes}
+
+        assert "nested/kept.md" in rel_paths
+        assert "_attachments/ignored.md" not in rel_paths
+        assert "nested/_attachments/also-ignored.md" not in rel_paths
+
+    async def test_skips_configured_excluded_files(self, tmp_vault: Path) -> None:
+        root_index = tmp_vault / "00_INDEX.md"
+        root_index.write_text("# ignored", encoding="utf-8")
+        nested = tmp_vault / "nested"
+        nested.mkdir()
+        nested_index = nested / "00_INDEX.md"
+        nested_index.write_text("# also ignored", encoding="utf-8")
+        kept = nested / "kept.md"
+        kept.write_text("# kept", encoding="utf-8")
+        reader = FilesystemVaultReader(
+            tmp_vault,
+            excluded_files=frozenset({"00_INDEX.md"}),
+        )
+
+        notes = await reader.list_notes()
+        rel_paths = {note.rel_path for note in notes}
+
+        assert "nested/kept.md" in rel_paths
+        assert "00_INDEX.md" not in rel_paths
+        assert "nested/00_INDEX.md" not in rel_paths
+
     async def test_folder_scope(self, vault_reader: FilesystemVaultReader) -> None:
         notes = await vault_reader.list_notes(folder="subfolder")
         assert {n.rel_path for n in notes} == {"subfolder/nested-thoughts.md"}
@@ -201,3 +243,25 @@ class TestIdPersistence:
 
         reloaded = JsonIdStore(path)
         assert await reloaded.get("a.md") == "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+
+    async def test_id_store_repairs_from_migrated_sidecar(self, tmp_path: Path) -> None:
+        path = tmp_path / "ulids.json"
+        migrated = tmp_path / "ulids.json.migrated"
+        migrated.write_text(json.dumps({"a.md": "01HQXR7K9YZ8M2N3PQRSTV4WX5"}), encoding="utf-8")
+
+        store = JsonIdStore(path)
+
+        assert await store.get("a.md") == "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+        assert json.loads(path.read_text(encoding="utf-8")) == {
+            "a.md": "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+        }
+
+    async def test_migrated_sidecar_wins_over_generated_duplicate(self, tmp_path: Path) -> None:
+        path = tmp_path / "ulids.json"
+        migrated = tmp_path / "ulids.json.migrated"
+        path.write_text(json.dumps({"a.md": "01HQXR7K9YZ8M2N3PQRSTV4WX6"}), encoding="utf-8")
+        migrated.write_text(json.dumps({"a.md": "01HQXR7K9YZ8M2N3PQRSTV4WX5"}), encoding="utf-8")
+
+        store = JsonIdStore(path)
+
+        assert await store.get("a.md") == "01HQXR7K9YZ8M2N3PQRSTV4WX5"
