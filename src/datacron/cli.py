@@ -273,8 +273,9 @@ async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
         for suffix in ("-wal", "-shm"):
             db_path.with_suffix(db_path.suffix + suffix).unlink(missing_ok=True)
 
+    settings = get_settings()
     reader = build_configured_reader(vault_root)
-    chunker = MarkdownChunker()
+    chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
     store = SQLiteFTS5Store()
     await store.open(db_path)
     started = time.perf_counter()
