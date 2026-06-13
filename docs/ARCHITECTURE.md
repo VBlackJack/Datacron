@@ -200,6 +200,15 @@ Homebrew v1.1, Docker = CI, Tauri reporté.
 ### ADR-012 — Eval harness obligatoire avant tout retrieval avancé
 30 questions réelles, recall@k, citation precision, latency, tokens. Gate explicite.
 
+### ADR-013 — Réconciliation d'index incrémentale, gate `mtime`, `content_hash` autorité
+`datacron index` et la réparation read-path partagent une seule réconciliation : une note
+dont le `st_mtime_ns` stocké est inchangé est sautée (ni lecture ni hash) ; le `content_hash`
+reste l'autorité dès qu'une note est lue, de sorte qu'un `mtime` non fiable ne provoque jamais
+de faux skip. Une note touchée mais au contenu identique voit son `mtime` rafraîchi pour que la
+passe suivante la saute. Remplace le full-scan O(n) par un balayage `stat` ; un `reindex --drop`
+force la reconstruction complète. Comparaison stricte `==` (jamais `<=`) pour gérer les
+restaurations à `mtime` plus ancien.
+
 ---
 
 ## 7. Layout du projet
@@ -353,7 +362,7 @@ sequenceDiagram
 
 ## 12. Questions ouvertes pour Phase 0
 
-1. **Modèle de chunker** — un seul splitter AST suffit-il, ou besoin de stratégies dédiées (code blocks, tables) dès v1 ?
+1. ~~**Modèle de chunker** — un seul splitter AST suffit-il, ou besoin de stratégies dédiées (code blocks, tables) dès v1 ?~~ → **Résolu (Sem 3.5)** : un seul splitter AST, plus un garde-fou de taille (`chunk_max_tokens`) qui redécoupe tout bloc trop gros sur frontières de lignes, avec stratégies dédiées CODE (fence + langue répétées) et TABLE (en-tête + séparateur répétés), et fallback de découpe intra-ligne. Découpe déterministe, sous-chunks à plages de lignes disjointes et sans trou.
 2. **Format de citation** — quel format pour les chunks renvoyés ? `[[note#header]]` Obsidian-style, ou JSON structuré ?
 3. **`get_note(format=map)`** — quel arbre exact renvoyer (juste headings, ou + counts/excerpts) ?
 4. **Eval set Julien** — quelles 30 questions ? À écrire en Sem 1 pour valider en Sem 4.

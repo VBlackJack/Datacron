@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sqlite3
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, cast, final
@@ -31,6 +33,7 @@ __all__ = ["SQLiteFTS5Store"]
 
 _LOGGER = get_logger(__name__)
 
+_FTS5_TERM_PATTERN: Final[re.Pattern[str]] = re.compile(r"\w+", flags=re.UNICODE)
 _ULID_SIDECAR_FILENAME: Final[str] = "ulids.json"
 _MIGRATED_ULID_SIDECAR_FILENAME: Final[str] = "ulids.json.migrated"
 
@@ -43,7 +46,8 @@ CREATE TABLE IF NOT EXISTS notes (
     content_hash TEXT NOT NULL,
     created TEXT NOT NULL,
     updated TEXT NOT NULL,
-    indexed_at TEXT NOT NULL
+    indexed_at TEXT NOT NULL,
+    fs_mtime INTEGER
 );
 """
 
@@ -83,8 +87,9 @@ INSERT INTO notes (
     content_hash,
     created,
     updated,
-    indexed_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    indexed_at,
+    fs_mtime
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(note_id) DO UPDATE SET
     rel_path = excluded.rel_path,
     title = excluded.title,
@@ -92,7 +97,8 @@ ON CONFLICT(note_id) DO UPDATE SET
     content_hash = excluded.content_hash,
     created = excluded.created,
     updated = excluded.updated,
-    indexed_at = excluded.indexed_at;
+    indexed_at = excluded.indexed_at,
+    fs_mtime = excluded.fs_mtime;
 """
 
 _INSERT_CHUNK_SQL: Final[str] = """
@@ -204,6 +210,62 @@ WHERE note_id = ?
 ORDER BY rowid;
 """
 
+_LIST_CHUNKS_WITH_WIKILINKS_SQL: Final[str] = """
+SELECT
+    chunk_id,
+    note_id,
+    note_rel_path,
+    header_path,
+    section_title,
+    chunk_type,
+    content,
+    ordinal,
+    content_hash,
+    token_count,
+    line_start,
+    line_end,
+    wikilinks_out_json,
+    lang
+FROM chunks_fts
+WHERE wikilinks_out_json IS NOT NULL
+  AND wikilinks_out_json != '[]'
+ORDER BY rowid;
+"""
+
+_LIST_INDEXED_NOTES_SQL: Final[str] = """
+SELECT rel_path, note_id, content_hash
+FROM notes
+ORDER BY indexed_at ASC;
+"""
+
+_LIST_INDEXED_NOTES_WITH_MTIME_SQL: Final[str] = """
+SELECT rel_path, note_id, content_hash, fs_mtime
+FROM notes
+ORDER BY indexed_at ASC;
+"""
+
+_RECORD_MTIME_SQL: Final[str] = "UPDATE notes SET fs_mtime = ? WHERE note_id = ?;"
+
+_ITER_ALL_CHUNKS_SQL: Final[str] = """
+SELECT
+    chunk_id,
+    note_id,
+    note_rel_path,
+    header_path,
+    section_title,
+    chunk_type,
+    content,
+    ordinal,
+    content_hash,
+    token_count,
+    line_start,
+    line_end,
+    wikilinks_out_json,
+    lang
+FROM chunks_fts
+ORDER BY rowid;
+"""
+
 
 @final
 class SQLiteFTS5Store:
@@ -240,16 +302,31 @@ class SQLiteFTS5Store:
         if connection is not None:
             await connection.close()
 
-    async def upsert_note(self, note: Note, chunks: list[Chunk]) -> None:
-        """Insert or replace a note and all of its chunks in one transaction."""
+    async def upsert_note(
+        self, note: Note, chunks: list[Chunk], fs_mtime_ns: int | None = None
+    ) -> None:
+        """Insert or replace a note and all of its chunks in one transaction.
+
+        ``fs_mtime_ns`` is the note file's ``st_mtime_ns`` at index time. It is
+        stored so the read-repair can skip the read+hash of unchanged notes by
+        comparing the filesystem mtime first (the ``content_hash`` stays the
+        authority on any mtime change).
+        """
         connection = self._require_connection()
         _validate_chunks_belong_to_note(note, chunks)
 
         indexed_at = datetime.now(tz=UTC).isoformat()
         await connection.execute("BEGIN")
         try:
-            await connection.execute(_INSERT_NOTE_SQL, _note_row(note, indexed_at))
-            await connection.execute("DELETE FROM chunks_fts WHERE note_id = ?", (note.id,))
+            await connection.execute(
+                "DELETE FROM chunks_fts WHERE note_id = ? OR note_rel_path = ?",
+                (note.id, note.rel_path),
+            )
+            await connection.execute(
+                "DELETE FROM notes WHERE rel_path = ? AND note_id != ?",
+                (note.rel_path, note.id),
+            )
+            await connection.execute(_INSERT_NOTE_SQL, _note_row(note, indexed_at, fs_mtime_ns))
             await connection.execute(
                 "DELETE FROM ulid_paths WHERE rel_path = ? OR note_id = ?",
                 (note.rel_path, note.id),
@@ -262,6 +339,18 @@ class SQLiteFTS5Store:
         except Exception:
             await connection.rollback()
             raise
+        await connection.commit()
+
+    async def record_mtime(self, note_id: str, fs_mtime_ns: int) -> None:
+        """Update the stored filesystem mtime for ``note_id`` without re-chunking.
+
+        Used by the read-repair when a note's mtime moved but its
+        ``content_hash`` is unchanged: refreshing the stored mtime lets the next
+        repair skip the read+hash. Without it, a touched-but-unchanged note
+        would be re-read on every search forever.
+        """
+        connection = self._require_connection()
+        await connection.execute(_RECORD_MTIME_SQL, (fs_mtime_ns, note_id))
         await connection.commit()
 
     async def delete_note(self, note_id: str) -> None:
@@ -284,8 +373,22 @@ class SQLiteFTS5Store:
             return []
 
         connection = self._require_connection()
-        async with connection.execute(_SEARCH_SQL, (query.strip(), limit)) as cursor:
-            rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+        terms = _fts5_terms(query)
+        if not terms:
+            return []
+        and_query = _join_fts5_terms(terms, operator=" ")
+        rows = await _fetch_search_rows(connection, and_query, limit)
+        if len(rows) < limit and len(terms) > 1:
+            or_query = _join_fts5_terms(terms, operator=" OR ")
+            seen_chunk_ids = {str(row["chunk_id"]) for row in rows}
+            for row in await _fetch_search_rows(connection, or_query, limit):
+                chunk_id = str(row["chunk_id"])
+                if chunk_id in seen_chunk_ids:
+                    continue
+                rows.append(row)
+                seen_chunk_ids.add(chunk_id)
+                if len(rows) >= limit:
+                    break
 
         return [
             SearchResult(
@@ -309,6 +412,47 @@ class SQLiteFTS5Store:
         async with connection.execute(_LIST_CHUNKS_FOR_NOTE_SQL, (note_id,)) as cursor:
             rows = cast("list[sqlite3.Row]", await cursor.fetchall())
         return [_chunk_from_row(row) for row in rows]
+
+    async def list_chunks_with_wikilinks(self) -> list[Chunk]:
+        """Return all chunks whose indexed wikilink list is non-empty."""
+        connection = self._require_connection()
+        async with connection.execute(_LIST_CHUNKS_WITH_WIKILINKS_SQL) as cursor:
+            rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+        return [_chunk_from_row(row) for row in rows]
+
+    async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
+        """Return ``rel_path -> (note_id, content_hash)`` for the current index."""
+        connection = self._require_connection()
+        async with connection.execute(_LIST_INDEXED_NOTES_SQL) as cursor:
+            rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+        return {
+            str(row["rel_path"]): (str(row["note_id"]), str(row["content_hash"])) for row in rows
+        }
+
+    async def list_indexed_notes_with_mtime(self) -> dict[str, tuple[str, str, int | None]]:
+        """Return ``rel_path -> (note_id, content_hash, fs_mtime_ns)`` for the index.
+
+        ``fs_mtime_ns`` is ``None`` for rows indexed before the mtime column
+        existed; callers must treat ``None`` as "always re-read" (never skip).
+        """
+        connection = self._require_connection()
+        async with connection.execute(_LIST_INDEXED_NOTES_WITH_MTIME_SQL) as cursor:
+            rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+        return {
+            str(row["rel_path"]): (
+                str(row["note_id"]),
+                str(row["content_hash"]),
+                None if row["fs_mtime"] is None else int(row["fs_mtime"]),
+            )
+            for row in rows
+        }
+
+    async def iter_all_chunks(self) -> AsyncIterator[Chunk]:
+        """Stream all indexed chunks in insertion/document order."""
+        connection = self._require_connection()
+        async with connection.execute(_ITER_ALL_CHUNKS_SQL) as cursor:
+            async for row in cursor:
+                yield _chunk_from_row(row)
 
     async def stats(self) -> IndexStats:
         """Return aggregate index statistics."""
@@ -338,7 +482,20 @@ class SQLiteFTS5Store:
         await connection.execute(_CREATE_NOTES_SQL)
         await connection.execute(_CREATE_CHUNKS_FTS_SQL)
         await connection.execute(_CREATE_ULID_PATHS_SQL)
+        await self._migrate_notes_columns(connection)
         await connection.commit()
+
+    async def _migrate_notes_columns(self, connection: aiosqlite.Connection) -> None:
+        """Add columns introduced after the initial ``notes`` schema (idempotent).
+
+        Databases created before ``fs_mtime`` existed keep working: the column
+        is added with NULL values, which callers treat as "always re-read".
+        """
+        async with connection.execute("PRAGMA table_info(notes);") as cursor:
+            rows = await cursor.fetchall()
+        columns = {str(row[1]) for row in rows}
+        if "fs_mtime" not in columns:
+            await connection.execute("ALTER TABLE notes ADD COLUMN fs_mtime INTEGER;")
 
     async def _migrate_ulid_sidecar(
         self,
@@ -349,18 +506,22 @@ class SQLiteFTS5Store:
         ulids_path = sidecar_dir / _ULID_SIDECAR_FILENAME
         migrated_path = sidecar_dir / _MIGRATED_ULID_SIDECAR_FILENAME
 
-        if migrated_path.exists() or not ulids_path.exists():
+        source_path = ulids_path if ulids_path.exists() else migrated_path
+        if not source_path.exists():
             return
 
-        mappings = await asyncio.to_thread(_read_ulid_mappings, ulids_path)
+        mappings = await asyncio.to_thread(_read_ulid_mappings, source_path)
         rows = list(mappings.items())
         await connection.executemany(
             "INSERT OR IGNORE INTO ulid_paths(rel_path, note_id) VALUES (?, ?)",
             rows,
         )
         await connection.commit()
-        await asyncio.to_thread(ulids_path.rename, migrated_path)
-        _LOGGER.info("Migrated %s ULID mappings from JsonIdStore", len(rows))
+        if not ulids_path.exists():
+            await asyncio.to_thread(_write_ulid_mappings, ulids_path, mappings)
+        if not migrated_path.exists():
+            await asyncio.to_thread(_write_ulid_mappings, migrated_path, mappings)
+        _LOGGER.info("Imported %s ULID mappings from JsonIdStore", len(rows))
 
     def _require_connection(self) -> aiosqlite.Connection:
         if self._conn is None:
@@ -373,6 +534,27 @@ class SQLiteFTS5Store:
         return self._db_path
 
 
+async def _fetch_search_rows(
+    connection: aiosqlite.Connection,
+    fts_query: str,
+    limit: int,
+) -> list[sqlite3.Row]:
+    async with connection.execute(_SEARCH_SQL, (fts_query, limit)) as cursor:
+        return cast("list[sqlite3.Row]", await cursor.fetchall())
+
+
+def _fts5_terms(query: str) -> list[str]:
+    return _FTS5_TERM_PATTERN.findall(query)
+
+
+def _join_fts5_terms(terms: list[str], *, operator: str) -> str:
+    return operator.join(_quote_fts5_term(term) for term in terms)
+
+
+def _quote_fts5_term(term: str) -> str:
+    return f'"{term.replace(chr(34), chr(34) * 2)}"'
+
+
 def _validate_chunks_belong_to_note(note: Note, chunks: list[Chunk]) -> None:
     for chunk in chunks:
         if chunk.note_id != note.id:
@@ -381,7 +563,9 @@ def _validate_chunks_belong_to_note(note: Note, chunks: list[Chunk]) -> None:
             )
 
 
-def _note_row(note: Note, indexed_at: str) -> tuple[str, str, str, str, str, str, str, str]:
+def _note_row(
+    note: Note, indexed_at: str, fs_mtime_ns: int | None
+) -> tuple[str, str, str, str, str, str, str, str, int | None]:
     return (
         note.id,
         note.rel_path,
@@ -391,6 +575,7 @@ def _note_row(note: Note, indexed_at: str) -> tuple[str, str, str, str, str, str
         note.created.isoformat(),
         note.updated.isoformat(),
         indexed_at,
+        fs_mtime_ns,
     )
 
 
@@ -464,6 +649,12 @@ def _read_ulid_mappings(path: Path) -> dict[str, str]:
     if not isinstance(data, dict):
         raise ValueError(f"ULID sidecar {path} is not a JSON object (found {type(data).__name__}).")
     return {str(rel_path): str(note_id) for rel_path, note_id in data.items()}
+
+
+def _write_ulid_mappings(path: Path, mappings: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(mappings, indent=2, sort_keys=True, ensure_ascii=False)
+    path.write_text(serialized + "\n", encoding="utf-8")
 
 
 async def _fetch_int(connection: aiosqlite.Connection, sql: str) -> int:
