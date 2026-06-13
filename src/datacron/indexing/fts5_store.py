@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS notes (
     content_hash TEXT NOT NULL,
     created TEXT NOT NULL,
     updated TEXT NOT NULL,
-    indexed_at TEXT NOT NULL
+    indexed_at TEXT NOT NULL,
+    fs_mtime INTEGER
 );
 """
 
@@ -86,8 +87,9 @@ INSERT INTO notes (
     content_hash,
     created,
     updated,
-    indexed_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    indexed_at,
+    fs_mtime
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(note_id) DO UPDATE SET
     rel_path = excluded.rel_path,
     title = excluded.title,
@@ -95,7 +97,8 @@ ON CONFLICT(note_id) DO UPDATE SET
     content_hash = excluded.content_hash,
     created = excluded.created,
     updated = excluded.updated,
-    indexed_at = excluded.indexed_at;
+    indexed_at = excluded.indexed_at,
+    fs_mtime = excluded.fs_mtime;
 """
 
 _INSERT_CHUNK_SQL: Final[str] = """
@@ -235,6 +238,14 @@ FROM notes
 ORDER BY indexed_at ASC;
 """
 
+_LIST_INDEXED_NOTES_WITH_MTIME_SQL: Final[str] = """
+SELECT rel_path, note_id, content_hash, fs_mtime
+FROM notes
+ORDER BY indexed_at ASC;
+"""
+
+_RECORD_MTIME_SQL: Final[str] = "UPDATE notes SET fs_mtime = ? WHERE note_id = ?;"
+
 _ITER_ALL_CHUNKS_SQL: Final[str] = """
 SELECT
     chunk_id,
@@ -291,8 +302,16 @@ class SQLiteFTS5Store:
         if connection is not None:
             await connection.close()
 
-    async def upsert_note(self, note: Note, chunks: list[Chunk]) -> None:
-        """Insert or replace a note and all of its chunks in one transaction."""
+    async def upsert_note(
+        self, note: Note, chunks: list[Chunk], fs_mtime_ns: int | None = None
+    ) -> None:
+        """Insert or replace a note and all of its chunks in one transaction.
+
+        ``fs_mtime_ns`` is the note file's ``st_mtime_ns`` at index time. It is
+        stored so the read-repair can skip the read+hash of unchanged notes by
+        comparing the filesystem mtime first (the ``content_hash`` stays the
+        authority on any mtime change).
+        """
         connection = self._require_connection()
         _validate_chunks_belong_to_note(note, chunks)
 
@@ -307,7 +326,7 @@ class SQLiteFTS5Store:
                 "DELETE FROM notes WHERE rel_path = ? AND note_id != ?",
                 (note.rel_path, note.id),
             )
-            await connection.execute(_INSERT_NOTE_SQL, _note_row(note, indexed_at))
+            await connection.execute(_INSERT_NOTE_SQL, _note_row(note, indexed_at, fs_mtime_ns))
             await connection.execute(
                 "DELETE FROM ulid_paths WHERE rel_path = ? OR note_id = ?",
                 (note.rel_path, note.id),
@@ -320,6 +339,18 @@ class SQLiteFTS5Store:
         except Exception:
             await connection.rollback()
             raise
+        await connection.commit()
+
+    async def record_mtime(self, note_id: str, fs_mtime_ns: int) -> None:
+        """Update the stored filesystem mtime for ``note_id`` without re-chunking.
+
+        Used by the read-repair when a note's mtime moved but its
+        ``content_hash`` is unchanged: refreshing the stored mtime lets the next
+        repair skip the read+hash. Without it, a touched-but-unchanged note
+        would be re-read on every search forever.
+        """
+        connection = self._require_connection()
+        await connection.execute(_RECORD_MTIME_SQL, (fs_mtime_ns, note_id))
         await connection.commit()
 
     async def delete_note(self, note_id: str) -> None:
@@ -398,6 +429,24 @@ class SQLiteFTS5Store:
             str(row["rel_path"]): (str(row["note_id"]), str(row["content_hash"])) for row in rows
         }
 
+    async def list_indexed_notes_with_mtime(self) -> dict[str, tuple[str, str, int | None]]:
+        """Return ``rel_path -> (note_id, content_hash, fs_mtime_ns)`` for the index.
+
+        ``fs_mtime_ns`` is ``None`` for rows indexed before the mtime column
+        existed; callers must treat ``None`` as "always re-read" (never skip).
+        """
+        connection = self._require_connection()
+        async with connection.execute(_LIST_INDEXED_NOTES_WITH_MTIME_SQL) as cursor:
+            rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+        return {
+            str(row["rel_path"]): (
+                str(row["note_id"]),
+                str(row["content_hash"]),
+                None if row["fs_mtime"] is None else int(row["fs_mtime"]),
+            )
+            for row in rows
+        }
+
     async def iter_all_chunks(self) -> AsyncIterator[Chunk]:
         """Stream all indexed chunks in insertion/document order."""
         connection = self._require_connection()
@@ -433,7 +482,20 @@ class SQLiteFTS5Store:
         await connection.execute(_CREATE_NOTES_SQL)
         await connection.execute(_CREATE_CHUNKS_FTS_SQL)
         await connection.execute(_CREATE_ULID_PATHS_SQL)
+        await self._migrate_notes_columns(connection)
         await connection.commit()
+
+    async def _migrate_notes_columns(self, connection: aiosqlite.Connection) -> None:
+        """Add columns introduced after the initial ``notes`` schema (idempotent).
+
+        Databases created before ``fs_mtime`` existed keep working: the column
+        is added with NULL values, which callers treat as "always re-read".
+        """
+        async with connection.execute("PRAGMA table_info(notes);") as cursor:
+            rows = await cursor.fetchall()
+        columns = {str(row[1]) for row in rows}
+        if "fs_mtime" not in columns:
+            await connection.execute("ALTER TABLE notes ADD COLUMN fs_mtime INTEGER;")
 
     async def _migrate_ulid_sidecar(
         self,
@@ -501,7 +563,9 @@ def _validate_chunks_belong_to_note(note: Note, chunks: list[Chunk]) -> None:
             )
 
 
-def _note_row(note: Note, indexed_at: str) -> tuple[str, str, str, str, str, str, str, str]:
+def _note_row(
+    note: Note, indexed_at: str, fs_mtime_ns: int | None
+) -> tuple[str, str, str, str, str, str, str, str, int | None]:
     return (
         note.id,
         note.rel_path,
@@ -511,6 +575,7 @@ def _note_row(note: Note, indexed_at: str) -> tuple[str, str, str, str, str, str
         note.created.isoformat(),
         note.updated.isoformat(),
         indexed_at,
+        fs_mtime_ns,
     )
 
 

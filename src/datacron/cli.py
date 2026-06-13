@@ -253,10 +253,18 @@ def reindex(
 
 
 async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
-    """Orchestrate VaultReader + MarkdownChunker + SQLiteFTS5Store."""
+    """Reconcile the FTS5 index with the vault (incremental unless ``drop_first``).
+
+    Both ``datacron index`` and the MCP read-repair go through the shared
+    :func:`reconcile`, so the CLI gets the same mtime-gated incremental behavior:
+    unchanged notes are skipped, changed ones re-chunked, vanished ones deleted.
+    ``reindex`` (``drop_first``) drops the database first, so every note is
+    re-indexed from scratch.
+    """
     from datacron.core.paths import sidecar_index_db  # noqa: PLC0415
     from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
     from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
+    from datacron.indexing.reconcile import reconcile  # noqa: PLC0415
 
     db_path = sidecar_index_db(vault_root)
     if drop_first and db_path.exists():
@@ -265,32 +273,30 @@ async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
         for suffix in ("-wal", "-shm"):
             db_path.with_suffix(db_path.suffix + suffix).unlink(missing_ok=True)
 
+    settings = get_settings()
     reader = build_configured_reader(vault_root)
-    chunker = MarkdownChunker()
+    chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
     store = SQLiteFTS5Store()
     await store.open(db_path)
     started = time.perf_counter()
-    note_count = 0
-    chunk_count = 0
     try:
-        notes = await reader.list_notes()
-        for note in notes:
-            chunks = chunker.chunk(note)
-            await store.upsert_note(note, chunks)
-            note_count += 1
-            chunk_count += len(chunks)
+        stats = await reconcile(store, reader, chunker, mtime_gate=True)
     finally:
         await store.close()
 
     duration_ms = (time.perf_counter() - started) * 1000.0
     _print(
-        f"Indexed {note_count} notes / {chunk_count} chunks into {db_path} ({duration_ms:.0f} ms)"
+        f"Indexed {stats['reindexed_notes']} notes "
+        f"({stats['skipped_notes']} unchanged, {stats['deleted_notes']} removed) "
+        f"into {db_path} ({duration_ms:.0f} ms)"
     )
     _LOGGER.info(
-        "cli.index completed (vault=%s notes=%d chunks=%d drop_first=%s duration_ms=%.1f)",
+        "cli.index completed (vault=%s reindexed=%d skipped=%d deleted=%d "
+        "drop_first=%s duration_ms=%.1f)",
         vault_root,
-        note_count,
-        chunk_count,
+        stats["reindexed_notes"],
+        stats["skipped_notes"],
+        stats["deleted_notes"],
         drop_first,
         duration_ms,
     )

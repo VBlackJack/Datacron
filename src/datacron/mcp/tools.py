@@ -40,6 +40,7 @@ from mcp.server.fastmcp import FastMCP
 from datacron.core.logger import get_logger
 from datacron.core.models import ChunkType, Note, SearchResult
 from datacron.core.paths import PathConfinementError, assert_within_paths
+from datacron.indexing.reconcile import ReconcileStats, reconcile
 from datacron.mcp.sandbox import wrap_vault_content
 
 if TYPE_CHECKING:
@@ -343,7 +344,7 @@ def _build_full_payload(
     offset: int,
     limit: int | None,
 ) -> dict[str, Any]:
-    max_tokens = app.settings.max_result_tokens
+    max_tokens = app.settings.get_note_max_tokens
     max_chars = max_tokens * _TOKEN_ESTIMATE_DIVISOR
     total_chars = len(note.content)
     start = min(offset, total_chars)
@@ -664,37 +665,15 @@ def _search_result_summary(result: SearchResult) -> dict[str, Any]:
     }
 
 
-async def _repair_index_on_read(app: DatacronApp) -> dict[str, int]:
-    """Synchronize the FTS index with the live vault before index-backed reads."""
-    indexed = await app.store.list_indexed_notes()
-    notes = await app.vault_reader.list_notes()
-    live_paths: set[str] = set()
-    reindexed_notes = 0
-    deleted_notes = 0
+async def _repair_index_on_read(app: DatacronApp) -> ReconcileStats:
+    """Synchronize the FTS index with the live vault before index-backed reads.
 
-    for note in notes:
-        live_paths.add(note.rel_path)
-        indexed_entry = indexed.get(note.rel_path)
-        if indexed_entry == (note.id, note.content_hash):
-            continue
-        if indexed_entry is not None and indexed_entry[0] != note.id:
-            await app.store.delete_note(indexed_entry[0])
-            deleted_notes += 1
-        await app.store.upsert_note(note, app.chunker.chunk(note))
-        reindexed_notes += 1
-
-    for rel_path, (note_id, _content_hash) in indexed.items():
-        if rel_path in live_paths:
-            continue
-        await app.store.delete_note(note_id)
-        deleted_notes += 1
-
-    return {
-        "checked_notes": len(notes),
-        "indexed_notes_before": len(indexed),
-        "reindexed_notes": reindexed_notes,
-        "deleted_notes": deleted_notes,
-    }
+    Delegates to the shared incremental :func:`reconcile` with the mtime gate
+    enabled, so an unchanged vault costs one ``stat`` sweep rather than a full
+    re-read+hash of every note. ``content_hash`` remains the authority on any
+    note whose mtime moved.
+    """
+    return await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
 
 
 async def _resolve_backlink_target(app: DatacronApp, target: str) -> str | None:
