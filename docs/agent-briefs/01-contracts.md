@@ -325,13 +325,20 @@ class FTS5Store(Protocol):
         """Close the database. Idempotent."""
         ...
 
-    async def upsert_note(self, note: Note, chunks: list[Chunk]) -> None:
+    async def upsert_note(
+        self, note: Note, chunks: list[Chunk], fs_mtime_ns: int | None = None
+    ) -> None:
         """Insert or update a Note and its Chunks atomically. Replaces all chunks
-        for the note_id."""
+        for the note_id. fs_mtime_ns is the file st_mtime_ns stored for the
+        read-repair mtime gate."""
         ...
 
     async def delete_note(self, note_id: str) -> None:
         """Remove a Note and all its Chunks. No error if absent."""
+        ...
+
+    async def record_mtime(self, note_id: str, fs_mtime_ns: int) -> None:
+        """Update only the stored filesystem mtime for note_id (no re-chunk)."""
         ...
 
     async def search(self, query: str, limit: int = 20) -> list[SearchResult]:
@@ -353,6 +360,13 @@ class FTS5Store(Protocol):
 
     async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
         """Return rel_path -> (note_id, content_hash) for index freshness checks."""
+        ...
+
+    async def list_indexed_notes_with_mtime(
+        self,
+    ) -> dict[str, tuple[str, str, int | None]]:
+        """Return rel_path -> (note_id, content_hash, fs_mtime_ns). fs_mtime_ns is
+        None for rows indexed before the column existed (treat as always-re-read)."""
         ...
 
     def iter_all_chunks(self) -> AsyncIterator[Chunk]:
@@ -490,6 +504,12 @@ class VaultReader(Protocol):
     ) -> list[Note]:
         ...
 
+    async def stat_notes(self) -> dict[str, tuple[Path, int]]:
+        """Return rel_path -> (absolute_path, st_mtime_ns) for every live note,
+        with the same exclusions as list_notes but without reading content. Used
+        by the read-repair mtime gate."""
+        ...
+
     async def resolve_alias(self, alias: str) -> str | None:
         """Returns note_id or None."""
         ...
@@ -586,7 +606,7 @@ insufficient:
 | Section | Frozen since | Last amendment |
 |---|---|---|
 | §1 Pydantic models | 2026-05-17 | 2026-05-24 — §1.3 Chunk.line_start/line_end added for ripgrep result → chunk resolution; prior 2026-05-22 amendment clarified Chunk.ordinal scope. **PENDING 2026-06-09** — §1.7 eval metrics path-level (cross-review on `claude-code/phase0`) |
-| §2 Protocols | 2026-05-17 | 2026-05-23 — §2.6 VaultReader: bound at construction, removed `vault_root` from method signatures, made `resolve_alias` priority explicitly global (strict order title→filename→aliases across all notes). **PENDING 2026-06-09** — §2.5 EvalHarness path-level metrics + frozen `metrics.py` signatures (cross-review on `claude-code/phase0`) |
+| §2 Protocols | 2026-05-17 | 2026-05-23 — §2.6 VaultReader: bound at construction, removed `vault_root` from method signatures, made `resolve_alias` priority explicitly global (strict order title→filename→aliases across all notes). **PENDING 2026-06-09** — §2.5 EvalHarness path-level metrics + frozen `metrics.py` signatures (cross-review on `claude-code/phase0`). **2026-06-13 (P1 mtime gate)** — §2.3 FTS5Store: `upsert_note` gains `fs_mtime_ns`, added `record_mtime` and `list_indexed_notes_with_mtime`; §2.6 VaultReader: added `stat_notes`. Additive, backward-compatible. |
 | §3 Ownership matrix | 2026-05-17 | — |
 | §4 Reserved config keys | 2026-05-17 | — |
 | §5 Test fixtures | 2026-05-17 | — |
