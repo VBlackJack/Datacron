@@ -32,12 +32,17 @@ def app(tmp_vault: Path) -> DatacronApp:
 
 @pytest.fixture
 def small_app(tmp_vault: Path) -> DatacronApp:
-    """Same as ``app`` but with a tiny result ceiling to exercise truncation."""
+    """Same as ``app`` but with tiny ceilings to exercise truncation.
+
+    ``get_note_max_tokens`` is capped too so get_note(full) still paginates;
+    it is decoupled from the search budget (``max_result_tokens``).
+    """
     settings = Settings(
         read_paths=[tmp_vault],
         vault_root=tmp_vault,
         max_result_count=3,
         max_result_tokens=50,
+        get_note_max_tokens=50,
     )
     return build_app(settings=settings, vault_root=tmp_vault, chunker=MarkdownChunker())
 
@@ -120,6 +125,30 @@ class TestGetNoteFull:
         assert result["estimated_tokens"] > result["returned_estimated_tokens"]
         assert result["returned_estimated_tokens"] <= 50
         assert result["next_offset"] is not None
+
+    @pytest.mark.asyncio
+    async def test_full_uses_get_note_budget_not_search_budget(self, tmp_vault: Path) -> None:
+        """get_note(full) honors get_note_max_tokens, not the search budget.
+
+        A note that would be truncated under a tiny ``max_result_tokens`` must
+        come back whole when ``get_note_max_tokens`` is generous — proving the
+        two budgets are decoupled (Item 1).
+        """
+        from datacron.mcp.tools import _get_note_impl
+
+        settings = Settings(
+            read_paths=[tmp_vault],
+            vault_root=tmp_vault,
+            max_result_tokens=50,  # search budget — must NOT affect get_note
+            get_note_max_tokens=8000,  # generous note budget
+        )
+        decoupled_app = build_app(
+            settings=settings, vault_root=tmp_vault, chunker=MarkdownChunker()
+        )
+
+        result = await _get_note_impl(decoupled_app, id_or_path="welcome.md", fmt="full")
+        assert result["truncated"] is False
+        assert result["next_offset"] is None
 
     @pytest.mark.asyncio
     async def test_full_accepts_offset_and_limit(self, app: DatacronApp) -> None:
