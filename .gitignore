@@ -49,3 +49,9 @@ logs/
 
 # Local agent session config
 .claude/
+
+# AI / agent working artifacts -- kept local, never committed
+CLAUDE.md
+docs/brief-*.md
+docs/fix-plan*.md
+docs/doc-sync*.md
