@@ -131,7 +131,7 @@ def build_app(
     if chunker is None:
         from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
 
-        chunker = MarkdownChunker()
+        chunker = MarkdownChunker(max_tokens=resolved_settings.chunk_max_tokens)
     if store is None:
         from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
 
