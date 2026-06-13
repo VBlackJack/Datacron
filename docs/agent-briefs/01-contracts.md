@@ -545,6 +545,7 @@ Both agents must use these env var / config key names exactly (zero hardcoding r
 | `DATACRON_MAX_RESULT_COUNT` | `20` | mcp.tools, indexing.* |
 | `DATACRON_RIPGREP_PATH` | `rg` (PATH lookup) | indexing.ripgrep |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | indexing.chunker |
+| `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | mcp.tools |
 
 ---
 

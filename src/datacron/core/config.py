@@ -35,6 +35,11 @@ DEFAULT_MAX_RESULT_TOKENS: Final[int] = 8000
 DEFAULT_MAX_RESULT_COUNT: Final[int] = 20
 DEFAULT_RIPGREP_PATH: Final[str] = "rg"
 DEFAULT_CHUNK_MAX_TOKENS: Final[int] = 1024
+# get_note(full) budget, decoupled from the search budget (max_result_tokens).
+# Search returns many snippets and must stay bounded; reading one note can be
+# generous, so a single get_note returns most notes whole while pagination
+# (offset/limit/next_offset) remains the safety valve for pathologically large notes.
+DEFAULT_GET_NOTE_MAX_TOKENS: Final[int] = 25000
 DEFAULT_EXCLUDED_FOLDERS: Final[tuple[str, ...]] = (
     "_attachments",
     "zzz_Corbeille",
@@ -141,6 +146,7 @@ class Settings(BaseSettings):
     max_result_count: int = Field(default=DEFAULT_MAX_RESULT_COUNT, ge=1)
     ripgrep_path: str = Field(default=DEFAULT_RIPGREP_PATH)
     chunk_max_tokens: int = Field(default=DEFAULT_CHUNK_MAX_TOKENS, ge=1)
+    get_note_max_tokens: int = Field(default=DEFAULT_GET_NOTE_MAX_TOKENS, ge=1)
 
     @field_validator("log_level", mode="before")
     @classmethod

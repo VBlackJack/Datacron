@@ -343,7 +343,7 @@ def _build_full_payload(
     offset: int,
     limit: int | None,
 ) -> dict[str, Any]:
-    max_tokens = app.settings.max_result_tokens
+    max_tokens = app.settings.get_note_max_tokens
     max_chars = max_tokens * _TOKEN_ESTIMATE_DIVISOR
     total_chars = len(note.content)
     start = min(offset, total_chars)
