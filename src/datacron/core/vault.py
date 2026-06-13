@@ -306,6 +306,22 @@ class FilesystemVaultReader:
                 raise
         return notes
 
+    async def stat_notes(self) -> dict[str, tuple[Path, int]]:
+        """Return ``rel_path -> (absolute_path, st_mtime_ns)`` for every live note.
+
+        Mirrors :meth:`list_notes` enumeration (same exclusions) but only
+        ``stat()``s each file. The read-repair uses this to skip the read+hash
+        of notes whose filesystem mtime is unchanged.
+        """
+        return await asyncio.to_thread(self._stat_markdown_paths)
+
+    def _stat_markdown_paths(self) -> dict[str, tuple[Path, int]]:
+        result: dict[str, tuple[Path, int]] = {}
+        for path in self._collect_markdown_paths(self._vault_root):
+            rel_path = _normalize_rel_path(path, self._vault_root)
+            result[rel_path] = (path, path.stat().st_mtime_ns)
+        return result
+
     async def resolve_alias(self, alias: str) -> str | None:
         normalized = alias.strip().lower()
         if not normalized:
