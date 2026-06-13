@@ -299,3 +299,86 @@ def test_line_ranges_are_relative_to_raw_content() -> None:
     chunks = MarkdownChunker().chunk(note)
 
     assert [(chunk.line_start, chunk.line_end) for chunk in chunks] == [(5, 6), (7, 7)]
+
+
+# ---------------------------------------------------------------------------
+# Chantier B: per-chunk size guard (max_tokens split)
+# ---------------------------------------------------------------------------
+
+
+def _budget_chunks(content: str, max_tokens: int) -> list[Chunk]:
+    return MarkdownChunker(max_tokens=max_tokens).chunk(_make_note("budget.md", content))
+
+
+def test_default_max_tokens_is_noarg_constructible() -> None:
+    # The structural conformance check constructs MarkdownChunker() with no args;
+    # a small note must stay a single chunk under the generous default budget.
+    chunks = MarkdownChunker().chunk(_make_note("budget.md", "Short paragraph.\n"))
+    assert len(chunks) == 1
+
+
+def test_invalid_max_tokens_rejected() -> None:
+    with pytest.raises(ValueError, match="max_tokens"):
+        MarkdownChunker(max_tokens=0)
+
+
+def test_oversized_narrative_splits_each_under_budget() -> None:
+    content = "\n".join(f"word{i:02d}" for i in range(20)) + "\n"
+    chunks = _budget_chunks(content, max_tokens=5)  # 20-char budget
+    assert len(chunks) > 1
+    assert all(c.chunk_type is ChunkType.NARRATIVE for c in chunks)
+    assert all(c.token_count <= 5 for c in chunks)
+    assert all(len(c.content) <= 20 for c in chunks)
+
+
+def test_split_is_deterministic() -> None:
+    content = "\n".join(f"word{i:02d}" for i in range(20)) + "\n"
+    first = _budget_chunks(content, max_tokens=5)
+    second = _budget_chunks(content, max_tokens=5)
+    assert first == second
+
+
+def test_subchunk_line_ranges_are_disjoint_and_gap_free() -> None:
+    content = "\n".join(f"word{i:02d}" for i in range(20)) + "\n"
+    chunks = _budget_chunks(content, max_tokens=5)
+    for prev, nxt in pairwise(chunks):
+        assert prev.line_end < nxt.line_start, "ranges must not overlap"
+        assert nxt.line_start == prev.line_end + 1, "ranges must be contiguous (no gap)"
+
+
+def test_subchunk_ids_use_successive_ordinals_no_part_segment() -> None:
+    content = "\n".join(f"word{i:02d}" for i in range(20)) + "\n"
+    chunks = _budget_chunks(content, max_tokens=5)
+    assert [c.ordinal for c in chunks] == list(range(len(chunks)))
+    for index, chunk in enumerate(chunks):
+        assert chunk.chunk_id == f"{_NOTE_ID}::::{index:04d}"  # no ::{part} segment
+
+
+def test_single_long_line_is_brute_split() -> None:
+    long_line = "x" * 100 + "\n"
+    chunks = _budget_chunks(long_line, max_tokens=5)  # 20-char budget
+    assert len(chunks) == 5
+    assert all(len(c.content) <= 20 for c in chunks)
+    assert "".join(c.content for c in chunks) == "x" * 100
+
+
+def test_table_split_repeats_header_and_separator() -> None:
+    rows = "\n".join(f"| r{i:02d}a | r{i:02d}b |" for i in range(8))
+    content = f"| Col A | Col B |\n| --- | --- |\n{rows}\n"
+    chunks = _budget_chunks(content, max_tokens=12)  # 48-char budget
+    assert len(chunks) > 1
+    assert all(c.chunk_type is ChunkType.TABLE for c in chunks)
+    for chunk in chunks:
+        assert chunk.content.startswith("| Col A | Col B |\n| --- | --- |")
+
+
+def test_code_split_preserves_fence_and_language() -> None:
+    body = "\n".join(f"call_{i:02d}();" for i in range(12))
+    content = f"```python\n{body}\n```\n"
+    chunks = _budget_chunks(content, max_tokens=10)  # 40-char budget
+    assert len(chunks) > 1
+    assert all(c.chunk_type is ChunkType.CODE for c in chunks)
+    assert all(c.lang == "python" for c in chunks)
+    for chunk in chunks:
+        assert chunk.content.startswith("```python\n")
+        assert chunk.content.endswith("\n```")

@@ -416,6 +416,89 @@ async def test_list_indexed_notes_and_wikilink_chunks(
     await store.close()
 
 
+async def test_upsert_stores_and_lists_fs_mtime(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    note = note_factory(id=_NOTE_ID, rel_path="welcome.md", content="Body")
+    chunk = chunk_factory(note=note, chunk_id=f"{note.id}::::0000", content="Body")
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+
+    await store.upsert_note(note, [chunk], fs_mtime_ns=1_234_567_890)
+    assert await store.list_indexed_notes_with_mtime() == {
+        "welcome.md": (_NOTE_ID, note.content_hash, 1_234_567_890)
+    }
+
+    # Without an mtime the stored value is NULL -> None ("always re-read").
+    await store.upsert_note(note, [chunk])
+    assert await store.list_indexed_notes_with_mtime() == {
+        "welcome.md": (_NOTE_ID, note.content_hash, None)
+    }
+    await store.close()
+
+
+async def test_record_mtime_updates_only_mtime(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    note = note_factory(id=_NOTE_ID, rel_path="welcome.md", content="Body")
+    chunk = chunk_factory(note=note, chunk_id=f"{note.id}::::0000", content="Body")
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+
+    await store.upsert_note(note, [chunk])
+    await store.record_mtime(_NOTE_ID, 999)
+
+    entry = (await store.list_indexed_notes_with_mtime())["welcome.md"]
+    assert entry == (_NOTE_ID, note.content_hash, 999)
+    await store.close()
+
+
+async def test_legacy_db_without_fs_mtime_is_migrated(tmp_path: Path) -> None:
+    """A notes table created before fs_mtime existed gains the column on open."""
+    db_path = _db_path(tmp_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_hash = "0" * 64
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE notes (
+                note_id TEXT PRIMARY KEY,
+                rel_path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                frontmatter_json TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                created TEXT NOT NULL,
+                updated TEXT NOT NULL,
+                indexed_at TEXT NOT NULL
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO notes VALUES (?, 'legacy.md', 'Legacy', '{}', ?, ?, ?, ?);",
+            (
+                _NOTE_ID,
+                legacy_hash,
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+            ),
+        )
+        connection.commit()
+
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+
+    # Migration ran: the column exists and the legacy row reads back with None.
+    assert await store.list_indexed_notes_with_mtime() == {
+        "legacy.md": (_NOTE_ID, legacy_hash, None)
+    }
+    await store.close()
+
+
 async def test_upsert_replaces_stale_note_id_for_same_path(
     tmp_path: Path,
     note_factory: NoteFactory,
