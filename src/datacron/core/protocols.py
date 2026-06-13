@@ -104,15 +104,26 @@ class FTS5Store(Protocol):
         """Close the database. Idempotent."""
         ...
 
-    async def upsert_note(self, note: Note, chunks: list[Chunk]) -> None:
+    async def upsert_note(
+        self, note: Note, chunks: list[Chunk], fs_mtime_ns: int | None = None
+    ) -> None:
         """Insert or update a Note and its Chunks atomically.
 
-        Replaces all chunks for ``note.id``.
+        Replaces all chunks for ``note.id``. ``fs_mtime_ns`` is the note file's
+        ``st_mtime_ns`` at index time, stored for the read-repair mtime gate.
         """
         ...
 
     async def delete_note(self, note_id: str) -> None:
         """Remove a Note and all its Chunks. No error if absent."""
+        ...
+
+    async def record_mtime(self, note_id: str, fs_mtime_ns: int) -> None:
+        """Update only the stored filesystem mtime for ``note_id``.
+
+        Lets the read-repair refresh the mtime of a note whose content is
+        unchanged but whose mtime moved, so the next repair can skip it.
+        """
         ...
 
     async def search(self, query: str, limit: int = 20) -> list[SearchResult]:
@@ -137,6 +148,14 @@ class FTS5Store(Protocol):
 
     async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
         """Return ``rel_path -> (note_id, content_hash)`` for index freshness checks."""
+        ...
+
+    async def list_indexed_notes_with_mtime(self) -> dict[str, tuple[str, str, int | None]]:
+        """Return ``rel_path -> (note_id, content_hash, fs_mtime_ns)`` for the index.
+
+        ``fs_mtime_ns`` is ``None`` for rows indexed before the column existed;
+        callers MUST treat ``None`` as "always re-read" (never skip).
+        """
         ...
 
     def iter_all_chunks(self) -> AsyncIterator[Chunk]:
@@ -222,6 +241,16 @@ class VaultReader(Protocol):
         limit: int | None = None,
     ) -> list[Note]:
         """Return notes from the bound vault, optionally scoped/limited."""
+        ...
+
+    async def stat_notes(self) -> dict[str, tuple[Path, int]]:
+        """Return ``rel_path -> (absolute_path, st_mtime_ns)`` for every live note.
+
+        Enumerates the vault with the same folder/file exclusions as
+        :meth:`list_notes` but only ``stat()``s each file — no content read or
+        parse. Used by the index read-repair to skip the read+hash of notes
+        whose filesystem mtime is unchanged.
+        """
         ...
 
     async def resolve_alias(self, alias: str) -> str | None:

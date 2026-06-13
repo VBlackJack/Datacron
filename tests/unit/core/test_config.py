@@ -19,6 +19,7 @@ from datacron.core.config import (
     DEFAULT_CHUNK_MAX_TOKENS,
     DEFAULT_EXCLUDED_FILES,
     DEFAULT_EXCLUDED_FOLDERS,
+    DEFAULT_GET_NOTE_MAX_TOKENS,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MAX_RESULT_COUNT,
     DEFAULT_MAX_RESULT_TOKENS,
@@ -39,6 +40,7 @@ class TestDefaults:
         assert settings.max_result_count == DEFAULT_MAX_RESULT_COUNT
         assert settings.ripgrep_path == DEFAULT_RIPGREP_PATH
         assert settings.chunk_max_tokens == DEFAULT_CHUNK_MAX_TOKENS
+        assert settings.get_note_max_tokens == DEFAULT_GET_NOTE_MAX_TOKENS
         assert settings.read_paths == []
         assert settings.vault_root is None
 
@@ -58,6 +60,11 @@ class TestEnvLoading:
         monkeypatch.setenv("DATACRON_LOG_LEVEL", "TRACE")
         with pytest.raises(ValidationError):
             Settings()
+
+    def test_env_get_note_max_tokens(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATACRON_GET_NOTE_MAX_TOKENS", "12345")
+        settings = Settings()
+        assert settings.get_note_max_tokens == 12345
 
     def test_read_paths_split_by_os_sep(
         self,
