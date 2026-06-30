@@ -44,7 +44,7 @@ from mcp.server.fastmcp import FastMCP
 from datacron import __version__
 from datacron.core.config import Settings, get_settings
 from datacron.core.logger import configure_logging, get_logger, shutdown_logging
-from datacron.core.paths import sidecar_index_db
+from datacron.core.paths import assert_within_read_paths, sidecar_index_db
 from datacron.core.protocols import (
     ASTChunker,
     FTS5Store,
@@ -127,6 +127,10 @@ def build_app(
     """
     resolved_settings = settings or get_settings()
     resolved_root = vault_root.expanduser().resolve()
+    if resolved_settings.read_paths:
+        # Empty read_paths keeps vault_root as the implicit boundary; an
+        # explicit allowlist must contain the served vault root.
+        assert_within_read_paths(resolved_root, resolved_settings)
     resolved_reader = vault_reader or build_configured_reader(resolved_root)
     if chunker is None:
         from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
