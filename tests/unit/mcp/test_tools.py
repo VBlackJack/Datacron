@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -94,7 +94,13 @@ async def writable_app(tmp_vault: Path) -> AsyncIterator[DatacronApp]:
         await store.close()
 
 
-def _write_memory_note(vault_root: Path, rel_path: str, body: str) -> tuple[Path, str]:
+def _write_memory_note(
+    vault_root: Path,
+    rel_path: str,
+    body: str,
+    *,
+    metadata_overrides: Mapping[str, Any] | None = None,
+) -> tuple[Path, str]:
     metadata: dict[str, Any] = {
         "id": "01HQXR7K9YZ8M2N3PQRSTV4WX5",
         "title": "Journaled memory",
@@ -106,6 +112,8 @@ def _write_memory_note(vault_root: Path, rel_path: str, body: str) -> tuple[Path
         "supersedes": [],
         "tags": ["memory"],
     }
+    if metadata_overrides:
+        metadata.update(metadata_overrides)
     target = vault_root / rel_path
     target.parent.mkdir(parents=True, exist_ok=True)
     raw = serialize(metadata, body)
@@ -712,6 +720,246 @@ class TestAppendJournal:
         assert result["error"]["type"] == "PathConfinementError"
         assert "outside the allowed write roots" in result["error"]["message"]
         assert target.read_text(encoding="utf-8") == original_raw
+
+
+class TestSetFrontmatter:
+    @pytest.mark.asyncio
+    async def test_confidence_only_preserves_body_identity_fields_and_snapshots(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/confidence.md"
+        body = "# Journaled memory\n\nBody with trailing newline.\n"
+        target, original_raw = _write_memory_note(tmp_vault, rel_path, body)
+        original_metadata, original_body = parse(original_raw)
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            confidence=" low ",
+        )
+
+        assert result["updated"] == {"rel_path": rel_path, "fields": ["confidence"]}
+        assert result["indexed"] is True
+
+        new_metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        original_without_updated = dict(original_metadata)
+        original_updated = original_without_updated.pop("updated")
+        new_without_updated = dict(new_metadata)
+        new_updated = new_without_updated.pop("updated")
+
+        assert new_body == original_body
+        assert new_metadata["confidence"] == "low"
+        assert new_without_updated == {**original_without_updated, "confidence": "low"}
+        assert new_updated != original_updated
+
+        backup_dir = tmp_vault / ".datacron" / "backups" / "_memory" / "facts" / "confidence.md"
+        backups = list(backup_dir.glob("*.bak"))
+        assert len(backups) == 1
+        assert backups[0].read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
+    async def test_supersedes_replaces_and_cleans_values(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/supersedes.md"
+        target, _original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\nBody.\n",
+            metadata_overrides={"supersedes": ["01OLDOLDOLDOLDOLDOLDOLDOLD"]},
+        )
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            supersedes=[" 01NEWNEWNEWNEWNEWNEWNEWN ", "", "01NEWNEWNEWNEWNEWNEWNEWN", "other"],
+        )
+
+        assert result["updated"] == {"rel_path": rel_path, "fields": ["supersedes"]}
+        metadata, _body = parse(target.read_text(encoding="utf-8"))
+        assert metadata["supersedes"] == ["01NEWNEWNEWNEWNEWNEWNEWN", "other"]
+
+    @pytest.mark.asyncio
+    async def test_last_verified_valid_date_is_partial_update(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/last-verified.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Journaled memory\n\nBody.\n"
+        )
+        original_metadata, _original_body = parse(original_raw)
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            last_verified="2026-06-30",
+        )
+
+        assert result["updated"] == {"rel_path": rel_path, "fields": ["last_verified"]}
+        metadata, _body = parse(target.read_text(encoding="utf-8"))
+        assert metadata["last_verified"] == "2026-06-30"
+        assert metadata["confidence"] == original_metadata["confidence"]
+        assert metadata["supersedes"] == original_metadata["supersedes"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_last_verified_returns_error_without_write(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/invalid-date.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Journaled memory\n\nBody.\n"
+        )
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            last_verified="20260630",
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert "last_verified must be a YYYY-MM-DD date" in result["error"]["message"]
+        assert target.read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
+    async def test_all_none_returns_error_without_write_or_backup(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/noop.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Journaled memory\n\nBody.\n"
+        )
+
+        result = await _set_frontmatter_impl(writable_app, rel_path=rel_path)
+
+        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["message"] == "nothing to update"
+        assert target.read_text(encoding="utf-8") == original_raw
+        backup_dir = tmp_vault / ".datacron" / "backups" / "_memory" / "facts" / "noop.md"
+        assert not backup_dir.exists()
+
+    @pytest.mark.asyncio
+    async def test_missing_note_returns_structured_error_without_creating_file(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/missing-frontmatter-target.md"
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            confidence="low",
+        )
+
+        assert result["error"]["type"] == "FileNotFoundError"
+        assert (
+            "note not found at _memory/facts/missing-frontmatter-target.md; use create_note_ai"
+            in result["error"]["message"]
+        )
+        assert not (tmp_vault / rel_path).exists()
+
+    @pytest.mark.asyncio
+    async def test_note_without_frontmatter_returns_error_and_leaves_file_intact(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/plain.md"
+        target = tmp_vault / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        original_raw = "# Plain note\n\nNo frontmatter.\n"
+        target.write_text(original_raw, encoding="utf-8")
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            confidence="low",
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["message"] == "note has no frontmatter"
+        assert target.read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
+    async def test_invalid_confidence_returns_error_without_write(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/invalid-confidence.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Journaled memory\n\nBody.\n"
+        )
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            confidence="bogus",
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert "confidence must be one of" in result["error"]["message"]
+        assert target.read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
+    async def test_writes_off_returns_clear_error_and_leaves_file_intact(
+        self, app_with_open_store: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/writes-off-frontmatter.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Journaled memory\n\nBody.\n"
+        )
+
+        result = await _set_frontmatter_impl(
+            app_with_open_store,
+            rel_path=rel_path,
+            confidence="low",
+        )
+
+        assert result["error"]["type"] == "PathConfinementError"
+        assert "writes disabled — set DATACRON_WRITE_PATHS" in result["error"]["message"]
+        assert target.read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
+    async def test_reconcile_updates_temporal_metadata_immediately(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        note_id = "01HQXR7K9YZ8M2N3PQRSTV4WX9"
+        rel_path = "_memory/facts/indexed-frontmatter.md"
+        _target, _original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Indexed frontmatter\n\nTemporal metadata target.\n",
+            metadata_overrides={"id": note_id, "confidence": "high"},
+        )
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            confidence="low",
+            supersedes=["01HQXR7K9YZ8M2N3PQRSTV4WX1"],
+        )
+
+        assert result["updated"] == {
+            "rel_path": rel_path,
+            "fields": ["confidence", "supersedes"],
+        }
+        temporal = await writable_app.store.list_temporal_metadata()
+        assert temporal[note_id].confidence == "low"
+        assert temporal[note_id].supersedes == ["01HQXR7K9YZ8M2N3PQRSTV4WX1"]
 
 
 class TestAudit:
