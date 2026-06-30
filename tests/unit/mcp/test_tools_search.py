@@ -19,7 +19,7 @@ from datacron.core.config import Settings
 from datacron.core.models import SearchResult
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
-from datacron.indexing.ripgrep import RipgrepWrapper
+from datacron.indexing.ripgrep import RipgrepError, RipgrepWrapper
 from datacron.indexing.wikilinks import RegexWikilinksExtractor
 from datacron.mcp.server import DatacronApp, build_app
 from datacron.mcp.tools import (
@@ -310,6 +310,32 @@ class TestSearchRegex:
         result = await _search_regex_impl(replaced, pattern="ok", glob=None, limit=5)
         assert "error" in result
         assert result["error"]["type"] == "FileNotFoundError"
+
+    @pytest.mark.asyncio
+    async def test_ripgrep_error_returns_pattern_rejected_error(
+        self,
+        stubbed_app: DatacronApp,
+    ) -> None:
+        class _RejectingRg:
+            async def search(self, **_kwargs: Any) -> list[SearchResult]:
+                raise RipgrepError(2, "regex parse error")
+
+        replaced = build_app(
+            settings=stubbed_app.settings,
+            vault_root=stubbed_app.vault_root,
+            chunker=stubbed_app.chunker,
+            store=stubbed_app.store,
+            ripgrep=_RejectingRg(),  # type: ignore[arg-type]
+        )
+
+        result = await _search_regex_impl(replaced, pattern="(?<=foo)bar", glob=None, limit=5)
+
+        assert "error" in result
+        assert "results" not in result
+        assert result["error"]["type"] == "ValueError"
+        assert "pattern rejected by ripgrep" in result["error"]["message"]
+        assert "regex parse error" in result["error"]["message"]
+        assert "internal error" not in result["error"]["message"].lower()
 
     @pytest.mark.asyncio
     async def test_results_are_sandbox_wrapped(

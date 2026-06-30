@@ -9,7 +9,9 @@
 
 from __future__ import annotations
 
-from datacron.core.frontmatter import extract_tags, parse
+import pytest
+
+from datacron.core.frontmatter import FrontmatterError, extract_tags, parse
 
 
 class TestParse:
@@ -29,6 +31,12 @@ class TestParse:
         meta, body = parse("")
         assert meta == {}
         assert body == ""
+
+    def test_invalid_yaml_raises_typed_error(self) -> None:
+        raw = "---\nid: [unclosed\n---\nbody\n"
+
+        with pytest.raises(FrontmatterError, match="while parsing"):
+            parse(raw)
 
 
 class TestExtractTags:

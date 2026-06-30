@@ -7,7 +7,7 @@
 > n'importe quel éditeur Markdown.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Status: design v2.1](https://img.shields.io/badge/Status-design_v2.1-orange)](docs/decisions-tranchees-v2.1.md)
+[![Status: Sem 4 en cours](https://img.shields.io/badge/Status-Sem_4_en_cours-green)](docs/decisions-tranchees-v2.1.md)
 [![MCP: Claude Desktop · Claude Code](https://img.shields.io/badge/MCP-Claude_Desktop_·_Code-purple)](#works-with)
 
 ---
@@ -232,15 +232,26 @@ standard que tu dois suivre.
 
 ## Statut
 
-Datacron est en **phase de design figée v2.1** — pas encore de code livré.
+Datacron a dépassé la phase "design only" : **Phase 0 (MVP) livrée** sur `main`,
+avec le tag `sem3-complete`. Les 5 tools MCP (`list_notes`, `get_note`, `search_text`,
+`search_regex`, `get_backlinks`) sont opérationnels, ainsi que les commandes
+`datacron init/status/index/reindex/mcp serve/mcp install`.
 
 La spec exécutable est dans [decisions-tranchees-v2.1.md](docs/decisions-tranchees-v2.1.md).
-Cette spec a été produite par une boucle design → cross-review (Gemini Pro + ChatGPT 5.5 Pro) →
-arbitrage, avec vérification empirique du support MCP côté Anthropic.
+Elle a été produite par une boucle design → cross-review (Gemini Pro + ChatGPT 5.5 Pro) →
+arbitrage, avec vérification empirique du support MCP côté Anthropic, puis implémentée
+par lots testés.
 
-**Phase 0 (MVP 4 semaines)** démarre prochainement. Critère de succès : 30 questions réelles
-sur le vault, depuis Claude Desktop, qui battent le baseline "folder dump" en qualité, latence,
-et coût tokens.
+**Sem 4 est en cours** : hardening `read_paths`, eval harness path-level, index incrémental
+mtime-gated, garde-fou chunker, et durcissements robustesse (frontmatter, confinement,
+ripgrep). La suite actuelle est verte : 342 tests, `ruff`, `ruff format --check` et
+`mypy --strict`.
+
+Le retrieval v1 repose sur **BM25 (FTS5) + ripgrep**. Les embeddings restent gelés tant
+que l'éval ne prouve pas leur apport ; l'hybride BGE-M3 reste une option v0.4 conditionnelle.
+
+Le critère de succès Phase 0 se mesure sur 30 questions réelles contre le baseline
+"folder dump", depuis Claude Desktop, en qualité, latence et coût tokens.
 
 ---
 
