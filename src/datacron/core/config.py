@@ -35,6 +35,9 @@ DEFAULT_LOG_LEVEL: Final[str] = "INFO"
 DEFAULT_LOG_DIR: Final[Path] = Path.home() / ".datacron" / "logs"
 DEFAULT_MAX_RESULT_TOKENS: Final[int] = 8000
 DEFAULT_MAX_RESULT_COUNT: Final[int] = 20
+TEMPORAL_OVERFETCH_FACTOR: Final[int] = 3
+SUPERSEDED_DEMOTION_FACTOR: Final[float] = 0.1
+CONFIDENCE_PENALTY: Final[dict[str, float]] = {"low": 0.7, "needs_verification": 0.5}
 DEFAULT_RIPGREP_PATH: Final[str] = "rg"
 DEFAULT_CHUNK_MAX_TOKENS: Final[int] = 1024
 # get_note(full) budget, decoupled from the search budget (max_result_tokens).

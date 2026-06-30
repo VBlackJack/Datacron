@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from datacron.core.config import Settings
+from datacron.core.frontmatter import serialize
 from datacron.core.models import SearchResult
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
@@ -27,6 +28,43 @@ from datacron.mcp.tools import (
     _search_regex_impl,
     _search_text_impl,
 )
+
+_TEMPORAL_CURRENT_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+_TEMPORAL_OLD_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX6"
+_TEMPORAL_HIGH_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX7"
+_TEMPORAL_UNCERTAIN_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX8"
+
+
+def _write_temporal_note(
+    vault_root: Path,
+    *,
+    rel_path: str,
+    note_id: str,
+    title: str,
+    confidence: str,
+    supersedes: list[str],
+    body: str,
+) -> None:
+    target = vault_root / rel_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        serialize(
+            {
+                "id": note_id,
+                "title": title,
+                "created": "2026-01-01T00:00:00+00:00",
+                "updated": "2026-01-01T00:00:00+00:00",
+                "origin": "ai",
+                "confidence": confidence,
+                "last_verified": "2026-01-01",
+                "supersedes": supersedes,
+                "tags": ["memory"],
+            },
+            body,
+        ),
+        encoding="utf-8",
+    )
+
 
 # ---------------------------------------------------------------------------
 # Fixtures: build an indexed DatacronApp on top of the demo vault.
@@ -214,6 +252,75 @@ excluded_files:
         assert all("/_attachments/" not in rel_path for rel_path in indexed)
         assert "00_INDEX.md" not in indexed
         assert "subfolder/00_INDEX.md" not in indexed
+
+    @pytest.mark.asyncio
+    async def test_temporal_rerank_demotes_superseded_note(
+        self, indexed_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        _write_temporal_note(
+            tmp_vault,
+            rel_path="_memory/temporal/current.md",
+            note_id=_TEMPORAL_CURRENT_ID,
+            title="Current temporal note",
+            confidence="high",
+            supersedes=[_TEMPORAL_OLD_ID],
+            body="# Current temporal note\n\ntemporalrank current answer.\n",
+        )
+        _write_temporal_note(
+            tmp_vault,
+            rel_path="_memory/temporal/old.md",
+            note_id=_TEMPORAL_OLD_ID,
+            title="Old temporal note",
+            confidence="high",
+            supersedes=[],
+            body=(
+                "# Old temporal note\n\ntemporalrank temporalrank temporalrank superseded answer.\n"
+            ),
+        )
+
+        default_result = await _search_text_impl(indexed_app, query="temporalrank", limit=1)
+        include_result = await _search_text_impl(
+            indexed_app,
+            query="temporalrank",
+            limit=1,
+            include_superseded=True,
+        )
+
+        assert "error" not in default_result
+        assert default_result["results"][0]["note_rel_path"] == "_memory/temporal/current.md"
+        assert "error" not in include_result
+        assert include_result["results"][0]["note_rel_path"] == "_memory/temporal/old.md"
+
+    @pytest.mark.asyncio
+    async def test_temporal_rerank_demotes_needs_verification_note(
+        self, indexed_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        _write_temporal_note(
+            tmp_vault,
+            rel_path="_memory/temporal/high.md",
+            note_id=_TEMPORAL_HIGH_ID,
+            title="High confidence temporal note",
+            confidence="high",
+            supersedes=[],
+            body="# High confidence temporal note\n\nconfidencerank current answer.\n",
+        )
+        _write_temporal_note(
+            tmp_vault,
+            rel_path="_memory/temporal/uncertain.md",
+            note_id=_TEMPORAL_UNCERTAIN_ID,
+            title="Uncertain temporal note",
+            confidence="needs_verification",
+            supersedes=[],
+            body=(
+                "# Uncertain temporal note\n\n"
+                "confidencerank confidencerank confidencerank uncertain answer.\n"
+            ),
+        )
+
+        result = await _search_text_impl(indexed_app, query="confidencerank", limit=1)
+
+        assert "error" not in result
+        assert result["results"][0]["note_rel_path"] == "_memory/temporal/high.md"
 
 
 # ---------------------------------------------------------------------------
