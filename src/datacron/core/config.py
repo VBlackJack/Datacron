@@ -161,6 +161,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default=DEFAULT_LOG_LEVEL)
     log_dir: Path = Field(default=DEFAULT_LOG_DIR)
     read_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
+    write_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
     vault_root: Path | None = Field(default=None)
     max_result_tokens: int = Field(default=DEFAULT_MAX_RESULT_TOKENS, ge=1)
     max_result_count: int = Field(default=DEFAULT_MAX_RESULT_COUNT, ge=1)
@@ -196,6 +197,15 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return _split_path_list(value)
         raise TypeError(f"Unsupported type for read_paths: {type(value).__name__}")
+
+    @field_validator("write_paths", mode="before")
+    @classmethod
+    def _parse_write_paths(cls, value: object) -> list[Path]:
+        if value is None or isinstance(value, str):
+            return _split_path_list(value)
+        if isinstance(value, list):
+            return _split_path_list(value)
+        raise TypeError(f"Unsupported type for write_paths: {type(value).__name__}")
 
     @field_validator("vault_root", mode="before")
     @classmethod

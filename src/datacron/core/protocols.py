@@ -52,6 +52,7 @@ __all__ = [
     "FTS5Store",
     "RipgrepWrapper",
     "VaultReader",
+    "VaultWriter",
     "WikilinksExtractor",
 ]
 
@@ -255,4 +256,13 @@ class VaultReader(Protocol):
 
     async def resolve_alias(self, alias: str) -> str | None:
         """Return the matching note's ULID, or ``None``."""
+        ...
+
+
+@runtime_checkable
+class VaultWriter(Protocol):
+    """Writes notes through confined, reversible filesystem primitives."""
+
+    async def write_note_atomic(self, rel_path: str, content: str, *, overwrite: bool) -> None:
+        """Write Markdown content under the bound vault root atomically."""
         ...
