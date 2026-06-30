@@ -72,13 +72,13 @@
   <text x="410" y="580" text-anchor="middle" font-size="10" fill="#bd93f9">[[note]] · [[note#header]]</text>
 
   <rect x="60" y="600" width="470" height="45" rx="6" fill="#282a36" stroke="#ffb86c"/>
-  <text x="295" y="620" text-anchor="middle" font-size="12" fill="#f8f8f2">⚠️ Datacron v1 n'écrit RIEN dans le vault — write tools reportés v0.2+</text>
-  <text x="295" y="638" text-anchor="middle" font-size="10" fill="#ffb86c">concurrence/file-locks + HITL UX = report motivé (cf. decisions-tranchees-v2.1.md)</text>
+  <text x="295" y="620" text-anchor="middle" font-size="12" fill="#f8f8f2">⚠️ Writes OFF par défaut — DATACRON_WRITE_PATHS requis</text>
+  <text x="295" y="638" text-anchor="middle" font-size="10" fill="#ffb86c">create_note_ai / append_journal : confinement, backups, écriture atomique</text>
 
   <!-- Layer 4 — .datacron/ sidecar -->
   <rect x="570" y="480" width="490" height="180" rx="10" fill="#1e1f29" stroke="#8be9fd" stroke-width="2"/>
   <text x="590" y="506" font-size="14" font-weight="700" fill="#8be9fd">.datacron/ (sidecar, gitignorable)</text>
-  <text x="590" y="524" font-size="11" fill="#6272a4">Métadonnées Datacron — n'altère jamais les notes utilisateur</text>
+  <text x="590" y="524" font-size="11" fill="#6272a4">Index, ULIDs, logs et backups — writes explicites uniquement</text>
 
   <rect x="590" y="540" width="220" height="50" rx="6" fill="#282a36" stroke="#50fa7b"/>
   <text x="700" y="562" text-anchor="middle" font-size="12" font-weight="600" fill="#f8f8f2">SQLite FTS5</text>
@@ -103,5 +103,5 @@
   </defs>
 
   <!-- Bottom note -->
-  <text x="550" y="700" text-anchor="middle" font-size="11" fill="#6272a4">★ Hors scope v1 : LangGraph · Studio Tauri · embeddings/LanceDB · Contextual Retrieval · write tools · multi-client wide</text>
+  <text x="550" y="700" text-anchor="middle" font-size="11" fill="#6272a4">★ Hors scope : LangGraph · Studio Tauri · embeddings/LanceDB sans preuve eval · writes concurrents multi-machines</text>
 </svg>

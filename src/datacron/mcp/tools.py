@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""MCP read-only tools: ``list_notes`` and ``get_note``.
+"""MCP tools for vault reads, search, and approved memory writes.
 
 Each tool follows the seven Sem-2 rules from
 ``docs/agent-briefs/02-brief-claude-code.md``:
@@ -33,14 +33,20 @@ from __future__ import annotations
 
 import re
 import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final
 
 from mcp.server.fastmcp import FastMCP
+from ulid import ULID
 
+from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
+from datacron.core.frontmatter import parse, serialize
 from datacron.core.logger import get_logger
 from datacron.core.models import ChunkType, Note, SearchResult
-from datacron.core.paths import PathConfinementError, assert_within_paths
+from datacron.core.paths import PathConfinementError, assert_within_paths, assert_within_write_paths
+from datacron.core.temporal import rerank_temporal
 from datacron.indexing.reconcile import ReconcileStats, reconcile
+from datacron.indexing.ripgrep import RipgrepError
 from datacron.mcp.sandbox import wrap_vault_content
 
 if TYPE_CHECKING:
@@ -56,6 +62,10 @@ _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
 _CHUNK_ID_SEPARATOR: Final[str] = "::"
 _TOKEN_ESTIMATE_DIVISOR: Final[int] = 4
+_MEMORY_ORIGINS: Final[frozenset[str]] = frozenset({"ai", "human", "merged"})
+_MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
+    {"high", "medium", "low", "needs_verification"}
+)
 
 
 def register_tools(server: FastMCP[Any], app: Any) -> None:
@@ -111,11 +121,21 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         description=(
             "Full-text BM25 search over the FTS5 index. Returns ranked sandbox-"
             "wrapped snippets with **term** highlighting. Requires `datacron index` "
-            "to have been run first."
+            "to have been run first. By default, explicitly superseded notes are "
+            "demoted; set include_superseded=true to inspect historical notes."
         ),
     )
-    async def search_text(query: str, limit: int = 20) -> dict[str, Any]:
-        return await _search_text_impl(app, query=query, limit=limit)
+    async def search_text(
+        query: str,
+        limit: int = 20,
+        include_superseded: bool = False,
+    ) -> dict[str, Any]:
+        return await _search_text_impl(
+            app,
+            query=query,
+            limit=limit,
+            include_superseded=include_superseded,
+        )
 
     @server.tool(
         name="search_regex",
@@ -145,6 +165,56 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
     )
     async def get_backlinks(target: str, limit: int = 20) -> dict[str, Any]:
         return await _get_backlinks_impl(app, target=target, limit=limit)
+
+    @server.tool(
+        name="create_note_ai",
+        title="Create memory note",
+        description=(
+            "Write a new typed _memory Markdown note. This is a write operation: "
+            "it is confined to DATACRON_WRITE_PATHS, never overwrites existing "
+            "files, snapshots destructive writes in lower-level primitives, and "
+            "relies on the MCP client's tool approval for human-in-the-loop review."
+        ),
+    )
+    async def create_note_ai(
+        rel_path: str,
+        title: str,
+        body: str,
+        origin: str,
+        confidence: str,
+        tags: list[str],
+        supersedes: list[str] | None = None,
+        last_verified: str | None = None,
+    ) -> dict[str, Any]:
+        return await _create_note_ai_impl(
+            app,
+            rel_path=rel_path,
+            title=title,
+            body=body,
+            origin=origin,
+            confidence=confidence,
+            tags=tags,
+            supersedes=supersedes,
+            last_verified=last_verified,
+        )
+
+    @server.tool(
+        name="append_journal",
+        title="Append to memory note",
+        description=(
+            "Append a Markdown entry under a heading in an existing memory note. "
+            "This is a write operation: it is confined to DATACRON_WRITE_PATHS, "
+            "uses reversible backups before overwrite, writes atomically, and "
+            "relies on the MCP client's tool approval for human-in-the-loop review."
+        ),
+    )
+    async def append_journal(rel_path: str, heading: str, entry: str) -> dict[str, Any]:
+        return await _append_journal_impl(
+            app,
+            rel_path=rel_path,
+            heading=heading,
+            entry=entry,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +325,184 @@ async def _get_note_impl(
     return payload
 
 
+async def _create_note_ai_impl(
+    app: DatacronApp,
+    *,
+    rel_path: str,
+    title: str,
+    body: str,
+    origin: str,
+    confidence: str,
+    tags: list[str],
+    supersedes: list[str] | None = None,
+    last_verified: str | None = None,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        cleaned = _validate_memory_frontmatter(
+            rel_path=rel_path,
+            title=title,
+            body=body,
+            origin=origin,
+            confidence=confidence,
+            tags=tags,
+        )
+        note_id = str(ULID())
+        now = datetime.now(tz=UTC)
+        frontmatter = {
+            "id": note_id,
+            "title": cleaned["title"],
+            "created": now.isoformat(),
+            "updated": now.isoformat(),
+            "origin": cleaned["origin"],
+            "confidence": cleaned["confidence"],
+            "last_verified": (last_verified.strip() if last_verified else now.date().isoformat()),
+            "supersedes": _clean_string_list(supersedes or []),
+            "tags": cleaned["tags"],
+        }
+        content = serialize(frontmatter, body)
+        await app.vault_writer.write_note_atomic(cleaned["rel_path"], content, overwrite=False)
+        index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+    except PathConfinementError as exc:
+        mapped_exc = (
+            PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
+            if not app.settings.write_paths
+            else exc
+        )
+        return _error_response(
+            "create_note_ai",
+            mapped_exc,
+            started,
+            rel_path=rel_path,
+            title=title,
+        )
+    except FileExistsError:
+        return _error_response(
+            "create_note_ai",
+            FileExistsError(
+                f"note already exists at {rel_path}; use patch_note_section (v0.2 phase 2)"
+            ),
+            started,
+            rel_path=rel_path,
+            title=title,
+        )
+    except ValueError as exc:
+        return _error_response(
+            "create_note_ai",
+            exc,
+            started,
+            rel_path=rel_path,
+            title=title,
+        )
+    except Exception:
+        _LOGGER.exception("create_note_ai failed (rel_path=%r title=%r)", rel_path, title)
+        return _error_response(
+            "create_note_ai",
+            RuntimeError("internal error"),
+            started,
+            rel_path=rel_path,
+            title=title,
+        )
+
+    payload: dict[str, Any] = {
+        "created": {
+            "id": note_id,
+            "rel_path": cleaned["rel_path"],
+            "title": cleaned["title"],
+        },
+        "indexed": True,
+    }
+    _audit(
+        "create_note_ai",
+        started,
+        note_id=note_id,
+        rel_path=cleaned["rel_path"],
+        title=cleaned["title"],
+        reindexed_notes=index_stats["reindexed_notes"],
+        deleted_notes=index_stats["deleted_notes"],
+    )
+    return payload
+
+
+async def _append_journal_impl(
+    app: DatacronApp,
+    *,
+    rel_path: str,
+    heading: str,
+    entry: str,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        cleaned_rel_path, cleaned_heading, cleaned_entry = _validate_append_journal_request(
+            rel_path=rel_path,
+            heading=heading,
+            entry=entry,
+        )
+        resolved = assert_within_write_paths(app.vault_root / cleaned_rel_path, app.settings)
+        resolved = assert_within_paths(resolved, [app.vault_root], kind="write")
+        if not resolved.exists():
+            raise FileNotFoundError(f"note not found at {cleaned_rel_path}; use create_note_ai")
+        raw = resolved.read_text(encoding="utf-8")
+        metadata, body = parse(raw)
+        new_body = _append_entry_to_heading(body, cleaned_heading, cleaned_entry)
+        metadata["updated"] = datetime.now(tz=UTC).isoformat()
+        content = serialize(metadata, new_body)
+        await app.vault_writer.write_note_atomic(cleaned_rel_path, content, overwrite=True)
+        index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+    except PathConfinementError as exc:
+        mapped_exc = (
+            PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
+            if not app.settings.write_paths
+            else exc
+        )
+        return _error_response(
+            "append_journal",
+            mapped_exc,
+            started,
+            rel_path=rel_path,
+            heading=heading,
+        )
+    except FileNotFoundError as exc:
+        return _error_response(
+            "append_journal",
+            exc,
+            started,
+            rel_path=rel_path,
+            heading=heading,
+        )
+    except ValueError as exc:
+        return _error_response(
+            "append_journal",
+            exc,
+            started,
+            rel_path=rel_path,
+            heading=heading,
+        )
+    except Exception:
+        _LOGGER.exception("append_journal failed (rel_path=%r heading=%r)", rel_path, heading)
+        return _error_response(
+            "append_journal",
+            RuntimeError("internal error"),
+            started,
+            rel_path=rel_path,
+            heading=heading,
+        )
+
+    payload: dict[str, Any] = {
+        "appended": {"rel_path": cleaned_rel_path, "heading": cleaned_heading},
+        "indexed": True,
+    }
+    _audit(
+        "append_journal",
+        started,
+        rel_path=cleaned_rel_path,
+        heading=cleaned_heading,
+        reindexed_notes=index_stats["reindexed_notes"],
+        deleted_notes=index_stats["deleted_notes"],
+    )
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -283,6 +531,129 @@ def _validate_get_note_request(
     if limit is not None and limit <= 0:
         return ValueError("limit must be > 0"), {"limit": limit}
     return None
+
+
+def _validate_memory_frontmatter(
+    *,
+    rel_path: str,
+    title: str,
+    body: str,
+    origin: str,
+    confidence: str,
+    tags: list[str],
+) -> dict[str, Any]:
+    cleaned_rel_path = rel_path.strip()
+    cleaned_title = title.strip()
+    cleaned_origin = origin.strip().lower()
+    cleaned_confidence = confidence.strip().lower()
+    cleaned_tags = _clean_string_list(tags)
+
+    if not cleaned_rel_path.endswith(".md"):
+        raise ValueError("rel_path must end with .md")
+    if not cleaned_title:
+        raise ValueError("title must not be empty")
+    if not body.strip():
+        raise ValueError("body must not be empty")
+    if cleaned_origin not in _MEMORY_ORIGINS:
+        raise ValueError(f"origin must be one of {sorted(_MEMORY_ORIGINS)}")
+    if cleaned_confidence not in _MEMORY_CONFIDENCE_LEVELS:
+        raise ValueError(f"confidence must be one of {sorted(_MEMORY_CONFIDENCE_LEVELS)}")
+    if not cleaned_tags:
+        raise ValueError("tags must not be empty")
+
+    return {
+        "rel_path": cleaned_rel_path,
+        "title": cleaned_title,
+        "origin": cleaned_origin,
+        "confidence": cleaned_confidence,
+        "tags": cleaned_tags,
+    }
+
+
+def _validate_append_journal_request(
+    *,
+    rel_path: str,
+    heading: str,
+    entry: str,
+) -> tuple[str, str, str]:
+    cleaned_rel_path = rel_path.strip()
+    cleaned_heading = heading.strip()
+    if not cleaned_rel_path.endswith(".md"):
+        raise ValueError("rel_path must end with .md")
+    if not cleaned_heading:
+        raise ValueError("heading must not be empty")
+    if not entry.strip():
+        raise ValueError("entry must not be empty")
+    return cleaned_rel_path, cleaned_heading, entry
+
+
+def _append_entry_to_heading(body: str, heading: str, entry: str) -> str:
+    lines = body.splitlines(keepends=True)
+    section = _find_heading_section(lines, heading)
+    if section is None:
+        suffix = "" if not body else "\n\n"
+        entry_block = entry if entry.endswith("\n") else f"{entry}\n"
+        return f"{body}{suffix}## {heading}\n\n{entry_block}"
+
+    _heading_index, _level, insert_at = section
+    prefix = "".join(lines[:insert_at])
+    suffix = "".join(lines[insert_at:])
+    block = _entry_block(entry, prefix=prefix, suffix=suffix)
+    return f"{prefix}{block}{suffix}"
+
+
+def _find_heading_section(lines: list[str], heading: str) -> tuple[int, int, int] | None:
+    for index, line in enumerate(lines):
+        parsed = _parse_heading_line(line)
+        if parsed is None:
+            continue
+        level, text = parsed
+        if text != heading:
+            continue
+        insert_at = len(lines)
+        for next_index in range(index + 1, len(lines)):
+            next_heading = _parse_heading_line(lines[next_index])
+            if next_heading is not None and next_heading[0] <= level:
+                insert_at = next_index
+                break
+        insert_at = _trim_trailing_blank_lines(lines, index + 1, insert_at)
+        return index, level, insert_at
+    return None
+
+
+def _trim_trailing_blank_lines(lines: list[str], start: int, end: int) -> int:
+    insert_at = end
+    while insert_at > start and not lines[insert_at - 1].strip():
+        insert_at -= 1
+    return insert_at
+
+
+def _parse_heading_line(line: str) -> tuple[int, str] | None:
+    match = _HEADING_HASH_PATTERN.match(line)
+    if match is None:
+        return None
+    level = len(match.group(1))
+    text = line[match.end() :].strip()
+    return level, text
+
+
+def _entry_block(entry: str, *, prefix: str, suffix: str) -> str:
+    leading = "" if not prefix else "\n\n" if not prefix.endswith("\n") else "\n"
+    entry_block = entry if entry.endswith("\n") else f"{entry}\n"
+    trailing = "" if not suffix or suffix.startswith("\n") else "\n"
+    return f"{leading}{entry_block}{trailing}"
+
+
+def _clean_string_list(values: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw_value in values:
+        value = str(raw_value).strip()
+        if not value or value in seen:
+            continue
+        cleaned.append(value)
+        seen.add(value)
+    return cleaned
 
 
 def _filter_by_tags(notes: list[Note], tags: list[str] | None) -> list[Note]:
@@ -324,11 +695,25 @@ async def _resolve_note(app: DatacronApp, id_or_path: str) -> Note | None:
         return None
 
     if _ULID_PATTERN.match(id_or_path):
-        for note in await app.vault_reader.list_notes():
-            if note.id == id_or_path:
-                return note
-        return None
+        return await _resolve_note_by_ulid(app, id_or_path)
     return await _read_note_by_rel_path(app, id_or_path)
+
+
+async def _resolve_note_by_ulid(app: DatacronApp, note_id: str) -> Note | None:
+    # Fast path: the index maps rel_path -> note_id without reading notes.
+    indexed = await app.store.list_indexed_notes_with_mtime()
+    for rel_path, (indexed_note_id, _hash, _mtime) in indexed.items():
+        if indexed_note_id == note_id:
+            try:
+                return await _read_note_by_rel_path(app, rel_path)
+            except FileNotFoundError:
+                break
+
+    # Fallback: fresh notes can exist on disk before the next reindex.
+    for note in await app.vault_reader.list_notes():
+        if note.id == note_id:
+            return note
+    return None
 
 
 async def _read_note_by_rel_path(app: DatacronApp, rel_path: str) -> Note:
@@ -431,6 +816,7 @@ async def _search_text_impl(
     *,
     query: str,
     limit: int,
+    include_superseded: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     cleaned = query.strip()
@@ -444,7 +830,16 @@ async def _search_text_impl(
     bounded_limit = _bounded_count(limit, app.settings.max_result_count)
     try:
         repair = await _repair_index_on_read(app)
-        raw_results = await app.store.search(cleaned, limit=bounded_limit)
+        raw_results = await app.store.search(
+            cleaned,
+            limit=bounded_limit * TEMPORAL_OVERFETCH_FACTOR,
+        )
+        temporal_meta = await app.store.list_temporal_metadata()
+        raw_results = rerank_temporal(
+            raw_results,
+            temporal_meta,
+            include_superseded=include_superseded,
+        )[:bounded_limit]
     except Exception:
         _LOGGER.exception("search_text failed (query=%r)", query)
         return _error_response("search_text", RuntimeError("internal error"), started, query=query)
@@ -468,6 +863,7 @@ async def _search_text_impl(
         limit=limit,
         bounded_limit=bounded_limit,
         returned=len(results),
+        include_superseded=include_superseded,
         reindexed_notes=repair["reindexed_notes"],
         deleted_notes=repair["deleted_notes"],
         truncated_for_tokens=truncated_for_tokens,
@@ -512,6 +908,15 @@ async def _search_regex_impl(
         )
     except FileNotFoundError as exc:
         return _error_response("search_regex", exc, started, pattern=pattern, glob=glob)
+    except RipgrepError as exc:
+        message = exc.stderr.strip() or str(exc)
+        return _error_response(
+            "search_regex",
+            ValueError(f"pattern rejected by ripgrep: {message}"),
+            started,
+            pattern=pattern,
+            glob=glob,
+        )
     except Exception:
         _LOGGER.exception("search_regex failed (pattern=%r glob=%r)", pattern, glob)
         return _error_response(

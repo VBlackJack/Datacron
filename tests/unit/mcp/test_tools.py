@@ -9,11 +9,15 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from datacron.core.config import Settings
+from datacron.core.frontmatter import parse, serialize
+from datacron.core.models import Note
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.mcp.server import DatacronApp, build_app
@@ -45,6 +49,68 @@ def small_app(tmp_vault: Path) -> DatacronApp:
         get_note_max_tokens=50,
     )
     return build_app(settings=settings, vault_root=tmp_vault, chunker=MarkdownChunker())
+
+
+@pytest.fixture
+async def app_with_open_store(tmp_vault: Path) -> AsyncIterator[DatacronApp]:
+    settings = Settings(
+        read_paths=[tmp_vault],
+        vault_root=tmp_vault,
+        max_result_count=20,
+        max_result_tokens=8000,
+    )
+    store = SQLiteFTS5Store()
+    await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+    try:
+        yield build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+    finally:
+        await store.close()
+
+
+@pytest.fixture
+async def writable_app(tmp_vault: Path) -> AsyncIterator[DatacronApp]:
+    settings = Settings(
+        read_paths=[tmp_vault],
+        write_paths=[tmp_vault],
+        vault_root=tmp_vault,
+        max_result_count=20,
+        max_result_tokens=8000,
+    )
+    store = SQLiteFTS5Store()
+    await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+    try:
+        yield build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+    finally:
+        await store.close()
+
+
+def _write_memory_note(vault_root: Path, rel_path: str, body: str) -> tuple[Path, str]:
+    metadata: dict[str, Any] = {
+        "id": "01HQXR7K9YZ8M2N3PQRSTV4WX5",
+        "title": "Journaled memory",
+        "created": "2026-01-01T00:00:00+00:00",
+        "updated": "2026-01-01T00:00:00+00:00",
+        "origin": "ai",
+        "confidence": "high",
+        "last_verified": "2026-01-01",
+        "supersedes": [],
+        "tags": ["memory"],
+    }
+    target = vault_root / rel_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    raw = serialize(metadata, body)
+    target.write_text(raw, encoding="utf-8")
+    return target, raw
 
 
 class TestListNotes:
@@ -198,21 +264,56 @@ class TestGetNoteFull:
         assert result["id"] == note.id
 
     @pytest.mark.asyncio
-    async def test_full_accepts_ulid(self, app: DatacronApp) -> None:
+    async def test_full_accepts_indexed_ulid_without_scanning(
+        self,
+        app_with_open_store: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         from datacron.mcp.tools import _get_note_impl
 
-        # Build the id by reading once, then re-querying by id
-        first = await _get_note_impl(app, id_or_path="welcome.md", fmt="full")
-        by_id = await _get_note_impl(app, id_or_path=first["id"], fmt="full")
-        assert by_id["rel_path"] == "welcome.md"
-        assert by_id["id"] == first["id"]
+        note = await app_with_open_store.vault_reader.read_note(tmp_vault / "welcome.md")
+        chunks = app_with_open_store.chunker.chunk(note)
+        await app_with_open_store.store.upsert_note(note, chunks)
+
+        calls = {"n": 0}
+        original_list_notes = app_with_open_store.vault_reader.list_notes
+
+        async def counting_list_notes(
+            folder: str | None = None,
+            limit: int | None = None,
+        ) -> list[Note]:
+            calls["n"] += 1
+            return await original_list_notes(folder=folder, limit=limit)
+
+        monkeypatch.setattr(app_with_open_store.vault_reader, "list_notes", counting_list_notes)
+
+        result = await _get_note_impl(app_with_open_store, id_or_path=note.id, fmt="full")
+
+        assert result["rel_path"] == "welcome.md"
+        assert result["id"] == note.id
+        assert calls["n"] == 0
 
     @pytest.mark.asyncio
-    async def test_unknown_ulid_returns_error(self, app: DatacronApp) -> None:
+    async def test_full_accepts_unindexed_ulid_by_scan_fallback(
+        self, app_with_open_store: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _get_note_impl
+
+        note = await app_with_open_store.vault_reader.read_note(tmp_vault / "welcome.md")
+        assert await app_with_open_store.store.list_indexed_notes_with_mtime() == {}
+
+        result = await _get_note_impl(app_with_open_store, id_or_path=note.id, fmt="full")
+
+        assert result["rel_path"] == "welcome.md"
+        assert result["id"] == note.id
+
+    @pytest.mark.asyncio
+    async def test_unknown_ulid_returns_error(self, app_with_open_store: DatacronApp) -> None:
         from datacron.mcp.tools import _get_note_impl
 
         bogus = "01ZZZZZZZZZZZZZZZZZZZZZZZZ"
-        result = await _get_note_impl(app, id_or_path=bogus, fmt="full")
+        result = await _get_note_impl(app_with_open_store, id_or_path=bogus, fmt="full")
         assert "error" in result
         assert result["error"]["type"] == "FileNotFoundError"
 
@@ -257,6 +358,360 @@ class TestGetNoteMap:
         result = await _get_note_impl(app, id_or_path="empty.md", fmt="map")
         assert result["headings"] == []
         assert result["chunk_count"] >= 1
+
+
+class TestCreateNoteAi:
+    @pytest.mark.asyncio
+    async def test_creates_typed_note_and_indexes_it_immediately(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.core.frontmatter import parse
+        from datacron.mcp.tools import _create_note_ai_impl, _get_note_impl, _search_text_impl
+
+        rel_path = "_memory/facts/generated.md"
+        result = await _create_note_ai_impl(
+            writable_app,
+            rel_path=rel_path,
+            title="Generated memory",
+            body="# Generated memory\n\nThe durabletoken fact is stored here.\n",
+            origin="ai",
+            confidence="high",
+            tags=["memory", "datacron"],
+        )
+
+        assert result["created"]["rel_path"] == rel_path
+        assert result["created"]["title"] == "Generated memory"
+        assert len(result["created"]["id"]) == 26
+        assert result["indexed"] is True
+
+        raw = (tmp_vault / rel_path).read_text(encoding="utf-8")
+        metadata, body = parse(raw)
+        assert metadata["id"] == result["created"]["id"]
+        assert metadata["title"] == "Generated memory"
+        assert metadata["origin"] == "ai"
+        assert metadata["confidence"] == "high"
+        assert metadata["tags"] == ["memory", "datacron"]
+        assert metadata["supersedes"] == []
+        assert isinstance(metadata["created"], str)
+        assert metadata["created"] == metadata["updated"]
+        assert isinstance(metadata["last_verified"], str)
+        assert "durabletoken" in body
+
+        search = await _search_text_impl(writable_app, query="durabletoken", limit=5)
+        assert "error" not in search
+        assert any(item["note_rel_path"] == rel_path for item in search["results"])
+
+        fetched = await _get_note_impl(writable_app, id_or_path=rel_path, fmt="full")
+        assert fetched["id"] == result["created"]["id"]
+        assert fetched["rel_path"] == rel_path
+
+    @pytest.mark.asyncio
+    async def test_writes_off_returns_structured_error_without_creating_file(
+        self, app_with_open_store: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _create_note_ai_impl
+
+        rel_path = "_memory/facts/denied.md"
+        result = await _create_note_ai_impl(
+            app_with_open_store,
+            rel_path=rel_path,
+            title="Denied",
+            body="Denied body",
+            origin="ai",
+            confidence="high",
+            tags=["memory"],
+        )
+
+        assert result["error"]["type"] == "PathConfinementError"
+        assert "writes disabled" in result["error"]["message"]
+        assert not (tmp_vault / rel_path).exists()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("field", "value", "message"),
+        [
+            ("origin", "bogus", "origin must be one of"),
+            ("confidence", "bogus", "confidence must be one of"),
+            ("tags", [], "tags must not be empty"),
+            ("rel_path", "_memory/facts/no-extension", "rel_path must end with .md"),
+        ],
+    )
+    async def test_validation_errors_are_structured_and_do_not_write(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        field: str,
+        value: object,
+        message: str,
+    ) -> None:
+        from datacron.mcp.tools import _create_note_ai_impl
+
+        payload: dict[str, Any] = {
+            "rel_path": "_memory/facts/invalid.md",
+            "title": "Invalid",
+            "body": "Invalid body",
+            "origin": "ai",
+            "confidence": "high",
+            "tags": ["memory"],
+        }
+        payload[field] = value
+
+        result = await _create_note_ai_impl(writable_app, **payload)
+
+        assert result["error"]["type"] == "ValueError"
+        assert message in result["error"]["message"]
+        assert not (tmp_vault / "_memory" / "facts" / "invalid.md").exists()
+        assert not (tmp_vault / "_memory" / "facts" / "no-extension").exists()
+
+    @pytest.mark.asyncio
+    async def test_create_never_clobbers_existing_note(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _create_note_ai_impl
+
+        rel_path = "_memory/facts/existing.md"
+        target = tmp_vault / rel_path
+        target.parent.mkdir(parents=True)
+        target.write_text("original\n", encoding="utf-8")
+
+        result = await _create_note_ai_impl(
+            writable_app,
+            rel_path=rel_path,
+            title="Existing",
+            body="New body",
+            origin="ai",
+            confidence="high",
+            tags=["memory"],
+        )
+
+        assert result["error"]["type"] == "FileExistsError"
+        assert "already exists" in result["error"]["message"]
+        assert target.read_text(encoding="utf-8") == "original\n"
+
+    @pytest.mark.asyncio
+    async def test_write_outside_write_roots_returns_structured_error(
+        self, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _create_note_ai_impl
+
+        allowed = tmp_vault / "_memory"
+        allowed.mkdir()
+        settings = Settings(
+            read_paths=[tmp_vault],
+            write_paths=[allowed],
+            vault_root=tmp_vault,
+            max_result_count=20,
+            max_result_tokens=8000,
+        )
+        store = SQLiteFTS5Store()
+        await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+        app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+        try:
+            result = await _create_note_ai_impl(
+                app,
+                rel_path="elsewhere/blocked.md",
+                title="Blocked",
+                body="Blocked body",
+                origin="ai",
+                confidence="high",
+                tags=["memory"],
+            )
+        finally:
+            await store.close()
+
+        assert result["error"]["type"] == "PathConfinementError"
+        assert "outside the allowed write roots" in result["error"]["message"]
+        assert not (tmp_vault / "elsewhere" / "blocked.md").exists()
+
+
+class TestAppendJournal:
+    @pytest.mark.asyncio
+    async def test_appends_to_existing_heading_and_reindexes(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _append_journal_impl, _search_text_impl
+
+        rel_path = "_memory/facts/journal.md"
+        body = (
+            "# Journaled memory\n\n"
+            "Intro block.\n\n"
+            "## Journal\n\n"
+            "Old entry.\n\n"
+            "## Later\n\n"
+            "Tail block.\n"
+        )
+        target, original_raw = _write_memory_note(tmp_vault, rel_path, body)
+        original_metadata, original_body = parse(original_raw)
+
+        result = await _append_journal_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Journal",
+            entry="- durableappend entry\n  continuation",
+        )
+
+        assert result["appended"] == {"rel_path": rel_path, "heading": "Journal"}
+        assert result["indexed"] is True
+
+        new_metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        original_without_updated = dict(original_metadata)
+        original_updated = original_without_updated.pop("updated")
+        new_without_updated = dict(new_metadata)
+        new_updated = new_without_updated.pop("updated")
+
+        assert new_without_updated == original_without_updated
+        assert new_updated != original_updated
+        assert new_body == original_body.replace(
+            "Old entry.\n\n## Later",
+            "Old entry.\n\n- durableappend entry\n  continuation\n\n## Later",
+        )
+
+        search = await _search_text_impl(writable_app, query="durableappend", limit=5)
+        assert "error" not in search
+        assert any(item["note_rel_path"] == rel_path for item in search["results"])
+
+    @pytest.mark.asyncio
+    async def test_missing_heading_is_created_at_end(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _append_journal_impl
+
+        rel_path = "_memory/facts/new-heading.md"
+        target, _original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\nIntro block.\n",
+        )
+
+        result = await _append_journal_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Decisions",
+            entry="- absent heading entry",
+        )
+
+        assert result["appended"] == {"rel_path": rel_path, "heading": "Decisions"}
+        _metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        assert new_body.endswith("\n\n## Decisions\n\n- absent heading entry")
+
+    @pytest.mark.asyncio
+    async def test_append_snapshots_previous_version(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _append_journal_impl
+
+        rel_path = "_memory/facts/backup.md"
+        _target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\n## Journal\n\nBefore backup.\n",
+        )
+
+        result = await _append_journal_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Journal",
+            entry="- backup durable entry",
+        )
+
+        assert result["indexed"] is True
+        backup_dir = tmp_vault / ".datacron" / "backups" / "_memory" / "facts" / "backup.md"
+        backups = list(backup_dir.glob("*.bak"))
+        assert len(backups) == 1
+        assert backups[0].read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
+    async def test_missing_note_returns_structured_error_without_creating_file(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _append_journal_impl
+
+        rel_path = "_memory/facts/missing.md"
+        result = await _append_journal_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Journal",
+            entry="- should not write",
+        )
+
+        assert result["error"]["type"] == "FileNotFoundError"
+        assert (
+            "note not found at _memory/facts/missing.md; use create_note_ai"
+            in result["error"]["message"]
+        )
+        assert not (tmp_vault / rel_path).exists()
+
+    @pytest.mark.asyncio
+    async def test_writes_off_returns_clear_error_and_leaves_file_intact(
+        self, app_with_open_store: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _append_journal_impl
+
+        rel_path = "_memory/facts/writes-off.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\n## Journal\n\nProtected.\n",
+        )
+
+        result = await _append_journal_impl(
+            app_with_open_store,
+            rel_path=rel_path,
+            heading="Journal",
+            entry="- denied entry",
+        )
+
+        assert result["error"]["type"] == "PathConfinementError"
+        assert "writes disabled — set DATACRON_WRITE_PATHS" in result["error"]["message"]
+        assert target.read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
+    async def test_append_outside_write_roots_returns_error_and_leaves_file_intact(
+        self, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _append_journal_impl
+
+        rel_path = "elsewhere/blocked.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\n## Journal\n\nBlocked.\n",
+        )
+        allowed = tmp_vault / "_memory"
+        allowed.mkdir(exist_ok=True)
+        settings = Settings(
+            read_paths=[tmp_vault],
+            write_paths=[allowed],
+            vault_root=tmp_vault,
+            max_result_count=20,
+            max_result_tokens=8000,
+        )
+        store = SQLiteFTS5Store()
+        await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+        app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+        try:
+            result = await _append_journal_impl(
+                app,
+                rel_path=rel_path,
+                heading="Journal",
+                entry="- denied entry",
+            )
+        finally:
+            await store.close()
+
+        assert result["error"]["type"] == "PathConfinementError"
+        assert "outside the allowed write roots" in result["error"]["message"]
+        assert target.read_text(encoding="utf-8") == original_raw
 
 
 class TestAudit:

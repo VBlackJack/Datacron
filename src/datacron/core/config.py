@@ -29,10 +29,15 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from datacron.core.query_expansion import default_query_expansion, normalize_term_map
+
 DEFAULT_LOG_LEVEL: Final[str] = "INFO"
 DEFAULT_LOG_DIR: Final[Path] = Path.home() / ".datacron" / "logs"
 DEFAULT_MAX_RESULT_TOKENS: Final[int] = 8000
 DEFAULT_MAX_RESULT_COUNT: Final[int] = 20
+TEMPORAL_OVERFETCH_FACTOR: Final[int] = 3
+SUPERSEDED_DEMOTION_FACTOR: Final[float] = 0.1
+CONFIDENCE_PENALTY: Final[dict[str, float]] = {"low": 0.7, "needs_verification": 0.5}
 DEFAULT_RIPGREP_PATH: Final[str] = "rg"
 DEFAULT_CHUNK_MAX_TOKENS: Final[int] = 1024
 # get_note(full) budget, decoupled from the search budget (max_result_tokens).
@@ -74,6 +79,7 @@ class VaultConfig(BaseModel):
     folders: dict[str, str] = Field(default_factory=dict)
     excluded_folders: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FOLDERS))
     excluded_files: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FILES))
+    query_expansion: dict[str, list[str]] = Field(default_factory=default_query_expansion)
 
     @field_validator("excluded_folders", mode="before")
     @classmethod
@@ -92,6 +98,23 @@ class VaultConfig(BaseModel):
         if not isinstance(value, list):
             raise TypeError("excluded_files must be a list of file names")
         return [str(item).strip() for item in value if str(item).strip()]
+
+    @field_validator("query_expansion", mode="before")
+    @classmethod
+    def _normalize_query_expansion(cls, value: object) -> dict[str, list[str]]:
+        if value is None or value == "":
+            return default_query_expansion()
+        if not isinstance(value, dict):
+            raise TypeError("query_expansion must be a mapping of terms to term lists")
+        raw_map: dict[str, list[str]] = {}
+        for raw_term, raw_equivalents in value.items():
+            if not isinstance(raw_equivalents, list):
+                raise TypeError("query_expansion values must be lists of terms")
+            term = str(raw_term).strip()
+            if not term:
+                continue
+            raw_map[term] = [str(item).strip() for item in raw_equivalents if str(item).strip()]
+        return normalize_term_map(raw_map)
 
 
 def load_vault_config(path: Path) -> VaultConfig | None:
@@ -141,6 +164,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default=DEFAULT_LOG_LEVEL)
     log_dir: Path = Field(default=DEFAULT_LOG_DIR)
     read_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
+    write_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
     vault_root: Path | None = Field(default=None)
     max_result_tokens: int = Field(default=DEFAULT_MAX_RESULT_TOKENS, ge=1)
     max_result_count: int = Field(default=DEFAULT_MAX_RESULT_COUNT, ge=1)
@@ -176,6 +200,15 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return _split_path_list(value)
         raise TypeError(f"Unsupported type for read_paths: {type(value).__name__}")
+
+    @field_validator("write_paths", mode="before")
+    @classmethod
+    def _parse_write_paths(cls, value: object) -> list[Path]:
+        if value is None or isinstance(value, str):
+            return _split_path_list(value)
+        if isinstance(value, list):
+            return _split_path_list(value)
+        raise TypeError(f"Unsupported type for write_paths: {type(value).__name__}")
 
     @field_validator("vault_root", mode="before")
     @classmethod

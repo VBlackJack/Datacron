@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import fnmatch
 import json
 import os
@@ -31,11 +32,21 @@ from datacron.core.models import Chunk, SearchResult
 from datacron.core.protocols import FTS5Store
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 
-__all__ = ["RipgrepWrapper"]
+__all__ = ["RipgrepError", "RipgrepWrapper"]
 
 _LOGGER = get_logger(__name__)
 _RIPGREP_PATH_ENV: Final[str] = "DATACRON_RIPGREP_PATH"
 _NO_MATCH_RETURN_CODE: Final[int] = 1
+
+
+class RipgrepError(RuntimeError):
+    """Raised when ripgrep exits with an error status."""
+
+    def __init__(self, returncode: int | None, stderr: str) -> None:
+        self.returncode = returncode
+        self.stderr = stderr
+        message = stderr.strip() or "(no stderr)"
+        super().__init__(f"ripgrep exited with status {returncode}: {message}")
 
 
 @final
@@ -85,6 +96,7 @@ class RipgrepWrapper:
 
         stderr_task = asyncio.create_task(proc.stderr.read())
         killed_for_limit = False
+        stderr = ""
 
         try:
             results, killed_for_limit = await _collect_results(
@@ -93,15 +105,18 @@ class RipgrepWrapper:
                 store=store,
                 limit=limit,
             )
-        finally:
             if killed_for_limit and proc.returncode is None:
                 proc.kill()
-                await proc.wait()
-
-        if not killed_for_limit:
             await proc.wait()
-
-        stderr = await _read_stderr(stderr_task)
+            stderr = await _read_stderr(stderr_task)
+        finally:
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            if not stderr_task.done():
+                stderr_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await stderr_task
         if killed_for_limit:
             return results
         if proc.returncode not in (0, _NO_MATCH_RETURN_CODE):
@@ -110,7 +125,7 @@ class RipgrepWrapper:
                 proc.returncode,
                 stderr.strip() or "(no stderr)",
             )
-            return []
+            raise RipgrepError(proc.returncode, stderr)
         return results
 
 
@@ -152,7 +167,7 @@ def _build_command(
     command = [rg_path, "--json", "--max-count", str(limit)]
     if glob:
         command.extend(["--glob", glob])
-    command.extend([pattern, str(vault_root)])
+    command.extend(["--", pattern, str(vault_root)])
     return command
 
 

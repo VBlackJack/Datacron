@@ -42,12 +42,17 @@ class TestDefaults:
         assert settings.chunk_max_tokens == DEFAULT_CHUNK_MAX_TOKENS
         assert settings.get_note_max_tokens == DEFAULT_GET_NOTE_MAX_TOKENS
         assert settings.read_paths == []
+        assert settings.write_paths == []
         assert settings.vault_root is None
 
     def test_vault_config_excluded_folders_default(self) -> None:
         config = VaultConfig()
         assert config.excluded_folders == list(DEFAULT_EXCLUDED_FOLDERS)
         assert config.excluded_files == list(DEFAULT_EXCLUDED_FILES)
+        assert config.query_expansion["supervision"] == ["monitoring"]
+        assert config.query_expansion["monitoring"] == ["supervision"]
+        assert config.query_expansion["validité"] == ["validity"]
+        assert config.query_expansion["certificate"] == ["certificat"]
 
 
 class TestEnvLoading:
@@ -90,6 +95,20 @@ class TestEnvLoading:
         monkeypatch.setenv("DATACRON_READ_PATHS", os.pathsep + str(only) + os.pathsep)
         settings = Settings()
         assert settings.read_paths == [only.resolve()]
+
+    def test_write_paths_split_by_os_sep(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        first = tmp_path / "a"
+        second = tmp_path / "b"
+        first.mkdir()
+        second.mkdir()
+        raw = os.pathsep.join([str(first), str(second)])
+        monkeypatch.setenv("DATACRON_WRITE_PATHS", raw)
+        settings = Settings()
+        assert settings.write_paths == [first.resolve(), second.resolve()]
 
     def test_vault_root_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("DATACRON_VAULT_ROOT", str(tmp_path))
@@ -138,6 +157,32 @@ excluded_files:
         assert config is not None
         assert config.excluded_folders == ["_attachments", "custom-trash"]
         assert config.excluded_files == ["00_INDEX.md", "custom-index.md"]
+
+    def test_load_vault_config_symmetrizes_query_expansion(self, tmp_path: Path) -> None:
+        path = tmp_path / "VAULT.yaml"
+        path.write_text(
+            """
+query_expansion:
+  supervision:
+    - monitoring
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        config = load_vault_config(path)
+
+        assert config is not None
+        assert config.query_expansion["supervision"] == ["monitoring"]
+        assert config.query_expansion["monitoring"] == ["supervision"]
+
+    def test_load_vault_config_keeps_explicit_empty_query_expansion(self, tmp_path: Path) -> None:
+        path = tmp_path / "VAULT.yaml"
+        path.write_text("query_expansion: {}\n", encoding="utf-8")
+
+        config = load_vault_config(path)
+
+        assert config is not None
+        assert config.query_expansion == {}
 
 
 class TestSingleton:
