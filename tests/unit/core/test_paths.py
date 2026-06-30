@@ -66,10 +66,24 @@ class TestSettingsBacked:
         nested.write_text("x", encoding="utf-8")
         assert assert_within_read_paths(nested, settings=settings) == nested.resolve()
 
-    def test_write_paths_phase0_denies_all(self, tmp_path: Path) -> None:
-        settings = Settings(read_paths=[tmp_path])
-        with pytest.raises(PathConfinementError):
+    def test_write_paths_empty_denies_all(self, tmp_path: Path) -> None:
+        settings = Settings(write_paths=[])
+        with pytest.raises(PathConfinementError, match="No write paths are configured"):
             assert_within_write_paths(tmp_path / "anywhere.md", settings=settings)
+
+    def test_write_paths_allowed(self, tmp_path: Path) -> None:
+        settings = Settings(write_paths=[tmp_path])
+        nested = tmp_path / "note.md"
+        assert assert_within_write_paths(nested, settings=settings) == nested.resolve()
+
+    def test_write_paths_rejected_outside_roots(self, tmp_path: Path) -> None:
+        allowed = tmp_path / "allowed"
+        outside = tmp_path / "outside"
+        allowed.mkdir()
+        outside.mkdir()
+        settings = Settings(write_paths=[allowed])
+        with pytest.raises(PathConfinementError, match="outside the allowed write roots"):
+            assert_within_write_paths(outside / "note.md", settings=settings)
 
 
 class TestSidecarHelpers:

@@ -45,6 +45,7 @@ from datacron.core.models import (
     SearchResult,
     Wikilink,
 )
+from datacron.core.temporal import TemporalMeta
 
 __all__ = [
     "ASTChunker",
@@ -52,6 +53,7 @@ __all__ = [
     "FTS5Store",
     "RipgrepWrapper",
     "VaultReader",
+    "VaultWriter",
     "WikilinksExtractor",
 ]
 
@@ -158,6 +160,10 @@ class FTS5Store(Protocol):
         """
         ...
 
+    async def list_temporal_metadata(self) -> dict[str, TemporalMeta]:
+        """Return explicit retrieval lifecycle metadata keyed by note_id."""
+        ...
+
     def iter_all_chunks(self) -> AsyncIterator[Chunk]:
         """Stream all indexed chunks in insertion/document order."""
         ...
@@ -255,4 +261,13 @@ class VaultReader(Protocol):
 
     async def resolve_alias(self, alias: str) -> str | None:
         """Return the matching note's ULID, or ``None``."""
+        ...
+
+
+@runtime_checkable
+class VaultWriter(Protocol):
+    """Writes notes through confined, reversible filesystem primitives."""
+
+    async def write_note_atomic(self, rel_path: str, content: str, *, overwrite: bool) -> None:
+        """Write Markdown content under the bound vault root atomically."""
         ...

@@ -116,14 +116,9 @@ def assert_within_read_paths(path: Path, settings: Settings | None = None) -> Pa
 
 
 def assert_within_write_paths(path: Path, settings: Settings | None = None) -> Path:
-    """Validate ``path`` against the configured write roots.
-
-    Phase-0 stub: no write paths are configured by default, so any call raises
-    :class:`PathConfinementError`. The function exists so MCP write tools added
-    in v0.2 can plug in without changing call sites.
-    """
-    _ = settings or get_settings()
-    return assert_within_paths(path, [], kind="write")
+    """Validate ``path`` against ``DATACRON_WRITE_PATHS``."""
+    resolved_settings = settings or get_settings()
+    return assert_within_paths(path, resolved_settings.write_paths, kind="write")
 
 
 def sidecar_dir(vault_root: Path) -> Path:

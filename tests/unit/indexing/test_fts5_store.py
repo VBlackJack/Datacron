@@ -24,6 +24,7 @@ import aiosqlite
 import pytest
 
 from datacron.core.models import Chunk, ChunkType, Note
+from datacron.core.temporal import TemporalMeta
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 
 NoteFactory = Callable[..., Note]
@@ -284,6 +285,107 @@ async def test_search_empty_query_and_non_positive_limit_are_empty(tmp_path: Pat
     await store.close()
 
 
+async def test_search_with_empty_query_expansion_matches_default(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    note = note_factory(id=_NOTE_ID, rel_path="welcome.md")
+    first = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::::0000",
+        content="alpha beta",
+    )
+    second = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::::0001",
+        content="alpha only",
+        ordinal=1,
+    )
+    default_store = SQLiteFTS5Store()
+    empty_map_store = SQLiteFTS5Store(term_map={})
+    await default_store.open(tmp_path / "default" / "datacron.db")
+    await empty_map_store.open(tmp_path / "empty-map" / "datacron.db")
+
+    await default_store.upsert_note(note, [first, second])
+    await empty_map_store.upsert_note(note, [first, second])
+
+    default_results = await default_store.search("alpha beta", limit=5)
+    empty_map_results = await empty_map_store.search("alpha beta", limit=5)
+
+    assert empty_map_results == default_results
+    await default_store.close()
+    await empty_map_store.close()
+
+
+async def test_search_expands_curated_terms_at_query_time(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    note = note_factory(id=_NOTE_ID, rel_path="monitoring.md")
+    chunk = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::::0000",
+        content="OSCARE monitoring guide",
+    )
+    plain_store = SQLiteFTS5Store()
+    expanded_store = SQLiteFTS5Store(term_map={"supervision": ["monitoring"]})
+    await plain_store.open(tmp_path / "plain" / "datacron.db")
+    await expanded_store.open(tmp_path / "expanded" / "datacron.db")
+
+    await plain_store.upsert_note(note, [chunk])
+    await expanded_store.upsert_note(note, [chunk])
+
+    assert await plain_store.search("supervision", limit=5) == []
+    expanded_results = await expanded_store.search("supervision", limit=5)
+
+    assert [result.chunk for result in expanded_results] == [chunk]
+    await plain_store.close()
+    await expanded_store.close()
+
+
+async def test_search_expansion_keeps_multi_term_queries_precise(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    note = note_factory(id=_NOTE_ID, rel_path="monitoring.md")
+    target = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::target::0000",
+        content="OSCARE monitoring setup",
+    )
+    monitoring_only = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::monitoring::0001",
+        content="monitoring alerts",
+        ordinal=1,
+    )
+    oscare_only = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::oscare::0002",
+        content="OSCARE onboarding",
+        ordinal=2,
+    )
+    unrelated = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::unrelated::0003",
+        content="backup restore",
+        ordinal=3,
+    )
+    store = SQLiteFTS5Store(term_map={"supervision": ["monitoring"]})
+    await store.open(_db_path(tmp_path))
+
+    await store.upsert_note(note, [target, monitoring_only, oscare_only, unrelated])
+    results = await store.search("supervision oscare", limit=10)
+
+    assert results[0].chunk == target
+    assert unrelated not in [result.chunk for result in results]
+    assert len(results) < 4
+    await store.close()
+
+
 async def test_search_multi_term_query_preserves_and_when_hits_exist(
     tmp_path: Path,
     note_factory: NoteFactory,
@@ -435,6 +537,32 @@ async def test_upsert_stores_and_lists_fs_mtime(
     await store.upsert_note(note, [chunk])
     assert await store.list_indexed_notes_with_mtime() == {
         "welcome.md": (_NOTE_ID, note.content_hash, None)
+    }
+    await store.close()
+
+
+async def test_list_temporal_metadata_reads_frontmatter_json(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    current = note_factory(
+        id=_NOTE_ID,
+        rel_path="current.md",
+        frontmatter={"confidence": "low", "supersedes": [_OTHER_NOTE_ID, ""]},
+    )
+    current_chunk = chunk_factory(note=current, chunk_id=f"{current.id}::::0000")
+    plain = note_factory(id=_OTHER_NOTE_ID, rel_path="plain.md", frontmatter={})
+    plain_chunk = chunk_factory(note=plain, chunk_id=f"{plain.id}::::0000")
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+
+    await store.upsert_note(current, [current_chunk])
+    await store.upsert_note(plain, [plain_chunk])
+
+    assert await store.list_temporal_metadata() == {
+        _NOTE_ID: TemporalMeta(confidence="low", supersedes=[_OTHER_NOTE_ID]),
+        _OTHER_NOTE_ID: TemporalMeta(confidence=None, supersedes=[]),
     }
     await store.close()
 

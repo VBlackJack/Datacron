@@ -66,10 +66,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: No shell scripts to check
+        if: hashFiles('scripts/**/*.sh') == ''
+        run: echo "No shell scripts found under scripts/."
       - name: Run ShellCheck
+        if: hashFiles('scripts/**/*.sh') != ''
         uses: ludeeus/action-shellcheck@2.0.0
         with:
           severity: warning
           scandir: ./scripts
           ignore_paths: ""
-        continue-on-error: true

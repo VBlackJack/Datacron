@@ -27,7 +27,7 @@ import pytest
 
 from datacron.core.models import Chunk, Note
 from datacron.indexing.fts5_store import SQLiteFTS5Store
-from datacron.indexing.ripgrep import RipgrepWrapper
+from datacron.indexing.ripgrep import RipgrepError, RipgrepWrapper, _build_command
 
 NoteFactory = Callable[..., Note]
 ChunkFactory = Callable[..., Chunk]
@@ -85,6 +85,26 @@ class _FakeProcess:
         if self.returncode is None:
             self.returncode = self._final_returncode
         return self.returncode
+
+
+class _PendingStderr:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cancelled = False
+        self.finished = False
+        self.task: asyncio.Task[Any] | None = None
+
+    async def read(self) -> bytes:
+        self.task = asyncio.current_task()
+        self.started.set()
+        never: asyncio.Future[bytes] = asyncio.Future()
+        try:
+            return await never
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        finally:
+            self.finished = True
 
 
 class _LoggerSpy:
@@ -203,6 +223,24 @@ def _install_process(
     return calls
 
 
+def test_build_command_inserts_separator_before_dash_pattern() -> None:
+    vault_root = Path("/v")
+
+    command = _build_command("rg", "-foo", vault_root, glob=None, limit=20)
+
+    assert command == ["rg", "--json", "--max-count", "20", "--", "-foo", str(vault_root)]
+
+
+def test_build_command_places_separator_after_glob_options() -> None:
+    vault_root = Path("/v")
+
+    command = _build_command("rg", "-foo", vault_root, glob="*.md", limit=20)
+    separator_index = command.index("--")
+
+    assert command[separator_index - 2 : separator_index] == ["--glob", "*.md"]
+    assert command[separator_index + 1 :] == ["-foo", str(vault_root)]
+
+
 async def test_happy_path_resolves_three_matches_across_two_files(
     indexed: _IndexedFixture,
     monkeypatch: pytest.MonkeyPatch,
@@ -253,6 +291,35 @@ async def test_limit_enforcement_kills_process_after_limit(
     assert process.killed is True
     process.kill.assert_called_once_with()
     process.wait.assert_awaited_once()
+
+
+async def test_process_and_stderr_task_are_cleaned_up_when_collection_raises(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import datacron.indexing.ripgrep as ripgrep_module
+
+    process = _FakeProcess([])
+    pending_stderr = _PendingStderr()
+    process.stderr.read = pending_stderr.read
+    _install_process(monkeypatch, process)
+
+    async def _raise_after_stderr_task_starts(**_kwargs: object) -> tuple[list[object], bool]:
+        await asyncio.sleep(0)
+        raise RuntimeError("collect failed")
+
+    monkeypatch.setattr(ripgrep_module, "_collect_results", _raise_after_stderr_task_starts)
+
+    with pytest.raises(RuntimeError, match="collect failed"):
+        await RipgrepWrapper().search("kafka", indexed.vault_root, store=indexed.store)
+
+    process.kill.assert_called_once_with()
+    process.wait.assert_awaited_once()
+    assert process.returncode is not None
+    assert pending_stderr.cancelled is True
+    assert pending_stderr.finished is True
+    assert pending_stderr.task is not None
+    assert pending_stderr.task.done()
 
 
 async def test_no_matches_exit_code_one_returns_empty(
@@ -326,7 +393,7 @@ async def test_fallback_honors_glob_limit_score_and_snippet(
     assert scoped[0].snippet == "Beta **intro**"
 
 
-async def test_rg_error_exit_returns_empty_and_logs_warning(
+async def test_rg_error_exit_raises_typed_error_and_logs_warning(
     indexed: _IndexedFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -342,7 +409,12 @@ async def test_rg_error_exit_returns_empty_and_logs_warning(
     )
     _install_process(monkeypatch, process)
 
-    assert await RipgrepWrapper().search("(", indexed.vault_root, store=indexed.store) == []
+    with pytest.raises(RipgrepError) as exc_info:
+        await RipgrepWrapper().search("(", indexed.vault_root, store=indexed.store)
+
+    assert exc_info.value.returncode == 2
+    assert exc_info.value.stderr == "regex parse error"
+    assert str(exc_info.value) == "ripgrep exited with status 2: regex parse error"
     assert logger.warning_calls
     assert logger.warning_calls[0][1][0] == 2
     assert logger.warning_calls[0][1][1] == "regex parse error"
@@ -409,8 +481,9 @@ async def test_glob_filter_is_passed_to_subprocess(
     )
 
     command = calls[0][0]
-    assert command[:7] == ("rg", "--json", "--max-count", "7", "--glob", "*.md", "kafka")
-    assert command[7] == str(indexed.vault_root)
+    assert command[:7] == ("rg", "--json", "--max-count", "7", "--glob", "*.md", "--")
+    assert command[7] == "kafka"
+    assert command[8] == str(indexed.vault_root)
 
 
 async def test_invalid_utf8_json_line_is_skipped(

@@ -68,6 +68,21 @@ class TestReadNote:
         with pytest.raises(FileNotFoundError):
             await vault_reader.read_note(vault_reader.vault_root / "does-not-exist.md")
 
+    async def test_invalid_frontmatter_keeps_note_with_empty_metadata(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        target = tmp_path / "broken.md"
+        target.write_text("---\ntags: [broken\n---\n# Broken\nBody text\n", encoding="utf-8")
+        reader = FilesystemVaultReader(tmp_path)
+
+        note = await reader.read_note(target)
+
+        assert note.frontmatter == {}
+        assert note.rel_path == "broken.md"
+        assert "# Broken" in note.content
+        assert "Body text" in note.content
+
 
 @pytest.mark.asyncio
 class TestListNotes:
@@ -153,6 +168,25 @@ class TestListNotes:
     async def test_folder_escape_rejected(self, vault_reader: FilesystemVaultReader) -> None:
         with pytest.raises(ValueError, match="escapes vault root"):
             await vault_reader.list_notes(folder="..")
+
+    async def test_invalid_frontmatter_note_is_included(
+        self,
+        tmp_vault: Path,
+    ) -> None:
+        reader = FilesystemVaultReader(tmp_vault)
+        baseline_count = len(await reader.list_notes())
+        (tmp_vault / "broken-frontmatter.md").write_text(
+            "---\ntags: [broken\n---\n# Broken\nBody text\n",
+            encoding="utf-8",
+        )
+
+        notes = await reader.list_notes()
+        by_path = {note.rel_path: note for note in notes}
+
+        assert len(notes) == baseline_count + 1
+        assert "broken-frontmatter.md" in by_path
+        assert by_path["broken-frontmatter.md"].frontmatter == {}
+        assert "Body text" in by_path["broken-frontmatter.md"].content
 
 
 @pytest.mark.asyncio

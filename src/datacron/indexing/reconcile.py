@@ -79,6 +79,14 @@ async def reconcile(
     deleted = 0
     skipped = 0
 
+    # Purge vanished paths before processing live notes. If a note was moved
+    # while keeping a stable frontmatter id, delete_note() clears the old row by
+    # note_id and the live loop below reinserts it at the new path.
+    for rel_path, (note_id, _content_hash, _fs_mtime) in indexed.items():
+        if rel_path not in live:
+            await store.delete_note(note_id)
+            deleted += 1
+
     for rel_path, (path, st_mtime_ns) in live.items():
         entry = indexed.get(rel_path)
 
@@ -105,12 +113,6 @@ async def reconcile(
             deleted += 1
         await store.upsert_note(note, chunker.chunk(note), fs_mtime_ns=st_mtime_ns)
         reindexed += 1
-
-    # Notes indexed but no longer on disk.
-    for rel_path, (note_id, _content_hash, _fs_mtime) in indexed.items():
-        if rel_path not in live:
-            await store.delete_note(note_id)
-            deleted += 1
 
     stats = ReconcileStats(
         checked_notes=len(live),

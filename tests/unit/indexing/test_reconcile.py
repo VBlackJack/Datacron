@@ -153,6 +153,39 @@ async def test_deleted_file_is_removed(
     assert "welcome.md" not in await store.list_indexed_notes_with_mtime()
 
 
+async def test_moved_note_keeps_index_without_stale_path(
+    store: SQLiteFTS5Store,
+    chunker: MarkdownChunker,
+    tmp_path: Path,
+) -> None:
+    """A stable-id note moved to a new path must be reindexed, not deleted."""
+    stable_id = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    old_path = vault / "old.md"
+    new_path = vault / "new.md"
+    old_path.write_text(
+        f"---\nid: {stable_id}\ntitle: Stable\n---\n# Stable\nbody\n",
+        encoding="utf-8",
+    )
+    reader = FilesystemVaultReader(vault)
+
+    await reconcile(store, reader, chunker, mtime_gate=True)
+    old_path.rename(new_path)
+
+    stats = await reconcile(store, reader, chunker, mtime_gate=True)
+
+    indexed = await store.list_indexed_notes_with_mtime()
+    chunks = await store.list_chunks_for_note(stable_id)
+    assert stats["deleted_notes"] == 1
+    assert stats["reindexed_notes"] == 1
+    assert set(indexed) == {"new.md"}
+    assert indexed["new.md"][0] == stable_id
+    assert "old.md" not in indexed
+    assert chunks
+    assert {chunk.note_rel_path for chunk in chunks} == {"new.md"}
+
+
 async def test_mtime_gate_false_reads_all_but_skips_on_hash_match(
     store: SQLiteFTS5Store,
     reader: FilesystemVaultReader,

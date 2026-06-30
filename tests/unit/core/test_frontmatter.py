@@ -9,7 +9,9 @@
 
 from __future__ import annotations
 
-from datacron.core.frontmatter import extract_tags, parse
+import pytest
+
+from datacron.core.frontmatter import FrontmatterError, extract_tags, parse, serialize
 
 
 class TestParse:
@@ -29,6 +31,54 @@ class TestParse:
         meta, body = parse("")
         assert meta == {}
         assert body == ""
+
+    def test_invalid_yaml_raises_typed_error(self) -> None:
+        raw = "---\nid: [unclosed\n---\nbody\n"
+
+        with pytest.raises(FrontmatterError, match="while parsing"):
+            parse(raw)
+
+
+class TestSerialize:
+    def test_round_trips_metadata_and_body(self) -> None:
+        metadata = {
+            "id": "01HQXR7K9YZ8M2N3PQRSTV4WX5",
+            "title": "Mémoire",
+            "origin": "ai",
+            "confidence": "L2",
+            "tags": ["datacron", "mémoire"],
+        }
+        body = "# Mémoire\n\nTexte préservé.\n"
+
+        parsed_metadata, parsed_body = parse(serialize(metadata, body))
+
+        assert parsed_metadata == metadata
+        assert parsed_body == body.rstrip("\n")
+
+    def test_key_order_is_deterministic(self) -> None:
+        rendered = serialize(
+            {
+                "z_extra": True,
+                "tags": ["memory"],
+                "title": "Title",
+                "id": "01HQXR7K9YZ8M2N3PQRSTV4WX5",
+                "confidence": "L2",
+                "alpha_extra": "first",
+            },
+            "Body\n",
+        )
+
+        lines = rendered.splitlines()
+        assert lines[:7] == [
+            "---",
+            "id: 01HQXR7K9YZ8M2N3PQRSTV4WX5",
+            "title: Title",
+            "confidence: L2",
+            "tags:",
+            "- memory",
+            "alpha_extra: first",
+        ]
+        assert "z_extra: true" in lines
 
 
 class TestExtractTags:

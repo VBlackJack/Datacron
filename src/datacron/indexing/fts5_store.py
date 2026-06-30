@@ -19,7 +19,7 @@ import asyncio
 import json
 import re
 import sqlite3
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, cast, final
@@ -28,6 +28,8 @@ import aiosqlite
 
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, ChunkType, IndexStats, Note, SearchResult
+from datacron.core.query_expansion import expand_terms, normalize_term_map
+from datacron.core.temporal import TemporalMeta
 
 __all__ = ["SQLiteFTS5Store"]
 
@@ -244,6 +246,12 @@ FROM notes
 ORDER BY indexed_at ASC;
 """
 
+_LIST_TEMPORAL_METADATA_SQL: Final[str] = """
+SELECT note_id, frontmatter_json
+FROM notes
+ORDER BY indexed_at ASC;
+"""
+
 _RECORD_MTIME_SQL: Final[str] = "UPDATE notes SET fs_mtime = ? WHERE note_id = ?;"
 
 _ITER_ALL_CHUNKS_SQL: Final[str] = """
@@ -271,9 +279,10 @@ ORDER BY rowid;
 class SQLiteFTS5Store:
     """Persistent SQLite-backed implementation of the FTS5Store contract."""
 
-    def __init__(self) -> None:
+    def __init__(self, term_map: Mapping[str, Sequence[str]] | None = None) -> None:
         self._conn: aiosqlite.Connection | None = None
         self._db_path: Path | None = None
+        self._term_map = normalize_term_map(term_map or {})
 
     async def open(self, db_path: Path) -> None:
         """Open or create the SQLite database at ``db_path``."""
@@ -376,10 +385,16 @@ class SQLiteFTS5Store:
         terms = _fts5_terms(query)
         if not terms:
             return []
-        and_query = _join_fts5_terms(terms, operator=" ")
+        if self._term_map:
+            groups = expand_terms(terms, self._term_map)
+            and_query = _join_fts5_groups(groups)
+            fallback_terms = _flatten_fts5_groups(groups)
+        else:
+            and_query = _join_fts5_terms(terms, operator=" ")
+            fallback_terms = terms
         rows = await _fetch_search_rows(connection, and_query, limit)
         if len(rows) < limit and len(terms) > 1:
-            or_query = _join_fts5_terms(terms, operator=" OR ")
+            or_query = _join_fts5_terms(fallback_terms, operator=" OR ")
             seen_chunk_ids = {str(row["chunk_id"]) for row in rows}
             for row in await _fetch_search_rows(connection, or_query, limit):
                 chunk_id = str(row["chunk_id"])
@@ -444,6 +459,16 @@ class SQLiteFTS5Store:
                 str(row["content_hash"]),
                 None if row["fs_mtime"] is None else int(row["fs_mtime"]),
             )
+            for row in rows
+        }
+
+    async def list_temporal_metadata(self) -> dict[str, TemporalMeta]:
+        """Return explicit retrieval lifecycle metadata keyed by note_id."""
+        connection = self._require_connection()
+        async with connection.execute(_LIST_TEMPORAL_METADATA_SQL) as cursor:
+            rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+        return {
+            str(row["note_id"]): _temporal_meta_from_frontmatter(row["frontmatter_json"])
             for row in rows
         }
 
@@ -551,6 +576,29 @@ def _join_fts5_terms(terms: list[str], *, operator: str) -> str:
     return operator.join(_quote_fts5_term(term) for term in terms)
 
 
+def _join_fts5_groups(groups: list[list[str]]) -> str:
+    query_parts: list[str] = []
+    for group in groups:
+        if len(group) == 1:
+            query_parts.append(_quote_fts5_term(group[0]))
+            continue
+        query_parts.append(f"({_join_fts5_terms(group, operator=' OR ')})")
+    return " AND ".join(query_parts)
+
+
+def _flatten_fts5_groups(groups: list[list[str]]) -> list[str]:
+    flattened: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for term in group:
+            key = term.lower()
+            if key in seen:
+                continue
+            flattened.append(term)
+            seen.add(key)
+    return flattened
+
+
 def _quote_fts5_term(term: str) -> str:
     return f'"{term.replace(chr(34), chr(34) * 2)}"'
 
@@ -626,6 +674,26 @@ def _wikilinks_from_json(value: Any) -> list[str]:
     if not isinstance(parsed, list):
         raise ValueError("Stored wikilinks_out_json is not a JSON array.")
     return [str(item) for item in parsed]
+
+
+def _temporal_meta_from_frontmatter(value: Any) -> TemporalMeta:
+    if value is None:
+        return TemporalMeta(confidence=None, supersedes=[])
+    parsed = json.loads(str(value))
+    if not isinstance(parsed, dict):
+        raise ValueError("Stored frontmatter_json is not a JSON object.")
+    return TemporalMeta(
+        confidence=_optional_str(parsed.get("confidence")),
+        supersedes=_string_list(parsed.get("supersedes")),
+    )
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
 
 
 def _optional_str(value: Any) -> str | None:

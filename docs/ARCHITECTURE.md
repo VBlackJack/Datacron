@@ -1,6 +1,6 @@
 # Datacron — Architecture & Spec technique
 
-> **Statut** : v2.1 — Spec exécutable post cross-review (Gemini Pro + ChatGPT 5.5 Pro)
+> **Statut** : v2.2 — Spec vivante synchronisée avec `integration/eval-fts5`
 > **Auteur** : Julien Bombled
 > **Date** : 2026-05-17
 > **Sources** :
@@ -18,25 +18,29 @@
 
 ## 1. Verdict d'architecture
 
-Datacron v1 est un **serveur MCP local stdio read-only** qui rend un vault Markdown
+Datacron v1 est un **serveur MCP local stdio** qui rend un vault Markdown
 interrogeable par Claude Desktop / Claude Code, en divisant par 20-50 la consommation
 de tokens par rapport au dump de notes en contexte.
 
-L'architecture v1 est volontairement **minimaliste** :
+Le socle livré reste volontairement **minimaliste** :
 
 1. **Couche vault** — Tout dossier de fichiers Markdown. Aucune migration requise.
-2. **Couche `.datacron/`** — Sidecar invisible (SQLite FTS5 index + ULID side-table + logs).
-3. **Couche serveur MCP** — FastMCP Python custom, stdio. 5 tools read-only, 3 resources.
+2. **Couche `.datacron/`** — Sidecar invisible (SQLite FTS5 index + ULID side-table + logs + backups).
+3. **Couche serveur MCP** — FastMCP Python custom, stdio. Read/search tools, write tools approuvés côté client, 3 resources.
 4. **Couche client** — Claude Desktop ou Claude Code via config locale.
 
-**Hors scope v1** (reportés post-MVP, par décision motivée — cf. decisions-tranchees-v2.1.md) :
-- Write tools (concurrence/file-lock + HITL UX délégué aux clients = pas mûrs)
+**Livré après le socle Phase 0 sur `integration/eval-fts5`** :
+- Query-expansion FR↔EN statique au moment de la recherche, configurée par `VAULT.yaml`.
+- Write tools Phase 1 : `create_note_ai` et `append_journal`, désactivés par défaut sans `DATACRON_WRITE_PATHS`, confinés, atomiques, avec backups.
+- Temporal re-ranking conservateur : démotion explicite des notes supersédées et pénalité légère de confidence.
+
+**Toujours hors scope** :
 - Embeddings vectoriels / LanceDB / Contextual Retrieval (ajoutés *si* eval mesure besoin)
 - LangGraph / agent autonome (Claude orchestre, suffisant)
 - Studio Tauri (CLI suffit pour le MVP)
 - Multi-client (Cursor v1.1, ChatGPT/Gemini v2)
 - Support Cowork (v1.x via tunnel HTTPS, documenté)
-- Trust model L0-L5 exposé (dormant tant que pas de writes)
+- Writes concurrents multi-machines (single-writer rule)
 
 ---
 
@@ -64,7 +68,7 @@ Claude Desktop  /  Claude Code
             │
             │ MCP stdio (JSON-RPC, local)
             ▼
-   Datacron MCP server (read-only)
+   Datacron MCP server
             │
             ▼
        Vault Markdown
@@ -74,9 +78,9 @@ Claude Desktop  /  Claude Code
 
 | Version | Ajout |
 |---|---|
-| v0.2 | Write tools : `append_journal`, `create_draft_note` (vers `_drafts/`) + Git snapshot |
+| v0.2 | Write tools Phase 1 livré : `create_note_ai`, `append_journal`, backups + confinement |
 | v0.3 | Mode tunnel : `datacron mcp serve --remote` pour Cowork via Cloudflare Tunnel + auth |
-| v0.4 | Embeddings + LanceDB *si* eval Phase 0 montre besoin |
+| v0.4 | Embeddings + LanceDB *si* eval montre besoin |
 | v0.5 | Contextual Retrieval *si* eval v0.4 montre encore un gap |
 | v1.0 | Stabilisation + Homebrew tap + docs MkDocs |
 | v2.0+ | LangGraph offline mode, Studio Tauri, Cursor/ChatGPT/Gemini full support |
@@ -93,7 +97,7 @@ flowchart TB
     end
 
     subgraph SERVER["Datacron MCP server (Python, FastMCP, stdio)"]
-        TOOLS[5 read-only tools]
+        TOOLS[Read/search tools + approved write tools]
         RES[3 resources]
         SBX[Content sandboxing]
         CONF[Path confinement]
@@ -173,14 +177,19 @@ Convergence Gemini ✅ + ChatGPT ✅. Direct FS, audit, confinement strict.
 ### ADR-003 — Pas d'orchestration autonome v1
 LangGraph et Ollama hors MVP. Claude orchestre, c'est suffisant.
 
-### ADR-004 — Recherche lexicale uniquement v1
-ripgrep + SQLite FTS5. Vectors ajoutés *si* eval mesure recall < threshold.
+### ADR-004 — Recherche lexicale mesurée avant embeddings
+SQLite FTS5/BM25 + ripgrep restent le socle. Query-expansion FR↔EN statique est appliquée
+au moment de la recherche. Vectors ajoutés *si* eval mesure un gap persistant.
 
-### ADR-005 — Pas de write tools v1
-Concurrence/file-lock + HITL UX non maîtrisée = report v0.2.
+### ADR-005 — Write tools opt-in, confinés, réversibles
+Les écritures sont OFF par défaut. `DATACRON_WRITE_PATHS` active explicitement une allowlist
+d'écriture. `create_note_ai` ne clobber jamais ; `append_journal` est additif et déclenche
+un backup avant overwrite atomique.
 
 ### ADR-006 — Trust model 3 niveaux UX (L0-L5 backend)
-Dormant en v1 read-only. Activé v0.2.
+Le backend porte les métadonnées (`origin`, `confidence`, `last_verified`, `supersedes`).
+L'UX fine L0-L5 reste côté client / roadmap, mais `confidence` et `supersedes` influencent
+déjà le retrieval temporel.
 
 ### ADR-007 — Git uniquement pour rollback, pas pour sync
 Single-writer vault rule en v1. Autres patterns documentés non supportés.
@@ -209,6 +218,17 @@ passe suivante la saute. Remplace le full-scan O(n) par un balayage `stat` ; un 
 force la reconstruction complète. Comparaison stricte `==` (jamais `<=`) pour gérer les
 restaurations à `mtime` plus ancien.
 
+### ADR-014 — Query-expansion FR↔EN statique avant vectoriel
+L'expansion est query-time, configurable par `VAULT.yaml`, et ferme le gap cross-lingue
+mesuré sans embeddings : recall@5 golden Julien 0.74 → 0.89, precision 0.29 → 0.32.
+Les embeddings restent gelés tant que la mesure ne justifie pas leur coût.
+
+### ADR-015 — Temporal re-ranking conservateur
+Le retrieval exploite seulement les signaux explicites : `supersedes` démote fortement les
+notes remplacées, `confidence: low/needs_verification` applique une pénalité légère.
+Pas de decay par âge (`last_verified`/`updated`) tant qu'une mesure ne prouve pas le gain.
+Le re-rank agit sur un pool overfetch ×3 avant troncature, et ne supprime jamais les résultats.
+
 ---
 
 ## 7. Layout du projet
@@ -227,10 +247,12 @@ datacron/                              # GitHub: jbombled/datacron
 │   │   ├── logger.py                  # FileLogger Python
 │   │   ├── paths.py                   # Path confinement enforcement
 │   │   ├── hashing.py                 # SHA256 + ULID
-│   │   └── frontmatter.py             # YAML parser (python-frontmatter)
+│   │   ├── frontmatter.py             # YAML parser (python-frontmatter)
+│   │   ├── temporal.py                # Temporal retrieval re-ranking
+│   │   └── vault_writer.py            # Confined atomic write primitive
 │   ├── mcp/
 │   │   ├── server.py                  # FastMCP entry (`datacron mcp serve`)
-│   │   ├── tools.py                   # 5 read-only tools
+│   │   ├── tools.py                   # Read/search tools + approved write tools
 │   │   ├── resources.py               # 3 resources
 │   │   └── sandbox.py                 # Content wrapping + escaping
 │   ├── indexing/
@@ -301,7 +323,8 @@ sequenceDiagram
 | Context bloat | Tool renvoie trop | `maxMatchesPerHit=20`, truncation 8k tokens |
 | Exfiltration cross-tool | Datacron + autre tool MCP coordonnent malicieusement | Resource declarations explicites, pas de tool "execute arbitrary" |
 | Audit | Pas de traçabilité | NDJSON append-only sur chaque appel |
-| Suppression accidentelle | Datacron supprime un fichier | N/A v1 (pas de write tools) |
+| Écriture accidentelle | Datacron modifie un fichier non prévu | `DATACRON_WRITE_PATHS` obligatoire, confinement strict, writes OFF par défaut |
+| Perte de contenu | Overwrite destructif | Backup horodaté dans `.datacron/backups/` + écriture atomique temp/replace |
 | Privacy LLM cloud | Chunks partent chez Anthropic via Claude | Documenté honnêtement dans README "What leaves your machine" |
 
 ---
@@ -337,7 +360,9 @@ sequenceDiagram
 - [ ] CI GitHub Actions : ruff + mypy --strict + pytest + shellcheck.
 - [ ] Release `datacron 0.1.0` sur PyPI.
 
-**Critère de succès** : 30 questions réelles depuis Claude Desktop battent le folder-dump sur qualité, latence, et coût tokens. Si succès → v0.2 (write tools) débloquée. Si échec → itération.
+**Critère de succès** : questions réelles depuis Claude Desktop battent le folder-dump sur
+qualité, latence, et coût tokens. Mesure actuelle sur golden Julien : recall@5 0.89,
+recall@10 0.95, recall@20 0.95, precision 0.32.
 
 ---
 
@@ -365,7 +390,9 @@ sequenceDiagram
 1. ~~**Modèle de chunker** — un seul splitter AST suffit-il, ou besoin de stratégies dédiées (code blocks, tables) dès v1 ?~~ → **Résolu (Sem 3.5)** : un seul splitter AST, plus un garde-fou de taille (`chunk_max_tokens`) qui redécoupe tout bloc trop gros sur frontières de lignes, avec stratégies dédiées CODE (fence + langue répétées) et TABLE (en-tête + séparateur répétés), et fallback de découpe intra-ligne. Découpe déterministe, sous-chunks à plages de lignes disjointes et sans trou.
 2. **Format de citation** — quel format pour les chunks renvoyés ? `[[note#header]]` Obsidian-style, ou JSON structuré ?
 3. **`get_note(format=map)`** — quel arbre exact renvoyer (juste headings, ou + counts/excerpts) ?
-4. **Eval set Julien** — quelles 30 questions ? À écrire en Sem 1 pour valider en Sem 4.
+4. ~~**Eval set Julien** — quelles questions ?~~ → **Résolu partiellement** : golden set
+   `local/golden-julien.yaml` utilisé pour QE/TR ; prochaine étape = l'élargir avec cas
+   temporels et questions tueuses de deuxième génération.
 
 ---
 
@@ -388,4 +415,5 @@ sequenceDiagram
 
 ---
 
-*Document v2.1 figé le 2026-05-17. Le code de Phase 0 peut démarrer immédiatement contre cette spec.*
+*Document v2.2 synchronisé le 2026-06-30 avec la branche `integration/eval-fts5`. Les
+rapports de recherche et décisions v2.1 restent des archives d'arbitrage.*
