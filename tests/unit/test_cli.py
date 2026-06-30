@@ -61,6 +61,7 @@ class TestInit:
             "_archive",
         ]
         assert config["excluded_files"] == ["00_INDEX.md"]
+        assert config["query_expansion"]["supervision"] == ["monitoring"]
 
     def test_init_refuses_overwrite_without_force(self, runner: CliRunner, tmp_path: Path) -> None:
         vault = tmp_path / "my-vault"

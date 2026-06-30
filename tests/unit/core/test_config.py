@@ -48,6 +48,10 @@ class TestDefaults:
         config = VaultConfig()
         assert config.excluded_folders == list(DEFAULT_EXCLUDED_FOLDERS)
         assert config.excluded_files == list(DEFAULT_EXCLUDED_FILES)
+        assert config.query_expansion["supervision"] == ["monitoring"]
+        assert config.query_expansion["monitoring"] == ["supervision"]
+        assert config.query_expansion["validité"] == ["validity"]
+        assert config.query_expansion["certificate"] == ["certificat"]
 
 
 class TestEnvLoading:
@@ -138,6 +142,32 @@ excluded_files:
         assert config is not None
         assert config.excluded_folders == ["_attachments", "custom-trash"]
         assert config.excluded_files == ["00_INDEX.md", "custom-index.md"]
+
+    def test_load_vault_config_symmetrizes_query_expansion(self, tmp_path: Path) -> None:
+        path = tmp_path / "VAULT.yaml"
+        path.write_text(
+            """
+query_expansion:
+  supervision:
+    - monitoring
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        config = load_vault_config(path)
+
+        assert config is not None
+        assert config.query_expansion["supervision"] == ["monitoring"]
+        assert config.query_expansion["monitoring"] == ["supervision"]
+
+    def test_load_vault_config_keeps_explicit_empty_query_expansion(self, tmp_path: Path) -> None:
+        path = tmp_path / "VAULT.yaml"
+        path.write_text("query_expansion: {}\n", encoding="utf-8")
+
+        config = load_vault_config(path)
+
+        assert config is not None
+        assert config.query_expansion == {}
 
 
 class TestSingleton:

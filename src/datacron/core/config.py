@@ -29,6 +29,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from datacron.core.query_expansion import default_query_expansion, normalize_term_map
+
 DEFAULT_LOG_LEVEL: Final[str] = "INFO"
 DEFAULT_LOG_DIR: Final[Path] = Path.home() / ".datacron" / "logs"
 DEFAULT_MAX_RESULT_TOKENS: Final[int] = 8000
@@ -74,6 +76,7 @@ class VaultConfig(BaseModel):
     folders: dict[str, str] = Field(default_factory=dict)
     excluded_folders: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FOLDERS))
     excluded_files: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FILES))
+    query_expansion: dict[str, list[str]] = Field(default_factory=default_query_expansion)
 
     @field_validator("excluded_folders", mode="before")
     @classmethod
@@ -92,6 +95,23 @@ class VaultConfig(BaseModel):
         if not isinstance(value, list):
             raise TypeError("excluded_files must be a list of file names")
         return [str(item).strip() for item in value if str(item).strip()]
+
+    @field_validator("query_expansion", mode="before")
+    @classmethod
+    def _normalize_query_expansion(cls, value: object) -> dict[str, list[str]]:
+        if value is None or value == "":
+            return default_query_expansion()
+        if not isinstance(value, dict):
+            raise TypeError("query_expansion must be a mapping of terms to term lists")
+        raw_map: dict[str, list[str]] = {}
+        for raw_term, raw_equivalents in value.items():
+            if not isinstance(raw_equivalents, list):
+                raise TypeError("query_expansion values must be lists of terms")
+            term = str(raw_term).strip()
+            if not term:
+                continue
+            raw_map[term] = [str(item).strip() for item in raw_equivalents if str(item).strip()]
+        return normalize_term_map(raw_map)
 
 
 def load_vault_config(path: Path) -> VaultConfig | None:
