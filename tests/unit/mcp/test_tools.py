@@ -17,6 +17,7 @@ import pytest
 
 from datacron.core.config import Settings
 from datacron.core.frontmatter import parse, serialize
+from datacron.core.hashing import hash_text
 from datacron.core.models import Note
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
@@ -960,6 +961,319 @@ class TestSetFrontmatter:
         temporal = await writable_app.store.list_temporal_metadata()
         assert temporal[note_id].confidence == "low"
         assert temporal[note_id].supersedes == ["01HQXR7K9YZ8M2N3PQRSTV4WX1"]
+
+
+class TestPatchNoteSection:
+    @pytest.mark.asyncio
+    async def test_replaces_mid_file_section_preserves_rest_and_reindexes(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_section_impl, _search_text_impl
+
+        rel_path = "_memory/facts/patch-mid.md"
+        body = (
+            "# Journaled memory\n\n"
+            "Intro block.\n\n"
+            "## Target\n\n"
+            "Old target line.\n\n"
+            "## Sibling\n\n"
+            "Sibling block.\n"
+        )
+        target, original_raw = _write_memory_note(tmp_vault, rel_path, body)
+        original_metadata, original_body = parse(original_raw)
+
+        result = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Target",
+            new_content="patchedtoken line\nsecond line",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["patched"] == {"rel_path": rel_path, "heading": "Target", "level": 2}
+        assert result["indexed"] is True
+
+        new_metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        original_without_updated = dict(original_metadata)
+        original_updated = original_without_updated.pop("updated")
+        new_without_updated = dict(new_metadata)
+        new_updated = new_without_updated.pop("updated")
+
+        assert new_without_updated == original_without_updated
+        assert new_updated != original_updated
+        assert new_body == (
+            "# Journaled memory\n\n"
+            "Intro block.\n\n"
+            "## Target\n\n"
+            "patchedtoken line\n"
+            "second line\n\n"
+            "## Sibling\n\n"
+            "Sibling block."
+        )
+        assert new_body.split("## Target", 1)[0] == original_body.split("## Target", 1)[0]
+        assert new_body.split("## Sibling", 1)[1] == original_body.split("## Sibling", 1)[1]
+
+        backup_dir = tmp_vault / ".datacron" / "backups" / "_memory" / "facts" / "patch-mid.md"
+        backups = list(backup_dir.glob("*.bak"))
+        assert len(backups) == 1
+        assert backups[0].read_text(encoding="utf-8") == original_raw
+
+        search = await _search_text_impl(writable_app, query="patchedtoken", limit=5)
+        assert "error" not in search
+        assert any(item["note_rel_path"] == rel_path for item in search["results"])
+
+    @pytest.mark.asyncio
+    async def test_hash_mismatch_returns_error_without_write_or_backup(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_section_impl
+
+        rel_path = "_memory/facts/stale-hash.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\n## Target\n\nOriginal.\n",
+        )
+
+        result = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Target",
+            new_content="Replacement.",
+            expected_hash="0" * 64,
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert (
+            "note changed since read (hash mismatch); re-read and retry"
+            in result["error"]["message"]
+        )
+        assert target.read_text(encoding="utf-8") == original_raw
+        backup_dir = tmp_vault / ".datacron" / "backups" / "_memory" / "facts" / "stale-hash.md"
+        assert not backup_dir.exists()
+
+    @pytest.mark.asyncio
+    async def test_bad_expected_hash_format_errors_before_read(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_section_impl
+
+        rel_path = "_memory/facts/missing-bad-hash.md"
+        result = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Target",
+            new_content="Replacement.",
+            expected_hash="ABC",
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert (
+            "expected_hash must be a lowercase 64-character SHA-256" in result["error"]["message"]
+        )
+        assert not (tmp_vault / rel_path).exists()
+
+    @pytest.mark.asyncio
+    async def test_heading_not_found_returns_error_without_write(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_section_impl
+
+        rel_path = "_memory/facts/missing-heading.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\n## Present\n\nBody.\n",
+        )
+
+        result = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Absent",
+            new_content="Replacement.",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["message"] == "heading not found; nothing to patch"
+        assert target.read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_heading_can_be_disambiguated_by_level(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_section_impl
+
+        rel_path = "_memory/facts/ambiguous-level.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\n## Foo\n\nOuter.\n\n### Foo\n\nInner.\n",
+        )
+
+        ambiguous = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Foo",
+            new_content="Replacement.",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert ambiguous["error"]["type"] == "ValueError"
+        assert ambiguous["error"]["message"] == (
+            "heading is ambiguous (2 matches); pass heading_level"
+        )
+        assert target.read_text(encoding="utf-8") == original_raw
+
+        patched = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Foo",
+            new_content="Inner replacement.",
+            expected_hash=hash_text(original_raw),
+            heading_level=3,
+        )
+
+        assert patched["patched"] == {"rel_path": rel_path, "heading": "Foo", "level": 3}
+        _metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        assert new_body.endswith("### Foo\n\nInner replacement.")
+
+    @pytest.mark.asyncio
+    async def test_same_level_ambiguous_heading_still_errors_with_level(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_section_impl
+
+        rel_path = "_memory/facts/ambiguous-same-level.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\n## Foo\n\nFirst.\n\n## Foo\n\nSecond.\n",
+        )
+
+        result = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Foo",
+            new_content="Replacement.",
+            expected_hash=hash_text(original_raw),
+            heading_level=2,
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["message"] == "heading is ambiguous (2 matches); pass heading_level"
+        assert target.read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
+    async def test_nested_subsections_are_part_of_target_section(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_section_impl
+
+        rel_path = "_memory/facts/nested-patch.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            (
+                "# Journaled memory\n\n"
+                "## Target\n\n"
+                "Old target.\n\n"
+                "### Sub\n\n"
+                "Old sub.\n\n"
+                "## Next\n\n"
+                "Next block.\n"
+            ),
+        )
+
+        result = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Target",
+            new_content="Replacement.",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["patched"]["level"] == 2
+        _metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        assert "### Sub" not in new_body
+        assert new_body == (
+            "# Journaled memory\n\n## Target\n\nReplacement.\n\n## Next\n\nNext block."
+        )
+
+    @pytest.mark.asyncio
+    async def test_last_section_replaces_to_eof(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_section_impl
+
+        rel_path = "_memory/facts/last-section.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\n## Tail\n\nOld tail.\n",
+        )
+
+        result = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Tail",
+            new_content="New tail.",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["patched"] == {"rel_path": rel_path, "heading": "Tail", "level": 2}
+        _metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        assert new_body == "# Journaled memory\n\n## Tail\n\nNew tail."
+
+    @pytest.mark.asyncio
+    async def test_empty_new_content_returns_error_without_write(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_section_impl
+
+        rel_path = "_memory/facts/empty-patch.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\n## Target\n\nOriginal.\n",
+        )
+
+        result = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Target",
+            new_content="   \n",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["message"] == "new_content must not be empty"
+        assert target.read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
+    async def test_writes_off_returns_clear_error_and_leaves_file_intact(
+        self, app_with_open_store: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_section_impl
+
+        rel_path = "_memory/facts/patch-writes-off.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\n## Target\n\nProtected.\n",
+        )
+
+        result = await _patch_note_section_impl(
+            app_with_open_store,
+            rel_path=rel_path,
+            heading="Target",
+            new_content="Denied.",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["error"]["type"] == "PathConfinementError"
+        assert "writes disabled — set DATACRON_WRITE_PATHS" in result["error"]["message"]
+        assert target.read_text(encoding="utf-8") == original_raw
 
 
 class TestAudit:
