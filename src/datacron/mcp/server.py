@@ -42,9 +42,9 @@ from typing import Final, final
 from mcp.server.fastmcp import FastMCP
 
 from datacron import __version__
-from datacron.core.config import Settings, get_settings
+from datacron.core.config import Settings, VaultConfig, get_settings, load_vault_config
 from datacron.core.logger import configure_logging, get_logger, shutdown_logging
-from datacron.core.paths import assert_within_read_paths, sidecar_index_db
+from datacron.core.paths import assert_within_read_paths, sidecar_index_db, sidecar_vault_config
 from datacron.core.protocols import (
     ASTChunker,
     FTS5Store,
@@ -139,7 +139,8 @@ def build_app(
     if store is None:
         from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
 
-        store = SQLiteFTS5Store()
+        config = load_vault_config(sidecar_vault_config(resolved_root)) or VaultConfig()
+        store = SQLiteFTS5Store(term_map=config.query_expansion)
     if ripgrep is None:
         from datacron.indexing.ripgrep import RipgrepWrapper as _RipgrepWrapper  # noqa: PLC0415
 

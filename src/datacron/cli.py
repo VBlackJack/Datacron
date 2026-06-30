@@ -48,6 +48,7 @@ from datacron.core.paths import (
     sidecar_index_dir,
     sidecar_vault_config,
 )
+from datacron.core.query_expansion import query_expansion_seed
 from datacron.core.vault import build_configured_reader
 
 __all__ = ["app", "mcp_entry"]
@@ -111,6 +112,7 @@ def _format_vault_yaml(vault_id: str, created: datetime) -> str:
         },
         "excluded_folders": list(DEFAULT_EXCLUDED_FOLDERS),
         "excluded_files": list(DEFAULT_EXCLUDED_FILES),
+        "query_expansion": query_expansion_seed(),
     }
     return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
 
@@ -296,9 +298,10 @@ async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
             db_path.with_suffix(db_path.suffix + suffix).unlink(missing_ok=True)
 
     settings = get_settings()
+    config = _load_vault_yaml(vault_root) or VaultConfig()
     reader = build_configured_reader(vault_root)
     chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
-    store = SQLiteFTS5Store()
+    store = SQLiteFTS5Store(term_map=config.query_expansion)
     await store.open(db_path)
     started = time.perf_counter()
     try:
@@ -363,7 +366,8 @@ async def _run_eval(vault_root: Path, questions_path: Path) -> None:
         raise typer.Exit(code=1)
 
     questions = load_eval_questions(questions_path)
-    store = SQLiteFTS5Store()
+    config = _load_vault_yaml(vault_root) or VaultConfig()
+    store = SQLiteFTS5Store(term_map=config.query_expansion)
     await store.open(db_path)
     try:
         await LocalEvalHarness().run(questions, store, RipgrepWrapper())
