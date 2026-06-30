@@ -1,291 +1,230 @@
 # Datacron
 
-> **Un pont MCP local-first qui rend ton vault Markdown interrogeable par Claude — sans dump et sans cloud.**
-> Au lieu de coller 50 notes dans le contexte de Claude (50 000 tokens), Datacron répond
-> aux requêtes MCP de Claude Desktop ou Claude Code en lui envoyant 5 chunks pertinents
-> (1 000 tokens). Économie typique : 20-50×. Tes notes restent sur disque, lisibles dans
-> n'importe quel éditeur Markdown.
+> Serveur MCP local pour interroger et maintenir un vault Markdown depuis Claude Desktop
+> ou Claude Code, sans envoyer tout le vault dans le contexte.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Status: Sem 4 en cours](https://img.shields.io/badge/Status-Sem_4_en_cours-green)](docs/decisions-tranchees-v2.1.md)
-[![MCP: Claude Desktop · Claude Code](https://img.shields.io/badge/MCP-Claude_Desktop_·_Code-purple)](#works-with)
+[![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)](pyproject.toml)
+[![MCP: local stdio](https://img.shields.io/badge/MCP-local_stdio-purple)](#mcp-tools)
 
----
+Datacron indexe un dossier de notes Markdown, expose un serveur MCP local, puis renvoie
+au client les notes ou chunks pertinents au lieu d'un dump complet. Le vault reste un
+dossier Markdown normal : Datacron ajoute seulement un sidecar `.datacron/` pour l'index,
+les logs, les ULID internes et les backups.
 
-## Trois promesses, trois lignes rouges
+## Ce qui est en place
 
-| Promesse | Ligne rouge |
+| Surface | État actuel |
 |---|---|
-| **💸 Économie de tokens** — chunks pertinents au lieu de dumps | Toujours via MCP, jamais en dump brut |
-| **📂 Vault portable** — fonctionne sur tes notes existantes sans migration | Pas de format imposé. Datacron lit ce qu'il y a |
-| **🔒 Local-first transparent** — tes notes ne quittent jamais ta machine pour Datacron | Section *[What leaves your machine](#what-leaves-your-machine)* honnête, pas de buzzword |
+| Lecture vault | `list_notes`, `get_note`, resources `datacron://vault/map`, `vault/info`, `policy/active` |
+| Recherche | SQLite FTS5/BM25, query-expansion FR↔EN, re-rank temporel, `ripgrep` via `search_regex` |
+| Graphe local | Wikilinks et backlinks via `get_backlinks` |
+| Écriture | `create_note_ai` et `append_journal`, désactivés par défaut sans `DATACRON_WRITE_PATHS` |
+| Index | `datacron index` incrémental, `datacron reindex` complet, réparation automatique à la lecture |
+| Évaluation | `datacron eval` avec recall@k, precision, latence et tokens |
+| Clients testés | Claude Desktop via installateur, Claude Code via serveur stdio |
 
----
+Mesure actuelle sur le golden set Julien, avec query-expansion et temporal re-rank actifs :
 
-## Works with
+```text
+recall@5  0.89
+recall@10 0.95
+recall@20 0.95
+precision 0.32
+tokens    39984
+```
 
-Datacron est un **serveur MCP local** (stdio). En v1 il est testé sur :
+## Installation
 
-| Client | Statut | Mode |
-|---|---|---|
-| **Claude Desktop** | ✅ v1 | Local stdio natif. Config en 1 commande : `datacron mcp install --client claude-desktop` |
-| **Claude Code** | ✅ v1 | Local stdio natif. `claude mcp add datacron …` |
-| **Cursor** | 🟡 v1.1 (à valider) | Local stdio (compatibilité MCP par design) |
-| **Cowork / claude.ai / mobile** | ⏳ v1.x | Cowork ne supporte que les *remote* MCP connectors. Nécessite un tunnel HTTPS — voir [§Cowork](#et-cowork-) |
-| **ChatGPT Desktop / Gemini** | 🔵 v2 | Quand leurs hosts MCP seront stables |
+Depuis un clone du repo :
 
-Datacron parle MCP standard JSON-RPC. Il fonctionnera avec tout futur client MCP, mais on
-ne *promet* pas ce qu'on n'a pas testé.
+```bash
+python -m pip install -e ".[dev]"
+```
 
-### Et Cowork ?
+Ou, pour installer seulement l'application :
 
-Cowork (et claude.ai) ne supportent pas les serveurs MCP en local stdio — seulement des
-*remote connectors* accessibles publiquement depuis l'infrastructure Anthropic. Conséquence :
-pour utiliser Datacron depuis Cowork, il faut exposer ton serveur local via un **tunnel HTTPS**
-(Cloudflare Tunnel, Tailscale Funnel, ngrok…).
+```bash
+python -m pip install -e .
+```
 
-C'est techniquement faisable, sécurisable avec auth token, mais ça change le profil de risque
-("local-first" devient "local serveur exposé via tunnel chiffré"). Datacron **v1.x** intégrera
-une commande `datacron mcp serve --remote` qui orchestrera ce tunnel avec auth + logs d'accès,
-et documentera honnêtement le trade-off. En attendant, **utilise Claude Desktop ou Claude Code**
-pour tirer parti de Datacron.
-
----
-
-## Pourquoi Datacron (l'argument-massue)
-
-**Avant Datacron**, tu demandes à Claude "résume mes notes sur X" :
-- Tu colles 50 notes dans le contexte → ~50 000 tokens
-- Claude lit tout, dont 95% non pertinent
-- Tu paies 50× plus que nécessaire, le contexte est saturé
-
-**Avec Datacron**, le même prompt :
-- Claude appelle `search_text("X")` via MCP
-- Datacron renvoie 5 chunks pertinents (~1 000 tokens)
-- Claude répond avec citations cliquables
-- **Facteur 50× d'économie**, qualité maintenue, contexte préservé pour la suite
-
----
-
-## Ce que Datacron fait (et ne fait pas)
-
-**Socle v1 (MVP 4 semaines)** :
-
-| Use case | Comment |
-|---|---|
-| 💬 **Q&A sur ton vault depuis Claude Desktop** | Claude appelle `search_text` / `search_regex` / `get_note` selon ce que tu demandes |
-| 🗺️ **Vault map injecté à Claude** | Resource MCP `datacron://vault/map` donne à Claude la structure globale en ~2k tokens |
-| 🔍 **Recherche lexicale + regex** | SQLite FTS5/BM25 + ripgrep wrapper |
-| 🔗 **Backlinks et wikilinks** | `get_backlinks` pour le graphe de liens |
-
-**Branche d'intégration actuelle (`integration/eval-fts5`)** :
-
-- ✅ Query-expansion FR↔EN statique au moment de la recherche (`VAULT.yaml` → `query_expansion`) ; gain mesuré sur le golden set Julien : recall@5 0.74 → 0.89.
-- ✅ Write tools Phase 1 : `create_note_ai` et `append_journal`, OFF par défaut, confinés par `DATACRON_WRITE_PATHS`, atomiques, réversibles via `.datacron/backups/`, et réindexés immédiatement.
-- ✅ Re-rank temporel conservateur : `supersedes` démote les notes remplacées, `confidence: low/needs_verification` baisse légèrement le score, `include_superseded=true` permet d'inspecter l'historique.
-
-**Datacron ne fait PAS encore** :
-
-- ❌ Embeddings vectoriels (ajoutés seulement si l'eval mesure que le lexical seul est insuffisant)
-- ❌ Agent autonome / LangGraph (Claude orchestre, c'est suffisant)
-- ❌ Studio GUI Tauri (ligne de commande suffit pour le MVP)
-- ❌ Mode multi-machines avec writes concurrents (single-writer rule pour toute écriture)
-
----
-
-## What leaves your machine
-
-Datacron lui-même **n'envoie rien** à un serveur tiers. Pas de télémétrie, pas d'analytics,
-pas de crash reporter cloud.
-
-**Mais** : quand tu utilises Claude Desktop avec Datacron, c'est **Claude Desktop** qui envoie
-à Anthropic les chunks que Datacron lui renvoie via MCP. C'est par design — c'est comme ça que
-fonctionne tout client MCP cloud.
-
-Ce qui veut dire :
-- ✅ **Le vault entier reste local.** Anthropic ne voit jamais ton vault complet.
-- ✅ **Seuls les chunks pertinents partent** (typiquement 5-10 chunks par requête).
-- ✅ **Tu contrôles** ce qui part en choisissant ta requête.
-- ⚠️ **Les chunks transitent quand même par Anthropic.** Si tu veux du strict air-gapped, n'utilise pas Claude — c'est cohérent, pas Datacron qui décide.
-
-Si tu veux du 100% local, Datacron v2 ajoutera un mode `datacron ask --local` qui utilise
-Ollama localement, mais ça sort du scope du serveur MCP actuel.
-
----
-
-## Installation (v1 MVP)
-
-### Prérequis
+Prérequis runtime :
 
 - Python 3.11+
-- `ripgrep` installé (`brew install ripgrep` / `apt install ripgrep` / `choco install ripgrep`)
-- Un vault Markdown quelque part sur ton disque
-- Claude Desktop ou Claude Code
+- `ripgrep` disponible dans le `PATH` pour `search_regex`
+- un dossier de notes Markdown
+- Claude Desktop ou un autre client MCP stdio
 
-### Installation
-
-```bash
-# Installer Datacron
-pipx install datacron
-
-# Initialiser sur ton vault existant (ne touche à rien, crée .datacron/)
-datacron init ~/Notes
-
-# Construire l'index
-datacron index
-
-# Câbler à Claude Desktop
-datacron mcp install --client claude-desktop
-
-# Vérifier
-datacron status
-```
-
-Redémarre Claude Desktop, puis pose ta question dans une conversation :
-
-> *"Datacron, qu'est-ce que j'ai écrit récemment sur Kafka ?"*
-
-Claude appellera Datacron en arrière-plan, recevra les chunks pertinents, te répondra avec
-citations. Tu peux cliquer sur les citations pour ouvrir les notes correspondantes.
-
-> **Indexation incrémentale.** `datacron index` ne réindexe que les notes modifiées
-> (comparaison `content_hash`, court-circuit par `mtime`) et supprime les notes disparues —
-> relancer la commande sur un vault inchangé est quasi instantané. L'index se répare aussi
-> seul au premier `search_*` suivant une édition : pas besoin de réindexer manuellement après
-> chaque modification (`datacron reindex` force une reconstruction complète si besoin).
->
-> **Réglages** (variables d'environnement, optionnelles) :
-> `DATACRON_CHUNK_MAX_TOKENS` (taille max d'un chunk, défaut `1024`),
-> `DATACRON_GET_NOTE_MAX_TOKENS` (budget de `get_note(format=full)`, défaut `25000`),
-> `DATACRON_MAX_RESULT_TOKENS` (budget des résultats de recherche, défaut `8000`).
-
----
-
-## Démarrage rapide (5 minutes)
+## Démarrage rapide
 
 ```bash
-pipx install datacron
-datacron init ~/Notes
-datacron index
-datacron mcp install --client claude-desktop
-datacron status
+datacron init /path/to/vault
+datacron index --vault /path/to/vault
+datacron status --vault /path/to/vault
+datacron mcp install --client claude-desktop --vault /path/to/vault
 ```
 
-Redémarre Claude Desktop. C'est fait.
+Redémarre Claude Desktop après `datacron mcp install`.
 
----
+Pour lancer le serveur manuellement :
 
-## Architecture (en une image)
-
-```
-   ┌────────────────────────────────────────────────────────┐
-   │  Claude Desktop  /  Claude Code  (v1)                  │
-   └────────────────────────┬───────────────────────────────┘
-                            │ MCP stdio (JSON-RPC)
-                            │
-   ┌────────────────────────▼───────────────────────────────┐
-   │  Datacron MCP server  (FastMCP, Python, local-first)   │
-   │  Tools: list_notes · get_note · search_text ·          │
-   │         search_regex · get_backlinks · create_note_ai ·│
-   │         append_journal                                 │
-   │  Resources: datacron://vault/map · /info · /policy     │
-   └─────┬──────────────────────────────────┬───────────────┘
-         │ filesystem                       │ reads index
-         │                                  │
-   ┌─────▼──────────────┐         ┌────────▼────────────────┐
-   │  Ton vault         │         │  .datacron/             │
-   │  Markdown          │         │  • SQLite FTS5 index    │
-   │  (any structure)   │         │  • ULID side-metadata   │
-   │                    │         │  • Logs                 │
-   └────────────────────┘         └─────────────────────────┘
+```bash
+datacron mcp serve --vault /path/to/vault
 ```
 
-Pas d'agent autonome. Pas de LangGraph. Pas de Studio. Pas de Tauri.
-**Juste un pont rapide entre Claude et ton filesystem, audité et sécurisé.**
+L'entrée script directe utilisée par l'installateur est aussi disponible :
 
-[→ Architecture détaillée](docs/ARCHITECTURE.md) · [→ Décisions tranchées v2.1](docs/decisions-tranchees-v2.1.md)
+```bash
+datacron-mcp
+```
 
----
+`datacron-mcp` lit le vault depuis `DATACRON_VAULT_ROOT`.
 
-## Comment Datacron traite ton vault
+## Configuration
 
-Datacron lit **n'importe quel vault Markdown sans migration**. Aucune note existante n'est
-modifiée.
+`datacron init` crée `.datacron/VAULT.yaml`. Ce fichier peut porter la configuration
+vault-local, notamment la query-expansion :
 
-- Les notes existantes sont indexées telles quelles.
-- Datacron crée un dossier `.datacron/` à la racine du vault (gitignorable) qui contient
-  son index SQLite, ses logs, et ses métadonnées internes (`id` ULID stables, hashes).
-- Tes notes peuvent suivre n'importe quelle structure : PARA, Zettelkasten, Johnny Decimal,
-  ou rien du tout.
-- Les wikilinks `[[note]]` sont reconnus, les frontmatter YAML sont parsés s'ils existent.
+```yaml
+query_expansion:
+  supervision: [monitoring]
+  sauvegarde: [backup]
+  restauration: [restore]
+  chiffrement: [encryption]
+  sécurité: [security]
+  validité: [validity]
+  certificat: [certificate]
+```
 
-Une référence interne `docs/dvs-reference.md` documente le format optionnel utilisé quand
-*Datacron lui-même* écrit des notes (post-v0.2), mais c'est une convention interne, pas un
-standard que tu dois suivre.
+Variables d'environnement utiles :
 
----
+| Variable | Défaut | Rôle |
+|---|---:|---|
+| `DATACRON_VAULT_ROOT` | répertoire courant ou `--vault` | vault servi par le serveur |
+| `DATACRON_READ_PATHS` | vide | allowlist de lecture ; l'installateur Claude Desktop la fixe au vault |
+| `DATACRON_WRITE_PATHS` | vide | allowlist d'écriture ; vide = write tools désactivés |
+| `DATACRON_MAX_RESULT_COUNT` | `20` | nombre max de résultats retournés |
+| `DATACRON_MAX_RESULT_TOKENS` | `8000` | budget token des résultats de recherche |
+| `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | budget de `get_note(format="full")` |
+| `DATACRON_CHUNK_MAX_TOKENS` | `1024` | taille cible max des chunks |
+| `DATACRON_RIPGREP_PATH` | `rg` | binaire ripgrep |
 
-## Vie privée & sécurité
+Les listes de chemins utilisent le séparateur de l'OS (`:` sous Unix, `;` sous Windows).
 
-- **Aucune télémétrie** — pas de phone-home, pas d'analytics tiers.
-- **Pas de LLM cloud appelé par Datacron lui-même** — c'est le client MCP (Claude Desktop) qui décide ce qu'il envoie à Anthropic, pas Datacron.
-- **Path confinement strict** — `DATACRON_READ_PATHS` confine la lecture ; `DATACRON_WRITE_PATHS` doit être explicitement configuré pour toute écriture.
-- **Writes fail-safe** — sans `DATACRON_WRITE_PATHS`, `create_note_ai` et `append_journal` renvoient une erreur claire et n'écrivent rien.
-- **Writes atomiques et réversibles** — overwrite via temp + `os.replace`; backup horodaté dans `.datacron/backups/` avant modification.
-- **Sandboxing des contenus** — le contenu des notes renvoyé via MCP est wrappé `<vault_content>…</vault_content>` avec instruction explicite au client de traiter comme données et non comme commandes.
-- **Bounded results** — limites strictes sur la taille des retours pour éviter le context bloat.
-- **Audit log local** — toutes les opérations MCP sont loguées en clair dans `~/.datacron/logs/`.
+## Écriture
 
----
+Les writes sont volontairement OFF par défaut. Sans `DATACRON_WRITE_PATHS`, les tools
+d'écriture renvoient une erreur claire et ne créent aucun fichier.
 
-## Statut
+Pour activer l'écriture sur un sous-dossier précis :
 
-Datacron a dépassé la phase "design only" : **Phase 0 (MVP) livrée** sur `main`,
-avec le tag `sem3-complete`. Les 5 tools MCP (`list_notes`, `get_note`, `search_text`,
-`search_regex`, `get_backlinks`) sont opérationnels, ainsi que les commandes
-`datacron init/status/index/reindex/mcp serve/mcp install`.
+```powershell
+$env:DATACRON_VAULT_ROOT = "G:\_DATA"
+$env:DATACRON_READ_PATHS = "G:\_DATA"
+$env:DATACRON_WRITE_PATHS = "G:\_DATA\_memory"
+datacron mcp serve --vault G:\_DATA
+```
 
-La spec exécutable est dans [decisions-tranchees-v2.1.md](docs/decisions-tranchees-v2.1.md).
-Elle a été produite par une boucle design → cross-review (Gemini Pro + ChatGPT 5.5 Pro) →
-arbitrage, avec vérification empirique du support MCP côté Anthropic, puis implémentée
-par lots testés.
+Tools d'écriture disponibles :
 
-**Sem 4 / branche d'intégration** : hardening `read_paths`, eval harness path-level,
-index incrémental mtime-gated, garde-fou chunker, durcissements robustesse
-(frontmatter, confinement, ripgrep), query-expansion FR↔EN, write tools Phase 1,
-et temporal re-ranking sont livrés sur `integration/eval-fts5`.
+- `create_note_ai` : crée une note Markdown typée, sans overwrite.
+- `append_journal` : ajoute une entrée sous un heading d'une note existante.
 
-La suite actuelle est verte : 387 tests, `ruff`, `ruff format --check` et
-`mypy --strict`.
+Garanties :
 
-Le retrieval actuel repose sur **BM25 (FTS5) + query-expansion + temporal re-rank +
-ripgrep**. Les embeddings restent gelés tant que l'éval ne prouve pas leur apport ;
-l'hybride BGE-M3 reste une option v0.4 conditionnelle. Mesure golden Julien :
-recall@5 0.89, recall@10 0.95, recall@20 0.95, precision 0.32.
+- confinement strict dans `DATACRON_WRITE_PATHS`
+- overwrite atomique via fichier temporaire + `os.replace`
+- backup horodaté sous `.datacron/backups/` avant modification d'une note existante
+- `reconcile()` après write pour rendre la note immédiatement cherchable
+- audit log local
 
-Le critère de succès Phase 0 se mesure sur 30 questions réelles contre le baseline
-"folder dump", depuis Claude Desktop, en qualité, latence et coût tokens.
+Le mode concurrent multi-machines n'est pas supporté pour les écritures : garde une règle
+single-writer sur le vault.
 
----
+## MCP Tools
 
-## Pourquoi pas …
-
-| Alternative | Pourquoi Datacron |
+| Tool | Description |
 |---|---|
-| **Notion AI / Mem.ai / Reflect** | Cloud-first, propriétaire, lock-in |
-| **Obsidian Copilot, Smart Connections** | Couplé Obsidian uniquement, pas multi-éditeur |
-| **AnythingLLM, Open WebUI** | Q&A sur documents, mais pas un pont MCP token-efficient avec Claude |
-| **Coller le vault dans Claude** | Marche, mais 20-50× plus cher en tokens, contexte saturé |
+| `list_notes` | liste les notes, filtrable par dossier et tags |
+| `get_note` | lit une note par ULID, chemin relatif ou chunk id ; formats `full` et `map` |
+| `search_text` | recherche BM25 avec query-expansion et re-rank temporel |
+| `search_regex` | recherche regex via ripgrep, avec résolution vers chunks indexés |
+| `get_backlinks` | trouve les chunks qui pointent vers une note ou un alias |
+| `create_note_ai` | crée une note Markdown typée, si writes activés |
+| `append_journal` | ajoute une entrée sous un heading, si writes activés |
 
----
+Resources MCP :
 
-## Contribuer
+- `datacron://vault/map`
+- `datacron://vault/info`
+- `datacron://policy/active`
 
-Datacron est sous licence **Apache 2.0**. Toute contribution respecte les standards de code
-de Julien Bombled (Apache 2.0 headers, English code, zero hardcoding, FileLogger, shellcheck clean).
+## Recherche
 
----
+`search_text` combine plusieurs signaux :
+
+- FTS5/BM25 pour le score lexical de base
+- query-expansion FR↔EN configurée dans `VAULT.yaml`
+- re-rank temporel conservateur :
+  - une note citée dans le `supersedes` d'une autre est fortement démotée
+  - `confidence: low` et `confidence: needs_verification` appliquent une pénalité légère
+  - `include_superseded=true` permet de remonter les notes historiques
+
+`search_regex` reste littéral : il n'applique ni query-expansion ni re-rank temporel.
+
+## Vie privée et sécurité
+
+- Datacron ne fait pas de télémétrie.
+- Datacron n'appelle pas de LLM cloud.
+- Le client MCP, par exemple Claude Desktop, peut envoyer à son fournisseur les chunks que
+  Datacron lui retourne. Datacron ne lui envoie pas le vault complet.
+- Le contenu retourné aux clients est enveloppé dans `<vault_content>...</vault_content>`.
+- Les résultats sont bornés par nombre et par budget token.
+- Les accès filesystem sont confinés par `DATACRON_READ_PATHS` et `DATACRON_WRITE_PATHS`.
+- Les opérations MCP sont auditées dans les logs locaux.
+
+## Commandes CLI
+
+```bash
+datacron init /path/to/vault
+datacron status --vault /path/to/vault
+datacron index --vault /path/to/vault
+datacron reindex --vault /path/to/vault
+datacron eval --questions local/golden-julien.yaml --vault /path/to/vault
+datacron mcp serve --vault /path/to/vault
+datacron mcp install --client claude-desktop --vault /path/to/vault
+```
+
+## Limites actuelles
+
+- Pas de vector search / embeddings : la mesure actuelle ne le justifie pas.
+- Pas d'agent autonome : le client MCP orchestre.
+- Pas de GUI.
+- Pas de writes concurrents multi-machines.
+- L'installateur automatique ne cible aujourd'hui que Claude Desktop. Les autres clients MCP
+  peuvent utiliser `datacron mcp serve` ou `datacron-mcp` en stdio si leur configuration le permet.
+
+## Développement
+
+```bash
+python -m pip install -e ".[dev]"
+ruff check .
+ruff format --check .
+mypy
+pytest
+```
+
+Dernier état vérifié sur cette branche :
+
+```text
+387 passed
+ruff OK
+ruff format --check OK
+mypy --strict OK
+```
 
 ## Licence
 
-Copyright 2026 Julien Bombled — Licensed under the [Apache License, Version 2.0](LICENSE).
+Copyright 2026 Julien Bombled.
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
