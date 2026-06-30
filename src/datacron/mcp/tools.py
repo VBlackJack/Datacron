@@ -41,6 +41,7 @@ from datacron.core.logger import get_logger
 from datacron.core.models import ChunkType, Note, SearchResult
 from datacron.core.paths import PathConfinementError, assert_within_paths
 from datacron.indexing.reconcile import ReconcileStats, reconcile
+from datacron.indexing.ripgrep import RipgrepError
 from datacron.mcp.sandbox import wrap_vault_content
 
 if TYPE_CHECKING:
@@ -324,11 +325,25 @@ async def _resolve_note(app: DatacronApp, id_or_path: str) -> Note | None:
         return None
 
     if _ULID_PATTERN.match(id_or_path):
-        for note in await app.vault_reader.list_notes():
-            if note.id == id_or_path:
-                return note
-        return None
+        return await _resolve_note_by_ulid(app, id_or_path)
     return await _read_note_by_rel_path(app, id_or_path)
+
+
+async def _resolve_note_by_ulid(app: DatacronApp, note_id: str) -> Note | None:
+    # Fast path: the index maps rel_path -> note_id without reading notes.
+    indexed = await app.store.list_indexed_notes_with_mtime()
+    for rel_path, (indexed_note_id, _hash, _mtime) in indexed.items():
+        if indexed_note_id == note_id:
+            try:
+                return await _read_note_by_rel_path(app, rel_path)
+            except FileNotFoundError:
+                break
+
+    # Fallback: fresh notes can exist on disk before the next reindex.
+    for note in await app.vault_reader.list_notes():
+        if note.id == note_id:
+            return note
+    return None
 
 
 async def _read_note_by_rel_path(app: DatacronApp, rel_path: str) -> Note:
@@ -512,6 +527,15 @@ async def _search_regex_impl(
         )
     except FileNotFoundError as exc:
         return _error_response("search_regex", exc, started, pattern=pattern, glob=glob)
+    except RipgrepError as exc:
+        message = exc.stderr.strip() or str(exc)
+        return _error_response(
+            "search_regex",
+            ValueError(f"pattern rejected by ripgrep: {message}"),
+            started,
+            pattern=pattern,
+            glob=glob,
+        )
     except Exception:
         _LOGGER.exception("search_regex failed (pattern=%r glob=%r)", pattern, glob)
         return _error_response(

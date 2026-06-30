@@ -9,11 +9,13 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 
 from datacron.core.config import Settings
+from datacron.core.models import Note
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.mcp.server import DatacronApp, build_app
@@ -45,6 +47,27 @@ def small_app(tmp_vault: Path) -> DatacronApp:
         get_note_max_tokens=50,
     )
     return build_app(settings=settings, vault_root=tmp_vault, chunker=MarkdownChunker())
+
+
+@pytest.fixture
+async def app_with_open_store(tmp_vault: Path) -> AsyncIterator[DatacronApp]:
+    settings = Settings(
+        read_paths=[tmp_vault],
+        vault_root=tmp_vault,
+        max_result_count=20,
+        max_result_tokens=8000,
+    )
+    store = SQLiteFTS5Store()
+    await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+    try:
+        yield build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+    finally:
+        await store.close()
 
 
 class TestListNotes:
@@ -198,21 +221,56 @@ class TestGetNoteFull:
         assert result["id"] == note.id
 
     @pytest.mark.asyncio
-    async def test_full_accepts_ulid(self, app: DatacronApp) -> None:
+    async def test_full_accepts_indexed_ulid_without_scanning(
+        self,
+        app_with_open_store: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         from datacron.mcp.tools import _get_note_impl
 
-        # Build the id by reading once, then re-querying by id
-        first = await _get_note_impl(app, id_or_path="welcome.md", fmt="full")
-        by_id = await _get_note_impl(app, id_or_path=first["id"], fmt="full")
-        assert by_id["rel_path"] == "welcome.md"
-        assert by_id["id"] == first["id"]
+        note = await app_with_open_store.vault_reader.read_note(tmp_vault / "welcome.md")
+        chunks = app_with_open_store.chunker.chunk(note)
+        await app_with_open_store.store.upsert_note(note, chunks)
+
+        calls = {"n": 0}
+        original_list_notes = app_with_open_store.vault_reader.list_notes
+
+        async def counting_list_notes(
+            folder: str | None = None,
+            limit: int | None = None,
+        ) -> list[Note]:
+            calls["n"] += 1
+            return await original_list_notes(folder=folder, limit=limit)
+
+        monkeypatch.setattr(app_with_open_store.vault_reader, "list_notes", counting_list_notes)
+
+        result = await _get_note_impl(app_with_open_store, id_or_path=note.id, fmt="full")
+
+        assert result["rel_path"] == "welcome.md"
+        assert result["id"] == note.id
+        assert calls["n"] == 0
 
     @pytest.mark.asyncio
-    async def test_unknown_ulid_returns_error(self, app: DatacronApp) -> None:
+    async def test_full_accepts_unindexed_ulid_by_scan_fallback(
+        self, app_with_open_store: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _get_note_impl
+
+        note = await app_with_open_store.vault_reader.read_note(tmp_vault / "welcome.md")
+        assert await app_with_open_store.store.list_indexed_notes_with_mtime() == {}
+
+        result = await _get_note_impl(app_with_open_store, id_or_path=note.id, fmt="full")
+
+        assert result["rel_path"] == "welcome.md"
+        assert result["id"] == note.id
+
+    @pytest.mark.asyncio
+    async def test_unknown_ulid_returns_error(self, app_with_open_store: DatacronApp) -> None:
         from datacron.mcp.tools import _get_note_impl
 
         bogus = "01ZZZZZZZZZZZZZZZZZZZZZZZZ"
-        result = await _get_note_impl(app, id_or_path=bogus, fmt="full")
+        result = await _get_note_impl(app_with_open_store, id_or_path=bogus, fmt="full")
         assert "error" in result
         assert result["error"]["type"] == "FileNotFoundError"
 

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import sys
 from pathlib import Path
@@ -18,12 +19,25 @@ import yaml
 from typer.testing import CliRunner
 
 from datacron.cli import app
-from datacron.core.paths import sidecar_dir, sidecar_index_dir, sidecar_vault_config
+from datacron.core.paths import (
+    sidecar_dir,
+    sidecar_index_db,
+    sidecar_index_dir,
+    sidecar_vault_config,
+)
 
 
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+async def _create_empty_index(db_path: Path) -> None:
+    from datacron.indexing.fts5_store import SQLiteFTS5Store
+
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    await store.close()
 
 
 class TestInit:
@@ -84,6 +98,33 @@ class TestStatus:
         assert result.exit_code == 0, result.stdout
         assert "initialized: yes" in result.stdout
         assert "notes:      1" in result.stdout
+        assert "not built" in result.stdout
+
+    def test_status_with_empty_index_file_reports_empty(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        vault = tmp_path / "vault"
+        runner.invoke(app, ["init", str(vault)])
+        (vault / "hello.md").write_text("# Hello\n", encoding="utf-8")
+        asyncio.run(_create_empty_index(sidecar_index_db(vault)))
+
+        result = runner.invoke(app, ["status", "--vault", str(vault)])
+
+        assert result.exit_code == 0, result.stdout
+        assert "notes:      1" in result.stdout
+        assert "index:      empty" in result.stdout
+        assert "run `datacron index`" in result.stdout
+        assert "built (" not in result.stdout
+
+    def test_status_after_index_reports_counts(self, runner: CliRunner, tmp_vault: Path) -> None:
+        indexed = runner.invoke(app, ["index", "--vault", str(tmp_vault)])
+        assert indexed.exit_code == 0, indexed.stdout + indexed.stderr
+
+        result = runner.invoke(app, ["status", "--vault", str(tmp_vault)])
+
+        assert result.exit_code == 0, result.stdout
+        assert "index:      built (6 notes," in result.stdout
+        assert " chunks)" in result.stdout
 
 
 class TestStubs:
