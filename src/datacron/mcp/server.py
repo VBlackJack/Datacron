@@ -50,6 +50,7 @@ from datacron.core.protocols import (
     FTS5Store,
     RipgrepWrapper,
     VaultReader,
+    VaultWriter,
     WikilinksExtractor,
 )
 from datacron.core.vault import build_configured_reader
@@ -91,6 +92,7 @@ class DatacronApp:
     vault_reader: VaultReader
     chunker: ASTChunker
     store: FTS5Store
+    vault_writer: VaultWriter
     ripgrep: RipgrepWrapper
     wikilinks: WikilinksExtractor
 
@@ -102,6 +104,7 @@ def build_app(
     vault_reader: VaultReader | None = None,
     chunker: ASTChunker | None = None,
     store: FTS5Store | None = None,
+    vault_writer: VaultWriter | None = None,
     ripgrep: RipgrepWrapper | None = None,
     wikilinks: WikilinksExtractor | None = None,
 ) -> DatacronApp:
@@ -116,6 +119,8 @@ def build_app(
             ``MarkdownChunker``.
         store: Optional pre-built :class:`FTS5Store`. Defaults to a fresh
             ``SQLiteFTS5Store()`` (unopened — the lifespan calls ``open``).
+        vault_writer: Optional pre-built :class:`VaultWriter`. Defaults to
+            the configured filesystem writer bound to ``vault_root``.
         ripgrep: Optional pre-built :class:`RipgrepWrapper`. Defaults to
             a fresh ``RipgrepWrapper()`` (stateless).
         wikilinks: Optional pre-built :class:`WikilinksExtractor`. Defaults
@@ -141,6 +146,10 @@ def build_app(
 
         config = load_vault_config(sidecar_vault_config(resolved_root)) or VaultConfig()
         store = SQLiteFTS5Store(term_map=config.query_expansion)
+    if vault_writer is None:
+        from datacron.core.vault_writer import FilesystemVaultWriter  # noqa: PLC0415
+
+        vault_writer = FilesystemVaultWriter(resolved_root, resolved_settings)
     if ripgrep is None:
         from datacron.indexing.ripgrep import RipgrepWrapper as _RipgrepWrapper  # noqa: PLC0415
 
@@ -155,6 +164,7 @@ def build_app(
         vault_reader=resolved_reader,
         chunker=chunker,
         store=store,
+        vault_writer=vault_writer,
         ripgrep=ripgrep,
         wikilinks=wikilinks,
     )
