@@ -45,6 +45,7 @@ from datacron.core.models import (
     SearchResult,
     Wikilink,
 )
+from datacron.core.temporal import TemporalMeta
 
 __all__ = [
     "ASTChunker",
@@ -157,6 +158,10 @@ class FTS5Store(Protocol):
         ``fs_mtime_ns`` is ``None`` for rows indexed before the column existed;
         callers MUST treat ``None`` as "always re-read" (never skip).
         """
+        ...
+
+    async def list_temporal_metadata(self) -> dict[str, TemporalMeta]:
+        """Return explicit retrieval lifecycle metadata keyed by note_id."""
         ...
 
     def iter_all_chunks(self) -> AsyncIterator[Chunk]:

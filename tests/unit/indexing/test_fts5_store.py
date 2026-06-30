@@ -24,6 +24,7 @@ import aiosqlite
 import pytest
 
 from datacron.core.models import Chunk, ChunkType, Note
+from datacron.core.temporal import TemporalMeta
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 
 NoteFactory = Callable[..., Note]
@@ -536,6 +537,32 @@ async def test_upsert_stores_and_lists_fs_mtime(
     await store.upsert_note(note, [chunk])
     assert await store.list_indexed_notes_with_mtime() == {
         "welcome.md": (_NOTE_ID, note.content_hash, None)
+    }
+    await store.close()
+
+
+async def test_list_temporal_metadata_reads_frontmatter_json(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    current = note_factory(
+        id=_NOTE_ID,
+        rel_path="current.md",
+        frontmatter={"confidence": "low", "supersedes": [_OTHER_NOTE_ID, ""]},
+    )
+    current_chunk = chunk_factory(note=current, chunk_id=f"{current.id}::::0000")
+    plain = note_factory(id=_OTHER_NOTE_ID, rel_path="plain.md", frontmatter={})
+    plain_chunk = chunk_factory(note=plain, chunk_id=f"{plain.id}::::0000")
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+
+    await store.upsert_note(current, [current_chunk])
+    await store.upsert_note(plain, [plain_chunk])
+
+    assert await store.list_temporal_metadata() == {
+        _NOTE_ID: TemporalMeta(confidence="low", supersedes=[_OTHER_NOTE_ID]),
+        _OTHER_NOTE_ID: TemporalMeta(confidence=None, supersedes=[]),
     }
     await store.close()
 
