@@ -42,6 +42,7 @@ class TestDefaults:
         assert settings.chunk_max_tokens == DEFAULT_CHUNK_MAX_TOKENS
         assert settings.get_note_max_tokens == DEFAULT_GET_NOTE_MAX_TOKENS
         assert settings.read_paths == []
+        assert settings.write_paths == []
         assert settings.vault_root is None
 
     def test_vault_config_excluded_folders_default(self) -> None:
@@ -94,6 +95,20 @@ class TestEnvLoading:
         monkeypatch.setenv("DATACRON_READ_PATHS", os.pathsep + str(only) + os.pathsep)
         settings = Settings()
         assert settings.read_paths == [only.resolve()]
+
+    def test_write_paths_split_by_os_sep(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        first = tmp_path / "a"
+        second = tmp_path / "b"
+        first.mkdir()
+        second.mkdir()
+        raw = os.pathsep.join([str(first), str(second)])
+        monkeypatch.setenv("DATACRON_WRITE_PATHS", raw)
+        settings = Settings()
+        assert settings.write_paths == [first.resolve(), second.resolve()]
 
     def test_vault_root_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("DATACRON_VAULT_ROOT", str(tmp_path))
