@@ -67,9 +67,9 @@ pour tirer parti de Datacron.
 
 ---
 
-## Ce que Datacron v1 fait (et ne fait pas)
+## Ce que Datacron fait (et ne fait pas)
 
-**v1 (MVP 4 semaines, read-only)** :
+**Socle v1 (MVP 4 semaines)** :
 
 | Use case | Comment |
 |---|---|
@@ -78,13 +78,18 @@ pour tirer parti de Datacron.
 | 🔍 **Recherche lexicale + regex** | SQLite FTS5/BM25 + ripgrep wrapper |
 | 🔗 **Backlinks et wikilinks** | `get_backlinks` pour le graphe de liens |
 
-**v1 ne fait PAS** (reporté post-MVP, par décision motivée — voir [decisions-tranchees-v2.1.md](docs/decisions-tranchees-v2.1.md)) :
+**Branche d'intégration actuelle (`integration/eval-fts5`)** :
 
-- ❌ Écriture dans le vault (write tools post-v0.2 quand on aura validé l'UX d'approbation)
+- ✅ Query-expansion FR↔EN statique au moment de la recherche (`VAULT.yaml` → `query_expansion`) ; gain mesuré sur le golden set Julien : recall@5 0.74 → 0.89.
+- ✅ Write tools Phase 1 : `create_note_ai` et `append_journal`, OFF par défaut, confinés par `DATACRON_WRITE_PATHS`, atomiques, réversibles via `.datacron/backups/`, et réindexés immédiatement.
+- ✅ Re-rank temporel conservateur : `supersedes` démote les notes remplacées, `confidence: low/needs_verification` baisse légèrement le score, `include_superseded=true` permet d'inspecter l'historique.
+
+**Datacron ne fait PAS encore** :
+
 - ❌ Embeddings vectoriels (ajoutés seulement si l'eval mesure que le lexical seul est insuffisant)
 - ❌ Agent autonome / LangGraph (Claude orchestre, c'est suffisant)
 - ❌ Studio GUI Tauri (ligne de commande suffit pour le MVP)
-- ❌ Mode multi-machines avec writes concurrents (single-writer rule en v1)
+- ❌ Mode multi-machines avec writes concurrents (single-writer rule pour toute écriture)
 
 ---
 
@@ -104,7 +109,7 @@ Ce qui veut dire :
 - ⚠️ **Les chunks transitent quand même par Anthropic.** Si tu veux du strict air-gapped, n'utilise pas Claude — c'est cohérent, pas Datacron qui décide.
 
 Si tu veux du 100% local, Datacron v2 ajoutera un mode `datacron ask --local` qui utilise
-Ollama localement, mais ça sort du scope du MVP read-only.
+Ollama localement, mais ça sort du scope du serveur MCP actuel.
 
 ---
 
@@ -179,9 +184,10 @@ Redémarre Claude Desktop. C'est fait.
                             │ MCP stdio (JSON-RPC)
                             │
    ┌────────────────────────▼───────────────────────────────┐
-   │  Datacron MCP server  (FastMCP, Python, read-only v1)  │
+   │  Datacron MCP server  (FastMCP, Python, local-first)   │
    │  Tools: list_notes · get_note · search_text ·          │
-   │         search_regex · get_backlinks                   │
+   │         search_regex · get_backlinks · create_note_ai ·│
+   │         append_journal                                 │
    │  Resources: datacron://vault/map · /info · /policy     │
    └─────┬──────────────────────────────────┬───────────────┘
          │ filesystem                       │ reads index
@@ -223,7 +229,9 @@ standard que tu dois suivre.
 
 - **Aucune télémétrie** — pas de phone-home, pas d'analytics tiers.
 - **Pas de LLM cloud appelé par Datacron lui-même** — c'est le client MCP (Claude Desktop) qui décide ce qu'il envoie à Anthropic, pas Datacron.
-- **Path confinement strict** — variables d'env `DATACRON_READ_PATHS` confinent physiquement le serveur.
+- **Path confinement strict** — `DATACRON_READ_PATHS` confine la lecture ; `DATACRON_WRITE_PATHS` doit être explicitement configuré pour toute écriture.
+- **Writes fail-safe** — sans `DATACRON_WRITE_PATHS`, `create_note_ai` et `append_journal` renvoient une erreur claire et n'écrivent rien.
+- **Writes atomiques et réversibles** — overwrite via temp + `os.replace`; backup horodaté dans `.datacron/backups/` avant modification.
 - **Sandboxing des contenus** — le contenu des notes renvoyé via MCP est wrappé `<vault_content>…</vault_content>` avec instruction explicite au client de traiter comme données et non comme commandes.
 - **Bounded results** — limites strictes sur la taille des retours pour éviter le context bloat.
 - **Audit log local** — toutes les opérations MCP sont loguées en clair dans `~/.datacron/logs/`.
@@ -242,13 +250,18 @@ Elle a été produite par une boucle design → cross-review (Gemini Pro + ChatG
 arbitrage, avec vérification empirique du support MCP côté Anthropic, puis implémentée
 par lots testés.
 
-**Sem 4 est en cours** : hardening `read_paths`, eval harness path-level, index incrémental
-mtime-gated, garde-fou chunker, et durcissements robustesse (frontmatter, confinement,
-ripgrep). La suite actuelle est verte : 342 tests, `ruff`, `ruff format --check` et
+**Sem 4 / branche d'intégration** : hardening `read_paths`, eval harness path-level,
+index incrémental mtime-gated, garde-fou chunker, durcissements robustesse
+(frontmatter, confinement, ripgrep), query-expansion FR↔EN, write tools Phase 1,
+et temporal re-ranking sont livrés sur `integration/eval-fts5`.
+
+La suite actuelle est verte : 387 tests, `ruff`, `ruff format --check` et
 `mypy --strict`.
 
-Le retrieval v1 repose sur **BM25 (FTS5) + ripgrep**. Les embeddings restent gelés tant
-que l'éval ne prouve pas leur apport ; l'hybride BGE-M3 reste une option v0.4 conditionnelle.
+Le retrieval actuel repose sur **BM25 (FTS5) + query-expansion + temporal re-rank +
+ripgrep**. Les embeddings restent gelés tant que l'éval ne prouve pas leur apport ;
+l'hybride BGE-M3 reste une option v0.4 conditionnelle. Mesure golden Julien :
+recall@5 0.89, recall@10 0.95, recall@20 0.95, precision 0.32.
 
 Le critère de succès Phase 0 se mesure sur 30 questions réelles contre le baseline
 "folder dump", depuis Claude Desktop, en qualité, latence et coût tokens.
