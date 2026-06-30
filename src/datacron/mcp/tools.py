@@ -33,14 +33,14 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, Final
 
 from mcp.server.fastmcp import FastMCP
 from ulid import ULID
 
 from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
-from datacron.core.frontmatter import parse, serialize
+from datacron.core.frontmatter import FrontmatterError, parse, serialize
 from datacron.core.logger import get_logger
 from datacron.core.models import ChunkType, Note, SearchResult
 from datacron.core.paths import PathConfinementError, assert_within_paths, assert_within_write_paths
@@ -214,6 +214,30 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             rel_path=rel_path,
             heading=heading,
             entry=entry,
+        )
+
+    @server.tool(
+        name="set_frontmatter",
+        title="Set lifecycle frontmatter",
+        description=(
+            "Update lifecycle frontmatter fields on an existing memory note. "
+            "This write operation only changes confidence, last_verified, "
+            "supersedes, and the automatic updated timestamp; the Markdown body "
+            "is preserved."
+        ),
+    )
+    async def set_frontmatter(
+        rel_path: str,
+        confidence: str | None = None,
+        last_verified: str | None = None,
+        supersedes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return await _set_frontmatter_impl(
+            app,
+            rel_path=rel_path,
+            confidence=confidence,
+            last_verified=last_verified,
+            supersedes=supersedes,
         )
 
 
@@ -503,6 +527,102 @@ async def _append_journal_impl(
     return payload
 
 
+async def _set_frontmatter_impl(
+    app: DatacronApp,
+    *,
+    rel_path: str,
+    confidence: str | None = None,
+    last_verified: str | None = None,
+    supersedes: list[str] | None = None,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        cleaned_rel_path, cleaned_confidence, cleaned_last_verified, cleaned_supersedes = (
+            _validate_set_frontmatter_request(
+                rel_path=rel_path,
+                confidence=confidence,
+                last_verified=last_verified,
+                supersedes=supersedes,
+            )
+        )
+        resolved = assert_within_write_paths(app.vault_root / cleaned_rel_path, app.settings)
+        resolved = assert_within_paths(resolved, [app.vault_root], kind="write")
+        if not resolved.exists():
+            raise FileNotFoundError(f"note not found at {cleaned_rel_path}; use create_note_ai")
+
+        raw = resolved.read_text(encoding="utf-8")
+        metadata, body = parse(raw)
+        if not metadata:
+            raise ValueError("note has no frontmatter")
+
+        changed_fields: list[str] = []
+        if cleaned_confidence is not None:
+            if metadata.get("confidence") != cleaned_confidence:
+                changed_fields.append("confidence")
+            metadata["confidence"] = cleaned_confidence
+        if cleaned_last_verified is not None:
+            if metadata.get("last_verified") != cleaned_last_verified:
+                changed_fields.append("last_verified")
+            metadata["last_verified"] = cleaned_last_verified
+        if cleaned_supersedes is not None:
+            if metadata.get("supersedes") != cleaned_supersedes:
+                changed_fields.append("supersedes")
+            metadata["supersedes"] = cleaned_supersedes
+
+        metadata["updated"] = datetime.now(tz=UTC).isoformat()
+        content = serialize(metadata, body)
+        await app.vault_writer.write_note_atomic(cleaned_rel_path, content, overwrite=True)
+        index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+    except PathConfinementError as exc:
+        mapped_exc = (
+            PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
+            if not app.settings.write_paths
+            else exc
+        )
+        return _error_response(
+            "set_frontmatter",
+            mapped_exc,
+            started,
+            rel_path=rel_path,
+        )
+    except FileNotFoundError as exc:
+        return _error_response(
+            "set_frontmatter",
+            exc,
+            started,
+            rel_path=rel_path,
+        )
+    except (FrontmatterError, ValueError) as exc:
+        return _error_response(
+            "set_frontmatter",
+            exc,
+            started,
+            rel_path=rel_path,
+        )
+    except Exception:
+        _LOGGER.exception("set_frontmatter failed (rel_path=%r)", rel_path)
+        return _error_response(
+            "set_frontmatter",
+            RuntimeError("internal error"),
+            started,
+            rel_path=rel_path,
+        )
+
+    payload: dict[str, Any] = {
+        "updated": {"rel_path": cleaned_rel_path, "fields": changed_fields},
+        "indexed": True,
+    }
+    _audit(
+        "set_frontmatter",
+        started,
+        rel_path=cleaned_rel_path,
+        fields=changed_fields,
+        reindexed_notes=index_stats["reindexed_notes"],
+        deleted_notes=index_stats["deleted_notes"],
+    )
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -545,7 +665,7 @@ def _validate_memory_frontmatter(
     cleaned_rel_path = rel_path.strip()
     cleaned_title = title.strip()
     cleaned_origin = origin.strip().lower()
-    cleaned_confidence = confidence.strip().lower()
+    cleaned_confidence = _validate_memory_confidence(confidence)
     cleaned_tags = _clean_string_list(tags)
 
     if not cleaned_rel_path.endswith(".md"):
@@ -556,8 +676,6 @@ def _validate_memory_frontmatter(
         raise ValueError("body must not be empty")
     if cleaned_origin not in _MEMORY_ORIGINS:
         raise ValueError(f"origin must be one of {sorted(_MEMORY_ORIGINS)}")
-    if cleaned_confidence not in _MEMORY_CONFIDENCE_LEVELS:
-        raise ValueError(f"confidence must be one of {sorted(_MEMORY_CONFIDENCE_LEVELS)}")
     if not cleaned_tags:
         raise ValueError("tags must not be empty")
 
@@ -568,6 +686,13 @@ def _validate_memory_frontmatter(
         "confidence": cleaned_confidence,
         "tags": cleaned_tags,
     }
+
+
+def _validate_memory_confidence(confidence: str) -> str:
+    cleaned_confidence = confidence.strip().lower()
+    if cleaned_confidence not in _MEMORY_CONFIDENCE_LEVELS:
+        raise ValueError(f"confidence must be one of {sorted(_MEMORY_CONFIDENCE_LEVELS)}")
+    return cleaned_confidence
 
 
 def _validate_append_journal_request(
@@ -585,6 +710,39 @@ def _validate_append_journal_request(
     if not entry.strip():
         raise ValueError("entry must not be empty")
     return cleaned_rel_path, cleaned_heading, entry
+
+
+def _validate_set_frontmatter_request(
+    *,
+    rel_path: str,
+    confidence: str | None,
+    last_verified: str | None,
+    supersedes: list[str] | None,
+) -> tuple[str, str | None, str | None, list[str] | None]:
+    cleaned_rel_path = rel_path.strip()
+    if confidence is None and last_verified is None and supersedes is None:
+        raise ValueError("nothing to update")
+    if not cleaned_rel_path.endswith(".md"):
+        raise ValueError("rel_path must end with .md")
+
+    cleaned_confidence = _validate_memory_confidence(confidence) if confidence is not None else None
+    cleaned_last_verified = (
+        _validate_last_verified_date(last_verified) if last_verified is not None else None
+    )
+    cleaned_supersedes = _clean_string_list(supersedes) if supersedes is not None else None
+
+    return cleaned_rel_path, cleaned_confidence, cleaned_last_verified, cleaned_supersedes
+
+
+def _validate_last_verified_date(value: str) -> str:
+    cleaned = value.strip()
+    try:
+        parsed = date.fromisoformat(cleaned)
+    except ValueError as exc:
+        raise ValueError("last_verified must be a YYYY-MM-DD date") from exc
+    if parsed.isoformat() != cleaned:
+        raise ValueError("last_verified must be a YYYY-MM-DD date")
+    return cleaned
 
 
 def _append_entry_to_heading(body: str, heading: str, entry: str) -> str:
