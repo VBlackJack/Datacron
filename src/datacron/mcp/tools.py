@@ -39,10 +39,12 @@ from typing import TYPE_CHECKING, Any, Final
 from mcp.server.fastmcp import FastMCP
 from ulid import ULID
 
+from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
 from datacron.core.frontmatter import parse, serialize
 from datacron.core.logger import get_logger
 from datacron.core.models import ChunkType, Note, SearchResult
 from datacron.core.paths import PathConfinementError, assert_within_paths, assert_within_write_paths
+from datacron.core.temporal import rerank_temporal
 from datacron.indexing.reconcile import ReconcileStats, reconcile
 from datacron.indexing.ripgrep import RipgrepError
 from datacron.mcp.sandbox import wrap_vault_content
@@ -119,11 +121,21 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         description=(
             "Full-text BM25 search over the FTS5 index. Returns ranked sandbox-"
             "wrapped snippets with **term** highlighting. Requires `datacron index` "
-            "to have been run first."
+            "to have been run first. By default, explicitly superseded notes are "
+            "demoted; set include_superseded=true to inspect historical notes."
         ),
     )
-    async def search_text(query: str, limit: int = 20) -> dict[str, Any]:
-        return await _search_text_impl(app, query=query, limit=limit)
+    async def search_text(
+        query: str,
+        limit: int = 20,
+        include_superseded: bool = False,
+    ) -> dict[str, Any]:
+        return await _search_text_impl(
+            app,
+            query=query,
+            limit=limit,
+            include_superseded=include_superseded,
+        )
 
     @server.tool(
         name="search_regex",
@@ -804,6 +816,7 @@ async def _search_text_impl(
     *,
     query: str,
     limit: int,
+    include_superseded: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     cleaned = query.strip()
@@ -817,7 +830,16 @@ async def _search_text_impl(
     bounded_limit = _bounded_count(limit, app.settings.max_result_count)
     try:
         repair = await _repair_index_on_read(app)
-        raw_results = await app.store.search(cleaned, limit=bounded_limit)
+        raw_results = await app.store.search(
+            cleaned,
+            limit=bounded_limit * TEMPORAL_OVERFETCH_FACTOR,
+        )
+        temporal_meta = await app.store.list_temporal_metadata()
+        raw_results = rerank_temporal(
+            raw_results,
+            temporal_meta,
+            include_superseded=include_superseded,
+        )[:bounded_limit]
     except Exception:
         _LOGGER.exception("search_text failed (query=%r)", query)
         return _error_response("search_text", RuntimeError("internal error"), started, query=query)
@@ -841,6 +863,7 @@ async def _search_text_impl(
         limit=limit,
         bounded_limit=bounded_limit,
         returned=len(results),
+        include_superseded=include_superseded,
         reindexed_notes=repair["reindexed_notes"],
         deleted_notes=repair["deleted_notes"],
         truncated_for_tokens=truncated_for_tokens,

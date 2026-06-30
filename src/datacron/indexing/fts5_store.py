@@ -29,6 +29,7 @@ import aiosqlite
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, ChunkType, IndexStats, Note, SearchResult
 from datacron.core.query_expansion import expand_terms, normalize_term_map
+from datacron.core.temporal import TemporalMeta
 
 __all__ = ["SQLiteFTS5Store"]
 
@@ -245,6 +246,12 @@ FROM notes
 ORDER BY indexed_at ASC;
 """
 
+_LIST_TEMPORAL_METADATA_SQL: Final[str] = """
+SELECT note_id, frontmatter_json
+FROM notes
+ORDER BY indexed_at ASC;
+"""
+
 _RECORD_MTIME_SQL: Final[str] = "UPDATE notes SET fs_mtime = ? WHERE note_id = ?;"
 
 _ITER_ALL_CHUNKS_SQL: Final[str] = """
@@ -455,6 +462,16 @@ class SQLiteFTS5Store:
             for row in rows
         }
 
+    async def list_temporal_metadata(self) -> dict[str, TemporalMeta]:
+        """Return explicit retrieval lifecycle metadata keyed by note_id."""
+        connection = self._require_connection()
+        async with connection.execute(_LIST_TEMPORAL_METADATA_SQL) as cursor:
+            rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+        return {
+            str(row["note_id"]): _temporal_meta_from_frontmatter(row["frontmatter_json"])
+            for row in rows
+        }
+
     async def iter_all_chunks(self) -> AsyncIterator[Chunk]:
         """Stream all indexed chunks in insertion/document order."""
         connection = self._require_connection()
@@ -657,6 +674,26 @@ def _wikilinks_from_json(value: Any) -> list[str]:
     if not isinstance(parsed, list):
         raise ValueError("Stored wikilinks_out_json is not a JSON array.")
     return [str(item) for item in parsed]
+
+
+def _temporal_meta_from_frontmatter(value: Any) -> TemporalMeta:
+    if value is None:
+        return TemporalMeta(confidence=None, supersedes=[])
+    parsed = json.loads(str(value))
+    if not isinstance(parsed, dict):
+        raise ValueError("Stored frontmatter_json is not a JSON object.")
+    return TemporalMeta(
+        confidence=_optional_str(parsed.get("confidence")),
+        supersedes=_string_list(parsed.get("supersedes")),
+    )
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
 
 
 def _optional_str(value: Any) -> str | None:
