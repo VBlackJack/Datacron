@@ -22,13 +22,30 @@ same normalization rules.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any, Final
 
 import frontmatter
+import yaml
 
-__all__ = ["extract_tags", "parse"]
+__all__ = ["FrontmatterError", "extract_tags", "parse", "serialize"]
 
 _INLINE_TAG_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?<!\S)#([A-Za-z0-9_][A-Za-z0-9_\-/]*)")
+_FRONTMATTER_KEY_ORDER: Final[tuple[str, ...]] = (
+    "id",
+    "title",
+    "created",
+    "updated",
+    "origin",
+    "confidence",
+    "last_verified",
+    "supersedes",
+    "tags",
+)
+
+
+class FrontmatterError(Exception):
+    """Raised when a note's YAML frontmatter cannot be parsed."""
 
 
 def parse(raw: str) -> tuple[dict[str, Any], str]:
@@ -40,9 +57,25 @@ def parse(raw: str) -> tuple[dict[str, Any], str]:
     """
     if not raw.lstrip().startswith("---"):
         return {}, raw
-    post = frontmatter.loads(raw)
+    try:
+        post = frontmatter.loads(raw)
+    except yaml.YAMLError as exc:
+        raise FrontmatterError(str(exc)) from exc
     metadata: dict[str, Any] = dict(post.metadata)
     return metadata, post.content
+
+
+def serialize(metadata: Mapping[str, Any], body: str) -> str:
+    """Return Markdown text with deterministic YAML frontmatter."""
+    ordered: dict[str, Any] = {}
+    for key in _FRONTMATTER_KEY_ORDER:
+        if key in metadata:
+            ordered[key] = metadata[key]
+    for key in sorted(key for key in metadata if key not in ordered):
+        ordered[key] = metadata[key]
+
+    dumped = yaml.safe_dump(ordered, sort_keys=False, allow_unicode=True).strip()
+    return f"---\n{dumped}\n---\n{body}"
 
 
 def _coerce_tag_iterable(value: object) -> list[str]:

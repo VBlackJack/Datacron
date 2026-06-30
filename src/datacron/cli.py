@@ -35,7 +35,6 @@ from datacron import __version__
 from datacron.core.config import (
     DEFAULT_EXCLUDED_FILES,
     DEFAULT_EXCLUDED_FOLDERS,
-    INDEX_DB_FILENAME,
     LOG_FILENAME_PATTERN,
     Settings,
     VaultConfig,
@@ -45,9 +44,11 @@ from datacron.core.config import (
 from datacron.core.logger import configure_logging, get_logger
 from datacron.core.paths import (
     sidecar_dir,
+    sidecar_index_db,
     sidecar_index_dir,
     sidecar_vault_config,
 )
+from datacron.core.query_expansion import query_expansion_seed
 from datacron.core.vault import build_configured_reader
 
 __all__ = ["app", "mcp_entry"]
@@ -111,6 +112,7 @@ def _format_vault_yaml(vault_id: str, created: datetime) -> str:
         },
         "excluded_folders": list(DEFAULT_EXCLUDED_FOLDERS),
         "excluded_files": list(DEFAULT_EXCLUDED_FILES),
+        "query_expansion": query_expansion_seed(),
     }
     return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
 
@@ -207,7 +209,8 @@ def status(
     else:
         note_count = 0
 
-    db_path = sidecar_index_dir(vault_root) / INDEX_DB_FILENAME
+    db_path = sidecar_index_db(vault_root)
+    index_status = asyncio.run(_index_status_label(db_path))
     log_dir = sidecar_dir(vault_root) / "logs"
     today_log = LOG_FILENAME_PATTERN.format(date=datetime.now().strftime("%Y%m%d"))
 
@@ -218,9 +221,30 @@ def status(
         _print(f"  vault_id:   {config.vault_id or '<unknown>'}")
         _print(f"  created:    {config.created or '<unknown>'}")
     _print(f"  notes:      {note_count}")
-    _print(f"  index:      {'built' if db_path.exists() else 'not built'} ({db_path})")
+    _print(f"  index:      {index_status} ({db_path})")
     _print(f"  log file:   {log_dir / today_log}")
     _log_completion("status", started)
+
+
+async def _index_status_label(db_path: Path) -> str:
+    if not db_path.exists():
+        return "not built"
+
+    from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
+
+    store = SQLiteFTS5Store()
+    try:
+        await store.open(db_path)
+        stats = await store.stats()
+    except Exception as exc:
+        _LOGGER.warning("Unable to read index stats from %s: %s", db_path, exc)
+        return "unreadable — run `datacron reindex`"
+    finally:
+        await store.close()
+
+    if stats.note_count > 0:
+        return f"built ({stats.note_count} notes, {stats.chunk_count} chunks)"
+    return "empty — run `datacron index`"
 
 
 def _not_implemented(command: str, since: str) -> NoReturn:
@@ -274,9 +298,10 @@ async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
             db_path.with_suffix(db_path.suffix + suffix).unlink(missing_ok=True)
 
     settings = get_settings()
+    config = _load_vault_yaml(vault_root) or VaultConfig()
     reader = build_configured_reader(vault_root)
     chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
-    store = SQLiteFTS5Store()
+    store = SQLiteFTS5Store(term_map=config.query_expansion)
     await store.open(db_path)
     started = time.perf_counter()
     try:
@@ -341,7 +366,8 @@ async def _run_eval(vault_root: Path, questions_path: Path) -> None:
         raise typer.Exit(code=1)
 
     questions = load_eval_questions(questions_path)
-    store = SQLiteFTS5Store()
+    config = _load_vault_yaml(vault_root) or VaultConfig()
+    store = SQLiteFTS5Store(term_map=config.query_expansion)
     await store.open(db_path)
     try:
         await LocalEvalHarness().run(questions, store, RipgrepWrapper())

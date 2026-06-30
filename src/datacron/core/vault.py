@@ -30,7 +30,7 @@ import re
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Final, final
+from typing import Any, Final, final
 
 from ulid import ULID
 
@@ -40,7 +40,7 @@ from datacron.core.config import (
     VaultConfig,
     load_vault_config,
 )
-from datacron.core.frontmatter import extract_tags, parse
+from datacron.core.frontmatter import FrontmatterError, extract_tags, parse
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
@@ -258,7 +258,18 @@ class FilesystemVaultReader:
 
         raw_text = await asyncio.to_thread(resolved.read_text, "utf-8")
         stat = await asyncio.to_thread(resolved.stat)
-        metadata, body = parse(raw_text)
+        metadata: dict[str, Any]
+        body: str
+        try:
+            metadata, body = parse(raw_text)
+        except FrontmatterError as exc:
+            _LOGGER.warning(
+                "Invalid YAML frontmatter in %s; reading note with empty metadata: %s",
+                resolved,
+                exc,
+            )
+            metadata = {}
+            body = raw_text
 
         rel_path = _normalize_rel_path(resolved, self._vault_root)
         note_id = await self._resolve_id(metadata, rel_path)
@@ -303,7 +314,6 @@ class FilesystemVaultReader:
                 notes.append(await self.read_note(path))
             except (OSError, ValueError) as exc:
                 _LOGGER.warning("Skipping unreadable note %s: %s", path, exc)
-                raise
         return notes
 
     async def stat_notes(self) -> dict[str, tuple[Path, int]]:

@@ -369,6 +369,10 @@ class FTS5Store(Protocol):
         None for rows indexed before the column existed (treat as always-re-read)."""
         ...
 
+    async def list_temporal_metadata(self) -> dict[str, TemporalMeta]:
+        """Return note_id -> TemporalMeta extracted from stored frontmatter_json."""
+        ...
+
     def iter_all_chunks(self) -> AsyncIterator[Chunk]:
         """Stream all indexed chunks in insertion/document order."""
         ...
@@ -377,6 +381,18 @@ class FTS5Store(Protocol):
         """Aggregate stats."""
         ...
 ```
+
+`TemporalMeta` is a small frozen dataclass in `core/temporal.py`:
+
+```python
+@dataclass(frozen=True)
+class TemporalMeta:
+    confidence: str | None
+    supersedes: list[str]
+```
+
+`SQLiteFTS5Store` also accepts an optional constructor `term_map` used for query-time
+FR↔EN expansion. This is an implementation option, not a Protocol method.
 
 ### 2.4 `RipgrepWrapper` (implemented by **Codex**)
 
@@ -515,6 +531,22 @@ class VaultReader(Protocol):
         ...
 ```
 
+### 2.7 `VaultWriter` (implemented by **Claude Code**)
+
+```python
+class VaultWriter(Protocol):
+    """Writes vault-relative Markdown notes through confined, reversible primitives."""
+
+    async def write_note_atomic(self, rel_path: str, content: str, *, overwrite: bool) -> None:
+        """Write content atomically. If overwrite=True and the target exists,
+        snapshot the previous version under .datacron/backups/ before replace.
+        Implementations MUST enforce DATACRON_WRITE_PATHS and bound vault_root."""
+        ...
+```
+
+The concrete implementation is `FilesystemVaultWriter` in `core/vault_writer.py`.
+Empty `write_paths` means writes are disabled; read-only operation remains the default.
+
 ---
 
 ## 3. Module ownership matrix
@@ -528,6 +560,8 @@ class VaultReader(Protocol):
 | `core/hashing.py` | Claude Code | stdlib |
 | `core/frontmatter.py` | Claude Code | stdlib, python-frontmatter |
 | `core/vault.py` | Claude Code | core.*, ulid-py |
+| `core/vault_writer.py` | Claude Code | core.*, stdlib |
+| `core/temporal.py` | Codex | core.models, core.config |
 | `cli.py` | Claude Code | core.*, mcp.*, installers.*, indexing.*, eval.*, typer |
 | `mcp/server.py` | Claude Code | core.*, indexing.*, mcp-python-sdk (FastMCP) |
 | `mcp/tools.py` | Claude Code | core.*, indexing.*, mcp.sandbox |
@@ -560,12 +594,16 @@ Both agents must use these env var / config key names exactly (zero hardcoding r
 | `DATACRON_LOG_LEVEL` | `INFO` | core.config |
 | `DATACRON_LOG_DIR` | `~/.datacron/logs` | core.config |
 | `DATACRON_READ_PATHS` | (none — required) | core.config |
+| `DATACRON_WRITE_PATHS` | `[]` (writes disabled) | core.config, core.vault_writer |
 | `DATACRON_VAULT_ROOT` | (resolved from `.datacron/VAULT.yaml`) | core.config |
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | mcp.tools, indexing.* |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | mcp.tools, indexing.* |
 | `DATACRON_RIPGREP_PATH` | `rg` (PATH lookup) | indexing.ripgrep |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | indexing.chunker |
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | mcp.tools |
+
+Vault-local `.datacron/VAULT.yaml` may also define `query_expansion`, a mapping of
+term -> synonyms used by `SQLiteFTS5Store(term_map=...)` at query time.
 
 ---
 
@@ -606,7 +644,7 @@ insufficient:
 | Section | Frozen since | Last amendment |
 |---|---|---|
 | §1 Pydantic models | 2026-05-17 | 2026-05-24 — §1.3 Chunk.line_start/line_end added for ripgrep result → chunk resolution; prior 2026-05-22 amendment clarified Chunk.ordinal scope. **PENDING 2026-06-09** — §1.7 eval metrics path-level (cross-review on `claude-code/phase0`) |
-| §2 Protocols | 2026-05-17 | 2026-05-23 — §2.6 VaultReader: bound at construction, removed `vault_root` from method signatures, made `resolve_alias` priority explicitly global (strict order title→filename→aliases across all notes). **PENDING 2026-06-09** — §2.5 EvalHarness path-level metrics + frozen `metrics.py` signatures (cross-review on `claude-code/phase0`). **2026-06-13 (P1 mtime gate)** — §2.3 FTS5Store: `upsert_note` gains `fs_mtime_ns`, added `record_mtime` and `list_indexed_notes_with_mtime`; §2.6 VaultReader: added `stat_notes`. Additive, backward-compatible. |
+| §2 Protocols | 2026-05-17 | 2026-05-23 — §2.6 VaultReader: bound at construction, removed `vault_root` from method signatures, made `resolve_alias` priority explicitly global (strict order title→filename→aliases across all notes). **PENDING 2026-06-09** — §2.5 EvalHarness path-level metrics + frozen `metrics.py` signatures (cross-review on `claude-code/phase0`). **2026-06-13 (P1 mtime gate)** — §2.3 FTS5Store: `upsert_note` gains `fs_mtime_ns`, added `record_mtime` and `list_indexed_notes_with_mtime`; §2.6 VaultReader: added `stat_notes`. **2026-06-30** — §2.7 VaultWriter added for confined atomic writes; §2.3 FTS5Store added `list_temporal_metadata` for temporal retrieval. Additive, backward-compatible. |
 | §3 Ownership matrix | 2026-05-17 | — |
 | §4 Reserved config keys | 2026-05-17 | — |
 | §5 Test fixtures | 2026-05-17 | — |
