@@ -41,6 +41,7 @@ from ulid import ULID
 
 from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
 from datacron.core.frontmatter import FrontmatterError, parse, serialize
+from datacron.core.hashing import HASH_HEX_LENGTH, hash_text
 from datacron.core.logger import get_logger
 from datacron.core.models import ChunkType, Note, SearchResult
 from datacron.core.paths import PathConfinementError, assert_within_paths, assert_within_write_paths
@@ -66,6 +67,7 @@ _MEMORY_ORIGINS: Final[frozenset[str]] = frozenset({"ai", "human", "merged"})
 _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
     {"high", "medium", "low", "needs_verification"}
 )
+_CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
 
 
 def register_tools(server: FastMCP[Any], app: Any) -> None:
@@ -238,6 +240,32 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             confidence=confidence,
             last_verified=last_verified,
             supersedes=supersedes,
+        )
+
+    @server.tool(
+        name="patch_note_section",
+        title="Patch note section",
+        description=(
+            "Replace the content under one existing Markdown heading. "
+            "This write operation requires the caller to pass the note's "
+            "current content_hash as expected_hash, preserves the heading line "
+            "and non-target sections, snapshots the prior file, and writes atomically."
+        ),
+    )
+    async def patch_note_section(
+        rel_path: str,
+        heading: str,
+        new_content: str,
+        expected_hash: str,
+        heading_level: int | None = None,
+    ) -> dict[str, Any]:
+        return await _patch_note_section_impl(
+            app,
+            rel_path=rel_path,
+            heading=heading,
+            new_content=new_content,
+            expected_hash=expected_hash,
+            heading_level=heading_level,
         )
 
 
@@ -623,6 +651,120 @@ async def _set_frontmatter_impl(
     return payload
 
 
+async def _patch_note_section_impl(
+    app: DatacronApp,
+    *,
+    rel_path: str,
+    heading: str,
+    new_content: str,
+    expected_hash: str,
+    heading_level: int | None = None,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        (
+            cleaned_rel_path,
+            cleaned_heading,
+            cleaned_new_content,
+            cleaned_expected_hash,
+            cleaned_heading_level,
+        ) = _validate_patch_note_section_request(
+            rel_path=rel_path,
+            heading=heading,
+            new_content=new_content,
+            expected_hash=expected_hash,
+            heading_level=heading_level,
+        )
+        resolved = assert_within_write_paths(app.vault_root / cleaned_rel_path, app.settings)
+        resolved = assert_within_paths(resolved, [app.vault_root], kind="write")
+        if not resolved.exists():
+            raise FileNotFoundError(f"note not found at {cleaned_rel_path}; use create_note_ai")
+
+        raw = resolved.read_text(encoding="utf-8")
+        if hash_text(raw) != cleaned_expected_hash:
+            raise ValueError("note changed since read (hash mismatch); re-read and retry")
+
+        metadata, body = parse(raw)
+        lines = body.splitlines(keepends=True)
+        content_start, content_end = _find_section_span(
+            lines,
+            cleaned_heading,
+            cleaned_heading_level,
+        )
+        matched_heading = _parse_heading_line(lines[content_start - 1])
+        if matched_heading is None:
+            raise RuntimeError("section span does not follow a heading")
+        matched_level, matched_text = matched_heading
+        prefix = "".join(lines[:content_start])
+        suffix = "".join(lines[content_end:])
+        new_body = (
+            f"{prefix}"
+            f"{_section_replacement_block(cleaned_new_content, prefix=prefix, suffix=suffix)}"
+            f"{suffix}"
+        )
+        metadata["updated"] = datetime.now(tz=UTC).isoformat()
+        content = serialize(metadata, new_body)
+        await app.vault_writer.write_note_atomic(cleaned_rel_path, content, overwrite=True)
+        index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+    except PathConfinementError as exc:
+        mapped_exc = (
+            PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
+            if not app.settings.write_paths
+            else exc
+        )
+        return _error_response(
+            "patch_note_section",
+            mapped_exc,
+            started,
+            rel_path=rel_path,
+            heading=heading,
+        )
+    except FileNotFoundError as exc:
+        return _error_response(
+            "patch_note_section",
+            exc,
+            started,
+            rel_path=rel_path,
+            heading=heading,
+        )
+    except (FrontmatterError, ValueError) as exc:
+        return _error_response(
+            "patch_note_section",
+            exc,
+            started,
+            rel_path=rel_path,
+            heading=heading,
+        )
+    except Exception:
+        _LOGGER.exception("patch_note_section failed (rel_path=%r heading=%r)", rel_path, heading)
+        return _error_response(
+            "patch_note_section",
+            RuntimeError("internal error"),
+            started,
+            rel_path=rel_path,
+            heading=heading,
+        )
+
+    payload: dict[str, Any] = {
+        "patched": {
+            "rel_path": cleaned_rel_path,
+            "heading": matched_text,
+            "level": matched_level,
+        },
+        "indexed": True,
+    }
+    _audit(
+        "patch_note_section",
+        started,
+        rel_path=cleaned_rel_path,
+        heading=cleaned_heading,
+        heading_level=matched_level,
+        reindexed_notes=index_stats["reindexed_notes"],
+        deleted_notes=index_stats["deleted_notes"],
+    )
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -745,6 +887,39 @@ def _validate_last_verified_date(value: str) -> str:
     return cleaned
 
 
+def _validate_patch_note_section_request(
+    *,
+    rel_path: str,
+    heading: str,
+    new_content: str,
+    expected_hash: str,
+    heading_level: int | None,
+) -> tuple[str, str, str, str, int | None]:
+    cleaned_rel_path = rel_path.strip()
+    cleaned_heading = heading.strip()
+    cleaned_expected_hash = expected_hash.strip()
+
+    if not cleaned_rel_path.endswith(".md"):
+        raise ValueError("rel_path must end with .md")
+    if not cleaned_heading:
+        raise ValueError("heading must not be empty")
+    if not new_content.strip():
+        raise ValueError("new_content must not be empty")
+    if not _CONTENT_HASH_PATTERN.fullmatch(cleaned_expected_hash):
+        raise ValueError(f"expected_hash must be a lowercase {HASH_HEX_LENGTH}-character SHA-256")
+    if heading_level is not None and heading_level not in range(1, 7):
+        raise ValueError("heading_level must be between 1 and 6")
+
+    normalized_content = new_content.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+    return (
+        cleaned_rel_path,
+        cleaned_heading,
+        normalized_content,
+        cleaned_expected_hash,
+        heading_level,
+    )
+
+
 def _append_entry_to_heading(body: str, heading: str, entry: str) -> str:
     lines = body.splitlines(keepends=True)
     section = _find_heading_section(lines, heading)
@@ -779,6 +954,39 @@ def _find_heading_section(lines: list[str], heading: str) -> tuple[int, int, int
     return None
 
 
+def _find_section_span(
+    lines: list[str],
+    heading: str,
+    heading_level: int | None,
+) -> tuple[int, int]:
+    matches: list[tuple[int, int]] = []
+    for index, line in enumerate(lines):
+        parsed = _parse_heading_line(line)
+        if parsed is None:
+            continue
+        level, text = parsed
+        if text != heading:
+            continue
+        if heading_level is not None and level != heading_level:
+            continue
+        matches.append((index, level))
+
+    if not matches:
+        raise ValueError("heading not found; nothing to patch")
+    if len(matches) > 1:
+        raise ValueError(f"heading is ambiguous ({len(matches)} matches); pass heading_level")
+
+    heading_index, level = matches[0]
+    content_start = heading_index + 1
+    content_end = len(lines)
+    for next_index in range(content_start, len(lines)):
+        next_heading = _parse_heading_line(lines[next_index])
+        if next_heading is not None and next_heading[0] <= level:
+            content_end = next_index
+            break
+    return content_start, content_end
+
+
 def _trim_trailing_blank_lines(lines: list[str], start: int, end: int) -> int:
     insert_at = end
     while insert_at > start and not lines[insert_at - 1].strip():
@@ -800,6 +1008,13 @@ def _entry_block(entry: str, *, prefix: str, suffix: str) -> str:
     entry_block = entry if entry.endswith("\n") else f"{entry}\n"
     trailing = "" if not suffix or suffix.startswith("\n") else "\n"
     return f"{leading}{entry_block}{trailing}"
+
+
+def _section_replacement_block(new_content: str, *, prefix: str, suffix: str) -> str:
+    leading = "\n\n" if prefix and not prefix.endswith("\n") else "\n"
+    content_block = f"{new_content}\n"
+    trailing = "" if not suffix or suffix.startswith("\n") else "\n"
+    return f"{leading}{content_block}{trailing}"
 
 
 def _clean_string_list(values: list[str]) -> list[str]:
