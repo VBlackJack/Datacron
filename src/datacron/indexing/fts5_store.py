@@ -19,7 +19,7 @@ import asyncio
 import json
 import re
 import sqlite3
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, cast, final
@@ -28,6 +28,7 @@ import aiosqlite
 
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, ChunkType, IndexStats, Note, SearchResult
+from datacron.core.query_expansion import expand_terms, normalize_term_map
 
 __all__ = ["SQLiteFTS5Store"]
 
@@ -271,9 +272,10 @@ ORDER BY rowid;
 class SQLiteFTS5Store:
     """Persistent SQLite-backed implementation of the FTS5Store contract."""
 
-    def __init__(self) -> None:
+    def __init__(self, term_map: Mapping[str, Sequence[str]] | None = None) -> None:
         self._conn: aiosqlite.Connection | None = None
         self._db_path: Path | None = None
+        self._term_map = normalize_term_map(term_map or {})
 
     async def open(self, db_path: Path) -> None:
         """Open or create the SQLite database at ``db_path``."""
@@ -376,10 +378,16 @@ class SQLiteFTS5Store:
         terms = _fts5_terms(query)
         if not terms:
             return []
-        and_query = _join_fts5_terms(terms, operator=" ")
+        if self._term_map:
+            groups = expand_terms(terms, self._term_map)
+            and_query = _join_fts5_groups(groups)
+            fallback_terms = _flatten_fts5_groups(groups)
+        else:
+            and_query = _join_fts5_terms(terms, operator=" ")
+            fallback_terms = terms
         rows = await _fetch_search_rows(connection, and_query, limit)
         if len(rows) < limit and len(terms) > 1:
-            or_query = _join_fts5_terms(terms, operator=" OR ")
+            or_query = _join_fts5_terms(fallback_terms, operator=" OR ")
             seen_chunk_ids = {str(row["chunk_id"]) for row in rows}
             for row in await _fetch_search_rows(connection, or_query, limit):
                 chunk_id = str(row["chunk_id"])
@@ -549,6 +557,29 @@ def _fts5_terms(query: str) -> list[str]:
 
 def _join_fts5_terms(terms: list[str], *, operator: str) -> str:
     return operator.join(_quote_fts5_term(term) for term in terms)
+
+
+def _join_fts5_groups(groups: list[list[str]]) -> str:
+    query_parts: list[str] = []
+    for group in groups:
+        if len(group) == 1:
+            query_parts.append(_quote_fts5_term(group[0]))
+            continue
+        query_parts.append(f"({_join_fts5_terms(group, operator=' OR ')})")
+    return " AND ".join(query_parts)
+
+
+def _flatten_fts5_groups(groups: list[list[str]]) -> list[str]:
+    flattened: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for term in group:
+            key = term.lower()
+            if key in seen:
+                continue
+            flattened.append(term)
+            seen.add(key)
+    return flattened
 
 
 def _quote_fts5_term(term: str) -> str:

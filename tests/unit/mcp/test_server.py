@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from datacron.core.config import Settings
-from datacron.core.paths import PathConfinementError
+from datacron.core.paths import PathConfinementError, sidecar_index_db, sidecar_vault_config
 from datacron.mcp.server import build_app
 
 
@@ -53,3 +53,35 @@ class TestBuildAppReadPaths:
         app = build_app(settings=settings, vault_root=vault)
 
         assert app.vault_root == vault.resolve()
+
+
+class TestBuildAppQueryExpansion:
+    @pytest.mark.asyncio
+    async def test_default_store_uses_vault_query_expansion(self, tmp_path: Path) -> None:
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        sidecar_vault_config(vault).parent.mkdir(parents=True)
+        sidecar_vault_config(vault).write_text(
+            """
+query_expansion:
+  supervision:
+    - monitoring
+""".lstrip(),
+            encoding="utf-8",
+        )
+        (vault / "monitoring.md").write_text(
+            "# Monitoring\n\nOSCARE monitoring guide.\n",
+            encoding="utf-8",
+        )
+        settings = Settings(read_paths=[vault], vault_root=vault)
+        app = build_app(settings=settings, vault_root=vault)
+        await app.store.open(sidecar_index_db(vault))
+
+        try:
+            note = await app.vault_reader.read_note(vault / "monitoring.md")
+            await app.store.upsert_note(note, app.chunker.chunk(note))
+            results = await app.store.search("supervision", limit=5)
+        finally:
+            await app.store.close()
+
+        assert {result.chunk.note_rel_path for result in results} == {"monitoring.md"}
