@@ -229,6 +229,19 @@ notes remplacées, `confidence: low/needs_verification` applique une pénalité 
 Pas de decay par âge (`last_verified`/`updated`) tant qu'une mesure ne prouve pas le gain.
 Le re-rank agit sur un pool overfetch ×3 avant troncature, et ne supprime jamais les résultats.
 
+### ADR-016 — Lignes sur-longues brute-splittees : resolution a la premiere piece (limite acceptee)
+Le modèle `Chunk` adresse les chunks par plage de lignes (`line_start`/`line_end`, 1-indexé)
+pour que ripgrep resolve une correspondance (fichier, ligne) sans table annexe. Une ligne
+source unique dépassant `chunk_max_chars` est brute-splittée en N sous-chunks
+(`_brute_split_line`/`_segment_generic`) partageant tous la même plage (i, i).
+Conséquence : une correspondance ripgrep sur cette ligne résout vers le PREMIER sous-chunk
+(first-match containment) ; les sous-chunks 2..N ne sont pas adressables individuellement.
+Le contenu reste intégralement indexé et correct ; seul le chunk_id/snippet retourné pour
+une correspondance dans le débordement d'une ligne monstre pointe vers la pièce 1.
+**Décision : accepté (WAI).** Le fix propre exigerait des offsets caractère sub-ligne dans
+le modèle `Chunk` (frozen), disproportionné pour un edge rare (lignes > ~`chunk_max_chars` :
+minifié, base64, mono-ligne géant). Clôt l'item backlog P3 chunker.
+
 ---
 
 ## 7. Layout du projet
