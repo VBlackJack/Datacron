@@ -274,6 +274,9 @@ def _segment_generic(raw_lines: list[str], max_chars: int) -> list[tuple[str, in
     while i < n:
         if len(raw_lines[i].rstrip("\n")) > max_chars:
             for piece in _brute_split_line(raw_lines[i].rstrip("\n"), max_chars):
+                # NOTE (ADR-016): sub-pieces of a brute-split over-long line share the line
+                # range (i, i); a ripgrep match on line i resolves to the first piece.
+                # Accepted limitation - content is fully indexed. See docs/ARCHITECTURE.md ADR-016.
                 segments.append((piece, i, i))
             i += 1
             continue
