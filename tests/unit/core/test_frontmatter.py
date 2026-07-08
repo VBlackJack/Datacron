@@ -96,6 +96,12 @@ class TestExtractTags:
         assert "datacron" in tags
         assert "project/sub" in tags
 
+    def test_inline_numeric_refs_and_digit_prefixed_ids_skipped(self) -> None:
+        body = "Issue #47 and color #1e8f4f are refs, but #project/sub is a tag"
+        tags = extract_tags({}, body)
+        assert tags == ["project/sub"]
+        assert extract_tags({"tags": ["47"]}, body) == ["47", "project/sub"]
+
     def test_dedup_and_ordering(self) -> None:
         body = "first #alpha then #beta then #alpha again"
         tags = extract_tags({"tags": ["beta", "Gamma"]}, body)

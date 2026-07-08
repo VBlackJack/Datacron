@@ -81,17 +81,18 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         name="list_notes",
         title="List notes",
         description=(
-            "Return a paginated list of notes in the vault, optionally scoped to a "
-            "subfolder and/or filtered by tags. Each entry includes the stable ULID, "
-            "title, tags, aliases, and timestamps."
+            "Return an offset/limit paginated list of notes in the vault, optionally "
+            "scoped to a subfolder and/or filtered by tags. Each entry includes the "
+            "stable ULID, title, tags, aliases, and timestamps."
         ),
     )
     async def list_notes(
         folder: str | None = None,
         tags: list[str] | None = None,
         limit: int = 20,
+        offset: int = 0,
     ) -> dict[str, Any]:
-        return await _list_notes_impl(app, folder=folder, tags=tags, limit=limit)
+        return await _list_notes_impl(app, folder=folder, tags=tags, limit=limit, offset=offset)
 
     @server.tool(
         name="get_note",
@@ -283,9 +284,14 @@ async def _list_notes_impl(
     folder: str | None,
     tags: list[str] | None,
     limit: int,
+    offset: int = 0,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     bounded_limit = _bounded_count(limit, app.settings.max_result_count)
+    validation_error = _validate_list_notes_request(offset=offset)
+    if validation_error is not None:
+        exc, context = validation_error
+        return _error_response("list_notes", exc, started, folder=folder, **context)
     try:
         notes = await app.vault_reader.list_notes(folder=folder)
     except (FileNotFoundError, ValueError, PathConfinementError) as exc:
@@ -298,12 +304,17 @@ async def _list_notes_impl(
 
     filtered = _filter_by_tags(notes, tags)
     total = len(filtered)
-    returned = filtered[:bounded_limit]
+    start = min(offset, total)
+    end = min(start + bounded_limit, total)
+    returned = filtered[start:end]
+    next_offset = end if end < total else None
     payload = {
         "notes": [_note_summary(note) for note in returned],
         "total": total,
         "returned": len(returned),
-        "truncated": total > len(returned),
+        "offset": start,
+        "next_offset": next_offset,
+        "truncated": start > 0 or next_offset is not None,
         "limit_applied": bounded_limit,
     }
     _audit(
@@ -312,6 +323,7 @@ async def _list_notes_impl(
         folder=folder,
         tags=tags,
         limit=limit,
+        offset=offset,
         bounded_limit=bounded_limit,
         total=total,
         returned=len(returned),
@@ -822,6 +834,12 @@ def _validate_get_note_request(
         return ValueError("offset must be >= 0"), {"offset": offset}
     if limit is not None and limit <= 0:
         return ValueError("limit must be > 0"), {"limit": limit}
+    return None
+
+
+def _validate_list_notes_request(*, offset: int) -> tuple[BaseException, dict[str, int]] | None:
+    if offset < 0:
+        return ValueError("offset must be >= 0"), {"offset": offset}
     return None
 
 

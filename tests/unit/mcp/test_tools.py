@@ -180,6 +180,37 @@ class TestListNotes:
         assert len(result["notes"]) == 3
         assert result["truncated"] is True
         assert result["total"] == 6
+        assert result["offset"] == 0
+        assert result["next_offset"] == 3
+
+    @pytest.mark.asyncio
+    async def test_offset_pages_results(self, app: DatacronApp) -> None:
+        from datacron.mcp.tools import _list_notes_impl
+
+        full = await _list_notes_impl(app, folder=None, tags=None, limit=20)
+        page = await _list_notes_impl(app, folder=None, tags=None, limit=2, offset=2)
+        final_page = await _list_notes_impl(app, folder=None, tags=None, limit=20, offset=4)
+
+        full_paths = [note["rel_path"] for note in full["notes"]]
+        assert [note["rel_path"] for note in page["notes"]] == full_paths[2:4]
+        assert page["offset"] == 2
+        assert page["returned"] == 2
+        assert page["next_offset"] == 4
+        assert page["truncated"] is True
+
+        assert [note["rel_path"] for note in final_page["notes"]] == full_paths[4:]
+        assert final_page["offset"] == 4
+        assert final_page["next_offset"] is None
+        assert final_page["truncated"] is True
+
+    @pytest.mark.asyncio
+    async def test_negative_offset_returns_error_response(self, app: DatacronApp) -> None:
+        from datacron.mcp.tools import _list_notes_impl
+
+        result = await _list_notes_impl(app, folder=None, tags=None, limit=20, offset=-1)
+
+        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["message"] == "offset must be >= 0"
 
     @pytest.mark.asyncio
     async def test_folder_escape_returns_error_response(self, app: DatacronApp) -> None:
