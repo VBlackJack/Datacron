@@ -223,9 +223,9 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         title="Set lifecycle frontmatter",
         description=(
             "Update lifecycle frontmatter fields on an existing memory note. "
-            "This write operation only changes confidence, last_verified, "
-            "supersedes, and the automatic updated timestamp; the Markdown body "
-            "is preserved."
+            "This write operation only changes origin, confidence, "
+            "last_verified, supersedes, and the automatic updated timestamp; "
+            "the Markdown body is preserved."
         ),
     )
     async def set_frontmatter(
@@ -233,6 +233,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         confidence: str | None = None,
         last_verified: str | None = None,
         supersedes: list[str] | None = None,
+        origin: str | None = None,
     ) -> dict[str, Any]:
         return await _set_frontmatter_impl(
             app,
@@ -240,6 +241,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             confidence=confidence,
             last_verified=last_verified,
             supersedes=supersedes,
+            origin=origin,
         )
 
     @server.tool(
@@ -562,16 +564,22 @@ async def _set_frontmatter_impl(
     confidence: str | None = None,
     last_verified: str | None = None,
     supersedes: list[str] | None = None,
+    origin: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     try:
-        cleaned_rel_path, cleaned_confidence, cleaned_last_verified, cleaned_supersedes = (
-            _validate_set_frontmatter_request(
-                rel_path=rel_path,
-                confidence=confidence,
-                last_verified=last_verified,
-                supersedes=supersedes,
-            )
+        (
+            cleaned_rel_path,
+            cleaned_confidence,
+            cleaned_last_verified,
+            cleaned_supersedes,
+            cleaned_origin,
+        ) = _validate_set_frontmatter_request(
+            rel_path=rel_path,
+            confidence=confidence,
+            last_verified=last_verified,
+            supersedes=supersedes,
+            origin=origin,
         )
         resolved = assert_within_write_paths(app.vault_root / cleaned_rel_path, app.settings)
         resolved = assert_within_paths(resolved, [app.vault_root], kind="write")
@@ -585,17 +593,28 @@ async def _set_frontmatter_impl(
 
         changed_fields: list[str] = []
         if cleaned_confidence is not None:
-            if metadata.get("confidence") != cleaned_confidence:
-                changed_fields.append("confidence")
-            metadata["confidence"] = cleaned_confidence
+            _set_changed_frontmatter_field(
+                metadata,
+                changed_fields,
+                "confidence",
+                cleaned_confidence,
+            )
         if cleaned_last_verified is not None:
-            if metadata.get("last_verified") != cleaned_last_verified:
-                changed_fields.append("last_verified")
-            metadata["last_verified"] = cleaned_last_verified
+            _set_changed_frontmatter_field(
+                metadata,
+                changed_fields,
+                "last_verified",
+                cleaned_last_verified,
+            )
         if cleaned_supersedes is not None:
-            if metadata.get("supersedes") != cleaned_supersedes:
-                changed_fields.append("supersedes")
-            metadata["supersedes"] = cleaned_supersedes
+            _set_changed_frontmatter_field(
+                metadata,
+                changed_fields,
+                "supersedes",
+                cleaned_supersedes,
+            )
+        if cleaned_origin is not None:
+            _set_changed_frontmatter_field(metadata, changed_fields, "origin", cleaned_origin)
 
         metadata["updated"] = datetime.now(tz=UTC).isoformat()
         content = serialize(metadata, body)
@@ -649,6 +668,17 @@ async def _set_frontmatter_impl(
         deleted_notes=index_stats["deleted_notes"],
     )
     return payload
+
+
+def _set_changed_frontmatter_field(
+    metadata: dict[str, Any],
+    changed_fields: list[str],
+    field: str,
+    value: Any,
+) -> None:
+    if metadata.get(field) != value:
+        changed_fields.append(field)
+    metadata[field] = value
 
 
 async def _patch_note_section_impl(
@@ -806,7 +836,7 @@ def _validate_memory_frontmatter(
 ) -> dict[str, Any]:
     cleaned_rel_path = rel_path.strip()
     cleaned_title = title.strip()
-    cleaned_origin = origin.strip().lower()
+    cleaned_origin = _validate_memory_origin(origin)
     cleaned_confidence = _validate_memory_confidence(confidence)
     cleaned_tags = _clean_string_list(tags)
 
@@ -816,8 +846,6 @@ def _validate_memory_frontmatter(
         raise ValueError("title must not be empty")
     if not body.strip():
         raise ValueError("body must not be empty")
-    if cleaned_origin not in _MEMORY_ORIGINS:
-        raise ValueError(f"origin must be one of {sorted(_MEMORY_ORIGINS)}")
     if not cleaned_tags:
         raise ValueError("tags must not be empty")
 
@@ -828,6 +856,13 @@ def _validate_memory_frontmatter(
         "confidence": cleaned_confidence,
         "tags": cleaned_tags,
     }
+
+
+def _validate_memory_origin(origin: str) -> str:
+    cleaned_origin = origin.strip().lower()
+    if cleaned_origin not in _MEMORY_ORIGINS:
+        raise ValueError(f"origin must be one of {sorted(_MEMORY_ORIGINS)}")
+    return cleaned_origin
 
 
 def _validate_memory_confidence(confidence: str) -> str:
@@ -860,9 +895,10 @@ def _validate_set_frontmatter_request(
     confidence: str | None,
     last_verified: str | None,
     supersedes: list[str] | None,
-) -> tuple[str, str | None, str | None, list[str] | None]:
+    origin: str | None,
+) -> tuple[str, str | None, str | None, list[str] | None, str | None]:
     cleaned_rel_path = rel_path.strip()
-    if confidence is None and last_verified is None and supersedes is None:
+    if confidence is None and last_verified is None and supersedes is None and origin is None:
         raise ValueError("nothing to update")
     if not cleaned_rel_path.endswith(".md"):
         raise ValueError("rel_path must end with .md")
@@ -872,8 +908,15 @@ def _validate_set_frontmatter_request(
         _validate_last_verified_date(last_verified) if last_verified is not None else None
     )
     cleaned_supersedes = _clean_string_list(supersedes) if supersedes is not None else None
+    cleaned_origin = _validate_memory_origin(origin) if origin is not None else None
 
-    return cleaned_rel_path, cleaned_confidence, cleaned_last_verified, cleaned_supersedes
+    return (
+        cleaned_rel_path,
+        cleaned_confidence,
+        cleaned_last_verified,
+        cleaned_supersedes,
+        cleaned_origin,
+    )
 
 
 def _validate_last_verified_date(value: str) -> str:
