@@ -96,6 +96,57 @@ class TestExtractTags:
         assert "datacron" in tags
         assert "project/sub" in tags
 
+    def test_fenced_code_tags_are_skipped(self) -> None:
+        body = """Before
+```c
+#region
+#pragma once
+#include <stdio.h>
+```
+After #project/datacron
+"""
+
+        assert extract_tags({}, body) == ["project/datacron"]
+
+    def test_tilde_fenced_code_tags_are_skipped(self) -> None:
+        body = """Before
+~~~python
+#region
+~~~
+After #datacron
+"""
+
+        assert extract_tags({}, body) == ["datacron"]
+
+    def test_fenced_code_hex_colors_are_skipped(self) -> None:
+        body = """```css
+.theme { background: #bd93f9; color: #ffb86c; }
+```
+See #project/themeforge
+"""
+
+        assert extract_tags({}, body) == ["project/themeforge"]
+
+    def test_inline_code_spans_are_skipped(self) -> None:
+        body = "Run `#region #pragma #include` before #project/datacron."
+
+        assert extract_tags({}, body) == ["project/datacron"]
+
+    def test_inline_hex_color_shape_in_prose_skipped(self) -> None:
+        body = "Accent #bd93f9 partout, keep #project/themeforge."
+
+        assert extract_tags({}, body) == ["project/themeforge"]
+
+    def test_three_digit_hex_boundary_keeps_real_word_tag(self) -> None:
+        body = "Drop #fff but keep #uid."
+
+        assert extract_tags({}, body) == ["uid"]
+
+    def test_frontmatter_hex_tags_are_kept(self) -> None:
+        body = "Drop inline #bd93f9 and #fff, keep #uid."
+
+        assert extract_tags({"tags": ["bd93f9", "fff"]}, body) == ["bd93f9", "fff", "uid"]
+
     def test_inline_numeric_refs_and_digit_prefixed_ids_skipped(self) -> None:
         body = "Issue #47 and color #1e8f4f are refs, but #project/sub is a tag"
         tags = extract_tags({}, body)
