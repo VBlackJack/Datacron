@@ -30,7 +30,7 @@ import yaml
 
 __all__ = ["FrontmatterError", "extract_tags", "parse", "serialize"]
 
-_INLINE_TAG_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?<!\S)#([A-Za-z0-9_][A-Za-z0-9_\-/]*)")
+_INLINE_TAG_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?<!\S)#([A-Za-z_][A-Za-z0-9_\-/]*)")
 _FRONTMATTER_KEY_ORDER: Final[tuple[str, ...]] = (
     "id",
     "title",
