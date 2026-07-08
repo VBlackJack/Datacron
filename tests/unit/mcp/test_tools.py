@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from datacron.core.config import Settings
 from datacron.core.frontmatter import parse, serialize
 from datacron.core.hashing import hash_text
 from datacron.core.models import Note
+from datacron.core.vault_writer import FilesystemVaultWriter
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.mcp.server import DatacronApp, build_app
@@ -120,6 +122,16 @@ def _write_memory_note(
     raw = serialize(metadata, body)
     target.write_text(raw, encoding="utf-8")
     return target, raw
+
+
+class _CountingVaultWriter:
+    def __init__(self, delegate: FilesystemVaultWriter) -> None:
+        self._delegate = delegate
+        self.calls: list[tuple[str, bool]] = []
+
+    async def write_note_atomic(self, rel_path: str, content: str, *, overwrite: bool) -> None:
+        self.calls.append((rel_path, overwrite))
+        await self._delegate.write_note_atomic(rel_path, content, overwrite=overwrite)
 
 
 class TestListNotes:
@@ -761,6 +773,33 @@ class TestSetFrontmatter:
         assert backups[0].read_text(encoding="utf-8") == original_raw
 
     @pytest.mark.asyncio
+    async def test_origin_only_preserves_body_identity_fields_and_reindexes(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/origin.md"
+        body = "# Journaled memory\n\nBody with trailing newline.\n"
+        target, original_raw = _write_memory_note(tmp_vault, rel_path, body)
+        original_metadata, original_body = parse(original_raw)
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            origin=" merged ",
+        )
+
+        assert result["updated"] == {"rel_path": rel_path, "fields": ["origin"]}
+        assert result["indexed"] is True
+
+        new_metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        assert new_body == original_body
+        assert new_metadata["origin"] == "merged"
+        assert new_metadata["id"] == original_metadata["id"]
+        assert new_metadata["created"] == original_metadata["created"]
+        assert new_metadata["updated"] != original_metadata["updated"]
+
+    @pytest.mark.asyncio
     async def test_supersedes_replaces_and_cleans_values(
         self, writable_app: DatacronApp, tmp_vault: Path
     ) -> None:
@@ -809,6 +848,38 @@ class TestSetFrontmatter:
         assert metadata["supersedes"] == original_metadata["supersedes"]
 
     @pytest.mark.asyncio
+    async def test_existing_lifecycle_fields_still_update_without_origin(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/existing-fields.md"
+        target, _original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\nBody.\n",
+            metadata_overrides={"origin": "human"},
+        )
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            confidence="low",
+            last_verified="2026-06-30",
+            supersedes=["01NEWNEWNEWNEWNEWNEWNEWN"],
+        )
+
+        assert result["updated"] == {
+            "rel_path": rel_path,
+            "fields": ["confidence", "last_verified", "supersedes"],
+        }
+        metadata, _body = parse(target.read_text(encoding="utf-8"))
+        assert metadata["origin"] == "human"
+        assert metadata["confidence"] == "low"
+        assert metadata["last_verified"] == "2026-06-30"
+        assert metadata["supersedes"] == ["01NEWNEWNEWNEWNEWNEWNEWN"]
+
+    @pytest.mark.asyncio
     async def test_invalid_last_verified_returns_error_without_write(
         self, writable_app: DatacronApp, tmp_vault: Path
     ) -> None:
@@ -830,6 +901,61 @@ class TestSetFrontmatter:
         assert target.read_text(encoding="utf-8") == original_raw
 
     @pytest.mark.asyncio
+    async def test_invalid_origin_returns_error_without_write(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/invalid-origin.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Journaled memory\n\nBody.\n"
+        )
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            origin="robot",
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert "origin must be one of" in result["error"]["message"]
+        assert target.read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
+    async def test_origin_combined_with_confidence_and_supersedes_uses_one_atomic_write(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/combined-frontmatter.md"
+        target, _original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\nBody.\n",
+            metadata_overrides={"confidence": "needs_verification"},
+        )
+        writer = _CountingVaultWriter(FilesystemVaultWriter(tmp_vault, writable_app.settings))
+        app_with_counting_writer = replace(writable_app, vault_writer=writer)
+
+        result = await _set_frontmatter_impl(
+            app_with_counting_writer,
+            rel_path=rel_path,
+            confidence="low",
+            supersedes=["01NEWNEWNEWNEWNEWNEWNEWN"],
+            origin="HUMAN",
+        )
+
+        assert result["updated"] == {
+            "rel_path": rel_path,
+            "fields": ["confidence", "supersedes", "origin"],
+        }
+        assert writer.calls == [(rel_path, True)]
+        metadata, _body = parse(target.read_text(encoding="utf-8"))
+        assert metadata["confidence"] == "low"
+        assert metadata["supersedes"] == ["01NEWNEWNEWNEWNEWNEWNEWN"]
+        assert metadata["origin"] == "human"
+
+    @pytest.mark.asyncio
     async def test_all_none_returns_error_without_write_or_backup(
         self, writable_app: DatacronApp, tmp_vault: Path
     ) -> None:
@@ -840,7 +966,7 @@ class TestSetFrontmatter:
             tmp_vault, rel_path, "# Journaled memory\n\nBody.\n"
         )
 
-        result = await _set_frontmatter_impl(writable_app, rel_path=rel_path)
+        result = await _set_frontmatter_impl(writable_app, rel_path=rel_path, origin=None)
 
         assert result["error"]["type"] == "ValueError"
         assert result["error"]["message"] == "nothing to update"
