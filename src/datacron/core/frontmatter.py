@@ -30,7 +30,12 @@ import yaml
 
 __all__ = ["FrontmatterError", "extract_tags", "parse", "serialize"]
 
+_FENCED_CODE_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"(?ms)^[ \t]*(?P<fence>`{3,}|~{3,})[^\n]*\n.*?^[ \t]*(?P=fence)[ \t]*(?=\n|$)"
+)
+_INLINE_CODE_PATTERN: Final[re.Pattern[str]] = re.compile(r"`[^`\n]*`")
 _INLINE_TAG_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?<!\S)#([A-Za-z_][A-Za-z0-9_\-/]*)")
+_HEX_COLOR_TAG_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?i)^(?:[0-9a-f]{3}|[0-9a-f]{6})$")
 _FRONTMATTER_KEY_ORDER: Final[tuple[str, ...]] = (
     "id",
     "title",
@@ -89,6 +94,21 @@ def _coerce_tag_iterable(value: object) -> list[str]:
     return [str(value).strip()]
 
 
+def _strip_code_spans(body: str) -> str:
+    """Blank Markdown code regions before heuristic inline-tag scanning.
+
+    This preserves line breaks and character positions enough for the
+    whitespace lookbehind in ``_INLINE_TAG_PATTERN`` while avoiding a full
+    Markdown parser.
+    """
+    without_fences = _FENCED_CODE_PATTERN.sub(_blank_match, body)
+    return _INLINE_CODE_PATTERN.sub(_blank_match, without_fences)
+
+
+def _blank_match(match: re.Match[str]) -> str:
+    return "".join("\n" if char == "\n" else " " for char in match.group(0))
+
+
 def extract_tags(metadata: dict[str, Any], body: str) -> list[str]:
     """Return the deduplicated, lowercase tag set for a note.
 
@@ -101,7 +121,14 @@ def extract_tags(metadata: dict[str, Any], body: str) -> list[str]:
     """
     candidates: list[str] = []
     candidates.extend(_coerce_tag_iterable(metadata.get("tags")))
-    candidates.extend(match.group(1) for match in _INLINE_TAG_PATTERN.finditer(body))
+    scrubbed_body = _strip_code_spans(body)
+    candidates.extend(
+        match.group(1)
+        for match in _INLINE_TAG_PATTERN.finditer(scrubbed_body)
+        # Prose tags exactly shaped like CSS hex colors are dropped; frontmatter
+        # tags remain authoritative and are never filtered.
+        if not _HEX_COLOR_TAG_PATTERN.fullmatch(match.group(1))
+    )
 
     seen: set[str] = set()
     ordered: list[str] = []
