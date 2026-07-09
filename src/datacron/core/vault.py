@@ -13,8 +13,7 @@
 # limitations under the License.
 """Vault reader implementation (``core.VaultReader``).
 
-Implements the protocol described in ``docs/agent-briefs/01-contracts.md``
-§2.6. The reader walks a Markdown vault, parses frontmatter via
+The reader walks a Markdown vault, parses frontmatter via
 :mod:`datacron.core.frontmatter`, computes canonical content hashes via
 :mod:`datacron.core.hashing`, and assigns ULID identifiers without ever
 mutating the user's notes — IDs are stored in a JSON sidecar at
@@ -134,9 +133,8 @@ class JsonIdStore:
     """JSON-backed mapping from vault-relative paths to ULIDs.
 
     The store is lazy: it reads ``ulids.json`` on first access and persists
-    after every mutation. Phase-0 only — Codex's FTS5 ``ulid_paths`` table
-    becomes the source of truth once it lands in Sem 2; the JSON file remains
-    as a fallback bootstrap.
+    after every mutation. The FTS5 ``ulid_paths`` table becomes the source of
+    truth after indexing; the JSON file remains as a fallback bootstrap.
     """
 
     def __init__(self, path: Path) -> None:

@@ -13,9 +13,9 @@
 # limitations under the License.
 """Runtime configuration loaded from environment variables and ``.env``.
 
-All reserved keys are defined in ``docs/agent-briefs/01-contracts.md`` §4 and
-must use the ``DATACRON_`` prefix. The :func:`get_settings` accessor returns a
-cached singleton; tests may override it via :func:`reset_settings_cache`.
+Reserved runtime keys must use the ``DATACRON_`` prefix. The
+:func:`get_settings` accessor returns a cached singleton; tests may override it
+via :func:`reset_settings_cache`.
 """
 
 from __future__ import annotations
@@ -148,8 +148,8 @@ class Settings(BaseSettings):
     """Datacron runtime settings.
 
     Loaded from environment variables prefixed ``DATACRON_`` and an optional
-    ``.env`` file in the current working directory. All reserved keys are
-    listed in ``docs/agent-briefs/01-contracts.md`` §4.
+    ``.env`` file in the current working directory. All reserved runtime keys
+    use the ``DATACRON_`` namespace.
     """
 
     model_config = SettingsConfigDict(

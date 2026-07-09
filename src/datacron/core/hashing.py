@@ -16,7 +16,7 @@
 The canonical Datacron content hash is SHA-256 over the UTF-8 bytes of the
 text after BOM removal and CRLF/CR → LF normalization, returned as a
 lowercase hex string. This is the format consumed by ``Note.content_hash``
-(see ``docs/agent-briefs/01-contracts.md`` §1.1).
+and by index freshness checks.
 """
 
 from __future__ import annotations
