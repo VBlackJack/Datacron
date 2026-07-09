@@ -337,6 +337,10 @@ class FilesystemVaultReader:
         index = await self._build_alias_index()
         return index.get(normalized)
 
+    async def invalidate_alias_cache(self) -> None:
+        async with self._alias_lock:
+            self._alias_cache = None
+
     # -------------------------------------------------------------- internals
 
     def _is_inside_vault(self, path: Path) -> bool:
