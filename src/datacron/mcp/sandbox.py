@@ -35,13 +35,15 @@ from __future__ import annotations
 
 import re
 from html import escape as _html_escape
-from typing import Final
+from typing import Any, Final
 
 __all__ = [
     "ESCAPE_PREFIX",
     "ESCAPE_SUFFIX",
     "VAULT_CONTENT_CLOSE",
     "VAULT_CONTENT_NOTICE",
+    "sanitize_metadata_value",
+    "sanitize_payload_strings",
     "wrap_vault_content",
 ]
 
@@ -81,9 +83,53 @@ def _escape_suspicious(content: str) -> str:
     """Replace every suspicious match with ``[escaped: <match>]``."""
 
     def _replace(match: re.Match[str]) -> str:
+        if _is_already_escaped(content, *match.span()):
+            return match.group(0)
         return f"{ESCAPE_PREFIX}{match.group(0)}{ESCAPE_SUFFIX}"
 
     return _SUSPICIOUS_PATTERN.sub(_replace, content)
+
+
+def _is_already_escaped(content: str, start: int, end: int) -> bool:
+    prefix_start = start - len(ESCAPE_PREFIX)
+    if prefix_start < 0:
+        return False
+    return (
+        content[prefix_start:start] == ESCAPE_PREFIX
+        and content[end : end + len(ESCAPE_SUFFIX)] == ESCAPE_SUFFIX
+    )
+
+
+def sanitize_metadata_value(value: str) -> str:
+    """Escape vault-controlled metadata without adding a vault_content envelope."""
+    return _escape_suspicious(value)
+
+
+def sanitize_payload_strings(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy with every string key/value escaped recursively.
+
+    Use this for user-controlled metadata payloads such as frontmatter. Callers
+    keep containment-checked path fields outside this helper so rel_path values
+    remain byte-for-byte unchanged.
+    """
+    return {
+        sanitize_metadata_value(key) if isinstance(key, str) else key: _sanitize_payload_value(
+            value
+        )
+        for key, value in payload.items()
+    }
+
+
+def _sanitize_payload_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return sanitize_metadata_value(value)
+    if isinstance(value, dict):
+        return sanitize_payload_strings(value)
+    if isinstance(value, list):
+        return [_sanitize_payload_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_payload_value(item) for item in value)
+    return value
 
 
 def wrap_vault_content(path: str, content: str) -> str:
