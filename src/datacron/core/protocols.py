@@ -13,21 +13,19 @@
 # limitations under the License.
 """Materialized :class:`typing.Protocol` types for the Datacron contracts.
 
-This module is the **executable mirror** of section 2 of
-``docs/agent-briefs/01-contracts.md``. It exists so that consumers can
-type-annotate their Protocol parameters and so that concrete
-implementations can declare conformance via a one-line structural check
-(see ``core/vault.py`` for the pattern).
+This module is the executable mirror of the service contracts. It exists so
+that consumers can type-annotate their Protocol parameters and so that concrete
+implementations can declare conformance via a one-line structural check (see
+``core/vault.py`` for the pattern).
 
 Importing a Protocol does not pull in the concrete implementation — that
 is the whole point. ``mcp/tools.py`` can depend on
 :class:`ASTChunker` for typing while the runtime wiring lives in
 ``cli.py`` (the only module allowed to import across all layers).
 
-If the contract evolves, edit ``01-contracts.md`` first, then update
-this module to match, then bump the amendment row in the Frozen-status
-table. Silent drift between this module and the brief breaks parallel
-work.
+If the contract evolves, update the canonical contract first, then update this
+module to match, then bump the amendment row in the frozen-status table.
+Silent drift between this module and the contract breaks consumers.
 """
 
 from __future__ import annotations
