@@ -261,6 +261,13 @@ class VaultReader(Protocol):
         """Return the matching note's ULID, or ``None``."""
         ...
 
+    async def invalidate_alias_cache(self) -> None:
+        """Drop cached alias state after vault/index changes.
+
+        Implementations without an alias cache may use a no-op.
+        """
+        ...
+
 
 @runtime_checkable
 class VaultWriter(Protocol):
