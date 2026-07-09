@@ -47,7 +47,11 @@ from datacron.core.paths import PathConfinementError, assert_within_paths, asser
 from datacron.core.temporal import rerank_temporal
 from datacron.indexing.reconcile import ReconcileStats, reconcile
 from datacron.indexing.ripgrep import RipgrepError
-from datacron.mcp.sandbox import wrap_vault_content
+from datacron.mcp.sandbox import (
+    sanitize_metadata_value,
+    sanitize_payload_strings,
+    wrap_vault_content,
+)
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -1122,12 +1126,18 @@ def _note_summary(note: Note) -> dict[str, Any]:
     return {
         "id": note.id,
         "rel_path": note.rel_path,
-        "title": note.title,
-        "tags": list(note.tags),
-        "aliases": list(note.aliases),
-        "frontmatter": dict(note.frontmatter),
+        **_sanitized_note_metadata(note),
         "created": note.created.isoformat(),
         "updated": note.updated.isoformat(),
+    }
+
+
+def _sanitized_note_metadata(note: Note) -> dict[str, Any]:
+    return {
+        "title": sanitize_metadata_value(note.title),
+        "tags": [sanitize_metadata_value(tag) for tag in note.tags],
+        "aliases": [sanitize_metadata_value(alias) for alias in note.aliases],
+        "frontmatter": sanitize_payload_strings(dict(note.frontmatter)),
     }
 
 
@@ -1228,10 +1238,7 @@ def _build_full_payload(
     return {
         "id": note.id,
         "rel_path": note.rel_path,
-        "title": note.title,
-        "tags": list(note.tags),
-        "aliases": list(note.aliases),
-        "frontmatter": dict(note.frontmatter),
+        **_sanitized_note_metadata(note),
         "created": note.created.isoformat(),
         "updated": note.updated.isoformat(),
         "content_hash": note.content_hash,
@@ -1260,8 +1267,8 @@ def _build_chunk_payload(
         "chunk_id": chunk.chunk_id,
         "note_id": chunk.note_id,
         "rel_path": chunk.note_rel_path,
-        "title": note.title,
-        "header_path": chunk.header_path,
+        "title": sanitize_metadata_value(note.title),
+        "header_path": sanitize_metadata_value(chunk.header_path),
         "line_start": chunk.line_start,
         "line_end": chunk.line_end,
         "content": wrap_vault_content(chunk.note_rel_path, chunk.content),
@@ -1283,15 +1290,17 @@ def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
         headings.append(
             {
                 "level": level,
-                "text": chunk.section_title or chunk.content.lstrip("# ").strip(),
-                "path": chunk.header_path,
+                "text": sanitize_metadata_value(
+                    chunk.section_title or chunk.content.lstrip("# ").strip()
+                ),
+                "path": sanitize_metadata_value(chunk.header_path),
                 "chunk_id": chunk.chunk_id,
             }
         )
     return {
         "id": note.id,
         "rel_path": note.rel_path,
-        "title": note.title,
+        "title": sanitize_metadata_value(note.title),
         "format": "map",
         "headings": headings,
         "chunk_count": len(chunks),
@@ -1567,8 +1576,8 @@ def _search_result_summary(result: SearchResult) -> dict[str, Any]:
         "chunk_id": chunk.chunk_id,
         "note_id": chunk.note_id,
         "note_rel_path": chunk.note_rel_path,
-        "header_path": chunk.header_path,
-        "section_title": chunk.section_title,
+        "header_path": sanitize_metadata_value(chunk.header_path),
+        "section_title": _sanitize_optional_metadata(chunk.section_title),
         "chunk_type": chunk.chunk_type.value,
         "score": result.score,
         "snippet": wrapped_snippet,
@@ -1634,8 +1643,8 @@ async def _find_backlink_sources(
                 "source_chunk_id": chunk.chunk_id,
                 "source_note_id": chunk.note_id,
                 "source_note_rel_path": chunk.note_rel_path,
-                "header_path": chunk.header_path,
-                "section_title": chunk.section_title,
+                "header_path": sanitize_metadata_value(chunk.header_path),
+                "section_title": _sanitize_optional_metadata(chunk.section_title),
             }
         )
         if len(sources) >= limit:
@@ -1663,3 +1672,7 @@ async def _chunk_links_to(
         if alias_cache[key] == target_note_id:
             return True
     return False
+
+
+def _sanitize_optional_metadata(value: str | None) -> str | None:
+    return sanitize_metadata_value(value) if value is not None else None
