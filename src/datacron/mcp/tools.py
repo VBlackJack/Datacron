@@ -42,7 +42,7 @@ from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
 from datacron.core.frontmatter import FrontmatterError, parse, serialize
 from datacron.core.hashing import HASH_HEX_LENGTH, hash_text
 from datacron.core.logger import get_logger
-from datacron.core.models import ChunkType, Note, SearchResult
+from datacron.core.models import Chunk, ChunkType, Note, SearchResult
 from datacron.core.paths import PathConfinementError, assert_within_paths, assert_within_write_paths
 from datacron.core.temporal import rerank_temporal
 from datacron.indexing.reconcile import ReconcileStats, reconcile
@@ -98,9 +98,11 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         title="Get a note",
         description=(
             "Fetch a single note by its ULID, indexed chunk_id, or vault-relative path. "
-            "format='full' returns the sandbox-wrapped body; offset/limit page large "
-            "notes by character range. format='map' returns the heading outline only "
-            "(cheap to scan before requesting full content)."
+            "chunk_id inputs return format='chunk' with the sandbox-wrapped chunk body "
+            "and ignore offset/limit. For note inputs, format='full' returns the "
+            "sandbox-wrapped body and offset/limit page large notes by character range; "
+            "format='map' returns the heading outline only (cheap to scan before "
+            "requesting full content)."
         ),
     )
     async def get_note(
@@ -352,6 +354,20 @@ async def _get_note_impl(
         )
 
     try:
+        chunk_payload = await _resolve_chunk_payload(app, id_or_path)
+        if chunk_payload is not None:
+            _audit(
+                "get_note",
+                started,
+                id_or_path=id_or_path,
+                fmt="chunk",
+                note_id=chunk_payload["note_id"],
+                note_rel_path=chunk_payload["rel_path"],
+                chunk_id=chunk_payload["chunk_id"],
+                truncated=False,
+            )
+            return chunk_payload
+
         note = await _resolve_note(app, id_or_path)
     except (FileNotFoundError, ValueError, PathConfinementError) as exc:
         return _error_response("get_note", exc, started, id_or_path=id_or_path, fmt=fmt)
@@ -428,6 +444,7 @@ async def _create_note_ai_impl(
         content = serialize(frontmatter, body)
         await app.vault_writer.write_note_atomic(cleaned["rel_path"], content, overwrite=False)
         index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        await _invalidate_alias_cache_if_index_changed(app, index_stats)
     except PathConfinementError as exc:
         mapped_exc = (
             PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
@@ -514,6 +531,7 @@ async def _append_journal_impl(
         content = serialize(metadata, new_body)
         await app.vault_writer.write_note_atomic(cleaned_rel_path, content, overwrite=True)
         index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        await _invalidate_alias_cache_if_index_changed(app, index_stats)
     except PathConfinementError as exc:
         mapped_exc = (
             PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
@@ -631,6 +649,7 @@ async def _set_frontmatter_impl(
         content = serialize(metadata, body)
         await app.vault_writer.write_note_atomic(cleaned_rel_path, content, overwrite=True)
         index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        await _invalidate_alias_cache_if_index_changed(app, index_stats)
     except PathConfinementError as exc:
         mapped_exc = (
             PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
@@ -747,6 +766,7 @@ async def _patch_note_section_impl(
         content = serialize(metadata, new_body)
         await app.vault_writer.write_note_atomic(cleaned_rel_path, content, overwrite=True)
         index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        await _invalidate_alias_cache_if_index_changed(app, index_stats)
     except PathConfinementError as exc:
         mapped_exc = (
             PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
@@ -1155,6 +1175,37 @@ async def _read_note_by_rel_path(app: DatacronApp, rel_path: str) -> Note:
     return await app.vault_reader.read_note(resolved)
 
 
+async def _resolve_chunk_payload(app: DatacronApp, id_or_path: str) -> dict[str, Any] | None:
+    if _CHUNK_ID_SEPARATOR not in id_or_path:
+        return None
+    try:
+        chunk = await app.store.get_chunk(id_or_path)
+    except RuntimeError:
+        return None
+    if chunk is None:
+        return None
+
+    note = await _read_note_by_rel_path(app, chunk.note_rel_path)
+    chunks = await app.store.list_chunks_for_note(chunk.note_id)
+    prev_chunk_id, next_chunk_id = _chunk_neighbor_ids(chunks, chunk.chunk_id)
+    return _build_chunk_payload(
+        note,
+        chunk,
+        prev_chunk_id=prev_chunk_id,
+        next_chunk_id=next_chunk_id,
+    )
+
+
+def _chunk_neighbor_ids(chunks: list[Chunk], chunk_id: str) -> tuple[str | None, str | None]:
+    for index, chunk in enumerate(chunks):
+        if chunk.chunk_id != chunk_id:
+            continue
+        prev_chunk_id = chunks[index - 1].chunk_id if index > 0 else None
+        next_chunk_id = chunks[index + 1].chunk_id if index + 1 < len(chunks) else None
+        return prev_chunk_id, next_chunk_id
+    return None, None
+
+
 def _build_full_payload(
     app: DatacronApp,
     note: Note,
@@ -1194,6 +1245,30 @@ def _build_full_payload(
         "returned_chars": len(content),
         "next_offset": next_offset,
         "truncated": truncated,
+    }
+
+
+def _build_chunk_payload(
+    note: Note,
+    chunk: Chunk,
+    *,
+    prev_chunk_id: str | None,
+    next_chunk_id: str | None,
+) -> dict[str, Any]:
+    return {
+        "format": "chunk",
+        "chunk_id": chunk.chunk_id,
+        "note_id": chunk.note_id,
+        "rel_path": chunk.note_rel_path,
+        "title": note.title,
+        "header_path": chunk.header_path,
+        "line_start": chunk.line_start,
+        "line_end": chunk.line_end,
+        "content": wrap_vault_content(chunk.note_rel_path, chunk.content),
+        "content_hash": note.content_hash,
+        "estimated_tokens": chunk.token_count,
+        "prev_chunk_id": prev_chunk_id,
+        "next_chunk_id": next_chunk_id,
     }
 
 
@@ -1511,7 +1586,14 @@ async def _repair_index_on_read(app: DatacronApp) -> ReconcileStats:
     re-read+hash of every note. ``content_hash`` remains the authority on any
     note whose mtime moved.
     """
-    return await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+    stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+    await _invalidate_alias_cache_if_index_changed(app, stats)
+    return stats
+
+
+async def _invalidate_alias_cache_if_index_changed(app: DatacronApp, stats: ReconcileStats) -> None:
+    if stats["reindexed_notes"] or stats["deleted_notes"]:
+        await app.vault_reader.invalidate_alias_cache()
 
 
 async def _resolve_backlink_target(app: DatacronApp, target: str) -> str | None:

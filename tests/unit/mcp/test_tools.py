@@ -286,7 +286,7 @@ class TestGetNoteFull:
         assert result["next_offset"] == 35
 
     @pytest.mark.asyncio
-    async def test_full_accepts_chunk_id(self, tmp_vault: Path) -> None:
+    async def test_chunk_id_returns_chunk_payload(self, tmp_vault: Path) -> None:
         from datacron.mcp.tools import _get_note_impl
 
         settings = Settings(
@@ -306,14 +306,78 @@ class TestGetNoteFull:
         note = next(n for n in await app.vault_reader.list_notes() if n.rel_path == "welcome.md")
         chunks = app.chunker.chunk(note)
         await app.store.upsert_note(note, chunks)
+        assert len(chunks) >= 3
 
         try:
-            result = await _get_note_impl(app, id_or_path=chunks[0].chunk_id, fmt="full")
+            middle = chunks[1]
+            result = await _get_note_impl(
+                app,
+                id_or_path=middle.chunk_id,
+                fmt="full",
+                offset=10,
+                limit=1,
+            )
+            first = await _get_note_impl(app, id_or_path=chunks[0].chunk_id, fmt="full")
+            last = await _get_note_impl(app, id_or_path=chunks[-1].chunk_id, fmt="full")
         finally:
             await store.close()
 
+        assert result["format"] == "chunk"
+        assert result["chunk_id"] == middle.chunk_id
+        assert result["note_id"] == note.id
         assert result["rel_path"] == "welcome.md"
+        assert result["title"] == note.title
+        assert result["header_path"] == middle.header_path
+        assert result["line_start"] == middle.line_start
+        assert result["line_end"] == middle.line_end
+        assert result["content_hash"] == note.content_hash
+        assert result["estimated_tokens"] == middle.token_count
+        assert result["prev_chunk_id"] == chunks[0].chunk_id
+        assert result["next_chunk_id"] == chunks[2].chunk_id
+        assert result["content"].startswith('<vault_content path="welcome.md">\n')
+        assert result["content"].endswith("</vault_content>")
+        assert middle.content in result["content"]
+        assert note.content not in result["content"]
+
+        assert first["prev_chunk_id"] is None
+        assert first["next_chunk_id"] == chunks[1].chunk_id
+        assert last["prev_chunk_id"] == chunks[-2].chunk_id
+        assert last["next_chunk_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_missing_chunk_with_valid_ulid_falls_back_to_full_note(
+        self, app_with_open_store: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _get_note_impl
+
+        note = await app_with_open_store.vault_reader.read_note(tmp_vault / "welcome.md")
+
+        result = await _get_note_impl(
+            app_with_open_store,
+            id_or_path=f"{note.id}::missing/chunk::9999",
+            fmt="full",
+        )
+
+        assert result["format"] == "full"
         assert result["id"] == note.id
+        assert result["rel_path"] == "welcome.md"
+
+    @pytest.mark.asyncio
+    async def test_malformed_chunk_id_returns_existing_structured_error(
+        self, app_with_open_store: DatacronApp
+    ) -> None:
+        from datacron.mcp.tools import _get_note_impl
+
+        result = await _get_note_impl(
+            app_with_open_store,
+            id_or_path="not-a-valid-ulid::missing/chunk::9999",
+            fmt="full",
+        )
+
+        assert result["error"]["type"] == "FileNotFoundError"
+        assert result["error"]["message"] == (
+            "No note found for 'not-a-valid-ulid::missing/chunk::9999'"
+        )
 
     @pytest.mark.asyncio
     async def test_full_accepts_indexed_ulid_without_scanning(
@@ -456,6 +520,47 @@ class TestCreateNoteAi:
         fetched = await _get_note_impl(writable_app, id_or_path=rel_path, fmt="full")
         assert fetched["id"] == result["created"]["id"]
         assert fetched["rel_path"] == rel_path
+
+    @pytest.mark.asyncio
+    async def test_created_note_alias_is_resolvable_for_backlinks_without_restart(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.indexing.reconcile import reconcile
+        from datacron.mcp.tools import _create_note_ai_impl, _get_backlinks_impl
+
+        source_rel_path = "_memory/facts/source-link.md"
+        _source, _raw = _write_memory_note(
+            tmp_vault,
+            source_rel_path,
+            "# Source link\n\nReferences [[Fresh Alias Target]].\n",
+            metadata_overrides={
+                "id": "01HQXR7K9YZ8M2N3PQRSTV4WX6",
+                "title": "Source link",
+            },
+        )
+        await reconcile(
+            writable_app.store, writable_app.vault_reader, writable_app.chunker, mtime_gate=True
+        )
+        assert await writable_app.vault_reader.resolve_alias("Fresh Alias Target") is None
+
+        created = await _create_note_ai_impl(
+            writable_app,
+            rel_path="_memory/facts/fresh-alias-target.md",
+            title="Fresh Alias Target",
+            body="# Fresh Alias Target\n\nCreated after the alias cache was built.\n",
+            origin="ai",
+            confidence="high",
+            tags=["memory"],
+        )
+
+        backlinks = await _get_backlinks_impl(
+            writable_app,
+            target="Fresh Alias Target",
+            limit=5,
+        )
+
+        assert backlinks["resolved_note_id"] == created["created"]["id"]
+        assert any(item["source_note_rel_path"] == source_rel_path for item in backlinks["results"])
 
     @pytest.mark.asyncio
     async def test_writes_off_returns_structured_error_without_creating_file(
@@ -1118,6 +1223,34 @@ class TestSetFrontmatter:
         temporal = await writable_app.store.list_temporal_metadata()
         assert temporal[note_id].confidence == "low"
         assert temporal[note_id].supersedes == ["01HQXR7K9YZ8M2N3PQRSTV4WX1"]
+
+    @pytest.mark.asyncio
+    async def test_deleted_note_alias_disappears_after_repair_on_read(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _repair_index_on_read
+
+        rel_path = "_memory/facts/delete-alias.md"
+        target, _raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Delete Alias Target\n\nTemporary.\n",
+            metadata_overrides={
+                "id": "01HQXR7K9YZ8M2N3PQRSTV4WX7",
+                "title": "Delete Alias Target",
+            },
+        )
+        indexed = await _repair_index_on_read(writable_app)
+        assert indexed["reindexed_notes"] >= 1
+        assert await writable_app.vault_reader.resolve_alias("Delete Alias Target") == (
+            "01HQXR7K9YZ8M2N3PQRSTV4WX7"
+        )
+
+        target.unlink()
+        repaired = await _repair_index_on_read(writable_app)
+
+        assert repaired["deleted_notes"] == 1
+        assert await writable_app.vault_reader.resolve_alias("Delete Alias Target") is None
 
 
 class TestPatchNoteSection:

@@ -238,6 +238,22 @@ class TestResolveAlias:
         reader = FilesystemVaultReader(tmp_path)
         assert await reader.resolve_alias("dup") is None
 
+    async def test_invalidate_alias_cache_rebuilds_after_repeated_calls(
+        self, tmp_path: Path
+    ) -> None:
+        reader = FilesystemVaultReader(tmp_path)
+        assert await reader.resolve_alias("fresh-title") is None
+
+        (tmp_path / "fresh.md").write_text(
+            "---\ntitle: fresh-title\n---\n# Fresh\n",
+            encoding="utf-8",
+        )
+
+        await reader.invalidate_alias_cache()
+        await reader.invalidate_alias_cache()
+
+        assert await reader.resolve_alias("fresh-title") is not None
+
 
 @pytest.mark.asyncio
 class TestIdPersistence:
