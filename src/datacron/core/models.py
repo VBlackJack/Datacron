@@ -11,12 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Frozen Pydantic models shared between Datacron agents.
+"""Frozen Pydantic models shared across Datacron.
 
-This module is the canonical implementation of section 1 of
-``docs/agent-briefs/01-contracts.md``. The contract is FROZEN: any change here
-requires a separate ``contract: amend <X>`` PR approved by both Claude Code and
-Codex. Silent divergence breaks parallel work.
+This module is the canonical implementation of the shared data contracts. The
+contract is frozen: any change here requires a separate
+``contract: amend <X>`` PR. Silent divergence breaks cross-module consumers.
 """
 
 from __future__ import annotations
