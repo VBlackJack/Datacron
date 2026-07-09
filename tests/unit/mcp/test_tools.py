@@ -286,7 +286,7 @@ class TestGetNoteFull:
         assert result["next_offset"] == 35
 
     @pytest.mark.asyncio
-    async def test_full_accepts_chunk_id(self, tmp_vault: Path) -> None:
+    async def test_chunk_id_returns_chunk_payload(self, tmp_vault: Path) -> None:
         from datacron.mcp.tools import _get_note_impl
 
         settings = Settings(
@@ -306,14 +306,78 @@ class TestGetNoteFull:
         note = next(n for n in await app.vault_reader.list_notes() if n.rel_path == "welcome.md")
         chunks = app.chunker.chunk(note)
         await app.store.upsert_note(note, chunks)
+        assert len(chunks) >= 3
 
         try:
-            result = await _get_note_impl(app, id_or_path=chunks[0].chunk_id, fmt="full")
+            middle = chunks[1]
+            result = await _get_note_impl(
+                app,
+                id_or_path=middle.chunk_id,
+                fmt="full",
+                offset=10,
+                limit=1,
+            )
+            first = await _get_note_impl(app, id_or_path=chunks[0].chunk_id, fmt="full")
+            last = await _get_note_impl(app, id_or_path=chunks[-1].chunk_id, fmt="full")
         finally:
             await store.close()
 
+        assert result["format"] == "chunk"
+        assert result["chunk_id"] == middle.chunk_id
+        assert result["note_id"] == note.id
         assert result["rel_path"] == "welcome.md"
+        assert result["title"] == note.title
+        assert result["header_path"] == middle.header_path
+        assert result["line_start"] == middle.line_start
+        assert result["line_end"] == middle.line_end
+        assert result["content_hash"] == note.content_hash
+        assert result["estimated_tokens"] == middle.token_count
+        assert result["prev_chunk_id"] == chunks[0].chunk_id
+        assert result["next_chunk_id"] == chunks[2].chunk_id
+        assert result["content"].startswith('<vault_content path="welcome.md">\n')
+        assert result["content"].endswith("</vault_content>")
+        assert middle.content in result["content"]
+        assert note.content not in result["content"]
+
+        assert first["prev_chunk_id"] is None
+        assert first["next_chunk_id"] == chunks[1].chunk_id
+        assert last["prev_chunk_id"] == chunks[-2].chunk_id
+        assert last["next_chunk_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_missing_chunk_with_valid_ulid_falls_back_to_full_note(
+        self, app_with_open_store: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _get_note_impl
+
+        note = await app_with_open_store.vault_reader.read_note(tmp_vault / "welcome.md")
+
+        result = await _get_note_impl(
+            app_with_open_store,
+            id_or_path=f"{note.id}::missing/chunk::9999",
+            fmt="full",
+        )
+
+        assert result["format"] == "full"
         assert result["id"] == note.id
+        assert result["rel_path"] == "welcome.md"
+
+    @pytest.mark.asyncio
+    async def test_malformed_chunk_id_returns_existing_structured_error(
+        self, app_with_open_store: DatacronApp
+    ) -> None:
+        from datacron.mcp.tools import _get_note_impl
+
+        result = await _get_note_impl(
+            app_with_open_store,
+            id_or_path="not-a-valid-ulid::missing/chunk::9999",
+            fmt="full",
+        )
+
+        assert result["error"]["type"] == "FileNotFoundError"
+        assert result["error"]["message"] == (
+            "No note found for 'not-a-valid-ulid::missing/chunk::9999'"
+        )
 
     @pytest.mark.asyncio
     async def test_full_accepts_indexed_ulid_without_scanning(
