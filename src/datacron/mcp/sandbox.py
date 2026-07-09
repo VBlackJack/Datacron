@@ -34,14 +34,17 @@ threat model, classifier rejected as latency theater).
 from __future__ import annotations
 
 import re
+import unicodedata
 from html import escape as _html_escape
-from typing import Final
+from typing import Any, Final
 
 __all__ = [
     "ESCAPE_PREFIX",
     "ESCAPE_SUFFIX",
     "VAULT_CONTENT_CLOSE",
     "VAULT_CONTENT_NOTICE",
+    "sanitize_metadata_value",
+    "sanitize_payload_strings",
     "wrap_vault_content",
 ]
 
@@ -58,12 +61,14 @@ VAULT_CONTENT_CLOSE: Final[str] = "</vault_content>"
 #
 # The list mirrors the brief (02-brief-claude-code.md §mcp/sandbox.py) and
 # adds two defensive entries:
-#   - </?vault_content[…]> — prevents user content from breaking out of our
-#     own wrapping envelope by emitting a fake </vault_content>.
+#   - complete and partial vault_content delimiters — prevents user content
+#     from breaking out of our own wrapping envelope by emitting a fake
+#     </vault_content>, including unterminated or internally-spaced variants.
 #   - forget all (previous) instructions — common jailbreak variant.
 _SUSPICIOUS_SOURCES: Final[tuple[str, ...]] = (
     r"</?\s*system\s*>",
-    r"</?\s*vault_content[^>]*>",
+    r"<\s*/?\s*vault_content(?:\s+[^<>\n]*)?\s*>",
+    r"<\s*/?\s*vault_content",
     r"<\|im_start\|>",
     r"<\|im_end\|>",
     r"ignore\s+(?:all\s+)?previous\s+instructions",
@@ -79,11 +84,86 @@ _SUSPICIOUS_PATTERN: Final[re.Pattern[str]] = re.compile(
 
 def _escape_suspicious(content: str) -> str:
     """Replace every suspicious match with ``[escaped: <match>]``."""
+    detection_view, index_map = _detection_view(content)
+    if not detection_view:
+        return content
 
-    def _replace(match: re.Match[str]) -> str:
-        return f"{ESCAPE_PREFIX}{match.group(0)}{ESCAPE_SUFFIX}"
+    escaped: list[str] = []
+    cursor = 0
+    for match in _SUSPICIOUS_PATTERN.finditer(detection_view):
+        start = index_map[match.start()]
+        end = index_map[match.end() - 1] + 1
+        if start < cursor:
+            continue
+        matched_literal = content[start:end]
+        escaped.append(content[cursor:start])
+        if _is_already_escaped(content, start, end):
+            escaped.append(matched_literal)
+        else:
+            escaped.append(f"{ESCAPE_PREFIX}{matched_literal}{ESCAPE_SUFFIX}")
+        cursor = end
+    escaped.append(content[cursor:])
+    return "".join(escaped)
 
-    return _SUSPICIOUS_PATTERN.sub(_replace, content)
+
+def _detection_view(content: str) -> tuple[str, list[int]]:
+    """Return ``content`` without Unicode format controls plus index mapping.
+
+    Suspicious-pattern detection runs on the normalized view so zero-width
+    controls cannot split phrases such as "ignore previous instructions".
+    Replacement still uses spans from the original string, preserving the
+    user's text inside the escape envelope.
+    """
+    chars: list[str] = []
+    index_map: list[int] = []
+    for index, char in enumerate(content):
+        if unicodedata.category(char) == "Cf":
+            continue
+        chars.append(char)
+        index_map.append(index)
+    return "".join(chars), index_map
+
+
+def _is_already_escaped(content: str, start: int, end: int) -> bool:
+    prefix_start = start - len(ESCAPE_PREFIX)
+    if prefix_start < 0:
+        return False
+    return (
+        content[prefix_start:start] == ESCAPE_PREFIX
+        and content[end : end + len(ESCAPE_SUFFIX)] == ESCAPE_SUFFIX
+    )
+
+
+def sanitize_metadata_value(value: str) -> str:
+    """Escape vault-controlled metadata without adding a vault_content envelope."""
+    return _escape_suspicious(value)
+
+
+def sanitize_payload_strings(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy with every string key/value escaped recursively.
+
+    Use this for user-controlled metadata payloads such as frontmatter. Callers
+    keep containment-checked path fields outside this helper so rel_path values
+    remain byte-for-byte unchanged.
+    """
+    return {
+        sanitize_metadata_value(key) if isinstance(key, str) else key: _sanitize_payload_value(
+            value
+        )
+        for key, value in payload.items()
+    }
+
+
+def _sanitize_payload_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return sanitize_metadata_value(value)
+    if isinstance(value, dict):
+        return sanitize_payload_strings(value)
+    if isinstance(value, list):
+        return [_sanitize_payload_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_payload_value(item) for item in value)
+    return value
 
 
 def wrap_vault_content(path: str, content: str) -> str:

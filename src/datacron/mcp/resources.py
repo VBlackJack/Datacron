@@ -33,6 +33,7 @@ from datacron.core.config import INDEX_DB_FILENAME, VAULT_CONFIG_FILENAME
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
 from datacron.core.paths import sidecar_dir, sidecar_index_dir
+from datacron.mcp.sandbox import sanitize_metadata_value
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -219,11 +220,12 @@ def _group_by_folder(notes: list[Note]) -> dict[str, list[Note]]:
 
 def _format_note_line(note: Note) -> str:
     filename = Path(note.rel_path).name
-    title = note.title.strip() or filename
+    title = sanitize_metadata_value(note.title.strip() or filename)
     important_marker = " ★" if note.frontmatter.get("important") is True else ""
     tag_suffix = ""
     if note.tags:
-        tag_suffix = f"  [{', '.join(note.tags[:5])}{', …' if len(note.tags) > 5 else ''}]"
+        tags = [sanitize_metadata_value(tag) for tag in note.tags[:5]]
+        tag_suffix = f"  [{', '.join(tags)}{', …' if len(note.tags) > 5 else ''}]"
     return f"- `{filename}` — {title}{important_marker}{tag_suffix}"
 
 
