@@ -444,6 +444,7 @@ async def _create_note_ai_impl(
         content = serialize(frontmatter, body)
         await app.vault_writer.write_note_atomic(cleaned["rel_path"], content, overwrite=False)
         index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        await _invalidate_alias_cache_if_index_changed(app, index_stats)
     except PathConfinementError as exc:
         mapped_exc = (
             PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
@@ -530,6 +531,7 @@ async def _append_journal_impl(
         content = serialize(metadata, new_body)
         await app.vault_writer.write_note_atomic(cleaned_rel_path, content, overwrite=True)
         index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        await _invalidate_alias_cache_if_index_changed(app, index_stats)
     except PathConfinementError as exc:
         mapped_exc = (
             PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
@@ -647,6 +649,7 @@ async def _set_frontmatter_impl(
         content = serialize(metadata, body)
         await app.vault_writer.write_note_atomic(cleaned_rel_path, content, overwrite=True)
         index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        await _invalidate_alias_cache_if_index_changed(app, index_stats)
     except PathConfinementError as exc:
         mapped_exc = (
             PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
@@ -763,6 +766,7 @@ async def _patch_note_section_impl(
         content = serialize(metadata, new_body)
         await app.vault_writer.write_note_atomic(cleaned_rel_path, content, overwrite=True)
         index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        await _invalidate_alias_cache_if_index_changed(app, index_stats)
     except PathConfinementError as exc:
         mapped_exc = (
             PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
@@ -1582,7 +1586,14 @@ async def _repair_index_on_read(app: DatacronApp) -> ReconcileStats:
     re-read+hash of every note. ``content_hash`` remains the authority on any
     note whose mtime moved.
     """
-    return await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+    stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+    await _invalidate_alias_cache_if_index_changed(app, stats)
+    return stats
+
+
+async def _invalidate_alias_cache_if_index_changed(app: DatacronApp, stats: ReconcileStats) -> None:
+    if stats["reindexed_notes"] or stats["deleted_notes"]:
+        await app.vault_reader.invalidate_alias_cache()
 
 
 async def _resolve_backlink_target(app: DatacronApp, target: str) -> str | None:
