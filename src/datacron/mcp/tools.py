@@ -13,8 +13,7 @@
 # limitations under the License.
 """MCP tools for vault reads, search, and approved memory writes.
 
-Each tool follows the seven Sem-2 rules from
-``docs/agent-briefs/02-brief-claude-code.md``:
+Each tool follows the shared tool contract:
 
 1. Typed parameters (FastMCP's Pydantic integration).
 2. Path inputs are confined via :func:`datacron.core.paths.assert_within_paths`.
