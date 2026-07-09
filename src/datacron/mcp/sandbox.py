@@ -34,6 +34,7 @@ threat model, classifier rejected as latency theater).
 from __future__ import annotations
 
 import re
+import unicodedata
 from html import escape as _html_escape
 from typing import Any, Final
 
@@ -60,12 +61,14 @@ VAULT_CONTENT_CLOSE: Final[str] = "</vault_content>"
 #
 # The list mirrors the brief (02-brief-claude-code.md §mcp/sandbox.py) and
 # adds two defensive entries:
-#   - </?vault_content[…]> — prevents user content from breaking out of our
-#     own wrapping envelope by emitting a fake </vault_content>.
+#   - complete and partial vault_content delimiters — prevents user content
+#     from breaking out of our own wrapping envelope by emitting a fake
+#     </vault_content>, including unterminated or internally-spaced variants.
 #   - forget all (previous) instructions — common jailbreak variant.
 _SUSPICIOUS_SOURCES: Final[tuple[str, ...]] = (
     r"</?\s*system\s*>",
-    r"</?\s*vault_content[^>]*>",
+    r"<\s*/?\s*vault_content(?:\s+[^<>\n]*)?\s*>",
+    r"<\s*/?\s*vault_content",
     r"<\|im_start\|>",
     r"<\|im_end\|>",
     r"ignore\s+(?:all\s+)?previous\s+instructions",
@@ -81,13 +84,44 @@ _SUSPICIOUS_PATTERN: Final[re.Pattern[str]] = re.compile(
 
 def _escape_suspicious(content: str) -> str:
     """Replace every suspicious match with ``[escaped: <match>]``."""
+    detection_view, index_map = _detection_view(content)
+    if not detection_view:
+        return content
 
-    def _replace(match: re.Match[str]) -> str:
-        if _is_already_escaped(content, *match.span()):
-            return match.group(0)
-        return f"{ESCAPE_PREFIX}{match.group(0)}{ESCAPE_SUFFIX}"
+    escaped: list[str] = []
+    cursor = 0
+    for match in _SUSPICIOUS_PATTERN.finditer(detection_view):
+        start = index_map[match.start()]
+        end = index_map[match.end() - 1] + 1
+        if start < cursor:
+            continue
+        matched_literal = content[start:end]
+        escaped.append(content[cursor:start])
+        if _is_already_escaped(content, start, end):
+            escaped.append(matched_literal)
+        else:
+            escaped.append(f"{ESCAPE_PREFIX}{matched_literal}{ESCAPE_SUFFIX}")
+        cursor = end
+    escaped.append(content[cursor:])
+    return "".join(escaped)
 
-    return _SUSPICIOUS_PATTERN.sub(_replace, content)
+
+def _detection_view(content: str) -> tuple[str, list[int]]:
+    """Return ``content`` without Unicode format controls plus index mapping.
+
+    Suspicious-pattern detection runs on the normalized view so zero-width
+    controls cannot split phrases such as "ignore previous instructions".
+    Replacement still uses spans from the original string, preserving the
+    user's text inside the escape envelope.
+    """
+    chars: list[str] = []
+    index_map: list[int] = []
+    for index, char in enumerate(content):
+        if unicodedata.category(char) == "Cf":
+            continue
+        chars.append(char)
+        index_map.append(index)
+    return "".join(chars), index_map
 
 
 def _is_already_escaped(content: str, start: int, end: int) -> bool:
