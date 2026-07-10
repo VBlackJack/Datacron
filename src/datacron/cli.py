@@ -35,12 +35,18 @@ from datacron import __version__
 from datacron.core.config import (
     DEFAULT_EXCLUDED_FILES,
     DEFAULT_EXCLUDED_FOLDERS,
+    DEFAULT_HISTORY_MODE,
+    DEFAULT_HISTORY_RETENTION_DAYS,
+    HISTORY_DIR_NAME,
     LOG_FILENAME_PATTERN,
+    OPLOG_DIR_NAME,
+    OPLOG_PENDING_DIR_NAME,
     Settings,
     VaultConfig,
     get_settings,
     load_vault_config,
 )
+from datacron.core.durability import WritePolicy, probe_directory_durability
 from datacron.core.logger import configure_logging, get_logger
 from datacron.core.paths import (
     sidecar_dir,
@@ -49,7 +55,9 @@ from datacron.core.paths import (
     sidecar_vault_config,
 )
 from datacron.core.query_expansion import query_expansion_seed
+from datacron.core.scope import SingleTenantVaultScope
 from datacron.core.vault import build_configured_reader
+from datacron.scrubber import CanaryInitializationError, ScrubState, initialize_canaries
 
 __all__ = ["app", "mcp_entry"]
 
@@ -62,7 +70,7 @@ LINE_ENDINGS_LF: Final[str] = "lf"
 
 app = typer.Typer(
     name="datacron",
-    help="Datacron — local-first MCP server for Markdown vaults.",
+    help="Datacron -- local-first MCP server for Markdown vaults.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -99,6 +107,16 @@ def _resolve_vault_root(explicit: Path | None, settings: Settings) -> Path:
     )
 
 
+def _settings_for_cli_vault(settings: Settings, vault_root: Path) -> Settings:
+    """Bind an explicit CLI vault without widening configured non-empty scopes."""
+    updates: dict[str, object] = {"vault_root": vault_root}
+    if not settings.read_paths:
+        updates["read_paths"] = [vault_root]
+    if not settings.write_paths:
+        updates["write_paths"] = [vault_root]
+    return settings.model_copy(update=updates)
+
+
 def _format_vault_yaml(vault_id: str, created: datetime) -> str:
     payload = {
         "datacron_version": __version__,
@@ -106,6 +124,8 @@ def _format_vault_yaml(vault_id: str, created: datetime) -> str:
         "created": created.isoformat(),
         "encoding": ENCODING_UTF8,
         "line_endings": LINE_ENDINGS_LF,
+        "history_retention_days": DEFAULT_HISTORY_RETENTION_DAYS,
+        "history_mode": DEFAULT_HISTORY_MODE,
         "folders": {
             "drafts": DEFAULT_DRAFTS_FOLDER,
             "journal": DEFAULT_JOURNAL_FOLDER,
@@ -166,6 +186,8 @@ def init(
     sidecar.mkdir(parents=True, exist_ok=True)
     sidecar_index_dir(vault_path).mkdir(parents=True, exist_ok=True)
     (sidecar / "logs").mkdir(parents=True, exist_ok=True)
+    (sidecar / HISTORY_DIR_NAME).mkdir(parents=True, exist_ok=True)
+    (sidecar / OPLOG_DIR_NAME / OPLOG_PENDING_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
     config_path = sidecar_vault_config(vault_path)
     if config_path.exists() and not force:
@@ -238,18 +260,18 @@ async def _index_status_label(db_path: Path) -> str:
         stats = await store.stats()
     except Exception as exc:
         _LOGGER.warning("Unable to read index stats from %s: %s", db_path, exc)
-        return "unreadable — run `datacron reindex`"
+        return "unreadable -- run `datacron reindex`"
     finally:
         await store.close()
 
     if stats.note_count > 0:
         return f"built ({stats.note_count} notes, {stats.chunk_count} chunks)"
-    return "empty — run `datacron index`"
+    return "empty -- run `datacron index`"
 
 
 def _not_implemented(command: str, since: str) -> NoReturn:
     _error(
-        f"`datacron {command}` is not implemented yet — planned for {since}. "
+        f"`datacron {command}` is not implemented yet -- planned for {since}. "
         "Run `datacron --help` for available commands."
     )
 
@@ -269,11 +291,72 @@ def index(
 def reindex(
     vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
 ) -> None:
-    """Drop the FTS5 database and rebuild from scratch."""
+    """Build, validate, and atomically publish a complete FTS5 replacement."""
     configure_logging()
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
     asyncio.run(_run_index(vault_root, drop_first=True))
+
+
+@app.command(name="scrub-init")
+def scrub_init(
+    vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
+) -> None:
+    """Explicitly create configured integrity canaries without overwriting any."""
+    configure_logging()
+    base_settings = get_settings()
+    vault_root = _resolve_vault_root(vault, base_settings)
+    settings = _settings_for_cli_vault(base_settings, vault_root)
+    scope = SingleTenantVaultScope(vault_root, settings)
+    write_policy = WritePolicy(settings, probe_directory_durability(vault_root))
+    try:
+        result = initialize_canaries(vault_root, settings, scope, write_policy)
+    except CanaryInitializationError as exc:
+        _error(str(exc))
+    _print(
+        f"Integrity canaries ready at {vault_root}: "
+        f"{result['created']} created, {result['existing']} unchanged"
+    )
+
+
+@app.command()
+def scrub(
+    vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
+) -> None:
+    """Run one configured, resumable, alert-only integrity scrub window."""
+    configure_logging()
+    base_settings = get_settings()
+    vault_root = _resolve_vault_root(vault, base_settings)
+    settings = _settings_for_cli_vault(base_settings, vault_root)
+    state = asyncio.run(_run_scrub(vault_root, settings))
+    status = "critical" if state.anomalies else ("complete" if state.completed else "running")
+    _print(
+        f"Integrity scrub {status}: {state.checked_notes}/{state.total_notes} notes, "
+        f"{len(state.anomalies)} anomalies, pass {state.pass_id}"
+    )
+    if state.anomalies:
+        raise typer.Exit(code=2)
+
+
+async def _run_scrub(vault_root: Path, settings: Settings) -> ScrubState:
+    """Open the completed index immutably and run one scrub window."""
+    from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
+    from datacron.scrubber import run_integrity_scrub  # noqa: PLC0415
+
+    store = SQLiteFTS5Store()
+    await store.open(sidecar_index_db(vault_root), read_only=True)
+    try:
+        scope = SingleTenantVaultScope(vault_root, settings)
+        write_policy = WritePolicy(settings, probe_directory_durability(vault_root))
+        return await run_integrity_scrub(
+            vault_root,
+            settings,
+            scope,
+            write_policy,
+            store,
+        )
+    finally:
+        await store.close()
 
 
 async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
@@ -282,23 +365,36 @@ async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
     Both ``datacron index`` and the MCP read-repair go through the shared
     :func:`reconcile`, so the CLI gets the same mtime-gated incremental behavior:
     unchanged notes are skipped, changed ones re-chunked, vanished ones deleted.
-    ``reindex`` (``drop_first``) drops the database first, so every note is
-    re-indexed from scratch.
+    ``reindex`` (``drop_first``) builds a separate complete database and only
+    swaps it over the live index after byte-hash and SQLite validation.
     """
     from datacron.core.paths import sidecar_index_db  # noqa: PLC0415
     from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
     from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
+    from datacron.indexing.rebuild import rebuild_index_atomic  # noqa: PLC0415
     from datacron.indexing.reconcile import reconcile  # noqa: PLC0415
 
     db_path = sidecar_index_db(vault_root)
-    if drop_first and db_path.exists():
-        _LOGGER.info("Dropping existing index at %s before rebuild", db_path)
-        db_path.unlink()
-        for suffix in ("-wal", "-shm"):
-            db_path.with_suffix(db_path.suffix + suffix).unlink(missing_ok=True)
-
     settings = get_settings()
     config = _load_vault_yaml(vault_root) or VaultConfig()
+    if drop_first:
+        started = time.perf_counter()
+        rebuilt = await rebuild_index_atomic(vault_root, settings, config)
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        _print(
+            f"Reindexed {rebuilt['reindexed_notes']} notes "
+            f"into generation {rebuilt['generation']} at {db_path} ({duration_ms:.0f} ms)"
+        )
+        _LOGGER.info(
+            "cli.reindex completed (vault=%s notes=%d chunks=%d generation=%d duration_ms=%.1f)",
+            vault_root,
+            rebuilt["reindexed_notes"],
+            rebuilt["chunk_count"],
+            rebuilt["generation"],
+            duration_ms,
+        )
+        return
+
     reader = build_configured_reader(vault_root)
     chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
     store = SQLiteFTS5Store(term_map=config.query_expansion)
@@ -395,11 +491,18 @@ def mcp_serve(
     configure_logging()
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
+    if not vault_root.is_dir():
+        typer.echo(f"Vault not found: {vault_root}", err=True)
+        raise typer.Exit(code=1)
     _LOGGER.info("cli.mcp_serve starting (vault=%s)", vault_root)
     from datacron.mcp.server import run_stdio  # noqa: PLC0415
 
     try:
         asyncio.run(run_stdio(settings=settings, vault_root=vault_root))
+    except FileNotFoundError as exc:
+        _LOGGER.error("cli.mcp_serve vault unavailable: %s", exc)
+        typer.echo(f"Vault not found: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     except KeyboardInterrupt:
         _LOGGER.info("cli.mcp_serve received KeyboardInterrupt; exiting cleanly")
 
@@ -452,7 +555,7 @@ def mcp_install(
 
 
 def mcp_entry() -> None:
-    """``datacron-mcp`` script entry — direct stdio MCP server.
+    """``datacron-mcp`` script entry -- direct stdio MCP server.
 
     Used by ``installers/claude_desktop.py`` (Sem 3) so the Claude Desktop
     config can launch the server without going through the ``datacron mcp
