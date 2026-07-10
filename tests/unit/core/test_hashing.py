@@ -49,12 +49,12 @@ class TestHash:
         assert len(result) == HASH_HEX_LENGTH
         assert all(c in "0123456789abcdef" for c in result)
 
-    def test_hash_invariant_across_line_endings(self) -> None:
-        assert hash_text("hello\nworld") == hash_text("hello\r\nworld")
-        assert hash_text("a\rb") == hash_text("a\nb")
+    def test_hash_distinguishes_line_endings(self) -> None:
+        assert hash_text("hello\nworld") != hash_text("hello\r\nworld")
+        assert hash_text("a\rb") != hash_text("a\nb")
 
-    def test_hash_invariant_with_bom(self) -> None:
-        assert hash_text("﻿hello") == hash_text("hello")
+    def test_hash_distinguishes_bom(self) -> None:
+        assert hash_text("\ufeffhello") != hash_text("hello")
 
     def test_hash_matches_sha256(self) -> None:
         text = "datacron"

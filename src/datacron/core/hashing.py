@@ -11,13 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Content hashing utilities.
-
-The canonical Datacron content hash is SHA-256 over the UTF-8 bytes of the
-text after BOM removal and CRLF/CR → LF normalization, returned as a
-lowercase hex string. This is the format consumed by ``Note.content_hash``
-and by index freshness checks.
-"""
+"""Exact-byte content hashing and explicit text-normalization utilities."""
 
 from __future__ import annotations
 
@@ -27,7 +21,7 @@ from typing import Final
 __all__ = ["HASH_HEX_LENGTH", "hash_text", "normalize_text", "sha256_bytes"]
 
 HASH_HEX_LENGTH: Final[int] = 64
-_BOM: Final[str] = "﻿"
+_BOM: Final[str] = "\ufeff"
 
 
 def normalize_text(text: str) -> bytes:
@@ -47,8 +41,10 @@ def sha256_bytes(data: bytes) -> str:
 
 
 def hash_text(text: str) -> str:
-    """Compute the canonical Datacron content hash for ``text``.
+    """Return SHA-256 of the exact UTF-8 encoding of ``text``.
 
-    Equivalent to ``sha256_bytes(normalize_text(text))``.
+    This function intentionally preserves BOM, EOL, and Unicode code-point
+    differences. Call :func:`normalize_text` explicitly when normalization is
+    part of a separate derived-text contract.
     """
-    return sha256_bytes(normalize_text(text))
+    return sha256_bytes(text.encode("utf-8"))
