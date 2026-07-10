@@ -19,7 +19,7 @@ from collections.abc import Callable
 
 import pytest
 
-from datacron.core.models import Chunk
+from datacron.core.models import Chunk, ChunkType
 from datacron.indexing.wikilinks import RegexWikilinksExtractor
 
 ChunkFactory = Callable[..., Chunk]
@@ -91,3 +91,38 @@ def test_source_chunk_id_is_preserved(chunk_factory: ChunkFactory) -> None:
 
     assert links[0].source_chunk_id == chunk.chunk_id
     assert links[0].resolved_note_id is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "```bash\necho [[Not a link]]\n```",
+        "~~~powershell\n[[Not a link]]\n~~~",
+        "Use `[[Not a link]]` in an example.",
+        "---\nalias: '[[Not a link]]'\n---\nBody.",
+        'if [[ -f "$file" ]]; then\n  echo ok\nfi',
+        '[[ "$left" == "$right" ]] && echo equal',
+        'while [[ -n "$value" ]]; do\n  echo "$value"\ndone',
+    ],
+)
+def test_ignores_code_frontmatter_and_bash_conditions(
+    content: str,
+    chunk_factory: ChunkFactory,
+) -> None:
+    assert _extract(content, chunk_factory) == []
+
+
+def test_keeps_real_link_beside_excluded_candidates(chunk_factory: ChunkFactory) -> None:
+    content = (
+        "See [[Real Link]].\n\n"
+        "```bash\n[[Fenced false candidate]]\n```\n\n"
+        'if [[ -d "$folder" ]]; then echo ok; fi\n'
+    )
+
+    assert _extract(content, chunk_factory) == [("Real Link", None, None, None)]
+
+
+def test_code_chunk_is_never_treated_as_wikilink_source(chunk_factory: ChunkFactory) -> None:
+    chunk = chunk_factory(content="[[Not a link]]", chunk_type=ChunkType.CODE)
+
+    assert RegexWikilinksExtractor().extract(chunk) == []

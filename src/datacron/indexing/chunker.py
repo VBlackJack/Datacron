@@ -26,12 +26,10 @@ from datacron.core.config import DEFAULT_CHUNK_MAX_TOKENS
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, ChunkType, Note
+from datacron.indexing.wikilinks import extract_wikilink_targets
 
 _NON_ALPHANUMERIC_PATTERN = re.compile(r"[^a-z0-9]+")
 _REPEATED_DASH_PATTERN = re.compile(r"-+")
-_WIKILINK_TARGET_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"(?<!\\)\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]"
-)
 _HEADING_SEPARATOR: Final[str] = " / "
 _TOKEN_ESTIMATE_DIVISOR: Final[int] = 4
 
@@ -156,7 +154,7 @@ class MarkdownChunker:
             token_count=len(content) // _TOKEN_ESTIMATE_DIVISOR,
             line_start=line_start,
             line_end=line_end,
-            wikilinks_out=_extract_wikilink_targets(content),
+            wikilinks_out=extract_wikilink_targets(content, chunk_type),
             lang=lang,
         )
 
@@ -412,10 +410,6 @@ def _append_token_text(token: Any, parts: list[str]) -> None:
     content = getattr(token, "content", None)
     if isinstance(content, str):
         parts.append(content)
-
-
-def _extract_wikilink_targets(content: str) -> list[str]:
-    return [match.group(1).strip() for match in _WIKILINK_TARGET_PATTERN.finditer(content)]
 
 
 # Structural conformance check for mypy.

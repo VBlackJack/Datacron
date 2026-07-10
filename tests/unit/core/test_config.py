@@ -17,13 +17,23 @@ from pydantic import ValidationError
 
 from datacron.core.config import (
     DEFAULT_CHUNK_MAX_TOKENS,
+    DEFAULT_DURABILITY_MODE,
     DEFAULT_EXCLUDED_FILES,
     DEFAULT_EXCLUDED_FOLDERS,
     DEFAULT_GET_NOTE_MAX_TOKENS,
+    DEFAULT_HISTORY_MODE,
+    DEFAULT_HISTORY_RETENTION_DAYS,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MAX_RESULT_COUNT,
     DEFAULT_MAX_RESULT_TOKENS,
     DEFAULT_RIPGREP_PATH,
+    DEFAULT_SCRUB_CANARIES,
+    DEFAULT_SCRUB_CANARY_DIR,
+    DEFAULT_SCRUB_CHECKPOINT_INTERVAL_NOTES,
+    DEFAULT_SCRUB_CHECKPOINT_PATH,
+    DEFAULT_SCRUB_MAX_DURATION_SECONDS,
+    DEFAULT_SCRUB_MEBIBYTES_PER_SECOND,
+    DEFAULT_SCRUB_NOTES_PER_SECOND,
     Settings,
     VaultConfig,
     get_settings,
@@ -44,6 +54,15 @@ class TestDefaults:
         assert settings.read_paths == []
         assert settings.write_paths == []
         assert settings.vault_root is None
+        assert settings.read_only is False
+        assert settings.durability == DEFAULT_DURABILITY_MODE
+        assert settings.scrub_notes_per_second == DEFAULT_SCRUB_NOTES_PER_SECOND
+        assert settings.scrub_mebibytes_per_second == DEFAULT_SCRUB_MEBIBYTES_PER_SECOND
+        assert settings.scrub_max_duration_seconds == DEFAULT_SCRUB_MAX_DURATION_SECONDS
+        assert settings.scrub_checkpoint_interval_notes == DEFAULT_SCRUB_CHECKPOINT_INTERVAL_NOTES
+        assert settings.scrub_checkpoint_path == DEFAULT_SCRUB_CHECKPOINT_PATH
+        assert settings.scrub_canary_dir == DEFAULT_SCRUB_CANARY_DIR
+        assert settings.scrub_canaries == dict(DEFAULT_SCRUB_CANARIES)
 
     def test_vault_config_excluded_folders_default(self) -> None:
         config = VaultConfig()
@@ -51,8 +70,10 @@ class TestDefaults:
         assert config.excluded_files == list(DEFAULT_EXCLUDED_FILES)
         assert config.query_expansion["supervision"] == ["monitoring"]
         assert config.query_expansion["monitoring"] == ["supervision"]
-        assert config.query_expansion["validité"] == ["validity"]
+        assert config.query_expansion["validit\u00e9"] == ["validity"]
         assert config.query_expansion["certificate"] == ["certificat"]
+        assert config.history_retention_days == DEFAULT_HISTORY_RETENTION_DAYS
+        assert config.history_mode == DEFAULT_HISTORY_MODE
 
 
 class TestEnvLoading:
@@ -115,6 +136,46 @@ class TestEnvLoading:
         settings = Settings()
         assert settings.vault_root == tmp_path.resolve()
 
+    def test_read_only_and_strict_durability_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("DATACRON_READ_ONLY", "true")
+        monkeypatch.setenv("DATACRON_DURABILITY", "STRICT")
+        settings = Settings()
+        assert settings.read_only is True
+        assert settings.durability == "strict"
+
+    def test_invalid_durability_mode_raises(self) -> None:
+        with pytest.raises(ValidationError, match="DATACRON_DURABILITY"):
+            Settings(durability="eventually")
+
+    def test_scrub_canaries_load_from_json_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("DATACRON_SCRUB_CANARIES", '{"sentinel.md":"known\\r\\n"}')
+        settings = Settings()
+        assert settings.scrub_canaries == {"sentinel.md": "known\r\n"}
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("scrub_checkpoint_path", "../checkpoint.json"),
+            ("scrub_canary_dir", "C:/outside"),
+            ("scrub_canaries", {"../outside.md": "unsafe"}),
+            ("scrub_notes_per_second", 0),
+            ("scrub_max_duration_seconds", 0),
+        ],
+    )
+    def test_scrub_settings_reject_unsafe_or_zero_values(
+        self,
+        field: str,
+        value: object,
+    ) -> None:
+        with pytest.raises(ValidationError):
+            Settings.model_validate({field: value})
+
 
 class TestProgrammatic:
     def test_construct_with_list(self, tmp_path: Path) -> None:
@@ -127,6 +188,18 @@ class TestProgrammatic:
 
 
 class TestVaultConfig:
+    @pytest.mark.parametrize("mode", ["full", "redacted"])
+    def test_history_mode_accepts_declared_policies(self, mode: str) -> None:
+        assert VaultConfig(history_mode=mode.upper()).history_mode == mode
+
+    def test_history_mode_rejects_unknown_policy(self) -> None:
+        with pytest.raises(ValidationError, match="history_mode"):
+            VaultConfig(history_mode="encrypted-without-a-key-policy")
+
+    def test_history_retention_must_be_positive(self) -> None:
+        with pytest.raises(ValidationError, match="history_retention_days"):
+            VaultConfig(history_retention_days=0)
+
     def test_load_vault_config_applies_excluded_folder_default(self, tmp_path: Path) -> None:
         path = tmp_path / "VAULT.yaml"
         path.write_text("vault_id: 01HQ\n", encoding="utf-8")

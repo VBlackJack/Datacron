@@ -223,14 +223,14 @@ class TestResolveAlias:
         assert await vault_reader.resolve_alias("   ") is None
 
     async def test_title_wins_over_alias_global_priority(self, tmp_path: Path) -> None:
-        """Strict global priority per contracts §2.6: a title match on ANY note wins
+        """Strict global priority per contracts section 2.6: a title match on ANY note wins
         over an alias match on ANY other note, regardless of file iteration order.
         """
         # Note A: title "shared-key" (filename ordered AFTER B alphabetically)
         (tmp_path / "z-note.md").write_text(
             "---\ntitle: shared-key\n---\n# Body A\n", encoding="utf-8"
         )
-        # Note B: alias "shared-key" (filename ordered BEFORE A → iterated first)
+        # Note B: alias "shared-key" (filename ordered BEFORE A -> iterated first)
         (tmp_path / "a-note.md").write_text(
             "---\ntitle: Note B\naliases: [shared-key]\n---\n# Body B\n",
             encoding="utf-8",
@@ -243,7 +243,7 @@ class TestResolveAlias:
         assert target == note_a.id
 
     async def test_ambiguous_titles_return_none(self, tmp_path: Path) -> None:
-        """Two notes claiming the same title at tier 1 → unresolved, do not fall
+        """Two notes claiming the same title at tier 1 -> unresolved, do not fall
         through to lower tiers."""
         (tmp_path / "one.md").write_text("---\ntitle: dup\n---\n# Body\n", encoding="utf-8")
         (tmp_path / "two.md").write_text("---\ntitle: dup\n---\n# Body\n", encoding="utf-8")
@@ -282,6 +282,21 @@ class TestIdPersistence:
         data = json.loads(sidecar.read_text(encoding="utf-8"))
         assert data["welcome.md"] == note.id
 
+    async def test_read_only_missing_id_is_stable_without_sidecar_write(
+        self,
+        tmp_vault: Path,
+    ) -> None:
+        sidecar = tmp_vault / ".datacron" / "ulids.json"
+        sidecar.unlink(missing_ok=True)
+        reader = FilesystemVaultReader(tmp_vault, read_only=True)
+
+        first = await reader.read_note(tmp_vault / "welcome.md")
+        second = await reader.read_note(tmp_vault / "welcome.md")
+
+        assert first.id == second.id
+        assert len(first.id) == 26
+        assert not sidecar.exists()
+
     async def test_frontmatter_id_honored(self, tmp_vault: Path) -> None:
         fixed_id = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
         target = tmp_vault / "welcome.md"
@@ -317,6 +332,22 @@ class TestIdPersistence:
         assert json.loads(path.read_text(encoding="utf-8")) == {
             "a.md": "01HQXR7K9YZ8M2N3PQRSTV4WX5"
         }
+
+    async def test_read_only_id_store_uses_migrated_mapping_without_repair(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        path = tmp_path / "ulids.json"
+        migrated = tmp_path / "ulids.json.migrated"
+        migrated.write_text(
+            json.dumps({"a.md": "01HQXR7K9YZ8M2N3PQRSTV4WX5"}),
+            encoding="utf-8",
+        )
+
+        store = JsonIdStore(path, read_only=True)
+
+        assert await store.get("a.md") == "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+        assert not path.exists()
 
     async def test_migrated_sidecar_wins_over_generated_duplicate(self, tmp_path: Path) -> None:
         path = tmp_path / "ulids.json"

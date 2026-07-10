@@ -20,7 +20,9 @@ via :func:`reset_settings_cache`.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Final, final
@@ -45,6 +47,26 @@ DEFAULT_CHUNK_MAX_TOKENS: Final[int] = 1024
 # generous, so a single get_note returns most notes whole while pagination
 # (offset/limit/next_offset) remains the safety valve for pathologically large notes.
 DEFAULT_GET_NOTE_MAX_TOKENS: Final[int] = 25000
+DEFAULT_HISTORY_RETENTION_DAYS: Final[int] = 30
+DEFAULT_HISTORY_MODE: Final[str] = "full"
+DEFAULT_REDACT_SECRETS: Final[str] = "all"
+DEFAULT_DURABILITY_MODE: Final[str] = "best-effort"
+DEFAULT_SCRUB_NOTES_PER_SECOND: Final[float] = 50.0
+DEFAULT_SCRUB_MEBIBYTES_PER_SECOND: Final[float] = 16.0
+DEFAULT_SCRUB_MAX_DURATION_SECONDS: Final[float] = 30.0
+DEFAULT_SCRUB_CHECKPOINT_INTERVAL_NOTES: Final[int] = 25
+DEFAULT_SCRUB_CHECKPOINT_PATH: Final[Path] = Path(".datacron/scrubber/checkpoint.json")
+DEFAULT_SCRUB_CANARY_DIR: Final[Path] = Path(".datacron/scrubber/canaries")
+DEFAULT_SCRUB_CANARIES: Final[tuple[tuple[str, str], ...]] = (
+    (
+        "exact-byte-lf.md",
+        "# Datacron integrity canary\n\nformat: utf-8-lf\nsequence: 0123456789abcdef\n",
+    ),
+    (
+        "exact-byte-crlf.md",
+        "# Datacron integrity canary\r\n\r\nformat: utf-8-crlf\r\nsequence: fedcba9876543210\r\n",
+    ),
+)
 DEFAULT_EXCLUDED_FOLDERS: Final[tuple[str, ...]] = (
     "_attachments",
     "zzz_Corbeille",
@@ -56,6 +78,9 @@ DEFAULT_EXCLUDED_FILES: Final[tuple[str, ...]] = ("00_INDEX.md",)
 SIDECAR_DIR_NAME: Final[str] = ".datacron"
 INDEX_DIR_NAME: Final[str] = "index"
 INDEX_DB_FILENAME: Final[str] = "datacron.db"
+HISTORY_DIR_NAME: Final[str] = "history"
+OPLOG_DIR_NAME: Final[str] = "oplog"
+OPLOG_PENDING_DIR_NAME: Final[str] = "pending"
 VAULT_CONFIG_FILENAME: Final[str] = "VAULT.yaml"
 LOG_FILENAME_PATTERN: Final[str] = "datacron_{date}.log"
 LOG_FORMAT: Final[str] = "[%(asctime)s] [%(levelname)s] %(message)s"
@@ -64,6 +89,10 @@ LOG_DATE_FORMAT: Final[str] = "%Y-%m-%d %H:%M:%S"
 VALID_LOG_LEVELS: Final[frozenset[str]] = frozenset(
     {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 )
+VALID_SECRET_REDACTION_POLICIES: Final[frozenset[str]] = frozenset(
+    {"off", "log", "retrieval", "all"}
+)
+VALID_DURABILITY_MODES: Final[frozenset[str]] = frozenset({"strict", "best-effort"})
 
 
 class VaultConfig(BaseModel):
@@ -76,10 +105,28 @@ class VaultConfig(BaseModel):
     created: str | None = None
     encoding: str = "utf-8"
     line_endings: str = "lf"
+    history_retention_days: int = Field(default=DEFAULT_HISTORY_RETENTION_DAYS, ge=1)
+    history_mode: str = DEFAULT_HISTORY_MODE
     folders: dict[str, str] = Field(default_factory=dict)
     excluded_folders: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FOLDERS))
     excluded_files: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FILES))
     query_expansion: dict[str, list[str]] = Field(default_factory=default_query_expansion)
+
+    @field_validator("line_endings", mode="before")
+    @classmethod
+    def _normalize_line_endings(cls, value: object) -> str:
+        normalized = str(value).strip().lower()
+        if normalized not in {"lf", "crlf"}:
+            raise ValueError("line_endings must be 'lf' or 'crlf'")
+        return normalized
+
+    @field_validator("history_mode", mode="before")
+    @classmethod
+    def _normalize_history_mode(cls, value: object) -> str:
+        normalized = str(value).strip().lower()
+        if normalized not in {"full", "redacted"}:
+            raise ValueError("history_mode must be 'full' or 'redacted'")
+        return normalized
 
     @field_validator("excluded_folders", mode="before")
     @classmethod
@@ -171,6 +218,28 @@ class Settings(BaseSettings):
     ripgrep_path: str = Field(default=DEFAULT_RIPGREP_PATH)
     chunk_max_tokens: int = Field(default=DEFAULT_CHUNK_MAX_TOKENS, ge=1)
     get_note_max_tokens: int = Field(default=DEFAULT_GET_NOTE_MAX_TOKENS, ge=1)
+    redact_secrets: str = DEFAULT_REDACT_SECRETS
+    secret_redaction_patterns: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    read_only: bool = False
+    durability: str = DEFAULT_DURABILITY_MODE
+    scrub_notes_per_second: float = Field(default=DEFAULT_SCRUB_NOTES_PER_SECOND, gt=0)
+    scrub_mebibytes_per_second: float = Field(
+        default=DEFAULT_SCRUB_MEBIBYTES_PER_SECOND,
+        gt=0,
+    )
+    scrub_max_duration_seconds: float = Field(
+        default=DEFAULT_SCRUB_MAX_DURATION_SECONDS,
+        gt=0,
+    )
+    scrub_checkpoint_interval_notes: int = Field(
+        default=DEFAULT_SCRUB_CHECKPOINT_INTERVAL_NOTES,
+        ge=1,
+    )
+    scrub_checkpoint_path: Path = DEFAULT_SCRUB_CHECKPOINT_PATH
+    scrub_canary_dir: Path = DEFAULT_SCRUB_CANARY_DIR
+    scrub_canaries: Annotated[dict[str, str], NoDecode] = Field(
+        default_factory=lambda: dict(DEFAULT_SCRUB_CANARIES)
+    )
 
     @field_validator("log_level", mode="before")
     @classmethod
@@ -216,6 +285,77 @@ class Settings(BaseSettings):
         if value is None or value == "":
             return None
         return Path(str(value)).expanduser().resolve()
+
+    @field_validator("redact_secrets", mode="before")
+    @classmethod
+    def _normalize_redact_secrets(cls, value: object) -> str:
+        normalized = str(value).strip().lower()
+        if normalized not in VALID_SECRET_REDACTION_POLICIES:
+            raise ValueError(
+                f"DATACRON_REDACT_SECRETS must be one of {sorted(VALID_SECRET_REDACTION_POLICIES)}"
+            )
+        return normalized
+
+    @field_validator("secret_redaction_patterns", mode="before")
+    @classmethod
+    def _parse_secret_redaction_patterns(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            try:
+                decoded = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "DATACRON_SECRET_REDACTION_PATTERNS must be a JSON string list"
+                ) from exc
+            value = decoded
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise TypeError("secret_redaction_patterns must be a list of regex strings")
+        patterns = [item for item in value if item]
+        for pattern in patterns:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"invalid secret redaction regex: {pattern!r}") from exc
+        return patterns
+
+    @field_validator("durability", mode="before")
+    @classmethod
+    def _normalize_durability(cls, value: object) -> str:
+        normalized = str(value).strip().lower()
+        if normalized not in VALID_DURABILITY_MODES:
+            raise ValueError(f"DATACRON_DURABILITY must be one of {sorted(VALID_DURABILITY_MODES)}")
+        return normalized
+
+    @field_validator("scrub_checkpoint_path", "scrub_canary_dir", mode="before")
+    @classmethod
+    def _normalize_scrub_relative_path(cls, value: object) -> Path:
+        path = Path(str(value))
+        if path.is_absolute() or path.drive or ".." in path.parts or path == Path("."):
+            raise ValueError("scrubber paths must be non-empty vault-relative paths")
+        return path
+
+    @field_validator("scrub_canaries", mode="before")
+    @classmethod
+    def _parse_scrub_canaries(cls, value: object) -> dict[str, str]:
+        if value is None or value == "":
+            return dict(DEFAULT_SCRUB_CANARIES)
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValueError("DATACRON_SCRUB_CANARIES must be a JSON string mapping") from exc
+        if not isinstance(value, dict) or not value:
+            raise TypeError("scrub_canaries must be a non-empty mapping of paths to content")
+        canaries: dict[str, str] = {}
+        for raw_name, raw_content in value.items():
+            if not isinstance(raw_name, str) or not isinstance(raw_content, str):
+                raise TypeError("scrub_canaries keys and values must be strings")
+            name = Path(raw_name)
+            if name.is_absolute() or name.drive or ".." in name.parts or name == Path("."):
+                raise ValueError("scrub canary names must be safe relative paths")
+            canaries[name.as_posix()] = raw_content
+        return canaries
 
 
 @lru_cache(maxsize=1)

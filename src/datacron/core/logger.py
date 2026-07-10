@@ -40,6 +40,7 @@ from datacron.core.config import (
     Settings,
     get_settings,
 )
+from datacron.core.security import SecretRedactor
 
 __all__ = ["configure_logging", "get_logger", "shutdown_logging"]
 
@@ -50,7 +51,24 @@ _log_queue: queue.Queue[logging.LogRecord] | None = None
 _configured: bool = False
 
 
-def _build_file_handler(log_dir: Path) -> TimedRotatingFileHandler:
+class _RedactingFormatter(logging.Formatter):
+    """Apply secret redaction to the fully rendered record, including exceptions."""
+
+    def __init__(self, redactor: SecretRedactor | None) -> None:
+        super().__init__(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+        self._redactor = redactor
+
+    def format(self, record: logging.LogRecord) -> str:
+        rendered = super().format(record)
+        if self._redactor is None:
+            return rendered
+        return self._redactor.redact_text(rendered)
+
+
+def _build_file_handler(
+    log_dir: Path,
+    redactor: SecretRedactor | None,
+) -> TimedRotatingFileHandler:
     log_dir.mkdir(parents=True, exist_ok=True)
     today = datetime.now(tz=UTC).astimezone().strftime("%Y%m%d")
     log_path = log_dir / LOG_FILENAME_PATTERN.format(date=today)
@@ -62,14 +80,14 @@ def _build_file_handler(log_dir: Path) -> TimedRotatingFileHandler:
         delay=True,
         utc=False,
     )
-    handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+    handler.setFormatter(_RedactingFormatter(redactor))
     handler.setLevel(logging.DEBUG)
     return handler
 
 
-def _build_stderr_handler() -> logging.StreamHandler[Any]:
+def _build_stderr_handler(redactor: SecretRedactor | None) -> logging.StreamHandler[Any]:
     handler: logging.StreamHandler[Any] = logging.StreamHandler(stream=sys.stderr)
-    handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+    handler.setFormatter(_RedactingFormatter(redactor))
     handler.setLevel(logging.WARNING)
     return handler
 
@@ -86,10 +104,13 @@ def configure_logging(settings: Settings | None = None) -> None:
             return
         resolved = settings or get_settings()
         level = getattr(logging, resolved.log_level, logging.INFO)
+        redactor = (
+            SecretRedactor.from_settings(resolved) if SecretRedactor.log_enabled(resolved) else None
+        )
 
         log_queue: queue.Queue[logging.LogRecord] = queue.Queue(-1)
-        file_handler = _build_file_handler(resolved.log_dir)
-        stderr_handler = _build_stderr_handler()
+        file_handler = _build_file_handler(resolved.log_dir, redactor)
+        stderr_handler = _build_stderr_handler(redactor)
 
         listener = QueueListener(
             log_queue,

@@ -77,6 +77,25 @@ async def test_first_pass_indexes_all(
     assert stats["reindexed_notes"] == total
     assert stats["skipped_notes"] == 0
     assert stats["deleted_notes"] == 0
+    assert await store.get_generation() == 1
+
+
+async def test_generation_advances_only_for_changed_index(
+    store: SQLiteFTS5Store,
+    reader: FilesystemVaultReader,
+    chunker: MarkdownChunker,
+    tmp_vault: Path,
+) -> None:
+    await reconcile(store, reader, chunker, mtime_gate=True)
+    assert await store.get_generation() == 1
+
+    await reconcile(store, reader, chunker, mtime_gate=True)
+    assert await store.get_generation() == 1
+
+    target = tmp_vault / "welcome.md"
+    target.write_text(target.read_text(encoding="utf-8") + "\nchanged\n", encoding="utf-8")
+    await reconcile(store, reader, chunker, mtime_gate=True)
+    assert await store.get_generation() == 2
 
 
 async def test_unchanged_pass_skips_without_reading(
