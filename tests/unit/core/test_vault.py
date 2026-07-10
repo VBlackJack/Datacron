@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from datacron.core.hashing import sha256_bytes
 from datacron.core.vault import FilesystemVaultReader, JsonIdStore
 
 
@@ -29,6 +30,17 @@ class TestReadNote:
         assert len(note.id) == 26
         assert note.content_hash != ""
         assert len(note.content_hash) == 64
+
+    async def test_content_hash_uses_exact_disk_bytes(self, tmp_path: Path) -> None:
+        raw = b"\xef\xbb\xbf# Exact\r\n\r\nBody\r\n"
+        target = tmp_path / "exact.md"
+        target.write_bytes(raw)
+        reader = FilesystemVaultReader(tmp_path)
+
+        note = await reader.read_note(target)
+
+        assert note.raw_content == raw.decode("utf-8")
+        assert note.content_hash == sha256_bytes(raw)
 
     async def test_no_frontmatter_uses_h1(self, vault_reader: FilesystemVaultReader) -> None:
         note = await vault_reader.read_note(vault_reader.vault_root / "no-frontmatter.md")
