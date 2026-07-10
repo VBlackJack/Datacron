@@ -9,16 +9,22 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
+from pathlib import Path
 
 import pytest
 
 from datacron.core.hashing import (
+    FRESHNESS_CONTRACT_ID,
     HASH_HEX_LENGTH,
     hash_text,
     normalize_text,
     sha256_bytes,
 )
+
+_FRESHNESS_VECTOR_MANIFEST = Path(__file__).parents[2] / "fixtures" / "freshness-contract-v1.json"
 
 
 class TestNormalize:
@@ -35,11 +41,11 @@ class TestNormalize:
         assert normalize_text(raw) == expected
 
     def test_bom_stripped(self) -> None:
-        text = "﻿hello"
+        text = "\ufeffhello"
         assert normalize_text(text) == b"hello"
 
     def test_unicode_passthrough(self) -> None:
-        text = "café — naïve"
+        text = "caf\u00e9 -- na\u00efve"
         assert normalize_text(text) == text.encode("utf-8")
 
 
@@ -63,3 +69,14 @@ class TestHash:
 
     def test_sha256_bytes(self) -> None:
         assert sha256_bytes(b"") == hashlib.sha256(b"").hexdigest()
+
+    def test_freshness_contract_vectors_are_byte_exact(self, tmp_path: Path) -> None:
+        """The shared contract hashes bytes written without text conversion."""
+        manifest = json.loads(_FRESHNESS_VECTOR_MANIFEST.read_text(encoding="utf-8"))
+        assert manifest["contract"] == FRESHNESS_CONTRACT_ID
+
+        for vector in manifest["vectors"]:
+            payload = base64.b64decode(vector["base64"], validate=True)
+            target = tmp_path / f"{vector['id']}.md"
+            target.write_bytes(payload)
+            assert sha256_bytes(target.read_bytes()) == vector["sha256"]
