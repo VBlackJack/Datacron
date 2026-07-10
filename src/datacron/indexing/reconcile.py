@@ -16,7 +16,7 @@
 A single algorithm keeps the FTS index in sync with the live vault:
 
 * notes whose filesystem mtime is unchanged are skipped (no read, no hash) when
-  ``mtime_gate`` is enabled — this is what turns a full re-hash of the vault on
+  ``mtime_gate`` is enabled -- this is what turns a full re-hash of the vault on
   every search into a near-instant ``stat`` sweep;
 * ``content_hash`` stays the authority: a note is only re-chunked when its hash
   differs, never on an mtime change alone;
@@ -113,6 +113,9 @@ async def reconcile(
             deleted += 1
         await store.upsert_note(note, chunker.chunk(note), fs_mtime_ns=st_mtime_ns)
         reindexed += 1
+
+    if reindexed or deleted:
+        await store.increment_generation()
 
     stats = ReconcileStats(
         checked_notes=len(live),

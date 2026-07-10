@@ -186,6 +186,7 @@ addopts = [
 asyncio_mode = "auto"
 markers = [
     "integration: end-to-end tests that exercise external binaries (e.g. ripgrep)",
+    "invariants: blocking reliability properties and global baseline checks",
     "slow: long-running tests",
 ]
 filterwarnings = [

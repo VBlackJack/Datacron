@@ -59,7 +59,7 @@ def _chunks_for(name: str, content: str | None = None) -> list[Chunk]:
     [
         ([], ""),
         (["Architecture", "Chunking strategy"], "architecture/chunking-strategy"),
-        (["Café déjà vu", "Résumé & notes"], "cafe-deja-vu/resume-notes"),
+        (["Caf\u00e9 d\u00e9j\u00e0 vu", "R\u00e9sum\u00e9 & notes"], "cafe-deja-vu/resume-notes"),
         (["  API: v2.1 / MCP  ", "FTS5 + BM25"], "api-v2-1-mcp/fts5-bm25"),
         (["Repeated---punctuation", "A__B"], "repeated-punctuation/a-b"),
     ],
@@ -130,6 +130,22 @@ def test_code_blocks_are_atomic_and_keep_language() -> None:
         "python",
         "bash",
     ]
+
+
+def test_code_and_inline_code_do_not_emit_wikilink_targets() -> None:
+    content = (
+        "# Links\n\n"
+        "[[Real target]] and `[[Inline false target]]`.\n\n"
+        "```bash\n"
+        'if [[ -f "$file" ]]; then\n'
+        "  echo [[Fenced false target]]\n"
+        "fi\n"
+        "```\n"
+    )
+
+    chunks = _chunks_for("wikilinks.md", content=content)
+
+    assert [target for chunk in chunks for target in chunk.wikilinks_out] == ["Real target"]
 
 
 def test_code_block_content_preserves_fences() -> None:
@@ -226,7 +242,7 @@ def test_chunk_metadata_is_propagated_from_note() -> None:
     assert all(chunk.note_rel_path == "code-blocks.md" for chunk in chunks)
 
 
-def test_chunk_hash_uses_lf_normalized_content() -> None:
+def test_chunk_hash_uses_exact_derived_text() -> None:
     chunks = _chunks_for("code-blocks.md")
 
     assert chunks[2].content_hash == hash_text(chunks[2].content)
