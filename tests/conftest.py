@@ -15,7 +15,7 @@
 
 The demo vault under ``tests/fixtures/demo-vault/`` is the canonical fixture
 used by both Claude Code's core/MCP tests and Codex's indexing tests (per
-``docs/agent-briefs/01-contracts.md`` §5). ``tmp_vault`` copies that vault
+``docs/agent-briefs/01-contracts.md`` section 5). ``tmp_vault`` copies that vault
 into a per-test temporary directory so mutations stay isolated.
 """
 
@@ -47,11 +47,23 @@ _ENV_VARS: Final[tuple[str, ...]] = (
     "DATACRON_LOG_LEVEL",
     "DATACRON_LOG_DIR",
     "DATACRON_READ_PATHS",
+    "DATACRON_WRITE_PATHS",
     "DATACRON_VAULT_ROOT",
     "DATACRON_MAX_RESULT_TOKENS",
     "DATACRON_MAX_RESULT_COUNT",
     "DATACRON_RIPGREP_PATH",
     "DATACRON_CHUNK_MAX_TOKENS",
+    "DATACRON_REDACT_SECRETS",
+    "DATACRON_SECRET_REDACTION_PATTERNS",
+    "DATACRON_READ_ONLY",
+    "DATACRON_DURABILITY",
+    "DATACRON_SCRUB_NOTES_PER_SECOND",
+    "DATACRON_SCRUB_MEBIBYTES_PER_SECOND",
+    "DATACRON_SCRUB_MAX_DURATION_SECONDS",
+    "DATACRON_SCRUB_CHECKPOINT_INTERVAL_NOTES",
+    "DATACRON_SCRUB_CHECKPOINT_PATH",
+    "DATACRON_SCRUB_CANARY_DIR",
+    "DATACRON_SCRUB_CANARIES",
 )
 
 

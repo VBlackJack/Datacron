@@ -201,6 +201,7 @@ class IndexStats(BaseModel):
 
     note_count: int = Field(ge=0)
     chunk_count: int = Field(ge=0)
+    generation: int = Field(default=0, ge=0)
     last_indexed_at: datetime | None = None
     db_size_bytes: int = Field(ge=0)
     db_path: Path

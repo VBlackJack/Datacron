@@ -18,7 +18,7 @@ that consumers can type-annotate their Protocol parameters and so that concrete
 implementations can declare conformance via a one-line structural check (see
 ``core/vault.py`` for the pattern).
 
-Importing a Protocol does not pull in the concrete implementation — that
+Importing a Protocol does not pull in the concrete implementation -- that
 is the whole point. ``mcp/tools.py`` can depend on
 :class:`ASTChunker` for typing while the runtime wiring lives in
 ``cli.py`` (the only module allowed to import across all layers).
@@ -30,7 +30,7 @@ Silent drift between this module and the contract breaks consumers.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -43,6 +43,7 @@ from datacron.core.models import (
     SearchResult,
     Wikilink,
 )
+from datacron.core.operation_log import OperationContext, OperationRecord
 from datacron.core.temporal import TemporalMeta
 
 __all__ = [
@@ -61,9 +62,9 @@ class ASTChunker(Protocol):
     """Parses a Markdown :class:`Note` into :class:`Chunk` instances.
 
     Implementation: ``src/datacron/indexing/chunker.py``
-    (``MarkdownChunker``). See contracts §2.1 for required behavior:
+    (``MarkdownChunker``). See contracts section 2.1 for required behavior:
     heading-bounded splits, atomic code/table/list/quote blocks,
-    deterministic ordering, ``chunk_id`` format per §1.3.
+    deterministic ordering, ``chunk_id`` format per section 1.3.
     """
 
     def chunk(self, note: Note) -> list[Chunk]:
@@ -78,7 +79,7 @@ class WikilinksExtractor(Protocol):
     Implementation: ``src/datacron/indexing/wikilinks.py``. Recognizes
     ``[[target]]``, ``[[target|display]]``, ``[[target#header]]``,
     ``[[target#^block]]``. Returns one Wikilink per occurrence (duplicates
-    allowed within a chunk). Does NOT resolve targets to note IDs —
+    allowed within a chunk). Does NOT resolve targets to note IDs --
     callers use :meth:`VaultReader.resolve_alias` for that.
     """
 
@@ -93,11 +94,11 @@ class FTS5Store(Protocol):
 
     Implementation: ``src/datacron/indexing/fts5_store.py``. The store
     lives at ``{vault_root}/.datacron/index/datacron.db``. See
-    contracts §2.3 for transaction semantics and snippet format.
+    contracts section 2.3 for transaction semantics and snippet format.
     """
 
-    async def open(self, db_path: Path) -> None:
-        """Open or create the database. Idempotent."""
+    async def open(self, db_path: Path, *, read_only: bool = False) -> None:
+        """Open the database, optionally without any writable SQLite sidecar."""
         ...
 
     async def close(self) -> None:
@@ -162,6 +163,18 @@ class FTS5Store(Protocol):
         """Return explicit retrieval lifecycle metadata keyed by note_id."""
         ...
 
+    async def get_generation(self) -> int:
+        """Return the completed index generation counter."""
+        ...
+
+    async def set_generation(self, generation: int) -> None:
+        """Set generation while preparing an offline replacement index."""
+        ...
+
+    async def increment_generation(self) -> int:
+        """Commit and return the next completed index generation."""
+        ...
+
     def iter_all_chunks(self) -> AsyncIterator[Chunk]:
         """Stream all indexed chunks in insertion/document order."""
         ...
@@ -177,7 +190,7 @@ class RipgrepWrapper(Protocol):
 
     Implementation: ``src/datacron/indexing/ripgrep.py``. Streams JSON
     output line-by-line, resolves matches to :class:`Chunk` instances
-    via the supplied :class:`FTS5Store`. See contracts §2.4 for the
+    via the supplied :class:`FTS5Store`. See contracts section 2.4 for the
     score formula and snippet highlighting rules.
     """
 
@@ -202,7 +215,7 @@ class EvalHarness(Protocol):
     :class:`EvalQuestion` records, hits FTS5 + ripgrep directly (not
     via MCP), and produces :class:`EvalResult` metrics for
     ``recall@k``, ``citation_precision``, ``latency_ms``,
-    ``tokens_returned``. See contracts §2.5.
+    ``tokens_returned``. See contracts section 2.5.
     """
 
     async def run(
@@ -210,7 +223,7 @@ class EvalHarness(Protocol):
         eval_questions: list[EvalQuestion],
         store: FTS5Store,
         ripgrep: RipgrepWrapper,
-        k_values: list[int] = [5, 10, 20],  # noqa: B006 — Protocol default is documentation, not runtime state
+        k_values: list[int] = [5, 10, 20],  # noqa: B006 -- documented Protocol default
     ) -> list[EvalResult]:
         """Execute the eval; return one :class:`EvalResult` per question."""
         ...
@@ -226,9 +239,9 @@ class VaultReader(Protocol):
     as a constructor parameter and MUST NOT take it as a method argument.
     The bound vault_root governs every method call.
 
-    See contracts §2.6 for the full resolution rules — in particular,
+    See contracts section 2.6 for the full resolution rules -- in particular,
     :meth:`resolve_alias` uses strict global priority
-    (title → filename stem → aliases) across all notes, not per-note.
+    (title -> filename stem -> aliases) across all notes, not per-note.
     """
 
     async def read_note(self, path: Path) -> Note:
@@ -251,7 +264,7 @@ class VaultReader(Protocol):
         """Return ``rel_path -> (absolute_path, st_mtime_ns)`` for every live note.
 
         Enumerates the vault with the same folder/file exclusions as
-        :meth:`list_notes` but only ``stat()``s each file — no content read or
+        :meth:`list_notes` but only ``stat()``s each file -- no content read or
         parse. Used by the index read-repair to skip the read+hash of notes
         whose filesystem mtime is unchanged.
         """
@@ -273,6 +286,49 @@ class VaultReader(Protocol):
 class VaultWriter(Protocol):
     """Writes notes through confined, reversible filesystem primitives."""
 
-    async def write_note_atomic(self, rel_path: str, content: str, *, overwrite: bool) -> None:
-        """Write Markdown content under the bound vault root atomically."""
+    async def write_note_atomic(
+        self,
+        rel_path: str,
+        content: str,
+        *,
+        overwrite: bool,
+        expected_hash: str | None = None,
+        note_id: str | None = None,
+        operation: OperationContext | None = None,
+    ) -> str:
+        """Durably write complete Markdown content and return its exact-byte hash."""
+        ...
+
+    async def mutate_note_atomic(
+        self,
+        rel_path: str,
+        mutation: Callable[[str], str],
+        *,
+        expected_hash: str | None = None,
+        operation: OperationContext | None = None,
+    ) -> str:
+        """Run a locked read-CAS-mutate-durable-write transaction."""
+        ...
+
+    async def revert_note_atomic(
+        self,
+        rel_path: str,
+        to_hash: str,
+        *,
+        expected_hash: str | None,
+        operation: OperationContext,
+    ) -> str:
+        """Restore exact content-addressed history under CAS and audit it."""
+        ...
+
+    async def recover_operations(self) -> int:
+        """Recover durable pending operation manifests."""
+        ...
+
+    async def list_operations(self) -> list[OperationRecord]:
+        """Return committed operation records without mutating journal state."""
+        ...
+
+    async def purge_history(self) -> list[str]:
+        """Apply configured exact-content retention and return removed hashes."""
         ...

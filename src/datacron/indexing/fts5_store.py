@@ -80,6 +80,13 @@ CREATE TABLE IF NOT EXISTS ulid_paths (
 );
 """
 
+_CREATE_INDEX_META_SQL: Final[str] = """
+CREATE TABLE IF NOT EXISTS index_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+"""
+
 _INSERT_NOTE_SQL: Final[str] = """
 INSERT INTO notes (
     note_id,
@@ -282,24 +289,47 @@ class SQLiteFTS5Store:
     def __init__(self, term_map: Mapping[str, Sequence[str]] | None = None) -> None:
         self._conn: aiosqlite.Connection | None = None
         self._db_path: Path | None = None
+        self._read_only = False
         self._term_map = normalize_term_map(term_map or {})
 
-    async def open(self, db_path: Path) -> None:
-        """Open or create the SQLite database at ``db_path``."""
+    async def open(
+        self,
+        db_path: Path,
+        *,
+        read_only: bool = False,
+        sidecar_writeback: bool = True,
+    ) -> None:
+        """Open SQLite normally or as an immutable certified read-only index."""
         if self._conn is not None:
             return
 
         resolved_path = db_path.expanduser().resolve()
-        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+        if read_only:
+            if not resolved_path.is_file():
+                raise FileNotFoundError(
+                    f"certified read-only mode requires a prebuilt index: {resolved_path}"
+                )
+            uri = f"{resolved_path.as_uri()}?mode=ro&immutable=1"
+            connection = await aiosqlite.connect(uri, uri=True)
+        else:
+            resolved_path.parent.mkdir(parents=True, exist_ok=True)
+            connection = await aiosqlite.connect(resolved_path)
 
-        connection = await aiosqlite.connect(resolved_path)
         connection.row_factory = sqlite3.Row
         self._conn = connection
         self._db_path = resolved_path
+        self._read_only = read_only
 
         try:
-            await self._ensure_schema(connection)
-            await self._migrate_ulid_sidecar(connection, resolved_path)
+            if read_only:
+                await connection.execute("PRAGMA query_only = ON;")
+            else:
+                await self._ensure_schema(connection)
+                await self._migrate_ulid_sidecar(
+                    connection,
+                    resolved_path,
+                    writeback=sidecar_writeback,
+                )
         except Exception:
             await self.close()
             raise
@@ -308,6 +338,7 @@ class SQLiteFTS5Store:
         """Close the database connection if one is open."""
         connection = self._conn
         self._conn = None
+        self._read_only = False
         if connection is not None:
             await connection.close()
 
@@ -322,6 +353,7 @@ class SQLiteFTS5Store:
         authority on any mtime change).
         """
         connection = self._require_connection()
+        self._require_writable()
         _validate_chunks_belong_to_note(note, chunks)
 
         indexed_at = datetime.now(tz=UTC).isoformat()
@@ -359,12 +391,14 @@ class SQLiteFTS5Store:
         would be re-read on every search forever.
         """
         connection = self._require_connection()
+        self._require_writable()
         await connection.execute(_RECORD_MTIME_SQL, (fs_mtime_ns, note_id))
         await connection.commit()
 
     async def delete_note(self, note_id: str) -> None:
         """Remove a note, its chunks, and its path mapping if present."""
         connection = self._require_connection()
+        self._require_writable()
 
         await connection.execute("BEGIN")
         try:
@@ -472,6 +506,37 @@ class SQLiteFTS5Store:
             for row in rows
         }
 
+    async def get_generation(self) -> int:
+        """Return zero for legacy indexes, otherwise the completed generation."""
+        connection = self._require_connection()
+        try:
+            async with connection.execute(
+                "SELECT value FROM index_meta WHERE key = 'generation';"
+            ) as cursor:
+                row = await cursor.fetchone()
+        except sqlite3.OperationalError:
+            return 0
+        return int(row[0]) if row is not None else 0
+
+    async def set_generation(self, generation: int) -> None:
+        """Set the generation seed on a writable offline index."""
+        if generation < 0:
+            raise ValueError("generation must be non-negative")
+        connection = self._require_connection()
+        self._require_writable()
+        await connection.execute(
+            "INSERT INTO index_meta(key, value) VALUES ('generation', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+            (str(generation),),
+        )
+        await connection.commit()
+
+    async def increment_generation(self) -> int:
+        """Advance generation after one complete reconcile operation."""
+        generation = await self.get_generation() + 1
+        await self.set_generation(generation)
+        return generation
+
     async def iter_all_chunks(self) -> AsyncIterator[Chunk]:
         """Stream all indexed chunks in insertion/document order."""
         connection = self._require_connection()
@@ -494,10 +559,12 @@ class SQLiteFTS5Store:
             datetime.fromisoformat(last_indexed_raw) if last_indexed_raw is not None else None
         )
         db_size_bytes = db_path.stat().st_size if db_path.exists() else 0
+        generation = await self.get_generation()
 
         return IndexStats(
             note_count=note_count,
             chunk_count=chunk_count,
+            generation=generation,
             last_indexed_at=last_indexed_at,
             db_size_bytes=db_size_bytes,
             db_path=db_path,
@@ -507,8 +574,16 @@ class SQLiteFTS5Store:
         await connection.execute(_CREATE_NOTES_SQL)
         await connection.execute(_CREATE_CHUNKS_FTS_SQL)
         await connection.execute(_CREATE_ULID_PATHS_SQL)
+        await connection.execute(_CREATE_INDEX_META_SQL)
+        await connection.execute(
+            "INSERT OR IGNORE INTO index_meta(key, value) VALUES ('generation', '0');"
+        )
         await self._migrate_notes_columns(connection)
         await connection.commit()
+
+    def _require_writable(self) -> None:
+        if self._read_only:
+            raise PermissionError("immutable read-only index refuses mutation")
 
     async def _migrate_notes_columns(self, connection: aiosqlite.Connection) -> None:
         """Add columns introduced after the initial ``notes`` schema (idempotent).
@@ -526,6 +601,8 @@ class SQLiteFTS5Store:
         self,
         connection: aiosqlite.Connection,
         db_path: Path,
+        *,
+        writeback: bool,
     ) -> None:
         sidecar_dir = db_path.parent.parent
         ulids_path = sidecar_dir / _ULID_SIDECAR_FILENAME
@@ -542,9 +619,9 @@ class SQLiteFTS5Store:
             rows,
         )
         await connection.commit()
-        if not ulids_path.exists():
+        if writeback and not ulids_path.exists():
             await asyncio.to_thread(_write_ulid_mappings, ulids_path, mappings)
-        if not migrated_path.exists():
+        if writeback and not migrated_path.exists():
             await asyncio.to_thread(_write_ulid_mappings, migrated_path, mappings)
         _LOGGER.info("Imported %s ULID mappings from JsonIdStore", len(rows))
 

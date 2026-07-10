@@ -16,13 +16,14 @@
 The reader walks a Markdown vault, parses frontmatter via
 :mod:`datacron.core.frontmatter`, computes canonical content hashes via
 :mod:`datacron.core.hashing`, and assigns ULID identifiers without ever
-mutating the user's notes — IDs are stored in a JSON sidecar at
+mutating the user's notes -- IDs are stored in a JSON sidecar at
 ``.datacron/ulids.json``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -61,6 +62,7 @@ def build_configured_reader(
     vault_root: Path,
     *,
     id_store: JsonIdStore | None = None,
+    read_only: bool = False,
 ) -> FilesystemVaultReader:
     """Build a reader honoring vault exclusions from ``.datacron/VAULT.yaml``."""
     resolved_root = vault_root.expanduser().resolve()
@@ -69,6 +71,7 @@ def build_configured_reader(
     return FilesystemVaultReader(
         resolved_root,
         id_store=id_store,
+        read_only=read_only,
         excluded_folders=frozenset(config.excluded_folders),
         excluded_files=frozenset(config.excluded_files),
     )
@@ -137,8 +140,9 @@ class JsonIdStore:
     truth after indexing; the JSON file remains as a fallback bootstrap.
     """
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, read_only: bool = False) -> None:
         self._path = path
+        self._read_only = read_only
         self._cache: dict[str, str] | None = None
         self._lock = asyncio.Lock()
 
@@ -169,13 +173,19 @@ class JsonIdStore:
         merged = dict(primary)
         merged.update(migrated)
         if merged != primary:
-            self._write_sync(merged)
-            _LOGGER.info(
-                "Repaired ULID sidecar %s from %s (%s mappings)",
-                self._path,
-                migrated_path,
-                len(merged),
-            )
+            if self._read_only:
+                _LOGGER.info(
+                    "Using migrated ULID mappings without repairing read-only sidecar %s",
+                    self._path,
+                )
+            else:
+                self._write_sync(merged)
+                _LOGGER.info(
+                    "Repaired ULID sidecar %s from %s (%s mappings)",
+                    self._path,
+                    migrated_path,
+                    len(merged),
+                )
         return merged
 
     def _write_sync(self, data: dict[str, str]) -> None:
@@ -196,6 +206,8 @@ class JsonIdStore:
             return cache.get(rel_path)
 
     async def set(self, rel_path: str, note_id: str) -> None:
+        if self._read_only:
+            raise PermissionError("read-only ULID store refuses mutation")
         async with self._lock:
             cache = await self._ensure_loaded()
             cache[rel_path] = note_id
@@ -212,7 +224,7 @@ class FilesystemVaultReader:
     """Filesystem-backed implementation of the :class:`VaultReader` protocol.
 
     A reader is bound to a single ``vault_root`` at construction (contracts
-    §2.6 amendment fe5dbc6). All methods operate on that bound root; there
+    section 2.6 amendment fe5dbc6). All methods operate on that bound root; there
     is no per-call override.
 
     The concrete class deliberately differs in name from the Protocol so
@@ -226,12 +238,14 @@ class FilesystemVaultReader:
         vault_root: Path,
         *,
         id_store: JsonIdStore | None = None,
+        read_only: bool = False,
         excluded_folders: frozenset[str] | None = None,
         excluded_files: frozenset[str] | None = None,
     ) -> None:
         self._vault_root = vault_root.expanduser().resolve()
         sidecar = self._vault_root / SIDECAR_DIR_NAME / ULID_SIDECAR_FILENAME
-        self._id_store = id_store or JsonIdStore(sidecar)
+        self._read_only = read_only
+        self._id_store = id_store or JsonIdStore(sidecar, read_only=read_only)
         self._skipped_folders = SKIPPED_FOLDERS | frozenset(excluded_folders or ())
         self._skipped_files = frozenset(excluded_files or ())
         self._alias_cache: dict[str, str | None] | None = None
@@ -381,7 +395,10 @@ class FilesystemVaultReader:
         existing = await self._id_store.get(rel_path)
         if existing:
             return existing
-        new_id = str(ULID())
+        digest = hashlib.sha256(f"datacron-rel-path-id\x00{rel_path}".encode()).digest()
+        new_id = str(ULID.from_bytes(digest[:16]))
+        if self._read_only:
+            return new_id
         await self._id_store.set(rel_path, new_id)
         return new_id
 
@@ -399,8 +416,8 @@ class FilesystemVaultReader:
                     _LOGGER.warning("Alias index: skipping %s: %s", path, exc)
 
             index: dict[str, str | None] = {}
-            # Strict global priority per contracts §2.6: title → filename stem
-            # → aliases. A higher tier shadows lower tiers entirely. Within a
+            # Strict global priority per contracts section 2.6: title -> filename stem
+            # -> aliases. A higher tier shadows lower tiers entirely. Within a
             # tier, multiple notes claiming the same key resolve to None
             # (ambiguous within that tier).
             self._merge_alias_tier(index, notes, lambda n: (n.title,))
@@ -449,10 +466,10 @@ from datacron.core.protocols import VaultReader as _VaultReaderProtocol  # noqa:
 
 
 def _conformance_check(reader: _VaultReaderProtocol) -> _VaultReaderProtocol:
-    """Force mypy to verify :class:`FilesystemVaultReader` ↔ Protocol parity."""
+    """Force mypy to verify :class:`FilesystemVaultReader` <-> Protocol parity."""
     return reader
 
 
 def _assert_conformance() -> None:
-    """Static check only — never invoked at runtime."""
+    """Static check only -- never invoked at runtime."""
     _conformance_check(FilesystemVaultReader(Path()))

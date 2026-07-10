@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Callable
@@ -71,7 +72,63 @@ async def test_open_creates_schema(tmp_path: Path) -> None:
                 "SELECT name FROM sqlite_master WHERE type IN ('table', 'virtual table');"
             )
         }
-    assert {"notes", "chunks_fts", "ulid_paths"} <= tables
+    assert {"notes", "chunks_fts", "ulid_paths", "index_meta"} <= tables
+
+
+async def test_generation_counter_and_legacy_default(tmp_path: Path) -> None:
+    db_path = _db_path(tmp_path)
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    assert await store.get_generation() == 0
+    await store.set_generation(4)
+    assert await store.increment_generation() == 5
+    assert (await store.stats()).generation == 5
+    await store.close()
+
+    legacy_path = tmp_path / "legacy.db"
+    sqlite3.connect(legacy_path).close()
+    legacy = SQLiteFTS5Store()
+    await legacy.open(legacy_path, read_only=True)
+    assert await legacy.get_generation() == 0
+    await legacy.close()
+
+
+async def test_read_only_open_requires_prebuilt_index_without_creating_parent(
+    tmp_path: Path,
+) -> None:
+    db_path = _db_path(tmp_path)
+    store = SQLiteFTS5Store()
+
+    with pytest.raises(FileNotFoundError, match="requires a prebuilt index"):
+        await store.open(db_path, read_only=True)
+
+    assert not db_path.parent.exists()
+
+
+async def test_immutable_read_only_open_refuses_mutation_and_sidecars(tmp_path: Path) -> None:
+    db_path = _db_path(tmp_path)
+    writable = SQLiteFTS5Store()
+    await writable.open(db_path)
+    await writable.close()
+    before = (
+        hashlib.sha256(db_path.read_bytes()).hexdigest(),
+        db_path.stat().st_mtime_ns,
+    )
+
+    read_only = SQLiteFTS5Store()
+    await read_only.open(db_path, read_only=True)
+    assert (await read_only.stats()).note_count == 0
+    with pytest.raises(PermissionError, match="immutable read-only index"):
+        await read_only.delete_note(_NOTE_ID)
+    await read_only.close()
+
+    after = (
+        hashlib.sha256(db_path.read_bytes()).hexdigest(),
+        db_path.stat().st_mtime_ns,
+    )
+    assert before == after
+    assert not db_path.with_name(f"{db_path.name}-wal").exists()
+    assert not db_path.with_name(f"{db_path.name}-shm").exists()
 
 
 async def test_migration_imports_ulids_and_keeps_sidecar_readable(tmp_path: Path) -> None:
