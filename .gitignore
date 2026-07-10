@@ -59,3 +59,9 @@ docs/Gemini_*.md
 docs/brief-*.md
 docs/fix-plan*.md
 docs/doc-sync*.md
+
+# Local reliability reviews and experiments
+datacron-redteam-data-integrity.md
+lot*_design_review.md
+lot*_report.md
+experiments/

@@ -19,6 +19,7 @@ import yaml
 from typer.testing import CliRunner
 
 from datacron.cli import app
+from datacron.core.config import DEFAULT_HISTORY_MODE, DEFAULT_HISTORY_RETENTION_DAYS
 from datacron.core.paths import (
     sidecar_dir,
     sidecar_index_db,
@@ -53,6 +54,8 @@ class TestInit:
         assert len(config["vault_id"]) == 26
         assert config["encoding"] == "utf-8"
         assert config["line_endings"] == "lf"
+        assert config["history_retention_days"] == DEFAULT_HISTORY_RETENTION_DAYS
+        assert config["history_mode"] == DEFAULT_HISTORY_MODE
         assert config["folders"]["drafts"] == "_drafts"
         assert config["excluded_folders"] == [
             "_attachments",
@@ -226,6 +229,36 @@ class TestIndex:
         assert "nested-index/00_INDEX.md" not in rel_paths
 
 
+class TestScrub:
+    def test_init_and_complete_scrub(self, runner: CliRunner, tmp_vault: Path) -> None:
+        indexed = runner.invoke(app, ["reindex", "--vault", str(tmp_vault)])
+        assert indexed.exit_code == 0, indexed.stdout + indexed.stderr
+
+        initialized = runner.invoke(app, ["scrub-init", "--vault", str(tmp_vault)])
+        assert initialized.exit_code == 0, initialized.stdout + initialized.stderr
+        assert "2 created" in initialized.stdout
+
+        scrubbed = runner.invoke(app, ["scrub", "--vault", str(tmp_vault)])
+        assert scrubbed.exit_code == 0, scrubbed.stdout + scrubbed.stderr
+        assert "Integrity scrub complete: 6/6 notes, 0 anomalies" in scrubbed.stdout
+
+    def test_init_refuses_to_overwrite_altered_canary(
+        self,
+        runner: CliRunner,
+        tmp_vault: Path,
+    ) -> None:
+        first = runner.invoke(app, ["scrub-init", "--vault", str(tmp_vault)])
+        assert first.exit_code == 0, first.stdout + first.stderr
+        canary = tmp_vault / ".datacron" / "scrubber" / "canaries" / "exact-byte-lf.md"
+        canary.write_bytes(b"altered\x00")
+
+        second = runner.invoke(app, ["scrub-init", "--vault", str(tmp_vault)])
+
+        assert second.exit_code == 1
+        assert "refusing to overwrite altered integrity canary" in second.stderr
+        assert canary.read_bytes() == b"altered\x00"
+
+
 class TestEval:
     def test_eval_runs_against_existing_index(
         self, runner: CliRunner, tmp_vault: Path, tmp_path: Path
@@ -338,7 +371,7 @@ class TestMcpServe:
     requires an MCP client on the other end of the pipe, which lives in the
     integration tests (tests/integration/test_mcp_e2e.py). Here we only
     assert that the dispatcher resolves the vault and would launch the
-    server (no vault → exit 1 with a clear message)."""
+    server (no vault -> exit 1 with a clear message)."""
 
     def test_serve_without_vault_fails_clean(self, runner: CliRunner, tmp_path: Path) -> None:
         # tmp_path is empty: no .datacron/VAULT.yaml, no env var, no --vault.

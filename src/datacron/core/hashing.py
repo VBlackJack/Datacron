@@ -16,10 +16,19 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from typing import Final
 
-__all__ = ["HASH_HEX_LENGTH", "hash_text", "normalize_text", "sha256_bytes"]
+__all__ = [
+    "FRESHNESS_CONTRACT_ID",
+    "HASH_HEX_LENGTH",
+    "hash_text",
+    "index_generation_hash",
+    "normalize_text",
+    "sha256_bytes",
+]
 
+FRESHNESS_CONTRACT_ID: Final[str] = "freshness-contract-v1"
 HASH_HEX_LENGTH: Final[int] = 64
 _BOM: Final[str] = "\ufeff"
 
@@ -48,3 +57,16 @@ def hash_text(text: str) -> str:
     part of a separate derived-text contract.
     """
     return sha256_bytes(text.encode("utf-8"))
+
+
+def index_generation_hash(indexed: Mapping[str, tuple[str, str]]) -> str:
+    """Hash exact indexed path, identity, and content-hash rows."""
+    digest = hashlib.sha256()
+    for rel_path, (note_id, content_hash) in sorted(indexed.items()):
+        digest.update(rel_path.encode("utf-8"))
+        digest.update(b"\x00")
+        digest.update(note_id.encode("ascii"))
+        digest.update(b"\x00")
+        digest.update(content_hash.encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
