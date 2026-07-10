@@ -14,7 +14,7 @@
 """MCP resources: ``datacron://vault/map``, ``vault/info``, ``policy/active``.
 
 Resources are pull-only references the client may load into context.
-They are intentionally lightweight (the vault map targets ~2k tokens —
+They are intentionally lightweight (the vault map targets ~2k tokens -
 truncated if the vault is large enough to exceed
 ``DATACRON_MAX_RESULT_TOKENS``) so adding Datacron to a client never
 explodes the context window.
@@ -45,7 +45,7 @@ _LOGGER = get_logger(__name__)
 URI_VAULT_MAP: Final[str] = "datacron://vault/map"
 URI_VAULT_INFO: Final[str] = "datacron://vault/info"
 URI_POLICY_ACTIVE: Final[str] = "datacron://policy/active"
-_TRUNCATION_MARKER: Final[str] = "[…vault map truncated to fit token budget…]"
+_TRUNCATION_MARKER: Final[str] = "[...vault map truncated to fit token budget...]"
 
 
 def register_resources(server: FastMCP[DatacronApp], app: DatacronApp) -> None:
@@ -102,9 +102,9 @@ async def _build_vault_map(app: DatacronApp) -> str:
     grouped = _group_by_folder(notes)
     for folder in sorted(grouped):
         if folder:
-            lines.append(f"\n## {folder}/")
+            lines.append(f"\n## {_sanitize_retrieval_metadata(app, folder)}/")
         for note in grouped[folder]:
-            lines.append(_format_note_line(note))
+            lines.append(_format_note_line(app, note))
 
     rendered = "\n".join(lines)
     return _truncate_to_token_budget(rendered, app.settings.max_result_tokens)
@@ -124,7 +124,7 @@ async def _build_vault_info(app: DatacronApp) -> str:
         "vault_config": str(vault_config) if vault_config.is_file() else None,
         "note_count": note_count,
         "index": {
-            # "built" reflects whether the FTS5 store holds indexed notes —
+            # "built" reflects whether the FTS5 store holds indexed notes -
             # not just whether the file exists. Opening the store at server
             # startup creates an empty database; that's not yet "built".
             "built": indexed_notes > 0,
@@ -149,7 +149,7 @@ async def _build_vault_info(app: DatacronApp) -> str:
 def _build_policy_active() -> str:
     """Return the (currently empty) policy descriptor.
 
-    See ADR-006 / decisions-tranchees-v2.1.md §4.3: the L0-L5 trust
+    See ADR-006 / decisions-tranchees-v2.1.md section 4.3: the L0-L5 trust
     engine is dormant in Phase 0 because no write tools exist yet. The
     descriptor still ships so MCP clients can render the placeholder UX.
     """
@@ -192,7 +192,7 @@ async def _safe_store_stats(
     """Return ``(indexed_notes, indexed_chunks, last_indexed_at_iso, error)``.
 
     Any FTS5 error is captured and surfaced via the ``stats_error`` field on
-    the resource payload — vault/info must remain queryable even when the
+    the resource payload - vault/info must remain queryable even when the
     index is broken so users can diagnose the problem.
     """
     try:
@@ -218,15 +218,21 @@ def _group_by_folder(notes: list[Note]) -> dict[str, list[Note]]:
     return grouped
 
 
-def _format_note_line(note: Note) -> str:
-    filename = Path(note.rel_path).name
-    title = sanitize_metadata_value(note.title.strip() or filename)
-    important_marker = " ★" if note.frontmatter.get("important") is True else ""
+def _format_note_line(app: DatacronApp, note: Note) -> str:
+    filename = _sanitize_retrieval_metadata(app, Path(note.rel_path).name)
+    title = _sanitize_retrieval_metadata(app, note.title.strip() or filename)
+    important_marker = " *" if note.frontmatter.get("important") is True else ""
     tag_suffix = ""
     if note.tags:
-        tags = [sanitize_metadata_value(tag) for tag in note.tags[:5]]
-        tag_suffix = f"  [{', '.join(tags)}{', …' if len(note.tags) > 5 else ''}]"
-    return f"- `{filename}` — {title}{important_marker}{tag_suffix}"
+        tags = [_sanitize_retrieval_metadata(app, tag) for tag in note.tags[:5]]
+        tag_suffix = f"  [{', '.join(tags)}{', ...' if len(note.tags) > 5 else ''}]"
+    return f"- `{filename}` - {title}{important_marker}{tag_suffix}"
+
+
+def _sanitize_retrieval_metadata(app: DatacronApp, value: str) -> str:
+    if app.secret_redactor.retrieval_enabled(app.settings):
+        value = app.secret_redactor.redact_text(value)
+    return sanitize_metadata_value(value)
 
 
 def _truncate_to_token_budget(text: str, max_tokens: int) -> str:
