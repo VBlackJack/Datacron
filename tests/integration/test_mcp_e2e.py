@@ -48,6 +48,7 @@ def _server_params(vault: Path, log_dir: Path) -> StdioServerParameters:
     env = dict(os.environ)
     env["DATACRON_VAULT_ROOT"] = str(vault)
     env["DATACRON_READ_PATHS"] = str(vault)
+    env["DATACRON_WRITE_PATHS"] = str(vault)
     env["DATACRON_LOG_DIR"] = str(log_dir)
     env["DATACRON_LOG_LEVEL"] = "WARNING"
     env["PYTHONUNBUFFERED"] = "1"
@@ -80,7 +81,13 @@ class TestMcpE2E:
         try:
             response = await session.list_tools()
             tool_names = {t.name for t in response.tools}
-            assert {"list_notes", "get_note"} <= tool_names
+            assert {
+                "list_notes",
+                "get_note",
+                "revert_note",
+                "get_note_history",
+                "audit_query",
+            } <= tool_names
         finally:
             await _close_session(session, streams)
 
@@ -96,6 +103,38 @@ class TestMcpE2E:
             } <= uris
         finally:
             await _close_session(session, streams)
+
+    async def test_write_records_initialized_mcp_client_actor(
+        self, vault: Path, tmp_path: Path
+    ) -> None:
+        rel_path = "_memory/facts/mcp-actor.md"
+        session, streams = await _open_session(vault, tmp_path)
+        try:
+            created = await session.call_tool(
+                "create_note_ai",
+                {
+                    "rel_path": rel_path,
+                    "title": "MCP actor",
+                    "body": "# MCP actor\n\nAudited through the transport.\n",
+                    "origin": "ai",
+                    "confidence": "high",
+                    "tags": ["audit"],
+                },
+            )
+            history = await session.call_tool(
+                "get_note_history",
+                {"note": rel_path, "limit": 10},
+            )
+        finally:
+            await _close_session(session, streams)
+
+        assert not created.isError
+        assert not history.isError
+        history_payload = json.loads(history.content[0].text)  # type: ignore[union-attr]
+        assert history_payload["total"] == 1
+        actor = history_payload["operations"][0]["actor"]
+        assert actor.startswith("mcp-client:")
+        assert actor != "mcp-client:unidentified"
 
     async def test_list_notes_tool_returns_demo_vault(self, vault: Path, tmp_path: Path) -> None:
         session, streams = await _open_session(vault, tmp_path)

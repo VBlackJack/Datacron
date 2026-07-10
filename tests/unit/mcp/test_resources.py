@@ -43,15 +43,15 @@ class TestVaultMap:
 
         assert rendered == (
             "# vault\n"
-            "- `code-snippets.md` — Code Snippets  [code, reference]\n"
-            "- `empty.md` — empty\n"
-            "- `important-note.md` — Important Note ★  [priority]\n"
-            "- `no-frontmatter.md` — No Frontmatter Here  [code]\n"
-            "- `welcome.md` — Welcome to the Demo Vault  "
+            "- `code-snippets.md` - Code Snippets  [code, reference]\n"
+            "- `empty.md` - empty\n"
+            "- `important-note.md` - Important Note *  [priority]\n"
+            "- `no-frontmatter.md` - No Frontmatter Here  [code]\n"
+            "- `welcome.md` - Welcome to the Demo Vault  "
             "[intro, onboarding, welcome, datacron/demo]\n"
             "\n"
             "## subfolder/\n"
-            "- `nested-thoughts.md` — Nested Thoughts  [reflection]"
+            "- `nested-thoughts.md` - Nested Thoughts  [reflection]"
         )
 
     @pytest.mark.asyncio
@@ -65,9 +65,9 @@ class TestVaultMap:
     @pytest.mark.asyncio
     async def test_marks_important_notes(self, app: DatacronApp) -> None:
         rendered = await _build_vault_map(app)
-        # `★` is appended to notes carrying `important: true`
+        # `*` is appended to notes carrying `important: true`
         important_line = next(line for line in rendered.splitlines() if "important-note.md" in line)
-        assert important_line.endswith("★") or "★" in important_line
+        assert important_line.endswith("*") or "*" in important_line
 
     @pytest.mark.asyncio
     async def test_renders_titles(self, app: DatacronApp) -> None:

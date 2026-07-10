@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   lint-type-test:
-    name: Lint, type, test (Py${{ matrix.python-version }} / ${{ matrix.os }})
+    name: Invariant gate (Py${{ matrix.python-version }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -49,16 +49,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
-      - name: Ruff (lint)
-        run: ruff check .
+      - name: Blocking invariant gate
+        run: python scripts/check_invariants.py
 
-      - name: Ruff (format check)
-        run: ruff format --check .
-
-      - name: Mypy (strict)
-        run: mypy --strict src tests
-
-      - name: Pytest
+      - name: Full regression suite with coverage
         run: pytest --cov=datacron --cov-report=term-missing
 
   shellcheck:

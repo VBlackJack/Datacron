@@ -9,7 +9,9 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping
+import asyncio
+import hashlib
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,7 @@ from datacron.core.config import Settings
 from datacron.core.frontmatter import parse, serialize
 from datacron.core.hashing import hash_text
 from datacron.core.models import Note
+from datacron.core.operation_log import OperationContext, OperationRecord
 from datacron.core.vault_writer import FilesystemVaultWriter
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
@@ -120,7 +123,7 @@ def _write_memory_note(
     target = vault_root / rel_path
     target.parent.mkdir(parents=True, exist_ok=True)
     raw = serialize(metadata, body)
-    target.write_text(raw, encoding="utf-8")
+    target.write_bytes(raw.encode("utf-8"))
     return target, raw
 
 
@@ -153,9 +156,66 @@ class _CountingVaultWriter:
         self._delegate = delegate
         self.calls: list[tuple[str, bool]] = []
 
-    async def write_note_atomic(self, rel_path: str, content: str, *, overwrite: bool) -> None:
+    async def write_note_atomic(
+        self,
+        rel_path: str,
+        content: str,
+        *,
+        overwrite: bool,
+        expected_hash: str | None = None,
+        note_id: str | None = None,
+        operation: OperationContext | None = None,
+    ) -> str:
         self.calls.append((rel_path, overwrite))
-        await self._delegate.write_note_atomic(rel_path, content, overwrite=overwrite)
+        return await self._delegate.write_note_atomic(
+            rel_path,
+            content,
+            overwrite=overwrite,
+            expected_hash=expected_hash,
+            note_id=note_id,
+            operation=operation,
+        )
+
+    async def mutate_note_atomic(
+        self,
+        rel_path: str,
+        mutation: Callable[[str], str],
+        *,
+        expected_hash: str | None = None,
+        operation: OperationContext | None = None,
+    ) -> str:
+        self.calls.append((rel_path, True))
+        return await self._delegate.mutate_note_atomic(
+            rel_path,
+            mutation,
+            expected_hash=expected_hash,
+            operation=operation,
+        )
+
+    async def revert_note_atomic(
+        self,
+        rel_path: str,
+        to_hash: str,
+        *,
+        expected_hash: str | None,
+        operation: OperationContext,
+    ) -> str:
+        self.calls.append((rel_path, True))
+        return await self._delegate.revert_note_atomic(
+            rel_path,
+            to_hash,
+            expected_hash=expected_hash,
+            operation=operation,
+        )
+
+    async def recover_operations(self) -> int:
+        return await self._delegate.recover_operations()
+
+    async def list_operations(self) -> list[OperationRecord]:
+        return await self._delegate.list_operations()
+
+    async def purge_history(self) -> list[str]:
+        return await self._delegate.purge_history()
 
 
 class TestListNotes:
@@ -242,7 +302,7 @@ class TestListNotes:
 
         result = await _list_notes_impl(app, folder="..", tags=None, limit=20)
         assert "error" in result
-        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["type"] == "PathConfinementError"
 
     @pytest.mark.asyncio
     async def test_sanitizes_note_metadata_fields(self, app: DatacronApp, tmp_vault: Path) -> None:
@@ -270,7 +330,7 @@ class TestListNotes:
 
 class TestGetNoteFull:
     @pytest.mark.asyncio
-    async def test_full_wraps_content(self, app: DatacronApp) -> None:
+    async def test_full_wraps_content(self, app: DatacronApp, tmp_vault: Path) -> None:
         from datacron.mcp.tools import _get_note_impl
 
         result = await _get_note_impl(app, id_or_path="welcome.md", fmt="full")
@@ -280,6 +340,12 @@ class TestGetNoteFull:
         assert result["content"].endswith("</vault_content>")
         assert "Welcome" in result["content"]
         assert result["truncated"] is False
+        assert (
+            result["note_content_hash"]
+            == hashlib.sha256((tmp_vault / "welcome.md").read_bytes()).hexdigest()
+        )
+        assert result["content_hash"] == result["note_content_hash"]
+        assert result["content_hash_contract"] == "freshness-contract-v1"
 
     @pytest.mark.asyncio
     async def test_full_truncates_oversized_notes(self, small_app: DatacronApp) -> None:
@@ -296,7 +362,7 @@ class TestGetNoteFull:
         """get_note(full) honors get_note_max_tokens, not the search budget.
 
         A note that would be truncated under a tiny ``max_result_tokens`` must
-        come back whole when ``get_note_max_tokens`` is generous — proving the
+        come back whole when ``get_note_max_tokens`` is generous -- proving the
         two budgets are decoupled (Item 1).
         """
         from datacron.mcp.tools import _get_note_impl
@@ -304,7 +370,7 @@ class TestGetNoteFull:
         settings = Settings(
             read_paths=[tmp_vault],
             vault_root=tmp_vault,
-            max_result_tokens=50,  # search budget — must NOT affect get_note
+            max_result_tokens=50,  # search budget -- must NOT affect get_note
             get_note_max_tokens=8000,  # generous note budget
         )
         decoupled_app = build_app(
@@ -378,6 +444,9 @@ class TestGetNoteFull:
         assert result["line_start"] == middle.line_start
         assert result["line_end"] == middle.line_end
         assert result["content_hash"] == note.content_hash
+        assert result["note_content_hash"] == note.content_hash
+        assert result["chunk_content_hash"] == middle.content_hash
+        assert result["content_hash_contract"] == "freshness-contract-v1"
         assert result["estimated_tokens"] == middle.token_count
         assert result["prev_chunk_id"] == chunks[0].chunk_id
         assert result["next_chunk_id"] == chunks[2].chunk_id
@@ -390,6 +459,46 @@ class TestGetNoteFull:
         assert first["next_chunk_id"] == chunks[1].chunk_id
         assert last["prev_chunk_id"] == chunks[-2].chunk_id
         assert last["next_chunk_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_stale_chunk_id_returns_explicit_hash_conflict(self, tmp_vault: Path) -> None:
+        from datacron.mcp.tools import _get_note_impl
+
+        settings = Settings(
+            read_paths=[tmp_vault],
+            vault_root=tmp_vault,
+            max_result_count=20,
+            max_result_tokens=8000,
+        )
+        store = SQLiteFTS5Store()
+        await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+        app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+        target = tmp_vault / "welcome.md"
+        note = await app.vault_reader.read_note(target)
+        chunks = app.chunker.chunk(note)
+        stale_chunk = chunks[1]
+        await app.store.upsert_note(note, chunks)
+        target.write_bytes(b"Shifted before indexed content.\n\n" + target.read_bytes())
+
+        try:
+            result = await _get_note_impl(
+                app,
+                id_or_path=stale_chunk.chunk_id,
+                fmt="full",
+            )
+        finally:
+            await store.close()
+
+        assert result["error"]["type"] == "StaleChunkError"
+        assert result["error"]["message"] == (
+            "chunk_id is stale for welcome.md; indexed content_hash does not match "
+            "current note bytes; reindex and retry"
+        )
 
     @pytest.mark.asyncio
     async def test_missing_chunk_with_valid_ulid_falls_back_to_full_note(
@@ -551,6 +660,8 @@ class TestGetNoteMap:
         assert first["text"] == "Welcome"
         assert first["path"] == "Welcome"
         assert result["chunk_count"] >= len(result["headings"])
+        assert result["content_hash"] == result["note_content_hash"]
+        assert result["content_hash_contract"] == "freshness-contract-v1"
 
     @pytest.mark.asyncio
     async def test_map_for_empty_note(self, app: DatacronApp) -> None:
@@ -600,7 +711,9 @@ class TestCreateNoteAi:
         assert len(result["created"]["id"]) == 26
         assert result["indexed"] is True
 
-        raw = (tmp_vault / rel_path).read_text(encoding="utf-8")
+        target = tmp_vault / rel_path
+        raw = target.read_text(encoding="utf-8")
+        assert result["content_hash"] == hashlib.sha256(target.read_bytes()).hexdigest()
         metadata, body = parse(raw)
         assert metadata["id"] == result["created"]["id"]
         assert metadata["title"] == "Generated memory"
@@ -785,6 +898,42 @@ class TestCreateNoteAi:
         assert "outside the allowed write roots" in result["error"]["message"]
         assert not (tmp_vault / "elsewhere" / "blocked.md").exists()
 
+    @pytest.mark.asyncio
+    async def test_ulid_collision_regenerates_before_ack(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datacron.mcp import tools
+
+        colliding_id = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+        replacement_id = "01HQXR7K9YZ8M2N3PQRSTV4WXA"
+        _write_memory_note(
+            tmp_vault,
+            "_memory/facts/existing-identity.md",
+            "# Existing identity\n",
+            metadata_overrides={"id": colliding_id},
+        )
+        generated = iter((colliding_id, replacement_id))
+        monkeypatch.setattr(tools, "ULID", lambda: next(generated))
+
+        result = await tools._create_note_ai_impl(
+            writable_app,
+            rel_path="_memory/facts/unique-after-retry.md",
+            title="Unique after retry",
+            body="# Unique after retry\n",
+            origin="ai",
+            confidence="high",
+            tags=["memory"],
+        )
+
+        assert result["created"]["id"] == replacement_id
+        metadata, _body = parse(
+            (tmp_vault / "_memory/facts/unique-after-retry.md").read_text(encoding="utf-8")
+        )
+        assert metadata["id"] == replacement_id
+
 
 class TestAppendJournal:
     @pytest.mark.asyncio
@@ -814,6 +963,7 @@ class TestAppendJournal:
 
         assert result["appended"] == {"rel_path": rel_path, "heading": "Journal"}
         assert result["indexed"] is True
+        assert result["content_hash"] == hashlib.sha256(target.read_bytes()).hexdigest()
 
         new_metadata, new_body = parse(target.read_text(encoding="utf-8"))
         original_without_updated = dict(original_metadata)
@@ -877,10 +1027,8 @@ class TestAppendJournal:
         )
 
         assert result["indexed"] is True
-        backup_dir = tmp_vault / ".datacron" / "backups" / "_memory" / "facts" / "backup.md"
-        backups = list(backup_dir.glob("*.bak"))
-        assert len(backups) == 1
-        assert backups[0].read_text(encoding="utf-8") == original_raw
+        history = tmp_vault / ".datacron" / "history" / hash_text(original_raw)
+        assert history.read_text(encoding="utf-8") == original_raw
 
     @pytest.mark.asyncio
     async def test_missing_note_returns_structured_error_without_creating_file(
@@ -924,7 +1072,7 @@ class TestAppendJournal:
         )
 
         assert result["error"]["type"] == "PathConfinementError"
-        assert "writes disabled — set DATACRON_WRITE_PATHS" in result["error"]["message"]
+        assert "writes disabled -- set DATACRON_WRITE_PATHS" in result["error"]["message"]
         assert target.read_text(encoding="utf-8") == original_raw
 
     @pytest.mark.asyncio
@@ -970,6 +1118,67 @@ class TestAppendJournal:
         assert "outside the allowed write roots" in result["error"]["message"]
         assert target.read_text(encoding="utf-8") == original_raw
 
+    @pytest.mark.asyncio
+    async def test_append_cas_conflict_leaves_note_and_backups_unchanged(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _append_journal_impl
+
+        rel_path = "_memory/facts/append-conflict.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\n## Journal\n\nOriginal.\n",
+        )
+
+        result = await _append_journal_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Journal",
+            entry="- stale append",
+            expected_hash="0" * 64,
+        )
+
+        assert result["error"]["type"] == "WriteConflictError"
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert not (tmp_vault / ".datacron" / "history").exists()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_appends_preserve_every_complete_entry(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _append_journal_impl
+
+        rel_path = "_memory/facts/concurrent-appends.md"
+        target, _original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\n## Journal\n\nInitial.\n",
+        )
+
+        first, second = await asyncio.gather(
+            _append_journal_impl(
+                writable_app,
+                rel_path=rel_path,
+                heading="Journal",
+                entry="- concurrent entry A",
+            ),
+            _append_journal_impl(
+                writable_app,
+                rel_path=rel_path,
+                heading="Journal",
+                entry="- concurrent entry B",
+            ),
+        )
+
+        assert "error" not in first
+        assert "error" not in second
+        final_bytes = target.read_bytes()
+        final = final_bytes.decode("utf-8")
+        assert final.count("- concurrent entry A") == 1
+        assert final.count("- concurrent entry B") == 1
+        assert b"\x00" not in final_bytes
+
 
 class TestSetFrontmatter:
     @pytest.mark.asyncio
@@ -991,6 +1200,7 @@ class TestSetFrontmatter:
 
         assert result["updated"] == {"rel_path": rel_path, "fields": ["confidence"]}
         assert result["indexed"] is True
+        assert result["content_hash"] == hashlib.sha256(target.read_bytes()).hexdigest()
 
         new_metadata, new_body = parse(target.read_text(encoding="utf-8"))
         original_without_updated = dict(original_metadata)
@@ -1003,10 +1213,8 @@ class TestSetFrontmatter:
         assert new_without_updated == {**original_without_updated, "confidence": "low"}
         assert new_updated != original_updated
 
-        backup_dir = tmp_vault / ".datacron" / "backups" / "_memory" / "facts" / "confidence.md"
-        backups = list(backup_dir.glob("*.bak"))
-        assert len(backups) == 1
-        assert backups[0].read_text(encoding="utf-8") == original_raw
+        history = tmp_vault / ".datacron" / "history" / hash_text(original_raw)
+        assert history.read_text(encoding="utf-8") == original_raw
 
     @pytest.mark.asyncio
     async def test_origin_only_preserves_body_identity_fields_and_reindexes(
@@ -1207,8 +1415,7 @@ class TestSetFrontmatter:
         assert result["error"]["type"] == "ValueError"
         assert result["error"]["message"] == "nothing to update"
         assert target.read_text(encoding="utf-8") == original_raw
-        backup_dir = tmp_vault / ".datacron" / "backups" / "_memory" / "facts" / "noop.md"
-        assert not backup_dir.exists()
+        assert not (tmp_vault / ".datacron" / "history").exists()
 
     @pytest.mark.asyncio
     async def test_missing_note_returns_structured_error_without_creating_file(
@@ -1291,7 +1498,7 @@ class TestSetFrontmatter:
         )
 
         assert result["error"]["type"] == "PathConfinementError"
-        assert "writes disabled — set DATACRON_WRITE_PATHS" in result["error"]["message"]
+        assert "writes disabled -- set DATACRON_WRITE_PATHS" in result["error"]["message"]
         assert target.read_text(encoding="utf-8") == original_raw
 
     @pytest.mark.asyncio
@@ -1352,6 +1559,30 @@ class TestSetFrontmatter:
         assert repaired["deleted_notes"] == 1
         assert await writable_app.vault_reader.resolve_alias("Delete Alias Target") is None
 
+    @pytest.mark.asyncio
+    async def test_frontmatter_cas_conflict_leaves_note_and_backups_unchanged(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/frontmatter-conflict.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Journaled memory\n\nOriginal.\n",
+        )
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            confidence="low",
+            expected_hash="0" * 64,
+        )
+
+        assert result["error"]["type"] == "WriteConflictError"
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert not (tmp_vault / ".datacron" / "history").exists()
+
 
 class TestPatchNoteSection:
     @pytest.mark.asyncio
@@ -1382,6 +1613,7 @@ class TestPatchNoteSection:
 
         assert result["patched"] == {"rel_path": rel_path, "heading": "Target", "level": 2}
         assert result["indexed"] is True
+        assert result["content_hash"] == hashlib.sha256(target.read_bytes()).hexdigest()
 
         new_metadata, new_body = parse(target.read_text(encoding="utf-8"))
         original_without_updated = dict(original_metadata)
@@ -1403,10 +1635,8 @@ class TestPatchNoteSection:
         assert new_body.split("## Target", 1)[0] == original_body.split("## Target", 1)[0]
         assert new_body.split("## Sibling", 1)[1] == original_body.split("## Sibling", 1)[1]
 
-        backup_dir = tmp_vault / ".datacron" / "backups" / "_memory" / "facts" / "patch-mid.md"
-        backups = list(backup_dir.glob("*.bak"))
-        assert len(backups) == 1
-        assert backups[0].read_text(encoding="utf-8") == original_raw
+        history = tmp_vault / ".datacron" / "history" / hash_text(original_raw)
+        assert history.read_text(encoding="utf-8") == original_raw
 
         search = await _search_text_impl(writable_app, query="patchedtoken", limit=5)
         assert "error" not in search
@@ -1433,14 +1663,13 @@ class TestPatchNoteSection:
             expected_hash="0" * 64,
         )
 
-        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["type"] == "WriteConflictError"
         assert (
             "note changed since read (hash mismatch); re-read and retry"
             in result["error"]["message"]
         )
         assert target.read_text(encoding="utf-8") == original_raw
-        backup_dir = tmp_vault / ".datacron" / "backups" / "_memory" / "facts" / "stale-hash.md"
-        assert not backup_dir.exists()
+        assert not (tmp_vault / ".datacron" / "history").exists()
 
     @pytest.mark.asyncio
     async def test_bad_expected_hash_format_errors_before_read(
@@ -1662,7 +1891,7 @@ class TestPatchNoteSection:
         )
 
         assert result["error"]["type"] == "PathConfinementError"
-        assert "writes disabled — set DATACRON_WRITE_PATHS" in result["error"]["message"]
+        assert "writes disabled -- set DATACRON_WRITE_PATHS" in result["error"]["message"]
         assert target.read_text(encoding="utf-8") == original_raw
 
 
@@ -1685,7 +1914,7 @@ class TestSearchMetadataSanitization:
 
 
 class TestAudit:
-    """Audit lines go through the QueueListener → file handler, so caplog
+    """Audit lines go through the QueueListener -> file handler, so caplog
     (which intercepts at the root) doesn't see them. The test reads the
     daily log file the FileLogger fixture has redirected to tmp_path."""
 

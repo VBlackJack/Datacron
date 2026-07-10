@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+# Copyright 2026 Julien Bombled
+# Licensed under the Apache License, Version 2.0.
+
+set -eu
+python scripts/check_invariants.py

@@ -1,0 +1,23 @@
+{
+  "evidence_version": 1,
+  "invariants": {
+    "I1": "PROVEN",
+    "I2": "PROVEN",
+    "I3": "PROVEN",
+    "I4": "BASELINE-TRACKED",
+    "I5": "PROVEN",
+    "I6": "PROVEN",
+    "I7": "PROVEN",
+    "I8": "PROVEN",
+    "I9": "PROVEN",
+    "I10": "PROVEN",
+    "I11": "PROVEN",
+    "I12": "BASELINE-TRACKED",
+    "I13": "PROVEN",
+    "I14": "PROVEN",
+    "I15": "PROVEN"
+  },
+  "scope_notes": {
+    "I5": "PROVEN for the local single-tenant server; I5b remote and cross-tenant controls are deferred"
+  }
+}
