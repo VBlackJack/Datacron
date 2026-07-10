@@ -56,8 +56,8 @@ class Note(BaseModel):
             filesystem ctime.
         updated: Last-modified timestamp. Order of resolution: frontmatter
             ``updated``, filesystem mtime.
-        content_hash: SHA-256 of ``raw_content`` encoded as UTF-8 with LF line
-            endings, no BOM. Hex string, lowercase, no prefix.
+        content_hash: SHA-256 of the exact UTF-8 file bytes. Hex string,
+            lowercase, no prefix.
         tags: List of tags. Includes frontmatter ``tags`` (list or
             comma-separated string) and inline ``#tag`` occurrences.
             Deduplicated, lowercase.

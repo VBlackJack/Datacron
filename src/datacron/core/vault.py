@@ -40,7 +40,7 @@ from datacron.core.config import (
     load_vault_config,
 )
 from datacron.core.frontmatter import FrontmatterError, extract_tags, parse
-from datacron.core.hashing import hash_text
+from datacron.core.hashing import sha256_bytes
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
 
@@ -254,7 +254,8 @@ class FilesystemVaultReader:
         if not self._is_inside_vault(resolved):
             raise ValueError(f"Path {resolved} is outside the vault root {self._vault_root}.")
 
-        raw_text = await asyncio.to_thread(resolved.read_text, "utf-8")
+        raw_bytes = await asyncio.to_thread(resolved.read_bytes)
+        raw_text = raw_bytes.decode("utf-8", errors="strict")
         stat = await asyncio.to_thread(resolved.stat)
         metadata: dict[str, Any]
         body: str
@@ -290,7 +291,7 @@ class FilesystemVaultReader:
             raw_content=raw_text,
             created=created,
             updated=updated,
-            content_hash=hash_text(raw_text),
+            content_hash=sha256_bytes(raw_bytes),
             tags=tags,
             aliases=aliases,
         )
