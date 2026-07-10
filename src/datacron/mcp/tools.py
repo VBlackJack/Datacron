@@ -35,16 +35,24 @@ import time
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, Final
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from ulid import ULID
 
 from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
+from datacron.core.durability import DurabilityUnavailableError, ReadOnlyModeError
 from datacron.core.frontmatter import FrontmatterError, parse, serialize
-from datacron.core.hashing import HASH_HEX_LENGTH, hash_text
+from datacron.core.hashing import FRESHNESS_CONTRACT_ID, HASH_HEX_LENGTH
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, ChunkType, Note, SearchResult
-from datacron.core.paths import PathConfinementError, assert_within_paths, assert_within_write_paths
+from datacron.core.operation_log import (
+    HistoryUnavailableError,
+    OperationContext,
+    OperationLogError,
+    OperationRecord,
+)
+from datacron.core.paths import PathConfinementError
 from datacron.core.temporal import rerank_temporal
+from datacron.core.vault_writer import UlidCollisionError
 from datacron.indexing.reconcile import ReconcileStats, reconcile
 from datacron.indexing.ripgrep import RipgrepError
 from datacron.mcp.sandbox import (
@@ -52,15 +60,16 @@ from datacron.mcp.sandbox import (
     sanitize_payload_strings,
     wrap_vault_content,
 )
+from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
-__all__ = ["GetNoteFormat", "register_tools"]
+__all__ = ["GetNoteFormat", "StaleChunkError", "register_tools"]
 
 _LOGGER = get_logger(__name__)
 
-GetNoteFormat = str  # "full" | "map" — kept loose for FastMCP schema
+GetNoteFormat = str  # "full" | "map" -- kept loose for FastMCP schema
 _VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map"})
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
@@ -71,6 +80,11 @@ _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
     {"high", "medium", "low", "needs_verification"}
 )
 _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
+_ULID_CREATE_ATTEMPTS: Final[int] = 5
+
+
+class StaleChunkError(ValueError):
+    """Raised when a chunk belongs to an older byte version of its note."""
 
 
 def register_tools(server: FastMCP[Any], app: Any) -> None:
@@ -102,8 +116,9 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         title="Get a note",
         description=(
             "Fetch a single note by its ULID, indexed chunk_id, or vault-relative path. "
-            "chunk_id inputs return format='chunk' with the sandbox-wrapped chunk body "
-            "and ignore offset/limit. For note inputs, format='full' returns the "
+            "chunk_id inputs return format='chunk' with the sandbox-wrapped chunk body; "
+            "a parent-hash mismatch returns an explicit stale-chunk error. Chunk reads "
+            "ignore offset/limit. For note inputs, format='full' returns the "
             "sandbox-wrapped body and offset/limit page large notes by character range; "
             "format='map' returns the heading outline only (cheap to scan before "
             "requesting full content)."
@@ -167,7 +182,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         title="Get backlinks",
         description=(
             "Return chunks whose wikilinks point at the given target. Target may be "
-            "a note ULID or a wikilink alias (resolved via title → filename → "
+            "a note ULID or a wikilink alias (resolved via title -> filename -> "
             "aliases). Empty list if unresolved or no incoming links."
         ),
     )
@@ -175,12 +190,23 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         return await _get_backlinks_impl(app, target=target, limit=limit)
 
     @server.tool(
+        name="get_health",
+        title="Get operational health",
+        description=(
+            "Return truthful read-only health for index freshness, vault integrity, "
+            "point-in-time checksum, durability capability, and invariant evidence."
+        ),
+    )
+    async def get_health() -> dict[str, Any]:
+        return await _get_health_impl(app)
+
+    @server.tool(
         name="create_note_ai",
         title="Create memory note",
         description=(
             "Write a new typed _memory Markdown note. This is a write operation: "
             "it is confined to DATACRON_WRITE_PATHS, never overwrites existing "
-            "files, snapshots destructive writes in lower-level primitives, and "
+            "files, writes a durable operation record, and "
             "relies on the MCP client's tool approval for human-in-the-loop review."
         ),
     )
@@ -191,8 +217,10 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         origin: str,
         confidence: str,
         tags: list[str],
+        ctx: Context[Any, Any, Any],
         supersedes: list[str] | None = None,
         last_verified: str | None = None,
+        expected_hash: str | None = None,
     ) -> dict[str, Any]:
         return await _create_note_ai_impl(
             app,
@@ -204,6 +232,8 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             tags=tags,
             supersedes=supersedes,
             last_verified=last_verified,
+            expected_hash=expected_hash,
+            actor=app.identity_provider.identify(ctx).actor,
         )
 
     @server.tool(
@@ -212,16 +242,24 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         description=(
             "Append a Markdown entry under a heading in an existing memory note. "
             "This is a write operation: it is confined to DATACRON_WRITE_PATHS, "
-            "uses reversible backups before overwrite, writes atomically, and "
+            "stores content-addressed history, writes atomically, and "
             "relies on the MCP client's tool approval for human-in-the-loop review."
         ),
     )
-    async def append_journal(rel_path: str, heading: str, entry: str) -> dict[str, Any]:
+    async def append_journal(
+        rel_path: str,
+        heading: str,
+        entry: str,
+        ctx: Context[Any, Any, Any],
+        expected_hash: str | None = None,
+    ) -> dict[str, Any]:
         return await _append_journal_impl(
             app,
             rel_path=rel_path,
             heading=heading,
             entry=entry,
+            expected_hash=expected_hash,
+            actor=app.identity_provider.identify(ctx).actor,
         )
 
     @server.tool(
@@ -236,10 +274,12 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
     )
     async def set_frontmatter(
         rel_path: str,
+        ctx: Context[Any, Any, Any],
         confidence: str | None = None,
         last_verified: str | None = None,
         supersedes: list[str] | None = None,
         origin: str | None = None,
+        expected_hash: str | None = None,
     ) -> dict[str, Any]:
         return await _set_frontmatter_impl(
             app,
@@ -248,6 +288,8 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             last_verified=last_verified,
             supersedes=supersedes,
             origin=origin,
+            expected_hash=expected_hash,
+            actor=app.identity_provider.identify(ctx).actor,
         )
 
     @server.tool(
@@ -255,16 +297,17 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         title="Patch note section",
         description=(
             "Replace the content under one existing Markdown heading. "
-            "This write operation requires the caller to pass the note's "
-            "current content_hash as expected_hash, preserves the heading line "
-            "and non-target sections, snapshots the prior file, and writes atomically."
+            "Pass the note's current content_hash as expected_hash for CAS. "
+            "The operation preserves the heading line "
+            "and non-target sections, stores exact prior history, and writes atomically."
         ),
     )
     async def patch_note_section(
         rel_path: str,
         heading: str,
         new_content: str,
-        expected_hash: str,
+        ctx: Context[Any, Any, Any],
+        expected_hash: str | None = None,
         heading_level: int | None = None,
     ) -> dict[str, Any]:
         return await _patch_note_section_impl(
@@ -274,13 +317,98 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             new_content=new_content,
             expected_hash=expected_hash,
             heading_level=heading_level,
+            actor=app.identity_provider.identify(ctx).actor,
         )
+
+    @server.tool(
+        name="revert_note",
+        title="Revert note to exact history",
+        description=(
+            "Restore a note to exact content-addressed history bytes. Pass the current "
+            "content_hash as expected_hash for CAS. The revert is itself durable, "
+            "reversible, indexed, and operation-logged."
+        ),
+    )
+    async def revert_note(
+        note: str,
+        to_hash: str,
+        ctx: Context[Any, Any, Any],
+        expected_hash: str | None = None,
+    ) -> dict[str, Any]:
+        return await _revert_note_impl(
+            app,
+            note=note,
+            to_hash=to_hash,
+            expected_hash=expected_hash,
+            actor=app.identity_provider.identify(ctx).actor,
+        )
+
+    @server.tool(
+        name="get_note_history",
+        title="Get note operation history",
+        description=(
+            "List committed operation metadata for one note without reading history "
+            "content or modifying the journal."
+        ),
+    )
+    async def get_note_history(note: str, limit: int = 100) -> dict[str, Any]:
+        return await _get_note_history_impl(app, note=note, limit=limit)
+
+    @server.tool(
+        name="audit_query",
+        title="Query operation audit log",
+        description=(
+            "Query committed operation metadata by time range, tool, or note. "
+            "This read-only operation never changes the journal or vault."
+        ),
+    )
+    async def audit_query(
+        start: str | None = None,
+        end: str | None = None,
+        tool: str | None = None,
+        note: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        return await _audit_query_impl(
+            app,
+            start=start,
+            end=end,
+            tool=tool,
+            note=note,
+            limit=limit,
+        )
+
+    if app.settings.read_only:
+        for tool_name in MUTATING_TOOL_NAMES:
+            server.remove_tool(tool_name)
 
 
 # ---------------------------------------------------------------------------
 # Implementations (kept as module-level coroutines so they're easy to unit-test
 # without spinning a FastMCP instance).
 # ---------------------------------------------------------------------------
+
+
+async def _get_health_impl(app: DatacronApp) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        from datacron.mcp.health import build_health  # noqa: PLC0415
+
+        payload = await build_health(app)
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        return _error_response("get_health", exc, started)
+    except Exception:
+        _LOGGER.exception("get_health failed")
+        return _error_response("get_health", RuntimeError("internal error"), started)
+    _audit(
+        "get_health",
+        started,
+        status=payload["status"],
+        read_only=payload["read_only"],
+        notes_count=payload["index"]["vault_notes_count"],
+        stale_entries=payload["index"]["stale_entries"],
+    )
+    return payload
 
 
 async def _list_notes_impl(
@@ -314,7 +442,7 @@ async def _list_notes_impl(
     returned = filtered[start:end]
     next_offset = end if end < total else None
     payload = {
-        "notes": [_note_summary(note) for note in returned],
+        "notes": [_note_summary(app, note) for note in returned],
         "total": total,
         "returned": len(returned),
         "offset": start,
@@ -421,9 +549,12 @@ async def _create_note_ai_impl(
     tags: list[str],
     supersedes: list[str] | None = None,
     last_verified: str | None = None,
+    expected_hash: str | None = None,
+    actor: str = "direct-call",
 ) -> dict[str, Any]:
     started = time.perf_counter()
     try:
+        app.write_policy.ensure_writable()
         cleaned = _validate_memory_frontmatter(
             rel_path=rel_path,
             title=title,
@@ -432,26 +563,56 @@ async def _create_note_ai_impl(
             confidence=confidence,
             tags=tags,
         )
-        note_id = str(ULID())
+        cleaned_expected_hash = _validate_expected_hash(expected_hash)
         now = datetime.now(tz=UTC)
-        frontmatter = {
-            "id": note_id,
-            "title": cleaned["title"],
-            "created": now.isoformat(),
-            "updated": now.isoformat(),
-            "origin": cleaned["origin"],
-            "confidence": cleaned["confidence"],
-            "last_verified": (last_verified.strip() if last_verified else now.date().isoformat()),
-            "supersedes": _clean_string_list(supersedes or []),
-            "tags": cleaned["tags"],
-        }
-        content = serialize(frontmatter, body)
-        await app.vault_writer.write_note_atomic(cleaned["rel_path"], content, overwrite=False)
-        index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        for attempt in range(_ULID_CREATE_ATTEMPTS):
+            note_id = str(ULID())
+            frontmatter = {
+                "id": note_id,
+                "title": cleaned["title"],
+                "created": now.isoformat(),
+                "updated": now.isoformat(),
+                "origin": cleaned["origin"],
+                "confidence": cleaned["confidence"],
+                "last_verified": (
+                    last_verified.strip() if last_verified else now.date().isoformat()
+                ),
+                "supersedes": _clean_string_list(supersedes or []),
+                "tags": cleaned["tags"],
+            }
+            content = serialize(frontmatter, body)
+            try:
+                content_hash = await app.vault_writer.write_note_atomic(
+                    cleaned["rel_path"],
+                    content,
+                    overwrite=False,
+                    expected_hash=cleaned_expected_hash,
+                    note_id=note_id,
+                    operation=OperationContext(
+                        op="create",
+                        tool="create_note_ai",
+                        actor=actor,
+                        parameters={
+                            "title_chars": len(cleaned["title"]),
+                            "body_chars": len(body),
+                            "origin": cleaned["origin"],
+                            "confidence": cleaned["confidence"],
+                            "tag_count": len(cleaned["tags"]),
+                            "supersedes_count": len(supersedes or []),
+                        },
+                    ),
+                )
+                break
+            except UlidCollisionError:
+                if attempt == _ULID_CREATE_ATTEMPTS - 1:
+                    raise
+        index_stats = await _reconcile_serialized(app)
         await _invalidate_alias_cache_if_index_changed(app, index_stats)
+    except (DurabilityUnavailableError, ReadOnlyModeError) as exc:
+        return _error_response("create_note_ai", exc, started, rel_path=rel_path)
     except PathConfinementError as exc:
         mapped_exc = (
-            PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
+            PathConfinementError("writes disabled -- set DATACRON_WRITE_PATHS")
             if not app.settings.write_paths
             else exc
         )
@@ -496,6 +657,7 @@ async def _create_note_ai_impl(
             "rel_path": cleaned["rel_path"],
             "title": cleaned["title"],
         },
+        "content_hash": content_hash,
         "indexed": True,
     }
     _audit(
@@ -516,29 +678,50 @@ async def _append_journal_impl(
     rel_path: str,
     heading: str,
     entry: str,
+    expected_hash: str | None = None,
+    actor: str = "direct-call",
 ) -> dict[str, Any]:
     started = time.perf_counter()
     try:
+        app.write_policy.ensure_writable()
         cleaned_rel_path, cleaned_heading, cleaned_entry = _validate_append_journal_request(
             rel_path=rel_path,
             heading=heading,
             entry=entry,
         )
-        resolved = assert_within_write_paths(app.vault_root / cleaned_rel_path, app.settings)
-        resolved = assert_within_paths(resolved, [app.vault_root], kind="write")
-        if not resolved.exists():
-            raise FileNotFoundError(f"note not found at {cleaned_rel_path}; use create_note_ai")
-        raw = resolved.read_text(encoding="utf-8")
-        metadata, body = parse(raw)
-        new_body = _append_entry_to_heading(body, cleaned_heading, cleaned_entry)
-        metadata["updated"] = datetime.now(tz=UTC).isoformat()
-        content = serialize(metadata, new_body)
-        await app.vault_writer.write_note_atomic(cleaned_rel_path, content, overwrite=True)
-        index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        cleaned_expected_hash = _validate_expected_hash(expected_hash)
+
+        def mutation(raw: str) -> str:
+            metadata, current_body, has_bom = _parse_preserving_bom(raw)
+            new_body = _append_entry_to_heading(
+                current_body,
+                cleaned_heading,
+                cleaned_entry,
+            )
+            metadata["updated"] = datetime.now(tz=UTC).isoformat()
+            return _serialize_preserving_bom(metadata, new_body, has_bom=has_bom)
+
+        content_hash = await app.vault_writer.mutate_note_atomic(
+            cleaned_rel_path,
+            mutation,
+            expected_hash=cleaned_expected_hash,
+            operation=OperationContext(
+                op="append",
+                tool="append_journal",
+                actor=actor,
+                parameters={
+                    "heading": cleaned_heading,
+                    "entry_chars": len(cleaned_entry),
+                },
+            ),
+        )
+        index_stats = await _reconcile_serialized(app)
         await _invalidate_alias_cache_if_index_changed(app, index_stats)
+    except (DurabilityUnavailableError, ReadOnlyModeError) as exc:
+        return _error_response("append_journal", exc, started, rel_path=rel_path)
     except PathConfinementError as exc:
         mapped_exc = (
-            PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
+            PathConfinementError("writes disabled -- set DATACRON_WRITE_PATHS")
             if not app.settings.write_paths
             else exc
         )
@@ -557,7 +740,7 @@ async def _append_journal_impl(
             rel_path=rel_path,
             heading=heading,
         )
-    except ValueError as exc:
+    except (FrontmatterError, ValueError) as exc:
         return _error_response(
             "append_journal",
             exc,
@@ -577,6 +760,7 @@ async def _append_journal_impl(
 
     payload: dict[str, Any] = {
         "appended": {"rel_path": cleaned_rel_path, "heading": cleaned_heading},
+        "content_hash": content_hash,
         "indexed": True,
     }
     _audit(
@@ -598,9 +782,12 @@ async def _set_frontmatter_impl(
     last_verified: str | None = None,
     supersedes: list[str] | None = None,
     origin: str | None = None,
+    expected_hash: str | None = None,
+    actor: str = "direct-call",
 ) -> dict[str, Any]:
     started = time.perf_counter()
     try:
+        app.write_policy.ensure_writable()
         (
             cleaned_rel_path,
             cleaned_confidence,
@@ -614,49 +801,72 @@ async def _set_frontmatter_impl(
             supersedes=supersedes,
             origin=origin,
         )
-        resolved = assert_within_write_paths(app.vault_root / cleaned_rel_path, app.settings)
-        resolved = assert_within_paths(resolved, [app.vault_root], kind="write")
-        if not resolved.exists():
-            raise FileNotFoundError(f"note not found at {cleaned_rel_path}; use create_note_ai")
-
-        raw = resolved.read_text(encoding="utf-8")
-        metadata, body = parse(raw)
-        if not metadata:
-            raise ValueError("note has no frontmatter")
-
+        cleaned_expected_hash = _validate_expected_hash(expected_hash)
         changed_fields: list[str] = []
-        if cleaned_confidence is not None:
-            _set_changed_frontmatter_field(
-                metadata,
-                changed_fields,
-                "confidence",
-                cleaned_confidence,
-            )
-        if cleaned_last_verified is not None:
-            _set_changed_frontmatter_field(
-                metadata,
-                changed_fields,
-                "last_verified",
-                cleaned_last_verified,
-            )
-        if cleaned_supersedes is not None:
-            _set_changed_frontmatter_field(
-                metadata,
-                changed_fields,
-                "supersedes",
-                cleaned_supersedes,
-            )
-        if cleaned_origin is not None:
-            _set_changed_frontmatter_field(metadata, changed_fields, "origin", cleaned_origin)
+        requested_fields = sorted(
+            field
+            for field, value in {
+                "confidence": cleaned_confidence,
+                "last_verified": cleaned_last_verified,
+                "supersedes": cleaned_supersedes,
+                "origin": cleaned_origin,
+            }.items()
+            if value is not None
+        )
 
-        metadata["updated"] = datetime.now(tz=UTC).isoformat()
-        content = serialize(metadata, body)
-        await app.vault_writer.write_note_atomic(cleaned_rel_path, content, overwrite=True)
-        index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        def mutation(raw: str) -> str:
+            metadata, body, has_bom = _parse_preserving_bom(raw)
+            if not metadata:
+                raise ValueError("note has no frontmatter")
+            if cleaned_confidence is not None:
+                _set_changed_frontmatter_field(
+                    metadata,
+                    changed_fields,
+                    "confidence",
+                    cleaned_confidence,
+                )
+            if cleaned_last_verified is not None:
+                _set_changed_frontmatter_field(
+                    metadata,
+                    changed_fields,
+                    "last_verified",
+                    cleaned_last_verified,
+                )
+            if cleaned_supersedes is not None:
+                _set_changed_frontmatter_field(
+                    metadata,
+                    changed_fields,
+                    "supersedes",
+                    cleaned_supersedes,
+                )
+            if cleaned_origin is not None:
+                _set_changed_frontmatter_field(
+                    metadata,
+                    changed_fields,
+                    "origin",
+                    cleaned_origin,
+                )
+            metadata["updated"] = datetime.now(tz=UTC).isoformat()
+            return _serialize_preserving_bom(metadata, body, has_bom=has_bom)
+
+        content_hash = await app.vault_writer.mutate_note_atomic(
+            cleaned_rel_path,
+            mutation,
+            expected_hash=cleaned_expected_hash,
+            operation=OperationContext(
+                op="set_frontmatter",
+                tool="set_frontmatter",
+                actor=actor,
+                parameters={"fields": ",".join(requested_fields)},
+            ),
+        )
+        index_stats = await _reconcile_serialized(app)
         await _invalidate_alias_cache_if_index_changed(app, index_stats)
+    except (DurabilityUnavailableError, ReadOnlyModeError) as exc:
+        return _error_response("set_frontmatter", exc, started, rel_path=rel_path)
     except PathConfinementError as exc:
         mapped_exc = (
-            PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
+            PathConfinementError("writes disabled -- set DATACRON_WRITE_PATHS")
             if not app.settings.write_paths
             else exc
         )
@@ -691,6 +901,7 @@ async def _set_frontmatter_impl(
 
     payload: dict[str, Any] = {
         "updated": {"rel_path": cleaned_rel_path, "fields": changed_fields},
+        "content_hash": content_hash,
         "indexed": True,
     }
     _audit(
@@ -721,11 +932,13 @@ async def _patch_note_section_impl(
     rel_path: str,
     heading: str,
     new_content: str,
-    expected_hash: str,
+    expected_hash: str | None = None,
     heading_level: int | None = None,
+    actor: str = "direct-call",
 ) -> dict[str, Any]:
     started = time.perf_counter()
     try:
+        app.write_policy.ensure_writable()
         (
             cleaned_rel_path,
             cleaned_heading,
@@ -739,41 +952,54 @@ async def _patch_note_section_impl(
             expected_hash=expected_hash,
             heading_level=heading_level,
         )
-        resolved = assert_within_write_paths(app.vault_root / cleaned_rel_path, app.settings)
-        resolved = assert_within_paths(resolved, [app.vault_root], kind="write")
-        if not resolved.exists():
-            raise FileNotFoundError(f"note not found at {cleaned_rel_path}; use create_note_ai")
+        matched_level = 0
+        matched_text = ""
 
-        raw = resolved.read_text(encoding="utf-8")
-        if hash_text(raw) != cleaned_expected_hash:
-            raise ValueError("note changed since read (hash mismatch); re-read and retry")
+        def mutation(raw: str) -> str:
+            nonlocal matched_level, matched_text
+            metadata, body, has_bom = _parse_preserving_bom(raw)
+            lines = body.splitlines(keepends=True)
+            content_start, content_end = _find_section_span(
+                lines,
+                cleaned_heading,
+                cleaned_heading_level,
+            )
+            matched_heading = _parse_heading_line(lines[content_start - 1])
+            if matched_heading is None:
+                raise RuntimeError("section span does not follow a heading")
+            matched_level, matched_text = matched_heading
+            prefix = "".join(lines[:content_start])
+            suffix = "".join(lines[content_end:])
+            new_body = (
+                f"{prefix}"
+                f"{_section_replacement_block(cleaned_new_content, prefix=prefix, suffix=suffix)}"
+                f"{suffix}"
+            )
+            metadata["updated"] = datetime.now(tz=UTC).isoformat()
+            return _serialize_preserving_bom(metadata, new_body, has_bom=has_bom)
 
-        metadata, body = parse(raw)
-        lines = body.splitlines(keepends=True)
-        content_start, content_end = _find_section_span(
-            lines,
-            cleaned_heading,
-            cleaned_heading_level,
+        content_hash = await app.vault_writer.mutate_note_atomic(
+            cleaned_rel_path,
+            mutation,
+            expected_hash=cleaned_expected_hash,
+            operation=OperationContext(
+                op="patch_section",
+                tool="patch_note_section",
+                actor=actor,
+                parameters={
+                    "heading": cleaned_heading,
+                    "heading_level": cleaned_heading_level,
+                    "new_content_chars": len(cleaned_new_content),
+                },
+            ),
         )
-        matched_heading = _parse_heading_line(lines[content_start - 1])
-        if matched_heading is None:
-            raise RuntimeError("section span does not follow a heading")
-        matched_level, matched_text = matched_heading
-        prefix = "".join(lines[:content_start])
-        suffix = "".join(lines[content_end:])
-        new_body = (
-            f"{prefix}"
-            f"{_section_replacement_block(cleaned_new_content, prefix=prefix, suffix=suffix)}"
-            f"{suffix}"
-        )
-        metadata["updated"] = datetime.now(tz=UTC).isoformat()
-        content = serialize(metadata, new_body)
-        await app.vault_writer.write_note_atomic(cleaned_rel_path, content, overwrite=True)
-        index_stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        index_stats = await _reconcile_serialized(app)
         await _invalidate_alias_cache_if_index_changed(app, index_stats)
+    except (DurabilityUnavailableError, ReadOnlyModeError) as exc:
+        return _error_response("patch_note_section", exc, started, rel_path=rel_path)
     except PathConfinementError as exc:
         mapped_exc = (
-            PathConfinementError("writes disabled — set DATACRON_WRITE_PATHS")
+            PathConfinementError("writes disabled -- set DATACRON_WRITE_PATHS")
             if not app.settings.write_paths
             else exc
         )
@@ -816,6 +1042,7 @@ async def _patch_note_section_impl(
             "heading": matched_text,
             "level": matched_level,
         },
+        "content_hash": content_hash,
         "indexed": True,
     }
     _audit(
@@ -830,9 +1057,203 @@ async def _patch_note_section_impl(
     return payload
 
 
+async def _revert_note_impl(
+    app: DatacronApp,
+    *,
+    note: str,
+    to_hash: str,
+    expected_hash: str | None = None,
+    actor: str = "direct-call",
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        app.write_policy.ensure_writable()
+        cleaned_to_hash = _validate_expected_hash(to_hash)
+        if cleaned_to_hash is None:
+            raise ValueError("to_hash is required")
+        cleaned_expected_hash = _validate_expected_hash(expected_hash)
+        resolved = await _resolve_note(app, note)
+        if resolved is None:
+            raise FileNotFoundError(f"No note found for {note!r}")
+        content_hash = await app.vault_writer.revert_note_atomic(
+            resolved.rel_path,
+            cleaned_to_hash,
+            expected_hash=cleaned_expected_hash,
+            operation=OperationContext(
+                op="revert",
+                tool="revert_note",
+                actor=actor,
+                parameters={"to_hash": cleaned_to_hash},
+            ),
+        )
+        index_stats = await _reconcile_serialized(app)
+        await _invalidate_alias_cache_if_index_changed(app, index_stats)
+    except (
+        FileNotFoundError,
+        HistoryUnavailableError,
+        OperationLogError,
+        PathConfinementError,
+        DurabilityUnavailableError,
+        ReadOnlyModeError,
+        ValueError,
+    ) as exc:
+        return _error_response(
+            "revert_note",
+            exc,
+            started,
+            note=note,
+            to_hash=to_hash,
+        )
+    except Exception:
+        _LOGGER.exception("revert_note failed (note=%r to_hash=%r)", note, to_hash)
+        return _error_response(
+            "revert_note",
+            RuntimeError("internal error"),
+            started,
+            note=note,
+            to_hash=to_hash,
+        )
+
+    payload: dict[str, Any] = {
+        "reverted": {
+            "id": resolved.id,
+            "rel_path": resolved.rel_path,
+            "to_hash": cleaned_to_hash,
+        },
+        "content_hash": content_hash,
+        "indexed": True,
+    }
+    _audit(
+        "revert_note",
+        started,
+        note_id=resolved.id,
+        rel_path=resolved.rel_path,
+        to_hash=cleaned_to_hash,
+        reindexed_notes=index_stats["reindexed_notes"],
+        deleted_notes=index_stats["deleted_notes"],
+    )
+    return payload
+
+
+async def _get_note_history_impl(
+    app: DatacronApp,
+    *,
+    note: str,
+    limit: int,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    cleaned_note = note.strip()
+    if not cleaned_note:
+        return _error_response(
+            "get_note_history",
+            ValueError("note must not be empty"),
+            started,
+            note=note,
+        )
+    bounded_limit = _bounded_count(limit, app.settings.max_result_count)
+    try:
+        records = await app.vault_writer.list_operations()
+    except OperationLogError as exc:
+        return _error_response("get_note_history", exc, started, note=cleaned_note)
+    matching = [record for record in records if cleaned_note in (record.rel_path, record.note_id)]
+    returned = matching[-bounded_limit:]
+    payload = {
+        "note": cleaned_note,
+        "operations": [_operation_payload(record) for record in returned],
+        "total": len(matching),
+        "returned": len(returned),
+        "limit_applied": bounded_limit,
+        "truncated": len(returned) < len(matching),
+    }
+    _audit(
+        "get_note_history",
+        started,
+        note=cleaned_note,
+        total=len(matching),
+        returned=len(returned),
+    )
+    return payload
+
+
+async def _audit_query_impl(
+    app: DatacronApp,
+    *,
+    start: str | None,
+    end: str | None,
+    tool: str | None,
+    note: str | None,
+    limit: int,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        start_time = _parse_audit_time(start, field="start")
+        end_time = _parse_audit_time(end, field="end")
+        if start_time is not None and end_time is not None and start_time > end_time:
+            raise ValueError("start must be before or equal to end")
+        bounded_limit = _bounded_count(limit, app.settings.max_result_count)
+        records = await app.vault_writer.list_operations()
+    except (OperationLogError, ValueError) as exc:
+        return _error_response("audit_query", exc, started)
+
+    cleaned_tool = tool.strip() if tool else None
+    cleaned_note = note.strip() if note else None
+    matching: list[OperationRecord] = []
+    for record in records:
+        timestamp = datetime.fromisoformat(record.timestamp).astimezone(UTC)
+        if start_time is not None and timestamp < start_time:
+            continue
+        if end_time is not None and timestamp > end_time:
+            continue
+        if cleaned_tool and record.tool != cleaned_tool:
+            continue
+        if cleaned_note and cleaned_note not in {record.note_id, record.rel_path}:
+            continue
+        matching.append(record)
+    returned = matching[-bounded_limit:]
+    payload = {
+        "filters": {
+            "start": start,
+            "end": end,
+            "tool": cleaned_tool,
+            "note": cleaned_note,
+        },
+        "operations": [_operation_payload(record) for record in returned],
+        "total": len(matching),
+        "returned": len(returned),
+        "limit_applied": bounded_limit,
+        "truncated": len(returned) < len(matching),
+    }
+    _audit(
+        "audit_query",
+        started,
+        filter_tool=cleaned_tool,
+        note=cleaned_note,
+        total=len(matching),
+        returned=len(returned),
+    )
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _operation_payload(record: OperationRecord) -> dict[str, object]:
+    return record.to_dict()
+
+
+def _parse_audit_time(value: str | None, *, field: str) -> datetime | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    try:
+        parsed = datetime.fromisoformat(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{field} must include a timezone")
+    return parsed.astimezone(UTC)
 
 
 def _bounded_count(requested: int, ceiling: int) -> int:
@@ -976,12 +1397,12 @@ def _validate_patch_note_section_request(
     rel_path: str,
     heading: str,
     new_content: str,
-    expected_hash: str,
+    expected_hash: str | None,
     heading_level: int | None,
-) -> tuple[str, str, str, str, int | None]:
+) -> tuple[str, str, str, str | None, int | None]:
     cleaned_rel_path = rel_path.strip()
     cleaned_heading = heading.strip()
-    cleaned_expected_hash = expected_hash.strip()
+    cleaned_expected_hash = _validate_expected_hash(expected_hash)
 
     if not cleaned_rel_path.endswith(".md"):
         raise ValueError("rel_path must end with .md")
@@ -989,8 +1410,6 @@ def _validate_patch_note_section_request(
         raise ValueError("heading must not be empty")
     if not new_content.strip():
         raise ValueError("new_content must not be empty")
-    if not _CONTENT_HASH_PATTERN.fullmatch(cleaned_expected_hash):
-        raise ValueError(f"expected_hash must be a lowercase {HASH_HEX_LENGTH}-character SHA-256")
     if heading_level is not None and heading_level not in range(1, 7):
         raise ValueError("heading_level must be between 1 and 6")
 
@@ -1002,6 +1421,32 @@ def _validate_patch_note_section_request(
         cleaned_expected_hash,
         heading_level,
     )
+
+
+def _validate_expected_hash(expected_hash: str | None) -> str | None:
+    if expected_hash is None:
+        return None
+    cleaned = expected_hash.strip()
+    if not _CONTENT_HASH_PATTERN.fullmatch(cleaned):
+        raise ValueError(f"expected_hash must be a lowercase {HASH_HEX_LENGTH}-character SHA-256")
+    return cleaned
+
+
+def _parse_preserving_bom(raw: str) -> tuple[dict[str, Any], str, bool]:
+    has_bom = raw.startswith("\ufeff")
+    parseable = raw[1:] if has_bom else raw
+    metadata, body = parse(parseable)
+    return metadata, body, has_bom
+
+
+def _serialize_preserving_bom(
+    metadata: dict[str, Any],
+    body: str,
+    *,
+    has_bom: bool,
+) -> str:
+    prefix = "\ufeff" if has_bom else ""
+    return f"{prefix}{serialize(metadata, body)}"
 
 
 def _append_entry_to_heading(body: str, heading: str, entry: str) -> str:
@@ -1122,23 +1567,26 @@ def _filter_by_tags(notes: list[Note], tags: list[str] | None) -> list[Note]:
     return [note for note in notes if required.issubset(set(note.tags))]
 
 
-def _note_summary(note: Note) -> dict[str, Any]:
+def _note_summary(app: DatacronApp, note: Note) -> dict[str, Any]:
     return {
         "id": note.id,
-        "rel_path": note.rel_path,
-        **_sanitized_note_metadata(note),
+        "rel_path": _redact_retrieval_text(app, note.rel_path),
+        **_sanitized_note_metadata(app, note),
         "created": note.created.isoformat(),
         "updated": note.updated.isoformat(),
     }
 
 
-def _sanitized_note_metadata(note: Note) -> dict[str, Any]:
-    return {
-        "title": sanitize_metadata_value(note.title),
-        "tags": [sanitize_metadata_value(tag) for tag in note.tags],
-        "aliases": [sanitize_metadata_value(alias) for alias in note.aliases],
-        "frontmatter": sanitize_payload_strings(dict(note.frontmatter)),
+def _sanitized_note_metadata(app: DatacronApp, note: Note) -> dict[str, Any]:
+    metadata = {
+        "title": note.title,
+        "tags": list(note.tags),
+        "aliases": list(note.aliases),
+        "frontmatter": dict(note.frontmatter),
     }
+    if app.secret_redactor.retrieval_enabled(app.settings):
+        metadata = app.secret_redactor.redact_value(metadata)
+    return sanitize_payload_strings(metadata)
 
 
 async def _resolve_note(app: DatacronApp, id_or_path: str) -> Note | None:
@@ -1180,8 +1628,7 @@ async def _resolve_note_by_ulid(app: DatacronApp, note_id: str) -> Note | None:
 
 
 async def _read_note_by_rel_path(app: DatacronApp, rel_path: str) -> Note:
-    candidate = (app.vault_root / rel_path).expanduser()
-    resolved = assert_within_paths(candidate, [app.vault_root], kind="read")
+    resolved = app.scope.authorize_rel_path(rel_path, "read")
     return await app.vault_reader.read_note(resolved)
 
 
@@ -1196,9 +1643,21 @@ async def _resolve_chunk_payload(app: DatacronApp, id_or_path: str) -> dict[str,
         return None
 
     note = await _read_note_by_rel_path(app, chunk.note_rel_path)
+    indexed_notes = await app.store.list_indexed_notes()
+    indexed_note = indexed_notes.get(chunk.note_rel_path)
+    if (
+        indexed_note is None
+        or indexed_note[0] != chunk.note_id
+        or indexed_note[1] != note.content_hash
+    ):
+        raise StaleChunkError(
+            f"chunk_id is stale for {chunk.note_rel_path}; "
+            "indexed content_hash does not match current note bytes; reindex and retry"
+        )
     chunks = await app.store.list_chunks_for_note(chunk.note_id)
     prev_chunk_id, next_chunk_id = _chunk_neighbor_ids(chunks, chunk.chunk_id)
     return _build_chunk_payload(
+        app,
         note,
         chunk,
         prev_chunk_id=prev_chunk_id,
@@ -1225,26 +1684,30 @@ def _build_full_payload(
 ) -> dict[str, Any]:
     max_tokens = app.settings.get_note_max_tokens
     max_chars = max_tokens * _TOKEN_ESTIMATE_DIVISOR
-    total_chars = len(note.content)
+    retrieval_content = _redact_retrieval_text(app, note.content)
+    total_chars = len(retrieval_content)
     start = min(offset, total_chars)
     requested_limit = limit if limit is not None else max_chars
     limit_applied = min(requested_limit, max_chars)
     end = min(start + limit_applied, total_chars)
-    content = note.content[start:end]
+    content = retrieval_content[start:end]
     truncated = start > 0 or end < total_chars
     next_offset = end if end < total_chars else None
 
-    wrapped = wrap_vault_content(note.rel_path, content)
+    returned_rel_path = _redact_retrieval_text(app, note.rel_path)
+    wrapped = wrap_vault_content(returned_rel_path, content)
     return {
         "id": note.id,
-        "rel_path": note.rel_path,
-        **_sanitized_note_metadata(note),
+        "rel_path": returned_rel_path,
+        **_sanitized_note_metadata(app, note),
         "created": note.created.isoformat(),
         "updated": note.updated.isoformat(),
         "content_hash": note.content_hash,
+        "note_content_hash": note.content_hash,
+        "content_hash_contract": FRESHNESS_CONTRACT_ID,
         "format": "full",
         "content": wrapped,
-        "estimated_tokens": _estimate_tokens(note.content),
+        "estimated_tokens": _estimate_tokens(retrieval_content),
         "returned_estimated_tokens": _estimate_tokens(content),
         "offset": start,
         "limit_applied": limit_applied,
@@ -1256,6 +1719,7 @@ def _build_full_payload(
 
 
 def _build_chunk_payload(
+    app: DatacronApp,
     note: Note,
     chunk: Chunk,
     *,
@@ -1264,18 +1728,28 @@ def _build_chunk_payload(
 ) -> dict[str, Any]:
     return {
         "format": "chunk",
-        "chunk_id": chunk.chunk_id,
+        "chunk_id": _redact_retrieval_text(app, chunk.chunk_id),
         "note_id": chunk.note_id,
-        "rel_path": chunk.note_rel_path,
-        "title": sanitize_metadata_value(note.title),
-        "header_path": sanitize_metadata_value(chunk.header_path),
+        "rel_path": _redact_retrieval_text(app, chunk.note_rel_path),
+        "title": _sanitize_retrieval_metadata(app, note.title),
+        "header_path": _sanitize_retrieval_metadata(app, chunk.header_path),
         "line_start": chunk.line_start,
         "line_end": chunk.line_end,
-        "content": wrap_vault_content(chunk.note_rel_path, chunk.content),
+        "content": wrap_vault_content(
+            _redact_retrieval_text(app, chunk.note_rel_path),
+            _redact_retrieval_text(app, chunk.content),
+        ),
         "content_hash": note.content_hash,
+        "note_content_hash": note.content_hash,
+        "chunk_content_hash": chunk.content_hash,
+        "content_hash_contract": FRESHNESS_CONTRACT_ID,
         "estimated_tokens": chunk.token_count,
-        "prev_chunk_id": prev_chunk_id,
-        "next_chunk_id": next_chunk_id,
+        "prev_chunk_id": (
+            _redact_retrieval_text(app, prev_chunk_id) if prev_chunk_id is not None else None
+        ),
+        "next_chunk_id": (
+            _redact_retrieval_text(app, next_chunk_id) if next_chunk_id is not None else None
+        ),
     }
 
 
@@ -1290,17 +1764,21 @@ def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
         headings.append(
             {
                 "level": level,
-                "text": sanitize_metadata_value(
-                    chunk.section_title or chunk.content.lstrip("# ").strip()
+                "text": _sanitize_retrieval_metadata(
+                    app,
+                    chunk.section_title or chunk.content.lstrip("# ").strip(),
                 ),
-                "path": sanitize_metadata_value(chunk.header_path),
-                "chunk_id": chunk.chunk_id,
+                "path": _sanitize_retrieval_metadata(app, chunk.header_path),
+                "chunk_id": _redact_retrieval_text(app, chunk.chunk_id),
             }
         )
     return {
         "id": note.id,
-        "rel_path": note.rel_path,
-        "title": sanitize_metadata_value(note.title),
+        "rel_path": _redact_retrieval_text(app, note.rel_path),
+        "title": _sanitize_retrieval_metadata(app, note.title),
+        "content_hash": note.content_hash,
+        "note_content_hash": note.content_hash,
+        "content_hash_contract": FRESHNESS_CONTRACT_ID,
         "format": "map",
         "headings": headings,
         "chunk_count": len(chunks),
@@ -1324,7 +1802,7 @@ def _audit(tool: str, started: float, **fields: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sem 3 — search_text / search_regex / get_backlinks
+# Sem 3 -- search_text / search_regex / get_backlinks
 # ---------------------------------------------------------------------------
 
 
@@ -1351,6 +1829,11 @@ async def _search_text_impl(
             cleaned,
             limit=bounded_limit * TEMPORAL_OVERFETCH_FACTOR,
         )
+        raw_results = [
+            result
+            for result in raw_results
+            if app.scope.allows_rel_path(result.chunk.note_rel_path, "read")
+        ]
         temporal_meta = await app.store.list_temporal_metadata()
         raw_results = rerank_temporal(
             raw_results,
@@ -1365,8 +1848,8 @@ async def _search_text_impl(
         raw_results, max_tokens=app.settings.max_result_tokens
     )
     payload: dict[str, Any] = {
-        "query": cleaned,
-        "results": [_search_result_summary(r) for r in results],
+        "query": _redact_retrieval_text(app, cleaned),
+        "results": [_search_result_summary(app, result) for result in results],
         "returned": len(results),
         "limit_applied": bounded_limit,
         "truncated_for_tokens": truncated_for_tokens,
@@ -1415,14 +1898,20 @@ async def _search_regex_impl(
     bounded_limit = _bounded_count(limit, app.settings.max_result_count)
     try:
         repair = await _repair_index_on_read(app)
+        search_root = app.scope.authorize_path(app.vault_root, "read")
         raw_results = await app.ripgrep.search(
             pattern=pattern,
-            vault_root=app.vault_root,
+            vault_root=search_root,
             glob=glob,
             limit=bounded_limit,
             store=app.store,
             rg_path=app.settings.ripgrep_path,
         )
+        raw_results = [
+            result
+            for result in raw_results
+            if app.scope.allows_rel_path(result.chunk.note_rel_path, "read")
+        ]
     except FileNotFoundError as exc:
         return _error_response("search_regex", exc, started, pattern=pattern, glob=glob)
     except RipgrepError as exc:
@@ -1448,9 +1937,9 @@ async def _search_regex_impl(
         raw_results, max_tokens=app.settings.max_result_tokens
     )
     payload: dict[str, Any] = {
-        "pattern": pattern,
-        "glob": glob,
-        "results": [_search_result_summary(r) for r in results],
+        "pattern": _redact_retrieval_text(app, pattern),
+        "glob": _sanitize_optional_retrieval_metadata(app, glob),
+        "results": [_search_result_summary(app, result) for result in results],
         "returned": len(results),
         "limit_applied": bounded_limit,
         "truncated_for_tokens": truncated_for_tokens,
@@ -1499,7 +1988,7 @@ async def _get_backlinks_impl(
 
     if resolved_id is None:
         payload_unresolved: dict[str, Any] = {
-            "target": cleaned,
+            "target": _redact_retrieval_text(app, cleaned),
             "resolved_note_id": None,
             "results": [],
             "returned": 0,
@@ -1528,7 +2017,7 @@ async def _get_backlinks_impl(
         )
 
     payload: dict[str, Any] = {
-        "target": cleaned,
+        "target": _redact_retrieval_text(app, cleaned),
         "resolved_note_id": resolved_id,
         "results": sources,
         "returned": len(sources),
@@ -1569,15 +2058,19 @@ def _apply_token_budget(
     return kept, False
 
 
-def _search_result_summary(result: SearchResult) -> dict[str, Any]:
+def _search_result_summary(app: DatacronApp, result: SearchResult) -> dict[str, Any]:
     chunk = result.chunk
-    wrapped_snippet = wrap_vault_content(chunk.note_rel_path, result.snippet)
+    returned_rel_path = _redact_retrieval_text(app, chunk.note_rel_path)
+    wrapped_snippet = wrap_vault_content(
+        returned_rel_path,
+        _redact_retrieval_text(app, result.snippet),
+    )
     return {
-        "chunk_id": chunk.chunk_id,
+        "chunk_id": _redact_retrieval_text(app, chunk.chunk_id),
         "note_id": chunk.note_id,
-        "note_rel_path": chunk.note_rel_path,
-        "header_path": sanitize_metadata_value(chunk.header_path),
-        "section_title": _sanitize_optional_metadata(chunk.section_title),
+        "note_rel_path": returned_rel_path,
+        "header_path": _sanitize_retrieval_metadata(app, chunk.header_path),
+        "section_title": _sanitize_optional_retrieval_metadata(app, chunk.section_title),
         "chunk_type": chunk.chunk_type.value,
         "score": result.score,
         "snippet": wrapped_snippet,
@@ -1595,9 +2088,25 @@ async def _repair_index_on_read(app: DatacronApp) -> ReconcileStats:
     re-read+hash of every note. ``content_hash`` remains the authority on any
     note whose mtime moved.
     """
-    stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+    if not app.write_policy.writes_allowed:
+        indexed = await app.store.list_indexed_notes_with_mtime()
+        live = await app.vault_reader.stat_notes()
+        return {
+            "checked_notes": len(live),
+            "indexed_notes_before": len(indexed),
+            "reindexed_notes": 0,
+            "deleted_notes": 0,
+            "skipped_notes": len(live),
+        }
+    stats = await _reconcile_serialized(app)
     await _invalidate_alias_cache_if_index_changed(app, stats)
     return stats
+
+
+async def _reconcile_serialized(app: DatacronApp) -> ReconcileStats:
+    """Serialize transactions that share one aiosqlite connection."""
+    async with app.reconcile_lock:
+        return await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
 
 
 async def _invalidate_alias_cache_if_index_changed(app: DatacronApp, stats: ReconcileStats) -> None:
@@ -1608,6 +2117,8 @@ async def _invalidate_alias_cache_if_index_changed(app: DatacronApp, stats: Reco
 async def _resolve_backlink_target(app: DatacronApp, target: str) -> str | None:
     """Return a note_id from a ULID or an alias, or None if unresolved."""
     if _ULID_PATTERN.match(target):
+        # Keep the caller-supplied stable ID even after target deletion so
+        # scoped source chunks can still expose broken-backlink evidence.
         return target
     return await app.vault_reader.resolve_alias(target)
 
@@ -1631,6 +2142,8 @@ async def _find_backlink_sources(
     sources: list[dict[str, Any]] = []
 
     for chunk in await app.store.list_chunks_with_wikilinks():
+        if not app.scope.allows_rel_path(chunk.note_rel_path, "read"):
+            continue
         if chunk.note_id == target_note_id:
             continue
         if chunk.chunk_id in seen_chunk_ids:
@@ -1640,11 +2153,11 @@ async def _find_backlink_sources(
         seen_chunk_ids.add(chunk.chunk_id)
         sources.append(
             {
-                "source_chunk_id": chunk.chunk_id,
+                "source_chunk_id": _redact_retrieval_text(app, chunk.chunk_id),
                 "source_note_id": chunk.note_id,
-                "source_note_rel_path": chunk.note_rel_path,
-                "header_path": sanitize_metadata_value(chunk.header_path),
-                "section_title": _sanitize_optional_metadata(chunk.section_title),
+                "source_note_rel_path": _redact_retrieval_text(app, chunk.note_rel_path),
+                "header_path": _sanitize_retrieval_metadata(app, chunk.header_path),
+                "section_title": _sanitize_optional_retrieval_metadata(app, chunk.section_title),
             }
         )
         if len(sources) >= limit:
@@ -1674,5 +2187,18 @@ async def _chunk_links_to(
     return False
 
 
-def _sanitize_optional_metadata(value: str | None) -> str | None:
-    return sanitize_metadata_value(value) if value is not None else None
+def _redact_retrieval_text(app: DatacronApp, value: str) -> str:
+    if not app.secret_redactor.retrieval_enabled(app.settings):
+        return value
+    return app.secret_redactor.redact_text(value)
+
+
+def _sanitize_retrieval_metadata(app: DatacronApp, value: str) -> str:
+    return sanitize_metadata_value(_redact_retrieval_text(app, value))
+
+
+def _sanitize_optional_retrieval_metadata(
+    app: DatacronApp,
+    value: str | None,
+) -> str | None:
+    return _sanitize_retrieval_metadata(app, value) if value is not None else None

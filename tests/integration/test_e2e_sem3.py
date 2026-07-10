@@ -130,6 +130,9 @@ class TestSem3E2E:
             "search_text",
             "search_regex",
             "get_backlinks",
+            "revert_note",
+            "get_note_history",
+            "audit_query",
         } <= tool_names
 
     async def test_list_notes_returns_demo_vault(self, indexed_vault: Path, tmp_path: Path) -> None:
@@ -173,7 +176,7 @@ class TestSem3E2E:
         self, indexed_vault: Path, tmp_path: Path
     ) -> None:
         # The demo vault wires: important-note.md, subfolder/nested-thoughts.md
-        # → both link to [[Welcome]] (resolves via welcome.md's alias).
+        # Both link to [[Welcome]] (resolves via welcome.md's alias).
         session, streams = await _open_session(indexed_vault, tmp_path)
         try:
             result = await session.call_tool("get_backlinks", {"target": "Welcome", "limit": 20})
