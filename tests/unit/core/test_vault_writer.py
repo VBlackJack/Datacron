@@ -192,8 +192,6 @@ def test_atomic_durable_write_orders_file_replace_and_directory_fsync(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from datacron.core import vault_writer as module
-
     target = tmp_path / "note.md"
     target.write_bytes(b"old")
     events: list[str] = []
@@ -215,7 +213,7 @@ def test_atomic_durable_write_orders_file_replace_and_directory_fsync(
 
     monkeypatch.setattr("datacron.core.vault_writer.os.fsync", tracked_fsync)
     monkeypatch.setattr("datacron.core.vault_writer.os.replace", tracked_replace)
-    monkeypatch.setattr(module, "_fsync_directory", tracked_directory_fsync)
+    monkeypatch.setattr("datacron.core.durability.flush_directory_entry", tracked_directory_fsync)
 
     returned_hash = atomic_durable_write(target, b"new")
 

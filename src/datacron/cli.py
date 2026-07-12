@@ -83,6 +83,12 @@ mcp_app = typer.Typer(
 app.add_typer(mcp_app, name="mcp")
 
 
+@app.callback()
+def main() -> None:
+    """Configure process logging once at the CLI execution boundary."""
+    configure_logging()
+
+
 def _print(message: str) -> None:
     """Write to stdout via Typer (testable and stream-safe)."""
     typer.echo(message)
@@ -173,7 +179,6 @@ def init(
     ),
 ) -> None:
     """Initialize the ``.datacron/`` sidecar in a Markdown vault."""
-    configure_logging()
     started = _log_invocation("init", vault_path=str(vault_path), force=force)
 
     if not vault_path.exists():
@@ -216,7 +221,6 @@ def status(
     ),
 ) -> None:
     """Print vault metadata, note count, and index freshness."""
-    configure_logging()
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
     started = _log_invocation("status", vault=str(vault_root))
@@ -281,7 +285,6 @@ def index(
     vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
 ) -> None:
     """Build or refresh the FTS5 index for the vault."""
-    configure_logging()
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
     asyncio.run(_run_index(vault_root, drop_first=False))
@@ -292,7 +295,6 @@ def reindex(
     vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
 ) -> None:
     """Build, validate, and atomically publish a complete FTS5 replacement."""
-    configure_logging()
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
     asyncio.run(_run_index(vault_root, drop_first=True))
@@ -303,7 +305,6 @@ def scrub_init(
     vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
 ) -> None:
     """Explicitly create configured integrity canaries without overwriting any."""
-    configure_logging()
     base_settings = get_settings()
     vault_root = _resolve_vault_root(vault, base_settings)
     settings = _settings_for_cli_vault(base_settings, vault_root)
@@ -324,7 +325,6 @@ def scrub(
     vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
 ) -> None:
     """Run one configured, resumable, alert-only integrity scrub window."""
-    configure_logging()
     base_settings = get_settings()
     vault_root = _resolve_vault_root(vault, base_settings)
     settings = _settings_for_cli_vault(base_settings, vault_root)
@@ -443,7 +443,6 @@ def eval_(
     vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
 ) -> None:
     """Run the eval harness against the configured vault (Phase 0 Sem 4)."""
-    configure_logging()
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
     asyncio.run(_run_eval(vault_root, questions))
@@ -488,7 +487,6 @@ def mcp_serve(
     configured FileLogger; stdout is reserved for the MCP framing
     protocol.
     """
-    configure_logging()
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
     if not vault_root.is_dir():
@@ -527,7 +525,6 @@ def mcp_install(
     ),
 ) -> None:
     """Write the Datacron MCP server entry into a target client's config."""
-    configure_logging()
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
 
@@ -562,7 +559,6 @@ def mcp_entry() -> None:
     serve`` subcommand. Reads the vault root from ``DATACRON_VAULT_ROOT``
     (set by the installer) or falls back to the current directory.
     """
-    configure_logging()
     settings = get_settings()
     vault_root = _resolve_vault_root(None, settings)
     _LOGGER.info("datacron-mcp script entry starting (vault=%s)", vault_root)
