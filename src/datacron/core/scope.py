@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Literal, Protocol, final, runtime_checkable
 
@@ -36,6 +36,7 @@ __all__ = [
 
 AccessMode = Literal["read", "write"]
 NoteMutation = Callable[[str], str]
+NotePathLookup = Callable[[str], Awaitable[str | None]]
 
 
 @runtime_checkable
@@ -84,9 +85,19 @@ class SingleTenantVaultScope:
 class ScopedVaultReader:
     """Mediate every ``VaultReader`` filesystem operation through one scope."""
 
-    def __init__(self, delegate: VaultReader, scope: VaultScope) -> None:
+    def __init__(
+        self,
+        delegate: VaultReader,
+        scope: VaultScope,
+        note_path_lookup: NotePathLookup | None = None,
+    ) -> None:
         self._delegate = delegate
         self._scope = scope
+        self._note_path_lookup = note_path_lookup
+
+    def bind_note_path_lookup(self, lookup: NotePathLookup) -> None:
+        """Bind the existing index lookup used to authorize resolved note IDs."""
+        self._note_path_lookup = lookup
 
     async def read_note(self, path: Path) -> Note:
         resolved = self._scope.authorize_path(path, "read")
@@ -117,6 +128,10 @@ class ScopedVaultReader:
         resolved_id = await self._delegate.resolve_alias(alias)
         if resolved_id is None:
             return None
+        if self._note_path_lookup is not None:
+            rel_path = await self._note_path_lookup(resolved_id)
+            if rel_path is not None:
+                return resolved_id if self._scope.allows_rel_path(rel_path, "read") else None
         notes = await self.list_notes()
         return resolved_id if any(note.id == resolved_id for note in notes) else None
 
