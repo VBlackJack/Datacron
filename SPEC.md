@@ -170,24 +170,31 @@ Example: `01HQXR7K9YZ8M2N3PQRSTV4WX5::architecture/chunking::0003`
 
 ## 8. Audit log
 
-All Datacron operations append to `.datacron/audit/YYYY-MM-DD.ndjson`. One JSON object per line:
+Committed write operations append one JSON object per line to
+`.datacron/oplog/operations.jsonl`. Format version 2 records contain `prev_hash`, the
+SHA-256 hash of the preceding canonical JSONL record (`null` for the first record),
+forming a tamper-evident chain. Existing unversioned journals are migrated to version
+2 in one durable pass before their next append. Subsequent appends write and fsync only
+the new record; `audit_query` performs full-chain verification when it reads the
+journal.
 
 ```json
 {
-  "run_id": "2026-05-17T14-32-06Z_9f4d",
-  "ts": "2026-05-17T14:32:06+02:00",
-  "client": "claude-desktop",
-  "operation": "search_text",
-  "query_summary": "Kafka adoption risks (12 chars hash: a3b...)",
-  "result_count": 5,
-  "tokens_returned": 1042,
-  "latency_ms": 184
+  "format_version": 2,
+  "operation_id": "01J00000000000000000000042",
+  "timestamp": "2026-07-12T12:00:00.000000+00:00",
+  "prev_hash": null,
+  "op": "patch_section",
+  "tool": "patch_note_section",
+  "note_id": "01J00000000000000000000043",
+  "rel_path": "notes/example.md",
+  "before_hash": "<sha256>",
+  "after_hash": "<sha256>",
+  "actor": "mcp-client",
+  "parameters": {"heading": "Example"},
+  "history_stored": true
 }
 ```
-
-In MVP (read-only), audit logs every search and read for transparency and debugging.
-Write operations (post-v0.2) will add hash-before/hash-after, target paths, and human
-decision.
 
 ---
 
