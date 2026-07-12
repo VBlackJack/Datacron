@@ -1,14 +1,13 @@
 # Datacron — Architecture & Spec technique
 
-> **Statut** : v2.2 — Spec vivante synchronisée avec `integration/eval-fts5`
+> **Statut** : v2.2 — Spec vivante synchronisée avec `main`
 > **Auteur** : Julien Bombled
-> **Date** : 2026-05-17
+> **Date** : 2026-07-12
 > **Sources** :
-> - Deep-research initiaux : [`ChatGPT_deep-research-report.md`](ChatGPT_deep-research-report.md), [`Gemini_deep-research-report.md`](Gemini_deep-research-report.md)
-> - Cross-review v2.0 : [`Gemini_v2-review.md`](Gemini_v2-review.md), [`ChatGPT_v2-review.md`](ChatGPT_v2-review.md)
+> - Deep-research initiaux et cross-review v2.0 : archives locales non versionnées sous `local/docs-ai/`
 > - Arbitrage v2.1 : [`decisions-tranchees-v2.1.md`](decisions-tranchees-v2.1.md)
 > - Vérification empirique : Anthropic Help Center (Cowork = remote MCP only)
-> **Licence du code** : Apache 2.0 · **Code/comments** : English · **Documentation** : Français
+> **Licence du code** : Apache 2.0 · **Code/comments/docstrings** : English · **Guides et vues d'ensemble** : Français · **Contrats techniques** : English
 
 > 🔄 **Cette v2.1 remplace v2.0** après cross-review qui a pivoté 11 décisions sur 12.
 > Le scope du MVP a été divisé par 5 (4 semaines vs 20). Les détails de l'arbitrage sont
@@ -25,13 +24,13 @@ de tokens par rapport au dump de notes en contexte.
 Le socle livré reste volontairement **minimaliste** :
 
 1. **Couche vault** — Tout dossier de fichiers Markdown. Aucune migration requise.
-2. **Couche `.datacron/`** — Sidecar invisible (SQLite FTS5 index + ULID side-table + logs + backups).
+2. **Couche `.datacron/`** — Sidecar invisible (SQLite FTS5, ULID side-table, logs, historique et journal d'opérations).
 3. **Couche serveur MCP** — FastMCP Python custom, stdio. Read/search tools, write tools approuvés côté client, 3 resources.
 4. **Couche client** — Claude Desktop ou Claude Code via config locale.
 
-**Livré après le socle Phase 0 sur `integration/eval-fts5`** :
+**Livré sur `main` après le socle Phase 0** :
 - Query-expansion FR↔EN statique au moment de la recherche, configurée par `VAULT.yaml`.
-- Write tools Phase 1 : `create_note_ai` et `append_journal`, désactivés par défaut sans `DATACRON_WRITE_PATHS`, confinés, atomiques, avec backups.
+- Write tools : `create_note_ai`, `append_journal`, `set_frontmatter`, `patch_note_section` et `revert_note`, désactivés par défaut sans `DATACRON_WRITE_PATHS`, confinés, atomiques et historisés.
 - Temporal re-ranking conservateur : démotion explicite des notes supersédées et pénalité légère de confidence.
 
 **Toujours hors scope** :
@@ -78,8 +77,8 @@ Claude Desktop  /  Claude Code
 
 | Version | Ajout |
 |---|---|
-| v0.2 | Write tools Phase 1 livré : `create_note_ai`, `append_journal`, backups + confinement |
-| v0.3 | Mode tunnel : `datacron mcp serve --remote` pour Cowork via Cloudflare Tunnel + auth |
+| v0.2 | Write tools livrés : création, journal, frontmatter, patch et revert avec historique + confinement |
+| v0.3 | Mode tunnel futur pour Cowork via Cloudflare Tunnel + auth ; aucune commande livrée |
 | v0.4 | Embeddings + LanceDB *si* eval montre besoin |
 | v0.5 | Contextual Retrieval *si* eval v0.4 montre encore un gap |
 | v1.0 | Stabilisation + Homebrew tap + docs MkDocs |
@@ -133,15 +132,23 @@ flowchart TB
 
 ## 5. Catalogue MCP v1
 
-### 5.1 Tools (5)
+### 5.1 Tools (13)
 
-| Tool | Description | Implem |
-|---|---|---|
-| `list_notes(folder?, tags?, limit?)` | Liste paginée avec frontmatter | SQL on `.datacron/index/datacron.db` |
-| `get_note(id_or_path, format=full\|map)` | Note complète OU document-map (arbre headings) | FS read + AST parser |
-| `search_text(query, limit=20)` | BM25/FTS5 | SQLite FTS5 |
-| `search_regex(pattern, glob?, limit=20)` | Regex / symbols / stacktraces | ripgrep wrapper |
-| `get_backlinks(target)` | Wikilinks entrants | SQL on wikilinks side-table |
+| Groupe | Tool | Description | Implémentation |
+|---|---|---|---|
+| Lecture | `list_notes` | Liste paginée, filtrable par dossier et tags, avec identité et métadonnées. | VaultReader filesystem |
+| Lecture | `get_note` | Note par ULID, chunk id ou chemin ; contenu paginé, chunk ou plan de headings. | VaultReader + index de chunks |
+| Lecture | `search_text` | Recherche BM25 avec snippets classés et démotion des notes supersédées. | SQLite FTS5 |
+| Lecture | `search_regex` | Recherche regex, filtrable par glob, résolue vers les chunks indexés. | ripgrep + SQLite FTS5 |
+| Lecture | `get_backlinks` | Chunks dont les wikilinks ciblent un ULID ou un alias résolu. | Side-table wikilinks |
+| Écriture | `create_note_ai` | Création confinée d'une note `_memory`, sans overwrite et avec journal durable. | VaultWriter + operation log |
+| Écriture | `append_journal` | Ajout sous un heading avec historique exact et écriture atomique. | VaultWriter + operation log |
+| Écriture | `set_frontmatter` | Mise à jour des champs de cycle de vie en préservant le corps Markdown. | VaultWriter + frontmatter parser |
+| Écriture | `patch_note_section` | Remplacement CAS d'une section avec préservation des autres sections. | VaultWriter + operation log |
+| Écriture | `revert_note` | Restauration durable et réversible depuis l'historique adressé par contenu. | History store + VaultWriter |
+| Opérationnel | `get_health` | Fraîcheur, intégrité, checksum, durabilité et preuves d'invariants. | Health scanner read-only |
+| Opérationnel | `get_note_history` | Métadonnées d'opérations validées pour une note, sans lire le contenu historique. | Operation journal |
+| Opérationnel | `audit_query` | Requête read-only du journal par période, tool ou note. | Operation journal |
 
 ### 5.2 Resources (3)
 
@@ -184,7 +191,7 @@ au moment de la recherche. Vectors ajoutés *si* eval mesure un gap persistant.
 ### ADR-005 — Write tools opt-in, confinés, réversibles
 Les écritures sont OFF par défaut. `DATACRON_WRITE_PATHS` active explicitement une allowlist
 d'écriture. `create_note_ai` ne clobber jamais ; `append_journal` est additif et déclenche
-un backup avant overwrite atomique.
+la conservation adressée par contenu de la version précédente avant écriture atomique.
 
 ### ADR-006 — Trust model 3 niveaux UX (L0-L5 backend)
 Le backend porte les métadonnées (`origin`, `confidence`, `last_verified`, `supersedes`).
@@ -250,50 +257,58 @@ minifié, base64, mono-ligne géant). Clôt l'item backlog P3 chunker.
 datacron/                              # GitHub: jbombled/datacron
 ├── README.md                          # Manifeste produit
 ├── SPEC.md                            # Internal vault conventions reference
+├── CHANGELOG.md                       # Changements non publiés
 ├── LICENSE                            # Apache 2.0
-├── pyproject.toml                     # 1 seul package Python (uv)
+├── pyproject.toml                     # Package Python unique
+├── uv.lock                            # Dépendances runtime + dev figées
 ├── src/datacron/
 │   ├── __init__.py                    # version, public API
 │   ├── cli.py                         # Typer entry point (`datacron`)
 │   ├── core/
 │   │   ├── config.py                  # Constants, env loading (zero hardcoding)
-│   │   ├── logger.py                  # FileLogger Python
+│   │   ├── durability.py              # Atomic writes + durability policy
+│   │   ├── logger.py                  # FileLogger explicite aux entrypoints
+│   │   ├── operation_log.py           # Historique et journal durable
 │   │   ├── paths.py                   # Path confinement enforcement
 │   │   ├── hashing.py                 # SHA256 + ULID
 │   │   ├── frontmatter.py             # YAML parser (python-frontmatter)
 │   │   ├── temporal.py                # Temporal retrieval re-ranking
-│   │   └── vault_writer.py            # Confined atomic write primitive
+│   │   └── vault_writer.py            # Transactions de notes confinées
 │   ├── mcp/
 │   │   ├── server.py                  # FastMCP entry (`datacron mcp serve`)
-│   │   ├── tools.py                   # Read/search tools + approved write tools
+│   │   ├── tools.py                   # 13 tools read/write/ops
 │   │   ├── resources.py               # 3 resources
+│   │   ├── health.py                  # Operational health payload
 │   │   └── sandbox.py                 # Content wrapping + escaping
 │   ├── indexing/
 │   │   ├── chunker.py                 # AST-based Markdown chunker
 │   │   ├── fts5_store.py              # SQLite FTS5 wrapper
+│   │   ├── rebuild.py                  # Offline atomic reindex
+│   │   ├── reconcile.py                # Incremental reconciliation
 │   │   ├── ripgrep.py                 # subprocess wrapper
 │   │   └── wikilinks.py               # graph extraction
 │   ├── eval/
 │   │   └── harness.py                 # 30-question eval framework
-│   └── installers/
-│       └── claude_desktop.py          # config writer
+│   ├── installers/
+│   │   └── claude_desktop.py          # config writer
+│   ├── reliability.py                 # Read-only reliability scan
+│   └── scrubber.py                    # Resumable integrity scrubber
 ├── tests/
 ├── docs/
 │   ├── ARCHITECTURE.md                # Ce document
 │   ├── decisions-tranchees-v2.1.md
-│   ├── Gemini_v2-review.md
-│   ├── ChatGPT_v2-review.md
-│   ├── ChatGPT_deep-research-report.md
-│   ├── Gemini_deep-research-report.md
-│   ├── architecture-overview.svg
-│   └── user-guide/
+│   ├── freshness-contract-v1.md
+│   ├── integrity-scrubber.md
+│   ├── operational-health.md
+│   ├── security-boundary.md
+│   └── architecture-overview.svg
 ├── examples/
-│   └── demo-vault/                    # Vault d'exemple pour onboarding
+│   └── eval-questions.example.yaml
 ├── scripts/
-│   └── release.sh                     # bash-standards compliant
-├── .github/workflows/
-│   ├── ci.yml                         # ruff + mypy + pytest + shellcheck
-│   └── release.yml                    # PyPI publish on tag
+│   ├── audit_excluded_notes.py
+│   ├── check_invariants.py
+│   └── reliability_scan.py
+├── .github/workflows/ci.yml           # ruff + mypy + pytest + shellcheck
 └── .gitignore
 ```
 
@@ -337,7 +352,7 @@ sequenceDiagram
 | Exfiltration cross-tool | Datacron + autre tool MCP coordonnent malicieusement | Resource declarations explicites, pas de tool "execute arbitrary" |
 | Audit | Pas de traçabilité | NDJSON append-only sur chaque appel |
 | Écriture accidentelle | Datacron modifie un fichier non prévu | `DATACRON_WRITE_PATHS` obligatoire, confinement strict, writes OFF par défaut |
-| Perte de contenu | Overwrite destructif | Backup horodaté dans `.datacron/backups/` + écriture atomique temp/replace |
+| Perte de contenu | Overwrite destructif | Historique adressé par contenu + écriture atomique temp/replace |
 | Privacy LLM cloud | Chunks partent chez Anthropic via Claude | Documenté honnêtement dans README "What leaves your machine" |
 
 ---
@@ -392,9 +407,9 @@ recall@10 0.95, recall@20 0.95, precision 0.32.
 - Pas de `try/except: pass`. Log + re-raise.
 - `@final` decorator où inheritance non prévue.
 
-**Bash** (`scripts/release.sh` et autres) :
-- Template bash-standards : shebang `env bash`, `set -euo pipefail`, logging fns, dry-run, trap, prereqs, getopts, `--help`.
-- `shellcheck` clean en CI.
+**Scripts** :
+- Utilitaires Python sous `scripts/` pour les invariants, la fiabilité et l'audit des exclusions.
+- Le job ShellCheck de la CI vérifie explicitement l'absence ou la conformité de futurs scripts shell.
 
 ---
 
@@ -428,5 +443,5 @@ recall@10 0.95, recall@20 0.95, precision 0.32.
 
 ---
 
-*Document v2.2 synchronisé le 2026-06-30 avec la branche `integration/eval-fts5`. Les
+*Document v2.2 synchronisé le 2026-07-12 avec `main`. Les
 rapports de recherche et décisions v2.1 restent des archives d'arbitrage.*
