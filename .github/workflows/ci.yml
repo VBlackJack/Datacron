@@ -46,14 +46,14 @@ jobs:
 
       - name: Install project
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install uv==0.11.3
+          uv sync --frozen --extra dev --python "${{ matrix.python-version }}"
 
       - name: Blocking invariant gate
-        run: python scripts/check_invariants.py
+        run: uv run --frozen --extra dev python scripts/check_invariants.py
 
       - name: Full regression suite with coverage
-        run: pytest --cov=datacron --cov-report=term-missing
+        run: uv run --frozen --extra dev pytest --cov=datacron --cov-report=term-missing
 
   shellcheck:
     name: ShellCheck

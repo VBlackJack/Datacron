@@ -17,9 +17,14 @@ from __future__ import annotations
 
 import os
 import platform
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, final
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
 
 from datacron.core.config import Settings
 from datacron.core.logger import get_logger
@@ -117,122 +122,123 @@ def probe_directory_durability(path: Path) -> DurabilityStatus:
     return DurabilityStatus(backend=backend, directory_flush_supported=supported)
 
 
-def flush_directory_entry(path: Path) -> bool:
-    """Flush directory metadata through the native platform primitive."""
-    if os.name == "nt":
+if sys.platform == "win32":
+
+    def flush_directory_entry(path: Path) -> bool:
+        """Flush directory metadata through the native Windows primitive."""
         return _flush_windows_directory(path)
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    directory_fd = os.open(path, flags)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
-    return True
 
+    def _filesystem_backend(path: Path) -> str:
+        return _windows_filesystem_name(path)
 
-def _filesystem_backend(path: Path) -> str:
-    if os.name != "nt":
+else:
+
+    def flush_directory_entry(path: Path) -> bool:
+        """Flush directory metadata through the native POSIX primitive."""
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_fd = os.open(path, flags)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        return True
+
+    def _filesystem_backend(path: Path) -> str:
         return f"{platform.system().lower()}-filesystem"
-    return _windows_filesystem_name(path)
 
 
-def _windows_filesystem_name(path: Path) -> str:
-    import ctypes  # noqa: PLC0415
-    from ctypes import wintypes  # noqa: PLC0415
+if sys.platform == "win32":
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    get_volume_path_name = kernel32.GetVolumePathNameW
-    get_volume_path_name.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
-    get_volume_path_name.restype = wintypes.BOOL
-    get_volume_information = kernel32.GetVolumeInformationW
-    get_volume_information.argtypes = [
-        wintypes.LPCWSTR,
-        wintypes.LPWSTR,
-        wintypes.DWORD,
-        wintypes.LPDWORD,
-        wintypes.LPDWORD,
-        wintypes.LPDWORD,
-        wintypes.LPWSTR,
-        wintypes.DWORD,
-    ]
-    get_volume_information.restype = wintypes.BOOL
+    def _windows_filesystem_name(path: Path) -> str:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        get_volume_path_name = kernel32.GetVolumePathNameW
+        get_volume_path_name.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        get_volume_path_name.restype = wintypes.BOOL
+        get_volume_information = kernel32.GetVolumeInformationW
+        get_volume_information.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+            wintypes.LPDWORD,
+            wintypes.LPDWORD,
+            wintypes.LPDWORD,
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+        ]
+        get_volume_information.restype = wintypes.BOOL
 
-    volume_path = ctypes.create_unicode_buffer(_WINDOWS_MAX_PATH)
-    if not get_volume_path_name(str(path), volume_path, len(volume_path)):
-        return "windows-unknown"
-    filesystem_name = ctypes.create_unicode_buffer(256)
-    serial = wintypes.DWORD()
-    max_component = wintypes.DWORD()
-    flags = wintypes.DWORD()
-    if not get_volume_information(
-        volume_path.value,
-        None,
-        0,
-        ctypes.byref(serial),
-        ctypes.byref(max_component),
-        ctypes.byref(flags),
-        filesystem_name,
-        len(filesystem_name),
-    ):
-        return "windows-unknown"
-    return filesystem_name.value.lower() or "windows-unknown"
+        volume_path = ctypes.create_unicode_buffer(_WINDOWS_MAX_PATH)
+        if not get_volume_path_name(str(path), volume_path, len(volume_path)):
+            return "windows-unknown"
+        filesystem_name = ctypes.create_unicode_buffer(256)
+        serial = wintypes.DWORD()
+        max_component = wintypes.DWORD()
+        flags = wintypes.DWORD()
+        if not get_volume_information(
+            volume_path.value,
+            None,
+            0,
+            ctypes.byref(serial),
+            ctypes.byref(max_component),
+            ctypes.byref(flags),
+            filesystem_name,
+            len(filesystem_name),
+        ):
+            return "windows-unknown"
+        return filesystem_name.value.lower() or "windows-unknown"
 
+    def _flush_windows_directory(path: Path) -> bool:
+        generic_write = 0x40000000
+        file_share_all = 0x00000001 | 0x00000002 | 0x00000004
+        open_existing = 3
+        file_flag_backup_semantics = 0x02000000
+        invalid_handle_value = wintypes.HANDLE(-1).value
 
-def _flush_windows_directory(path: Path) -> bool:
-    import ctypes  # noqa: PLC0415
-    from ctypes import wintypes  # noqa: PLC0415
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_file = kernel32.CreateFileW
+        create_file.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        ]
+        create_file.restype = wintypes.HANDLE
+        flush_file_buffers = kernel32.FlushFileBuffers
+        flush_file_buffers.argtypes = [wintypes.HANDLE]
+        flush_file_buffers.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
 
-    generic_write = 0x40000000
-    file_share_all = 0x00000001 | 0x00000002 | 0x00000004
-    open_existing = 3
-    file_flag_backup_semantics = 0x02000000
-    invalid_handle_value = wintypes.HANDLE(-1).value
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    create_file = kernel32.CreateFileW
-    create_file.argtypes = [
-        wintypes.LPCWSTR,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.LPVOID,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.HANDLE,
-    ]
-    create_file.restype = wintypes.HANDLE
-    flush_file_buffers = kernel32.FlushFileBuffers
-    flush_file_buffers.argtypes = [wintypes.HANDLE]
-    flush_file_buffers.restype = wintypes.BOOL
-    close_handle = kernel32.CloseHandle
-    close_handle.argtypes = [wintypes.HANDLE]
-    close_handle.restype = wintypes.BOOL
-
-    handle = create_file(
-        str(path),
-        generic_write,
-        file_share_all,
-        None,
-        open_existing,
-        file_flag_backup_semantics,
-        None,
-    )
-    if handle == invalid_handle_value:
-        error = ctypes.get_last_error()
-        _LOGGER.warning(
-            "CreateFileW could not open directory %s for flush: winerror=%s",
-            path,
-            error,
+        handle = create_file(
+            str(path),
+            generic_write,
+            file_share_all,
+            None,
+            open_existing,
+            file_flag_backup_semantics,
+            None,
         )
-        return False
-    try:
-        if not flush_file_buffers(handle):
+        if handle == invalid_handle_value:
             error = ctypes.get_last_error()
             _LOGGER.warning(
-                "FlushFileBuffers failed for directory %s: winerror=%s",
+                "CreateFileW could not open directory %s for flush: winerror=%s",
                 path,
                 error,
             )
             return False
-        return True
-    finally:
-        close_handle(handle)
+        try:
+            if not flush_file_buffers(handle):
+                error = ctypes.get_last_error()
+                _LOGGER.warning(
+                    "FlushFileBuffers failed for directory %s: winerror=%s",
+                    path,
+                    error,
+                )
+                return False
+            return True
+        finally:
+            close_handle(handle)
