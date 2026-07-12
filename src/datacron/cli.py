@@ -14,9 +14,8 @@
 """Datacron command-line entry point.
 
 The :data:`app` Typer instance is the ``datacron`` console script declared in
-``pyproject.toml``. The Phase-0 Sem-1 scope only ships ``init`` and ``status``
-as fully wired commands; the remaining subcommands are registered but raise
-``typer.Exit`` until the relevant modules land.
+``pyproject.toml``. It exposes vault lifecycle, indexing, integrity, evaluation,
+and MCP server management commands.
 """
 
 from __future__ import annotations
@@ -482,10 +481,9 @@ def mcp_serve(
     """Run the FastMCP stdio server.
 
     Reads MCP JSON-RPC messages from stdin and replies on stdout. The
-    server exposes the Sem-2 read-only catalog: ``list_notes``,
-    ``get_note``, and the three vault resources. Logs go to the
-    configured FileLogger; stdout is reserved for the MCP framing
-    protocol.
+    server exposes the registered read, write, and operational tools plus
+    the three vault resources. Logs go to the configured FileLogger;
+    stdout is reserved for the MCP framing protocol.
     """
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
