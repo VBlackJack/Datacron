@@ -272,13 +272,6 @@ async def _index_status_label(db_path: Path) -> str:
     return "empty -- run `datacron index`"
 
 
-def _not_implemented(command: str, since: str) -> NoReturn:
-    _error(
-        f"`datacron {command}` is not implemented yet -- planned for {since}. "
-        "Run `datacron --help` for available commands."
-    )
-
-
 @app.command()
 def index(
     vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
@@ -420,15 +413,6 @@ async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
         drop_first,
         duration_ms,
     )
-
-
-@app.command(name="ask")
-def ask(
-    question: str = typer.Argument(..., help="Question to send through the local tools."),
-) -> None:
-    """CLI fallback that exercises the MCP tool surface (Phase 0 Sem 3-4)."""
-    _ = question
-    _not_implemented("ask", since="Sem 3-4 (depends on mcp/tools.py)")
 
 
 @app.command(name="eval")

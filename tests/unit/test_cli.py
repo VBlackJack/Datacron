@@ -131,19 +131,6 @@ class TestStatus:
         assert " chunks)" in result.stdout
 
 
-class TestStubs:
-    """Commands still pending in Sem 4. ``index`` / ``reindex`` / ``mcp install``
-    moved to their own test classes once they were wired in Sem 3."""
-
-    @pytest.mark.parametrize("cmd", [["ask", "anything"]])
-    def test_stub_exits_with_error(self, runner: CliRunner, cmd: list[str]) -> None:
-        result = runner.invoke(app, cmd)
-        assert result.exit_code == 1
-        assert "not implemented" in result.stderr.lower() or "not implemented" in (
-            result.stdout.lower()
-        )
-
-
 class TestIndex:
     def test_index_builds_fts5_store_on_demo_vault(
         self, runner: CliRunner, tmp_vault: Path
