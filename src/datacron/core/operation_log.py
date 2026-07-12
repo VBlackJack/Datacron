@@ -28,6 +28,7 @@ from datacron.core.config import (
     OPLOG_PENDING_DIR_NAME,
     SIDECAR_DIR_NAME,
 )
+from datacron.core.durability import atomic_durable_write, durable_flush_directory
 from datacron.core.hashing import sha256_bytes
 
 JsonScalar: TypeAlias = str | int | float | bool | None
@@ -317,13 +318,9 @@ def _parse_records(data: bytes) -> list[OperationRecord]:
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
-    from datacron.core.vault_writer import atomic_durable_write  # noqa: PLC0415
-
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_durable_write(path, data)
 
 
 def _durable_flush_directory(path: Path) -> None:
-    from datacron.core.vault_writer import durable_flush_directory  # noqa: PLC0415
-
     durable_flush_directory(path)
