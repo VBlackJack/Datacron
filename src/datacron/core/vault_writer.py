@@ -21,12 +21,18 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Final, final
 from uuid import uuid4
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 from datacron.core.config import SIDECAR_DIR_NAME, Settings, VaultConfig
 from datacron.core.durability import (
@@ -559,17 +565,11 @@ class FilesystemVaultWriter:
             if lock_file.tell() == 0:
                 lock_file.write(b"\x00")
                 lock_file.flush()
-            if os.name == "nt":
-                _lock_windows_file(lock_file)
-            else:
-                _lock_posix_file(lock_file)
+            _lock_file(lock_file)
             try:
                 yield
             finally:
-                if os.name == "nt":
-                    _unlock_windows_file(lock_file)
-                else:
-                    _unlock_posix_file(lock_file)
+                _unlock_file(lock_file)
 
     @staticmethod
     def _lock_key(target: Path) -> str:
@@ -683,47 +683,40 @@ def _fsync_directory(path: Path) -> bool:
     return flush_directory_entry(path)
 
 
-def _lock_windows_file(lock_file: object) -> None:
-    import msvcrt  # noqa: PLC0415
+if sys.platform == "win32":
 
-    file_handle = lock_file
-    if not hasattr(file_handle, "fileno") or not hasattr(file_handle, "seek"):
-        raise TypeError("lock file must expose fileno and seek")
-    file_handle.seek(0)
-    while True:
-        try:
-            msvcrt.locking(file_handle.fileno(), msvcrt.LK_NBLCK, 1)
-            return
-        except OSError as exc:
-            if exc.errno not in {errno.EACCES, errno.EDEADLK}:
-                raise
-            time.sleep(_LOCK_RETRY_SECONDS)
+    def _lock_file(lock_file: object) -> None:
+        file_handle = lock_file
+        if not hasattr(file_handle, "fileno") or not hasattr(file_handle, "seek"):
+            raise TypeError("lock file must expose fileno and seek")
+        file_handle.seek(0)
+        while True:
+            try:
+                msvcrt.locking(file_handle.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError as exc:
+                if exc.errno not in {errno.EACCES, errno.EDEADLK}:
+                    raise
+                time.sleep(_LOCK_RETRY_SECONDS)
 
+    def _unlock_file(lock_file: object) -> None:
+        file_handle = lock_file
+        if not hasattr(file_handle, "fileno") or not hasattr(file_handle, "seek"):
+            raise TypeError("lock file must expose fileno and seek")
+        file_handle.seek(0)
+        msvcrt.locking(file_handle.fileno(), msvcrt.LK_UNLCK, 1)
 
-def _unlock_windows_file(lock_file: object) -> None:
-    import msvcrt  # noqa: PLC0415
+else:
 
-    file_handle = lock_file
-    if not hasattr(file_handle, "fileno") or not hasattr(file_handle, "seek"):
-        raise TypeError("lock file must expose fileno and seek")
-    file_handle.seek(0)
-    msvcrt.locking(file_handle.fileno(), msvcrt.LK_UNLCK, 1)
+    def _lock_file(lock_file: object) -> None:
+        if not hasattr(lock_file, "fileno"):
+            raise TypeError("lock file must expose fileno")
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
 
-
-def _lock_posix_file(lock_file: object) -> None:
-    import fcntl  # noqa: PLC0415
-
-    if not hasattr(lock_file, "fileno"):
-        raise TypeError("lock file must expose fileno")
-    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # type: ignore[attr-defined]
-
-
-def _unlock_posix_file(lock_file: object) -> None:
-    import fcntl  # noqa: PLC0415
-
-    if not hasattr(lock_file, "fileno"):
-        raise TypeError("lock file must expose fileno")
-    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
+    def _unlock_file(lock_file: object) -> None:
+        if not hasattr(lock_file, "fileno"):
+            raise TypeError("lock file must expose fileno")
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _conformance_check(writer: VaultWriter) -> None:

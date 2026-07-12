@@ -162,7 +162,7 @@ class TestEnvLoading:
         ("field", "value"),
         [
             ("scrub_checkpoint_path", "../checkpoint.json"),
-            ("scrub_canary_dir", "C:/outside"),
+            ("scrub_canary_dir", None),
             ("scrub_canaries", {"../outside.md": "unsafe"}),
             ("scrub_notes_per_second", 0),
             ("scrub_max_duration_seconds", 0),
@@ -170,9 +170,12 @@ class TestEnvLoading:
     )
     def test_scrub_settings_reject_unsafe_or_zero_values(
         self,
+        tmp_path: Path,
         field: str,
         value: object,
     ) -> None:
+        if field == "scrub_canary_dir":
+            value = tmp_path.resolve()
         with pytest.raises(ValidationError):
             Settings.model_validate({field: value})
 
