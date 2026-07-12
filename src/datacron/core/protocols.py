@@ -147,6 +147,10 @@ class FTS5Store(Protocol):
         """Return all chunks whose indexed wikilink list is non-empty."""
         ...
 
+    async def get_note_rel_path(self, note_id: str) -> str | None:
+        """Return the indexed vault-relative path for ``note_id``, if present."""
+        ...
+
     async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
         """Return ``rel_path -> (note_id, content_hash)`` for index freshness checks."""
         ...
