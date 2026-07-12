@@ -311,6 +311,21 @@ async def test_upsert_replaces_existing_chunks(
     await store.close()
 
 
+async def test_get_note_rel_path_uses_indexed_identity(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+) -> None:
+    note = note_factory(id=_NOTE_ID, rel_path="folder/welcome.md")
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+
+    await store.upsert_note(note, [])
+
+    assert await store.get_note_rel_path(note.id) == note.rel_path
+    assert await store.get_note_rel_path(_OTHER_NOTE_ID) is None
+    await store.close()
+
+
 async def test_delete_note_removes_note_chunks_and_ulid_path(
     tmp_path: Path,
     note_factory: NoteFactory,
