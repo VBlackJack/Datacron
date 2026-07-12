@@ -661,4 +661,6 @@ def _conformance_check(writer: VaultWriter) -> None:
     _ = writer
 
 
-_conformance_check(FilesystemVaultWriter(Path("."), Settings()))
+def _assert_conformance() -> None:
+    """Static check only -- never invoked at runtime."""
+    _conformance_check(FilesystemVaultWriter(Path(), Settings()))
