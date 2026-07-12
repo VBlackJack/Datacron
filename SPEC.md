@@ -39,9 +39,17 @@ my-vault/
 │   ├── VAULT.yaml                   # vault-level metadata
 │   ├── index/                       # SQLite FTS5 index + ULID side-table
 │   │   └── datacron.db
-│   ├── logs/                        # FileLogger output
-│   │   └── datacron_YYYYMMDD.log
-│   └── policy.yaml                  # optional vault-local policy override
+│   ├── history/                     # content-addressed prior note bytes
+│   │   └── <sha256>
+│   ├── oplog/                       # committed and pending write evidence
+│   │   ├── operations.jsonl
+│   │   └── pending/
+│   │       └── <operation-id>.json
+│   ├── scrubber/                    # integrity checkpoint and canaries
+│   │   ├── checkpoint.json
+│   │   └── canaries/
+│   ├── logs/                        # reserved vault-local log directory
+│   └── ulids.json                   # stable IDs for notes without frontmatter IDs
 ├── … the user's notes, in any structure …
 ```
 
@@ -100,8 +108,7 @@ audit_run_id: 2026-05-17T15-58-12Z_a3c2
 That's it. No `status`, no `trust_level` exposed in the frontmatter — those live in
 the audit log and policy engine.
 
-**Existing notes are never retroactively modified** unless the user explicitly runs
-`datacron normalize`, which is opt-in and never auto-triggered.
+**Existing notes are never retroactively normalized.** Datacron ships no normalization command.
 
 ---
 
