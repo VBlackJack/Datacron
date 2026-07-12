@@ -18,15 +18,18 @@ from __future__ import annotations
 import os
 import platform
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, final
+from uuid import uuid4
 
 if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
 
 from datacron.core.config import Settings
+from datacron.core.hashing import sha256_bytes
 from datacron.core.logger import get_logger
 
 __all__ = [
@@ -34,12 +37,15 @@ __all__ = [
     "DurabilityUnavailableError",
     "ReadOnlyModeError",
     "WritePolicy",
+    "atomic_durable_write",
+    "durable_flush_directory",
     "flush_directory_entry",
     "probe_directory_durability",
 ]
 
 _LOGGER = get_logger(__name__)
 _WINDOWS_MAX_PATH: Final[int] = 32768
+FaultInjector = Callable[[str], None]
 
 
 class ReadOnlyModeError(PermissionError):
@@ -48,6 +54,71 @@ class ReadOnlyModeError(PermissionError):
 
 class DurabilityUnavailableError(PermissionError):
     """Raised when strict mode cannot prove directory-entry durability."""
+
+
+def atomic_durable_write(
+    path: Path,
+    data: bytes,
+    *,
+    fault_injector: FaultInjector | None = None,
+) -> str:
+    """Atomically replace ``path`` with durable exact ``data`` and return its SHA-256.
+
+    The caller must create ``path.parent`` first. The temporary file is always a
+    sibling so the replacement stays on one filesystem. On Windows, directory
+    flushing uses a Win32 directory handle because ``os.open`` rejects directories.
+    A target-file fsync is the logged degraded fallback for filesystems that reject
+    directory flushing.
+    """
+    temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    _inject(fault_injector, "before_temp_open")
+    try:
+        with temp_path.open("xb") as temp_file:
+            _inject(fault_injector, "after_temp_open")
+            temp_file.write(data)
+            _inject(fault_injector, "after_temp_write")
+            temp_file.flush()
+            _inject(fault_injector, "after_temp_flush")
+            os.fsync(temp_file.fileno())
+            _inject(fault_injector, "after_temp_fsync")
+
+        os.replace(temp_path, path)
+        _inject(fault_injector, "after_replace")
+        if not _flush_directory_or_false(path.parent):
+            _fsync_file(path)
+            _LOGGER.warning(
+                "Parent-directory fsync unavailable for %s; used degraded target-file fsync",
+                path,
+            )
+        _inject(fault_injector, "after_directory_fsync")
+    finally:
+        temp_path.unlink(missing_ok=True)
+    return sha256_bytes(data)
+
+
+def durable_flush_directory(path: Path) -> None:
+    """Durably flush directory metadata, with the documented Windows fallback."""
+    if not _flush_directory_or_false(path):
+        _LOGGER.warning("Directory fsync unavailable for metadata update under %s", path)
+
+
+def _flush_directory_or_false(path: Path) -> bool:
+    try:
+        return flush_directory_entry(path)
+    except OSError as exc:
+        _LOGGER.warning("Directory fsync failed for %s: %s", path, exc)
+        return False
+
+
+def _fsync_file(path: Path) -> None:
+    # Windows requires a writable handle for os.fsync/FlushFileBuffers.
+    with path.open("r+b") as file_handle:
+        os.fsync(file_handle.fileno())
+
+
+def _inject(fault_injector: FaultInjector | None, point: str) -> None:
+    if fault_injector is not None:
+        fault_injector(point)
 
 
 @dataclass(frozen=True)
