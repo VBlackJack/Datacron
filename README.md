@@ -6,11 +6,12 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)](pyproject.toml)
 [![MCP: local stdio](https://img.shields.io/badge/MCP-local_stdio-purple)](#mcp-tools)
+[![CI](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml/badge.svg)](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml)
 
 Datacron indexe un dossier de notes Markdown, expose un serveur MCP local, puis renvoie
 au client les notes ou chunks pertinents au lieu d'un dump complet. Le vault reste un
 dossier Markdown normal : Datacron ajoute seulement un sidecar `.datacron/` pour l'index,
-les logs, les ULID internes et les backups.
+les logs, les ULID internes, l'historique et le journal d'opérations.
 
 ## Ce qui est en place
 
@@ -19,7 +20,7 @@ les logs, les ULID internes et les backups.
 | Lecture vault | `list_notes`, `get_note`, resources `datacron://vault/map`, `vault/info`, `policy/active` |
 | Recherche | SQLite FTS5/BM25, query-expansion FR↔EN, re-rank temporel, `ripgrep` via `search_regex` |
 | Graphe local | Wikilinks et backlinks via `get_backlinks` |
-| Écriture | `create_note_ai` et `append_journal`, désactivés par défaut sans `DATACRON_WRITE_PATHS` |
+| Écriture | 5 tools confinés et réversibles, désactivés par défaut sans `DATACRON_WRITE_PATHS` |
 | Index | `datacron index` incrémental, `datacron reindex` complet, réparation automatique à la lecture |
 | Évaluation | `datacron eval` avec recall@k, precision, latence et tokens |
 | Clients testés | Claude Desktop via installateur, Claude Code via serveur stdio |
@@ -129,12 +130,15 @@ Tools d'écriture disponibles :
 
 - `create_note_ai` : crée une note Markdown typée, sans overwrite.
 - `append_journal` : ajoute une entrée sous un heading d'une note existante.
+- `set_frontmatter` : met à jour les champs de cycle de vie sans modifier le corps Markdown.
+- `patch_note_section` : remplace le contenu sous un heading existant avec contrôle CAS.
+- `revert_note` : restaure les octets exacts d'une version conservée dans l'historique.
 
 Garanties :
 
 - confinement strict dans `DATACRON_WRITE_PATHS`
 - overwrite atomique via fichier temporaire + `os.replace`
-- backup horodaté sous `.datacron/backups/` avant modification d'une note existante
+- historique adressé par contenu avant modification d'une note existante
 - `reconcile()` après write pour rendre la note immédiatement cherchable
 - audit log local
 
@@ -143,15 +147,33 @@ single-writer sur le vault.
 
 ## MCP Tools
 
+### Lecture
+
 | Tool | Description |
 |---|---|
-| `list_notes` | liste les notes, filtrable par dossier et tags |
-| `get_note` | lit une note par ULID, chemin relatif ou chunk id ; formats `full` et `map` |
-| `search_text` | recherche BM25 avec query-expansion et re-rank temporel |
-| `search_regex` | recherche regex via ripgrep, avec résolution vers chunks indexés |
-| `get_backlinks` | trouve les chunks qui pointent vers une note ou un alias |
-| `create_note_ai` | crée une note Markdown typée, si writes activés |
-| `append_journal` | ajoute une entrée sous un heading, si writes activés |
+| `list_notes` | retourne une liste paginée, filtrable par dossier et tags, avec ULID, titre, tags, alias et dates |
+| `get_note` | lit une note par ULID, chunk id ou chemin relatif, en contenu paginé, chunk ou plan de headings |
+| `search_text` | effectue une recherche BM25 sur l'index FTS5 avec snippets classés et notes obsolètes démotées par défaut |
+| `search_regex` | effectue une recherche regex via ripgrep et résout les lignes trouvées vers les chunks indexés |
+| `get_backlinks` | retourne les chunks dont les wikilinks ciblent un ULID ou un alias résolu |
+
+### Écriture
+
+| Tool | Description |
+|---|---|
+| `create_note_ai` | crée une nouvelle note `_memory` typée, confinée aux chemins autorisés, sans overwrite et avec journal durable |
+| `append_journal` | ajoute une entrée Markdown sous un heading, avec confinement, historique exact et écriture atomique |
+| `set_frontmatter` | modifie uniquement les champs de cycle de vie et la date `updated`, en préservant le corps Markdown |
+| `patch_note_section` | remplace le contenu d'un heading existant avec CAS, historique exact et préservation des autres sections |
+| `revert_note` | restaure une note depuis son historique adressé par contenu ; l'opération reste durable, réversible et auditée |
+
+### Opérationnel
+
+| Tool | Description |
+|---|---|
+| `get_health` | retourne l'état réel de fraîcheur de l'index, d'intégrité, de checksum, de durabilité et des invariants |
+| `get_note_history` | liste les métadonnées d'opérations validées d'une note sans lire le contenu historique ni modifier le journal |
+| `audit_query` | interroge les métadonnées d'opérations par période, tool ou note sans modifier le journal ni le vault |
 
 Resources MCP :
 
@@ -190,7 +212,9 @@ datacron init /path/to/vault
 datacron status --vault /path/to/vault
 datacron index --vault /path/to/vault
 datacron reindex --vault /path/to/vault
-datacron eval --questions local/golden-julien.yaml --vault /path/to/vault
+datacron scrub-init --vault /path/to/vault
+datacron scrub --vault /path/to/vault
+datacron eval --questions examples/eval-questions.example.yaml --vault /path/to/vault
 datacron mcp serve --vault /path/to/vault
 datacron mcp install --client claude-desktop --vault /path/to/vault
 ```
@@ -204,6 +228,14 @@ datacron mcp install --client claude-desktop --vault /path/to/vault
 - L'installateur automatique ne cible aujourd'hui que Claude Desktop. Les autres clients MCP
   peuvent utiliser `datacron mcp serve` ou `datacron-mcp` en stdio si leur configuration le permet.
 
+## Documentation
+
+- [Architecture et surface publique](docs/ARCHITECTURE.md)
+- [Frontière de sécurité](docs/security-boundary.md)
+- [Scrubber d'intégrité](docs/integrity-scrubber.md)
+- [Santé opérationnelle et durabilité](docs/operational-health.md)
+- [Contrat de fraîcheur](docs/freshness-contract-v1.md)
+
 ## Développement
 
 ```bash
@@ -212,15 +244,6 @@ ruff check .
 ruff format --check .
 mypy
 pytest
-```
-
-Dernier état vérifié sur cette branche :
-
-```text
-387 passed
-ruff OK
-ruff format --check OK
-mypy --strict OK
 ```
 
 ## Licence
