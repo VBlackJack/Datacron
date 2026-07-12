@@ -4,8 +4,7 @@
 > **Auteur** : Julien Bombled (synthèse arbitrée par Claude)
 > **Date** : 2026-05-17
 > **Sources de cross-review** :
-> - [`Gemini_v2-review.md`](./Gemini_v2-review.md)
-> - [`ChatGPT_v2-review.md`](./ChatGPT_v2-review.md)
+> - Archives locales non versionnées sous `local/docs-ai/`
 > - Vérification web Anthropic docs (Cowork = remote MCP only)
 > **Remplace** : ARCHITECTURE.md v2.0 (qui devient v2.1 après patch)
 
@@ -93,7 +92,7 @@ Les deux modèles ont produit des verdicts indépendants. Cette v2.1 est le **r�
 - Datacron **lit n'importe quel vault Markdown sans migration**. Aucune note existante n'est forcée à se conformer à DVS.
 - Les `id` ULID, `content_hash`, et métadonnées Datacron sont stockés en **side-metadata dans `.datacron/`**, pas dans le frontmatter des notes existantes.
 - DVS frontmatter n'est écrit **que sur les notes que Datacron crée**.
-- Une commande `datacron normalize` est disponible pour migrer un vault vers DVS, mais c'est opt-in jamais automatique.
+- Aucune commande de normalisation n'est livrée ; le vault existant reste inchangé.
 - Les "dossiers réservés" deviennent **configurables** dans `.datacron/VAULT.yaml` — l'utilisateur peut mapper `_inbox/` sur son propre `00-Inbox/` PARA s'il le souhaite.
 - **DVS n'est pas marketé comme une "open spec"** (contrarian take ChatGPT, retenu). Le fichier `SPEC.md` reste documentation interne de référence. Si la demande communautaire émerge, on l'extraira en `jbombled/datacron-spec` plus tard.
 
@@ -260,7 +259,7 @@ Le repo reste prêt à accueillir `crates/datacron-studio/` quand on construira 
 
 **Post-MVP** (débloqué par usage v0.1.0) :
 - v0.2 : write tools (`append_journal`, `create_draft_note`) + Git snapshot
-- v0.3 : tunnel HTTPS pour Cowork (`datacron mcp serve --remote`)
+- v0.3 : tunnel HTTPS futur pour Cowork, sans commande livrée à ce jour
 - v0.4 : embeddings + LanceDB si eval Phase 0 montre besoin
 - v0.5 : Contextual Retrieval si eval v0.4 montre encore un gap
 - v1.0 : stabilisation + docs MkDocs + Homebrew tap
