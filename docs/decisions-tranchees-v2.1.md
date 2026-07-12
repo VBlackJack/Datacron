@@ -327,8 +327,7 @@ CLI :
   • datacron index                   → build/rebuild index
   • datacron reindex                 → force full reindex
   • datacron mcp serve               → start FastMCP server (stdio)
-  • datacron mcp install --client <claude-desktop|claude-code> → write client config
-  • datacron ask "..." [--client]    → CLI fallback that exercises the same tools
+  • datacron mcp install --client claude-desktop → write client config
   • datacron eval                    → run eval harness on test questions
 ```
 
