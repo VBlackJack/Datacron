@@ -152,9 +152,21 @@ def shutdown_logging() -> None:
             listener.stop()
             for handler in listener.handlers:
                 try:
-                    handler.flush()
+                    try:
+                        handler.flush()
+                    except ValueError:
+                        # CliRunner and other embedders may close their captured stderr
+                        # before Datacron tears down the StreamHandler that references it.
+                        stream = getattr(handler, "stream", None)
+                        if stream is None or not getattr(stream, "closed", False):
+                            raise
                 finally:
-                    handler.close()
+                    try:
+                        handler.close()
+                    except ValueError:
+                        stream = getattr(handler, "stream", None)
+                        if stream is None or not getattr(stream, "closed", False):
+                            raise
 
 
 def get_logger(name: str) -> logging.Logger:
