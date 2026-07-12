@@ -317,7 +317,7 @@ async def test_prop_strict_mode_fails_closed(
     shutdown_logging()
     configure_logging(best_settings)
     monkeypatch.setattr(
-        "datacron.core.vault_writer._fsync_directory",
+        "datacron.core.durability.flush_directory_entry",
         lambda _path: False,
     )
     best_app = build_app(
