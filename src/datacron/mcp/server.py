@@ -270,11 +270,13 @@ async def run_stdio(
     settings: Settings | None = None,
     vault_root: Path,
 ) -> None:
-    """Configure logging, build the server, and run the stdio loop.
+    """Configure logging once at the server boundary and run the stdio loop.
 
     This is what ``datacron mcp serve`` and the ``datacron-mcp`` script
-    entry call. The coroutine returns when the client disconnects or the
-    runtime is interrupted.
+    entry call. Keeping configuration here instead of :func:`build_app`
+    preserves side-effect-free composition in tests and library consumers.
+    The coroutine returns when the client disconnects or the runtime is
+    interrupted.
     """
     resolved_settings = settings or get_settings()
     configure_logging(resolved_settings)
