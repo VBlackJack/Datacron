@@ -18,6 +18,10 @@ Format: ``[YYYY-MM-DD HH:MM:SS] [LEVEL] message``. One file per day in
 ``~/.datacron/logs/``). A background :class:`QueueListener` drains records to
 the file and to stderr (WARNING and above). All loggers obtained via
 :func:`get_logger` route through the same queue.
+
+Importing this module or calling :func:`get_logger` never configures logging.
+Until an entrypoint calls :func:`configure_logging`, ``datacron.*`` loggers have
+no handlers of their own and propagate to Python's standard root logger.
 """
 
 from __future__ import annotations
@@ -173,12 +177,10 @@ def get_logger(name: str) -> logging.Logger:
     """Return a logger under the ``datacron`` namespace.
 
     ``name`` is typically ``__name__``; it is normalized so that any caller
-    inside the ``datacron`` package shares the configured handlers without
-    duplicating output.
+    inside the ``datacron`` package shares explicitly configured handlers
+    without duplicating output. This function never parses settings, creates
+    files, or starts the queue listener.
     """
-    if not _configured:
-        configure_logging()
-
     if name.startswith(f"{_ROOT_LOGGER_NAME}."):
         logger_name = name
     elif name == _ROOT_LOGGER_NAME:
