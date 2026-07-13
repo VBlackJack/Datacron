@@ -1,0 +1,40 @@
+{
+  "provider": "claim-decomposition-rules-v1",
+  "rules_path": "local/eval-contradiction/claim-decomp-rules.json",
+  "corpus_path": "local/eval-contradiction/corpus.json",
+  "labels_path": "local/eval-contradiction/labels.jsonl",
+  "synthetic_spec_path": "local/eval-contradiction/synthetic-spec.json",
+  "min_segment_chars": 18,
+  "max_segment_chars": 520,
+  "min_token_chars": 3,
+  "max_claims_per_note": 260,
+  "max_subject_note_frequency": 10,
+  "min_shared_subjects": 1,
+  "min_shared_subject_weight": 2.0,
+  "min_subject_overlap": 0.04,
+  "max_claim_pair_evaluations": 1200,
+  "max_matches_per_pair": 5,
+  "evidence_claim_sample_size": 25,
+  "compatible_scope_pairs": [
+    ["assertion", "activation"],
+    ["assertion", "obligation"],
+    ["assertion", "replacement_state"],
+    ["activation", "obligation"],
+    ["activation", "replacement_state"],
+    ["replacement_state", "value_threshold"]
+  ],
+  "conflict_weights": {
+    "polarity": 2.0,
+    "value_or_state": 1.8
+  },
+  "subject_overlap_weight": 2.0,
+  "shared_subject_weight_factor": 0.08,
+  "same_scope_bonus": 0.25,
+  "min_score": 2.75,
+  "full_min_score": 2.75,
+  "top_n": 2556,
+  "max_pool_pairs": 400,
+  "baseline_full_pool_recall": 0.20,
+  "cutoffs": [25, 50, 100, 200],
+  "trials": 3
+}

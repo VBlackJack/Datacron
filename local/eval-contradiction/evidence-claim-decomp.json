@@ -1,0 +1,7377 @@
+{
+  "schema_version": 1,
+  "measurement": "claim-decomposition-candidate-generation",
+  "measurement_date": "2026-07-13",
+  "provider": "claim-decomposition-rules-v1",
+  "model_id": null,
+  "prompt_sha256": null,
+  "inputs": {
+    "corpus": {
+      "path": "local/eval-contradiction/corpus.json",
+      "sha256": "c1dbfee8d4f1df41c34a9e06cd5d1eab9d3619816e2106e8d29e71de90fd1b42",
+      "notes": 72
+    },
+    "labels": {
+      "path": "local/eval-contradiction/labels.jsonl",
+      "sha256": "28c0a51aa2b72d4d2d6a50851c4197c8bec0fc5e0c634682da8f5a3d4815165c",
+      "pairs": 274
+    },
+    "synthetic_spec": {
+      "path": "local/eval-contradiction/synthetic-spec.json",
+      "sha256": "54f600d6f55145e0981dacb59dd0dcecaad0367b9fed27e19c3005d546c2dd44"
+    },
+    "config": {
+      "path": "local/eval-contradiction/claim-decomp-config.json",
+      "sha256": "7813fba3c61bbcd698241918a5cfb45709528357460d8d9beefd1fe9dae23649"
+    },
+    "rules": {
+      "path": "local/eval-contradiction/claim-decomp-rules.json",
+      "sha256": "6cd7b34e3c1a272ec53786aaa72ea1902338f7fc301856dc9fd6d213f2cf5368"
+    },
+    "provider_module": {
+      "path": "local/eval-contradiction/claim_decomp_candidates.py",
+      "sha256": "40f394228209b6a042ad4bb0327d1019bda0e4f8d44c970b54e781a7381d66d8"
+    }
+  },
+  "pool": {
+    "candidate_pairs": 357,
+    "all_possible_pairs": 2556,
+    "ratio_of_all_pairs": 0.1396713615023474,
+    "is_all_pairs": false
+  },
+  "recall_at_cutoffs": [
+    {
+      "cutoff": 25,
+      "retrieved": 25,
+      "synthetic_present": 1,
+      "synthetic_total": 20,
+      "synthetic_recall": 0.05,
+      "curation_present": 0,
+      "curation_total": 4
+    },
+    {
+      "cutoff": 50,
+      "retrieved": 50,
+      "synthetic_present": 1,
+      "synthetic_total": 20,
+      "synthetic_recall": 0.05,
+      "curation_present": 0,
+      "curation_total": 4
+    },
+    {
+      "cutoff": 100,
+      "retrieved": 100,
+      "synthetic_present": 3,
+      "synthetic_total": 20,
+      "synthetic_recall": 0.15,
+      "curation_present": 0,
+      "curation_total": 4
+    },
+    {
+      "cutoff": 200,
+      "retrieved": 200,
+      "synthetic_present": 10,
+      "synthetic_total": 20,
+      "synthetic_recall": 0.5,
+      "curation_present": 0,
+      "curation_total": 4
+    }
+  ],
+  "full_pool_recall": {
+    "synthetic_present": 11,
+    "synthetic_total": 20,
+    "synthetic_recall": 0.55,
+    "curation_present": 0,
+    "curation_total": 4,
+    "curation_recall": 0.0
+  },
+  "recall_by_stratum": {
+    "cutoffs": {
+      "25": [
+        {
+          "stratum": "activation_deactivation",
+          "present": 1,
+          "total": 5,
+          "recall": 0.2
+        },
+        {
+          "stratum": "obligation_interdiction",
+          "present": 0,
+          "total": 5,
+          "recall": 0.0
+        },
+        {
+          "stratum": "replacement_state",
+          "present": 0,
+          "total": 5,
+          "recall": 0.0
+        },
+        {
+          "stratum": "value_threshold",
+          "present": 0,
+          "total": 5,
+          "recall": 0.0
+        }
+      ],
+      "50": [
+        {
+          "stratum": "activation_deactivation",
+          "present": 1,
+          "total": 5,
+          "recall": 0.2
+        },
+        {
+          "stratum": "obligation_interdiction",
+          "present": 0,
+          "total": 5,
+          "recall": 0.0
+        },
+        {
+          "stratum": "replacement_state",
+          "present": 0,
+          "total": 5,
+          "recall": 0.0
+        },
+        {
+          "stratum": "value_threshold",
+          "present": 0,
+          "total": 5,
+          "recall": 0.0
+        }
+      ],
+      "100": [
+        {
+          "stratum": "activation_deactivation",
+          "present": 2,
+          "total": 5,
+          "recall": 0.4
+        },
+        {
+          "stratum": "obligation_interdiction",
+          "present": 0,
+          "total": 5,
+          "recall": 0.0
+        },
+        {
+          "stratum": "replacement_state",
+          "present": 0,
+          "total": 5,
+          "recall": 0.0
+        },
+        {
+          "stratum": "value_threshold",
+          "present": 1,
+          "total": 5,
+          "recall": 0.2
+        }
+      ],
+      "200": [
+        {
+          "stratum": "activation_deactivation",
+          "present": 3,
+          "total": 5,
+          "recall": 0.6
+        },
+        {
+          "stratum": "obligation_interdiction",
+          "present": 1,
+          "total": 5,
+          "recall": 0.2
+        },
+        {
+          "stratum": "replacement_state",
+          "present": 3,
+          "total": 5,
+          "recall": 0.6
+        },
+        {
+          "stratum": "value_threshold",
+          "present": 3,
+          "total": 5,
+          "recall": 0.6
+        }
+      ]
+    },
+    "full_pool": [
+      {
+        "stratum": "activation_deactivation",
+        "present": 3,
+        "total": 5,
+        "recall": 0.6
+      },
+      {
+        "stratum": "obligation_interdiction",
+        "present": 1,
+        "total": 5,
+        "recall": 0.2
+      },
+      {
+        "stratum": "replacement_state",
+        "present": 4,
+        "total": 5,
+        "recall": 0.8
+      },
+      {
+        "stratum": "value_threshold",
+        "present": 3,
+        "total": 5,
+        "recall": 0.6
+      }
+    ]
+  },
+  "canary": {
+    "note_a": "_memory/facts/skills-architecture.md",
+    "note_b": "_memory/preferences/julien.md",
+    "present": false,
+    "rank": null,
+    "included_in_synthetic_metrics": false
+  },
+  "determinism": {
+    "identical": true,
+    "trials": [
+      {
+        "trial": 1,
+        "ranking_sha256": "8b740b16a77d5b13b233c9d8c9ca04c2c55a5b1294710c6fc8b80f7649b83eec",
+        "provider_ranking_sha256": "949c07fe9e733e689861cbf0964e583ff30257f6399253a16486b305ba81e35d",
+        "claim_extraction_sha256": "57801797d2eef8d6aeb867627364b19948cb9b2e355c8756b1ac239521c62121",
+        "latency_seconds": 20.613,
+        "claim_count": 4215,
+        "pool_pairs": 357
+      },
+      {
+        "trial": 2,
+        "ranking_sha256": "8b740b16a77d5b13b233c9d8c9ca04c2c55a5b1294710c6fc8b80f7649b83eec",
+        "provider_ranking_sha256": "949c07fe9e733e689861cbf0964e583ff30257f6399253a16486b305ba81e35d",
+        "claim_extraction_sha256": "57801797d2eef8d6aeb867627364b19948cb9b2e355c8756b1ac239521c62121",
+        "latency_seconds": 20.685,
+        "claim_count": 4215,
+        "pool_pairs": 357
+      },
+      {
+        "trial": 3,
+        "ranking_sha256": "8b740b16a77d5b13b233c9d8c9ca04c2c55a5b1294710c6fc8b80f7649b83eec",
+        "provider_ranking_sha256": "949c07fe9e733e689861cbf0964e583ff30257f6399253a16486b305ba81e35d",
+        "claim_extraction_sha256": "57801797d2eef8d6aeb867627364b19948cb9b2e355c8756b1ac239521c62121",
+        "latency_seconds": 20.684,
+        "claim_count": 4215,
+        "pool_pairs": 357
+      }
+    ]
+  },
+  "gates": {
+    "recall": {
+      "operator": ">",
+      "baseline_recall": 0.2,
+      "observed_recall": 0.55,
+      "present": 11,
+      "total": 20,
+      "pass": true
+    },
+    "budget": {
+      "operator": "<=",
+      "max_pool_pairs": 400,
+      "observed_pool_pairs": 357,
+      "pass": true
+    },
+    "lot10_eligible": true
+  },
+  "positive_coverage": [
+    {
+      "note_a": "_memory/facts/concurrent-agents-corrupt-git-shared-drive.md",
+      "note_b": "synthetic/syn-obligation-01.md",
+      "label_source": "synthetique",
+      "stratum": "obligation_interdiction",
+      "present": false,
+      "rank": null
+    },
+    {
+      "note_a": "_memory/facts/onecert-no-license-magellan.md",
+      "note_b": "synthetic/syn-obligation-02.md",
+      "label_source": "synthetique",
+      "stratum": "obligation_interdiction",
+      "present": true,
+      "rank": 128
+    },
+    {
+      "note_a": "_memory/facts/onecert-english-only.md",
+      "note_b": "synthetic/syn-obligation-03.md",
+      "label_source": "synthetique",
+      "stratum": "obligation_interdiction",
+      "present": false,
+      "rank": null
+    },
+    {
+      "note_a": "_memory/facts/skills-architecture.md",
+      "note_b": "synthetic/syn-obligation-04.md",
+      "label_source": "synthetique",
+      "stratum": "obligation_interdiction",
+      "present": false,
+      "rank": null
+    },
+    {
+      "note_a": "_memory/projects/datacron-karpathy-wiki-design.md",
+      "note_b": "synthetic/syn-obligation-05.md",
+      "label_source": "synthetique",
+      "stratum": "obligation_interdiction",
+      "present": false,
+      "rank": null
+    },
+    {
+      "note_a": "_memory/projects/heimdall-updater.md",
+      "note_b": "synthetic/syn-activation-01.md",
+      "label_source": "synthetique",
+      "stratum": "activation_deactivation",
+      "present": false,
+      "rank": null
+    },
+    {
+      "note_a": "_memory/projects/heimdall-per-profile-logging.md",
+      "note_b": "synthetic/syn-activation-02.md",
+      "label_source": "synthetique",
+      "stratum": "activation_deactivation",
+      "present": false,
+      "rank": null
+    },
+    {
+      "note_a": "_memory/projects/heimdall-master-password.md",
+      "note_b": "synthetic/syn-activation-03.md",
+      "label_source": "synthetique",
+      "stratum": "activation_deactivation",
+      "present": true,
+      "rank": 74
+    },
+    {
+      "note_a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "note_b": "synthetic/syn-activation-04.md",
+      "label_source": "synthetique",
+      "stratum": "activation_deactivation",
+      "present": true,
+      "rank": 6
+    },
+    {
+      "note_a": "_memory/projects/themeforge-magellan.md",
+      "note_b": "synthetic/syn-activation-05.md",
+      "label_source": "synthetique",
+      "stratum": "activation_deactivation",
+      "present": true,
+      "rank": 186
+    },
+    {
+      "note_a": "_memory/projects/heimdall-testenv.md",
+      "note_b": "synthetic/syn-value-01.md",
+      "label_source": "synthetique",
+      "stratum": "value_threshold",
+      "present": true,
+      "rank": 111
+    },
+    {
+      "note_a": "_memory/facts/onecert-nxlog-certificats.md",
+      "note_b": "synthetic/syn-value-02.md",
+      "label_source": "synthetique",
+      "stratum": "value_threshold",
+      "present": false,
+      "rank": null
+    },
+    {
+      "note_a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "note_b": "synthetic/syn-value-03.md",
+      "label_source": "synthetique",
+      "stratum": "value_threshold",
+      "present": true,
+      "rank": 57
+    },
+    {
+      "note_a": "_memory/projects/heimdall-master-password.md",
+      "note_b": "synthetic/syn-value-04.md",
+      "label_source": "synthetique",
+      "stratum": "value_threshold",
+      "present": true,
+      "rank": 116
+    },
+    {
+      "note_a": "_memory/facts/datacron-reliability-program-2026-07-10.md",
+      "note_b": "synthetic/syn-value-05.md",
+      "label_source": "synthetique",
+      "stratum": "value_threshold",
+      "present": false,
+      "rank": null
+    },
+    {
+      "note_a": "_memory/facts/datacron-reliability-program-2026-07-10.md",
+      "note_b": "synthetic/syn-state-01.md",
+      "label_source": "synthetique",
+      "stratum": "replacement_state",
+      "present": false,
+      "rank": null
+    },
+    {
+      "note_a": "_memory/projects/isoforge.md",
+      "note_b": "synthetic/syn-state-02.md",
+      "label_source": "synthetique",
+      "stratum": "replacement_state",
+      "present": true,
+      "rank": 130
+    },
+    {
+      "note_a": "_memory/facts/onecert-nxlog-certificats.md",
+      "note_b": "synthetic/syn-state-03.md",
+      "label_source": "synthetique",
+      "stratum": "replacement_state",
+      "present": true,
+      "rank": 215
+    },
+    {
+      "note_a": "_memory/projects/heimdall-testenv.md",
+      "note_b": "synthetic/syn-state-04.md",
+      "label_source": "synthetique",
+      "stratum": "replacement_state",
+      "present": true,
+      "rank": 110
+    },
+    {
+      "note_a": "_memory/projects/themeforge-magellan.md",
+      "note_b": "synthetic/syn-state-05.md",
+      "label_source": "synthetique",
+      "stratum": "replacement_state",
+      "present": true,
+      "rank": 187
+    },
+    {
+      "note_a": "_memory/facts/skills-architecture.md",
+      "note_b": "_memory/preferences/julien.md",
+      "label_source": "curation",
+      "stratum": null,
+      "present": false,
+      "rank": null
+    },
+    {
+      "note_a": "_memory/projects/datacron.md",
+      "note_b": "synthetic/syn-obligation-01.md",
+      "label_source": "curation",
+      "stratum": null,
+      "present": false,
+      "rank": null
+    },
+    {
+      "note_a": "_memory/projects/heimdall-release.md",
+      "note_b": "synthetic/syn-activation-01.md",
+      "label_source": "curation",
+      "stratum": null,
+      "present": false,
+      "rank": null
+    },
+    {
+      "note_a": "_memory/projects/onecert-windows.md",
+      "note_b": "synthetic/syn-state-03.md",
+      "label_source": "curation",
+      "stratum": null,
+      "present": false,
+      "rank": null
+    }
+  ],
+  "ranking": [
+    {
+      "rank": 1,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "score": 6.135386,
+      "shared_subjects": [
+        "command",
+        "ctrl+k",
+        "library",
+        "strict"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 2,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 6.135386,
+      "shared_subjects": [
+        "command",
+        "ctrl+k",
+        "fail",
+        "final",
+        "library"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 3,
+      "a": "_memory/projects/heimdall-context-menus.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 5.463048,
+      "shared_subjects": [
+        "contextuels",
+        "menus"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 4,
+      "a": "_memory/projects/win11forge.md",
+      "b": "synthetic/syn-activation-05.md",
+      "score": 5.306499,
+      "shared_subjects": [
+        "branding",
+        "feature",
+        "integration"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 5,
+      "a": "_memory/projects/heimdall-master-password.md",
+      "b": "_memory/projects/heimdall-parity-audit.md",
+      "score": 5.084187,
+      "shared_subjects": [
+        "anssi",
+        "lock",
+        "workspace"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 6,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "synthetic/syn-activation-04.md",
+      "score": 4.957073,
+      "shared_subjects": [
+        "cortex"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 7,
+      "a": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "b": "synthetic/syn-state-01.md",
+      "score": 4.896656,
+      "shared_subjects": [
+        "store"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 8,
+      "a": "_memory/projects/win11forge.md",
+      "b": "synthetic/syn-state-05.md",
+      "score": 4.869617,
+      "shared_subjects": [
+        "branding"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 9,
+      "a": "_memory/facts/onecert-nxlog-certificats.md",
+      "b": "_memory/projects/heimdall-updater.md",
+      "score": 4.776696,
+      "shared_subjects": [
+        "installer",
+        "lister"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 10,
+      "a": "synthetic/syn-activation-04.md",
+      "b": "synthetic/syn-value-03.md",
+      "score": 4.707073,
+      "shared_subjects": [
+        "cortex"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 11,
+      "a": "_memory/projects/defender-idle-clone.md",
+      "b": "_memory/projects/themeforge-magellan.md",
+      "score": 4.700525,
+      "shared_subjects": [
+        "effet"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 12,
+      "a": "_memory/facts/datacron-reliability-program-2026-07-10.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 4.689779,
+      "shared_subjects": [
+        "bilan",
+        "check",
+        "dette",
+        "runner"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 13,
+      "a": "_memory/projects/scrybe.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 4.683148,
+      "shared_subjects": [
+        "lit",
+        "logs",
+        "settings"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 14,
+      "a": "_memory/projects/objectifs-annuels-2026.md",
+      "b": "_memory/projects/onecert-windows-roadmap.md",
+      "score": 4.662516,
+      "shared_subjects": [
+        "roadmap"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 15,
+      "a": "_memory/projects/onecert-windows-roadmap.md",
+      "b": "_memory/projects/skills-portables-et-formateurs.md",
+      "score": 4.662516,
+      "shared_subjects": [
+        "roadmap"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 16,
+      "a": "_memory/projects/heimdall-release.md",
+      "b": "_memory/projects/themeforge-v2-dropin.md",
+      "score": 4.655741,
+      "shared_subjects": [
+        "attente",
+        "campagne"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 17,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/facts/datacron-reliability-program-2026-07-10.md",
+      "score": 4.640902,
+      "shared_subjects": [
+        "2026-07-10"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 18,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 4.639316,
+      "shared_subjects": [
+        "archi",
+        "command",
+        "final",
+        "force",
+        "refonte",
+        "testee"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 19,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 4.626806,
+      "shared_subjects": [
+        "assembly",
+        "dry-run",
+        "dryrun",
+        "props",
+        "toggle"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 20,
+      "a": "_memory/projects/objectifs-annuels-2026.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 4.625243,
+      "shared_subjects": [
+        "2026-07-08",
+        "adrien",
+        "christine",
+        "deploye",
+        "equipe",
+        "eric",
+        "hugo",
+        "observabilite",
+        "riyad",
+        "septembre",
+        "zach"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 21,
+      "a": "_memory/projects/heimdall-external-vault.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 4.622658,
+      "shared_subjects": [
+        "integration",
+        "logs",
+        "migration"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 22,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 4.610936,
+      "shared_subjects": [
+        "footer",
+        "log",
+        "transcript"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 23,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 4.594096,
+      "shared_subjects": [
+        "branding"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 24,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/heimdall-history.md",
+      "score": 4.586992,
+      "shared_subjects": [
+        "moteur",
+        "points",
+        "rendre",
+        "semantique"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 25,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/projects/charon.md",
+      "score": 4.585348,
+      "shared_subjects": [
+        "charon",
+        "fondation"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 26,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/datacron.md",
+      "score": 4.581362,
+      "shared_subjects": [
+        "semantique",
+        "suite",
+        "tag",
+        "zones"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 27,
+      "a": "_memory/facts/skills-architecture.md",
+      "b": "_memory/projects/expert-skills.md",
+      "score": 4.577336,
+      "shared_subjects": [
+        "skills"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 28,
+      "a": "_memory/facts/skills-architecture.md",
+      "b": "_memory/projects/magellan-agents-skills.md",
+      "score": 4.577336,
+      "shared_subjects": [
+        "architecture",
+        "extraction",
+        "skills"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 29,
+      "a": "_memory/facts/skills-architecture.md",
+      "b": "_memory/projects/skills-portables-et-formateurs.md",
+      "score": 4.577336,
+      "shared_subjects": [
+        "skills"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 30,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/projects/heimdall-parity-audit.md",
+      "score": 4.57244,
+      "shared_subjects": [
+        "contrat",
+        "segment"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 31,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/heimdall-parity-audit.md",
+      "score": 4.562333,
+      "shared_subjects": [
+        "contrat",
+        "investigation",
+        "ok.",
+        "rename",
+        "voir"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 32,
+      "a": "_memory/facts/datacron-reliability-program-2026-07-10.md",
+      "b": "_memory/projects/charon.md",
+      "score": 4.549712,
+      "shared_subjects": [
+        "branch",
+        "statut"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 33,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 4.549712,
+      "shared_subjects": [
+        "askuserquestion",
+        "ignore",
+        "lit",
+        "nav",
+        "statut"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 34,
+      "a": "_memory/projects/scrybe.md",
+      "b": "_memory/projects/themeforge-v2-dropin.md",
+      "score": 4.548856,
+      "shared_subjects": [
+        "apply",
+        "creee",
+        "injection",
+        "pousse"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 35,
+      "a": "_memory/projects/heimdall-master-password.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 4.548185,
+      "shared_subjects": [
+        "lock",
+        "sftp",
+        "terminal",
+        "vnc",
+        "vue"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 36,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 4.530924,
+      "shared_subjects": [
+        "affiche",
+        "flagge",
+        "migration",
+        "verte"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 37,
+      "a": "_memory/projects/ansible-gpo.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 4.530902,
+      "shared_subjects": [
+        "snc"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 38,
+      "a": "_memory/projects/expert-skills.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 4.518948,
+      "shared_subjects": [
+        "famille",
+        "gotcha",
+        "microsoft",
+        "save"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 39,
+      "a": "_memory/projects/defender-idle-clone.md",
+      "b": "_memory/projects/heimdall-master-password.md",
+      "score": 4.51765,
+      "shared_subjects": [
+        "idle",
+        "locked"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 40,
+      "a": "_memory/facts/onecert-nxlog-certificats.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 4.510068,
+      "shared_subjects": [
+        "export",
+        "gap",
+        "gui",
+        "pem",
+        "plugin"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 41,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "_memory/projects/skills-portables-et-formateurs.md",
+      "score": 4.504498,
+      "shared_subjects": [
+        "famille"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 42,
+      "a": "_memory/projects/heimdall.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 4.499233,
+      "shared_subjects": [
+        "nav",
+        "testee",
+        "verte"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 43,
+      "a": "_memory/projects/heimdall-release.md",
+      "b": "_memory/projects/heimdall-testenv.md",
+      "score": 4.486485,
+      "shared_subjects": [
+        "externe",
+        "ftp",
+        "heimdall.next",
+        "sftp"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 44,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 4.481405,
+      "shared_subjects": [
+        "clos",
+        "contrat",
+        "final",
+        "produit"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 45,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/heimdall-history.md",
+      "score": 4.481405,
+      "shared_subjects": [
+        "branches",
+        "migration",
+        "tag"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 46,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 4.481405,
+      "shared_subjects": [
+        "contrat",
+        "migration",
+        "tag"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 47,
+      "a": "_memory/projects/heimdall.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 4.481405,
+      "shared_subjects": [
+        "clos",
+        "final",
+        "positifs",
+        "sonde",
+        "verte."
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 48,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 4.474385,
+      "shared_subjects": [
+        "cert",
+        "connexion",
+        "off",
+        "phase"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 49,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/heimdall-cmdlib-ux.md",
+      "score": 4.469501,
+      "shared_subjects": [
+        "copie",
+        "map",
+        "search",
+        "strict"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 50,
+      "a": "_memory/projects/heimdall.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 4.453804,
+      "shared_subjects": [
+        "cert",
+        "clos",
+        "critical",
+        "gap",
+        "popup"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 51,
+      "a": "_memory/INIT.md",
+      "b": "_memory/projects/datacron.md",
+      "score": 4.433095,
+      "shared_subjects": [
+        "info",
+        "mcp",
+        "premier",
+        "search",
+        "write"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 52,
+      "a": "_memory/facts/datacron-reliability-program-2026-07-10.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 4.395798,
+      "shared_subjects": [
+        "branch",
+        "job",
+        "journal",
+        "statut"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 53,
+      "a": "_memory/projects/datacron-karpathy-wiki-design.md",
+      "b": "_memory/projects/defender-idle-clone.md",
+      "score": 4.369837,
+      "shared_subjects": [
+        "recherche"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 54,
+      "a": "_memory/projects/datacron-karpathy-wiki-design.md",
+      "b": "_memory/projects/skills-portables-et-formateurs.md",
+      "score": 4.369755,
+      "shared_subjects": [
+        "retrieval"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 55,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/heimdall-master-password.md",
+      "score": 4.354566,
+      "shared_subjects": [
+        "boucle",
+        "bout",
+        "bout.",
+        "vue",
+        "workspace",
+        "z-order"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 56,
+      "a": "_memory/facts/concurrent-agents-corrupt-git-shared-drive.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 4.347873,
+      "shared_subjects": [
+        "0-octet",
+        "fact",
+        "index.lock",
+        "residuel",
+        "supprime"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 57,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "synthetic/syn-value-03.md",
+      "score": 4.340238,
+      "shared_subjects": [
+        "cortex"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 58,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 4.329703,
+      "shared_subjects": [
+        "chantiers",
+        "drakul",
+        "heimdall.next",
+        "runtime",
+        "sombre"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 59,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/projects/datacron-karpathy-wiki-design.md",
+      "score": 4.317675,
+      "shared_subjects": [
+        "2026-07-10",
+        "cortex",
+        "llm"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 60,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/winsight.md",
+      "score": 4.28903,
+      "shared_subjects": [
+        "cf.",
+        "evident",
+        "winsight"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 61,
+      "a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 4.288726,
+      "shared_subjects": [
+        "commentaires",
+        "conventions",
+        "files",
+        "prepare.yml",
+        "proxy",
+        "roles",
+        "undefined",
+        "vars",
+        "worldline"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 62,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 4.282625,
+      "shared_subjects": [
+        "contrat"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 63,
+      "a": "_memory/projects/heimdall-master-password.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "score": 4.257542,
+      "shared_subjects": [
+        "crypto",
+        "dek",
+        "sftp"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 64,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 4.256881,
+      "shared_subjects": [
+        "archi",
+        "cross-review",
+        "max",
+        "read"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 65,
+      "a": "_memory/projects/themeforge.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 4.256881,
+      "shared_subjects": [
+        "archi",
+        "coherence",
+        "crlf",
+        "julien.",
+        "venir"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 66,
+      "a": "_memory/facts/concurrent-agents-corrupt-git-shared-drive.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 4.23903,
+      "shared_subjects": [
+        "residuel"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 67,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "_memory/projects/winsight.md",
+      "score": 4.23903,
+      "shared_subjects": [
+        "winsight"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 68,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 4.231405,
+      "shared_subjects": [
+        "migration",
+        "tag"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 69,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 4.185087,
+      "shared_subjects": [
+        "contrat",
+        "corriger",
+        "editeur",
+        "ftp",
+        "harness",
+        "headless",
+        "sftp"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 70,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 4.164545,
+      "shared_subjects": [
+        "env",
+        "hover",
+        "off",
+        "server",
+        "settings",
+        "systeme"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 71,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 4.152128,
+      "shared_subjects": [
+        "configs",
+        "dir",
+        "ini",
+        "key",
+        "log",
+        "messagebox",
+        "natif"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 72,
+      "a": "_memory/facts/onecert-nxlog-certificats.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 4.148311,
+      "shared_subjects": [
+        "acl",
+        "certifs",
+        "issuer",
+        "key",
+        "plugin"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 73,
+      "a": "_memory/projects/themeforge-v2-dropin.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 4.009444,
+      "shared_subjects": [
+        "packages",
+        "pat",
+        "read",
+        "themeforge.theme"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 74,
+      "a": "_memory/projects/heimdall-master-password.md",
+      "b": "synthetic/syn-activation-03.md",
+      "score": 3.859773,
+      "shared_subjects": [
+        "lock",
+        "security",
+        "workspace"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 75,
+      "a": "_memory/projects/heimdall.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 3.818172,
+      "shared_subjects": [
+        "2026-06-07",
+        "accent",
+        "enter",
+        "esc",
+        "proton.me",
+        "sombre",
+        "vblackjack",
+        "veryblackjack"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 76,
+      "a": "_memory/INIT.md",
+      "b": "_memory/preferences/julien.md",
+      "score": 3.718908,
+      "shared_subjects": [
+        "filesystem",
+        "mcp",
+        "memoire",
+        "preferences",
+        "write"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 77,
+      "a": "_memory/projects/heimdall-updater.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 3.687919,
+      "shared_subjects": [
+        "build.ps1",
+        "dist",
+        "heimdall-release.md",
+        "in-app",
+        "installer",
+        "settings",
+        "telecharger"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 78,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 3.675442,
+      "shared_subjects": [
+        "apache",
+        "standards",
+        "tag"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 79,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "score": 3.648152,
+      "shared_subjects": [
+        "attente",
+        "maj",
+        "tag"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 80,
+      "a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 3.644164,
+      "shared_subjects": [
+        "ansible",
+        "charge",
+        "conventions",
+        "lint",
+        "molecule",
+        "proxy",
+        "worldline"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 81,
+      "a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.624734,
+      "shared_subjects": [
+        "guide",
+        "min",
+        "vecu"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 82,
+      "a": "_memory/projects/onecert-windows.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 3.594163,
+      "shared_subjects": [
+        "apply",
+        "besoin",
+        "chocolatey",
+        "conventions",
+        "idempotent",
+        "ini",
+        "plan",
+        "reutilisables",
+        "worldline"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 83,
+      "a": "_memory/projects/heimdall-external-vault.md",
+      "b": "_memory/projects/heimdall-history.md",
+      "score": 3.516029,
+      "shared_subjects": [
+        "heimdall.app",
+        "migration",
+        "net10.0-windows",
+        "page"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 84,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.478356,
+      "shared_subjects": [
+        "accessibilite",
+        "borderbrush",
+        "borderthickness",
+        "passee",
+        "refonte",
+        "sections"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 85,
+      "a": "_memory/facts/datacron-reliability-program-2026-07-10.md",
+      "b": "_memory/projects/datacron-karpathy-wiki-design.md",
+      "score": 3.439963,
+      "shared_subjects": [
+        "2026-07-10",
+        "fiabilite",
+        "programme",
+        "statut"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 86,
+      "a": "_memory/projects/expert-skills.md",
+      "b": "_memory/projects/skills-portables-et-formateurs.md",
+      "score": 3.434517,
+      "shared_subjects": [
+        "famille",
+        "microsoft",
+        "skills"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 87,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.409463,
+      "shared_subjects": [
+        "crlf",
+        "fournir",
+        "julien.",
+        "retourner"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 88,
+      "a": "_memory/projects/heimdall-external-vault.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.409463,
+      "shared_subjects": [
+        "crlf",
+        "etc.",
+        "net10.0-windows",
+        "shell"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 89,
+      "a": "_memory/projects/heimdall-updater.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.409463,
+      "shared_subjects": [
+        "crlf"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 90,
+      "a": "_memory/projects/onecert-windows.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.409463,
+      "shared_subjects": [
+        "catalogue",
+        "crlf",
+        "packages"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 91,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "score": 3.40028,
+      "shared_subjects": [
+        "attente",
+        "maj",
+        "parity",
+        "reconnexion",
+        "retry",
+        "runbook"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 92,
+      "a": "_memory/projects/themeforge.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 3.386567,
+      "shared_subjects": [
+        "package",
+        "read",
+        "ses"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 93,
+      "a": "_memory/facts/skills-architecture.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 3.374058,
+      "shared_subjects": [
+        "2026-06-10"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 94,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/projects/datacron.md",
+      "score": 3.356081,
+      "shared_subjects": [
+        "contrat",
+        "cortex",
+        "mesure"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 95,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "_memory/projects/onecert-windows-roadmap.md",
+      "score": 3.355844,
+      "shared_subjects": [
+        "consumers",
+        "oscare",
+        "stores",
+        "zabbix"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 96,
+      "a": "_memory/projects/heimdall-release.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.355709,
+      "shared_subjects": [
+        "cadratin",
+        "final",
+        "min",
+        "read",
+        "restore",
+        "shell",
+        "tiret"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 97,
+      "a": "_memory/projects/heimdall-fr-truncation.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "score": 3.35319,
+      "shared_subjects": [
+        "25f2f5bc",
+        "hardening",
+        "no-ff",
+        "truncation"
+      ],
+      "conflict_types": [
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 98,
+      "a": "_memory/projects/win11forge.md",
+      "b": "_memory/projects/winsight.md",
+      "score": 3.329492,
+      "shared_subjects": [
+        "new",
+        "smoke",
+        "types",
+        "var"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 99,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.319876,
+      "shared_subjects": [
+        "changement",
+        "donne",
+        "julien.",
+        "read",
+        "suppression"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 100,
+      "a": "_memory/projects/heimdall-context-menus.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.319876,
+      "shared_subjects": [
+        "sonde",
+        "visuelle"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 101,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/datacron.md",
+      "score": 3.304502,
+      "shared_subjects": [
+        "agents",
+        "memoire",
+        "workflow"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 102,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/isoforge.md",
+      "score": 3.304502,
+      "shared_subjects": [
+        "workflow"
+      ],
+      "conflict_types": [
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 103,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/heimdall-testenv.md",
+      "score": 3.29803,
+      "shared_subjects": [
+        "connexion",
+        "heimdall.next",
+        "runtime"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 104,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/heimdall-history.md",
+      "score": 3.295311,
+      "shared_subjects": [
+        "command",
+        "inline",
+        "migration"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 105,
+      "a": "_memory/projects/heimdall-release.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 3.289451,
+      "shared_subjects": [
+        "french",
+        "heimdall.next",
+        "sftp",
+        "ssh",
+        "truncation",
+        "winrm"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 106,
+      "a": "_memory/projects/themeforge-v2-dropin.md",
+      "b": "_memory/projects/winsight.md",
+      "score": 3.267622,
+      "shared_subjects": [
+        "contre",
+        "v2.0"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 107,
+      "a": "_memory/projects/objectifs-annuels-2026.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 3.255695,
+      "shared_subjects": [
+        "ansible",
+        "conseil",
+        "guillaume",
+        "romain",
+        "yasmine"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 108,
+      "a": "_memory/projects/scrybe.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.254502,
+      "shared_subjects": [
+        "desormais",
+        "locale",
+        "runtime.",
+        "superviseur",
+        "venir"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 109,
+      "a": "_memory/projects/heimdall-fr-truncation.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 3.241105,
+      "shared_subjects": [
+        "button",
+        "french",
+        "prochaine",
+        "truncation"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 110,
+      "a": "_memory/projects/heimdall-testenv.md",
+      "b": "synthetic/syn-state-04.md",
+      "score": 3.239766,
+      "shared_subjects": [
+        "heimdall-testenv"
+      ],
+      "conflict_types": [
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 111,
+      "a": "_memory/projects/heimdall-testenv.md",
+      "b": "synthetic/syn-value-01.md",
+      "score": 3.239766,
+      "shared_subjects": [
+        "heimdall-testenv",
+        "vnc"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 112,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/onecert-windows-roadmap.md",
+      "score": 3.237421,
+      "shared_subjects": [
+        "chantiers"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 113,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 3.237421,
+      "shared_subjects": [
+        "heimdall.next"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 114,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 3.237421,
+      "shared_subjects": [
+        "chantiers"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 115,
+      "a": "_memory/projects/heimdall-per-profile-logging.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 3.236072,
+      "shared_subjects": [
+        "ssh",
+        "winrm"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 116,
+      "a": "_memory/projects/heimdall-master-password.md",
+      "b": "synthetic/syn-value-04.md",
+      "score": 3.234904,
+      "shared_subjects": [
+        "dek",
+        "security"
+      ],
+      "conflict_types": [
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 117,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.230801,
+      "shared_subjects": [
+        "retourner"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 118,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 3.230801,
+      "shared_subjects": [
+        "include",
+        "path.",
+        "suite",
+        "zabbix"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 119,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.230801,
+      "shared_subjects": [
+        "consommateur",
+        "controle",
+        "packages",
+        "pat"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 120,
+      "a": "_memory/projects/heimdall-master-password.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.230801,
+      "shared_subjects": [
+        "consommateur",
+        "statique",
+        "visuelle"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 121,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "score": 3.21535,
+      "shared_subjects": [
+        "heimdall.next"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 122,
+      "a": "_memory/projects/themeforge.md",
+      "b": "_memory/projects/winsight.md",
+      "score": 3.212178,
+      "shared_subjects": [
+        "types",
+        "var"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 123,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 3.212147,
+      "shared_subjects": [
+        "binding",
+        "oneway",
+        "phase",
+        "semantique"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 124,
+      "a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "b": "_memory/projects/objectifs-annuels-2026.md",
+      "score": 3.202763,
+      "shared_subjects": [
+        "ansible",
+        "charges",
+        "roles"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 125,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 3.181868,
+      "shared_subjects": [
+        "bloque",
+        "command",
+        "plateforme",
+        "refonte"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 126,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "synthetic/syn-value-01.md",
+      "score": 3.169603,
+      "shared_subjects": [
+        "environment",
+        "heimdall-testenv",
+        "vnc"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 127,
+      "a": "_memory/facts/onecert-nxlog-certificats.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 3.166445,
+      "shared_subjects": [
+        "acl",
+        "certificats",
+        "key",
+        "pem",
+        "plugin"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 128,
+      "a": "_memory/facts/onecert-no-license-magellan.md",
+      "b": "synthetic/syn-obligation-02.md",
+      "score": 3.160691,
+      "shared_subjects": [
+        "apache"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 129,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/projects/isoforge.md",
+      "score": 3.158444,
+      "shared_subjects": [
+        "isoforge",
+        "sections"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 130,
+      "a": "_memory/projects/isoforge.md",
+      "b": "synthetic/syn-state-02.md",
+      "score": 3.158444,
+      "shared_subjects": [
+        "isoforge"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 131,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/themeforge-magellan.md",
+      "score": 3.154216,
+      "shared_subjects": [
+        "runtime",
+        "themes"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 132,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/projects/themeforge-magellan.md",
+      "score": 3.154216,
+      "shared_subjects": [
+        "ok."
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 133,
+      "a": "_memory/projects/heimdall.md",
+      "b": "_memory/projects/themeforge-magellan.md",
+      "score": 3.154216,
+      "shared_subjects": [
+        "publie",
+        "runtime",
+        "themes"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 134,
+      "a": "_memory/projects/themeforge-magellan.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.154216,
+      "shared_subjects": [
+        "packages",
+        "themes"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 135,
+      "a": "_memory/projects/themeforge-magellan.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 3.154216,
+      "shared_subjects": [
+        "ok.",
+        "package"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 136,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.133395,
+      "shared_subjects": [
+        "couleurs",
+        "desormais",
+        "rester"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 137,
+      "a": "_memory/projects/scrybe.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 3.125786,
+      "shared_subjects": [
+        "besoin",
+        "chemins",
+        "implementation",
+        "sealed",
+        "sombre",
+        "standards"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 138,
+      "a": "_memory/projects/datacron.md",
+      "b": "synthetic/syn-activation-04.md",
+      "score": 3.124388,
+      "shared_subjects": [
+        "draft"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 139,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/expert-skills.md",
+      "score": 3.106909,
+      "shared_subjects": [
+        "experts",
+        "fond",
+        "server"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 140,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/skills-portables-et-formateurs.md",
+      "score": 3.099858,
+      "shared_subjects": [
+        "recall",
+        "retrieval"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 141,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/themeforge-v2-dropin.md",
+      "score": 3.099352,
+      "shared_subjects": [
+        "campagne",
+        "light",
+        "lit"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 142,
+      "a": "_memory/projects/datacron.md",
+      "b": "synthetic/syn-state-01.md",
+      "score": 3.096656,
+      "shared_subjects": [
+        "markdown",
+        "store"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 143,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "synthetic/syn-state-01.md",
+      "score": 3.096656,
+      "shared_subjects": [
+        "store"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 144,
+      "a": "_memory/projects/scrybe.md",
+      "b": "synthetic/syn-state-01.md",
+      "score": 3.096656,
+      "shared_subjects": [
+        "store"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 145,
+      "a": "_memory/projects/themeforge-v2-dropin.md",
+      "b": "synthetic/syn-state-01.md",
+      "score": 3.096656,
+      "shared_subjects": [
+        "store"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 146,
+      "a": "_memory/projects/win11forge.md",
+      "b": "synthetic/syn-state-01.md",
+      "score": 3.096656,
+      "shared_subjects": [
+        "store"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 147,
+      "a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "b": "_memory/preferences/julien.md",
+      "score": 3.090344,
+      "shared_subjects": [
+        "courbes",
+        "guillemets",
+        "prefixe"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 148,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/defender-idle-clone.md",
+      "score": 3.088596,
+      "shared_subjects": [
+        "bout",
+        "bout.",
+        "idle",
+        "supervise"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 149,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/projects/heimdall-master-password.md",
+      "score": 3.080423,
+      "shared_subjects": [
+        "contrat",
+        "lock"
+      ],
+      "conflict_types": [
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 150,
+      "a": "_memory/facts/concurrent-agents-corrupt-git-shared-drive.md",
+      "b": "_memory/facts/sandbox-mount-nul-artefact.md",
+      "score": 3.080218,
+      "shared_subjects": [
+        "corruption",
+        "nul"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 151,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/facts/onecert-english-only.md",
+      "score": 3.076848,
+      "shared_subjects": [
+        "produit"
+      ],
+      "conflict_types": [
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 152,
+      "a": "_memory/facts/onecert-english-only.md",
+      "b": "_memory/projects/datacron.md",
+      "score": 3.076848,
+      "shared_subjects": [
+        "produit"
+      ],
+      "conflict_types": [
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 153,
+      "a": "_memory/facts/onecert-english-only.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 3.076848,
+      "shared_subjects": [
+        "french",
+        "produit",
+        "user-facing"
+      ],
+      "conflict_types": [
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 154,
+      "a": "_memory/facts/onecert-english-only.md",
+      "b": "_memory/projects/onecert-windows-roadmap.md",
+      "score": 3.076848,
+      "shared_subjects": [
+        "produit"
+      ],
+      "conflict_types": [
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 155,
+      "a": "_memory/facts/onecert-english-only.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 3.076848,
+      "shared_subjects": [
+        "produit",
+        "prompts"
+      ],
+      "conflict_types": [
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 156,
+      "a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "b": "_memory/projects/datacron.md",
+      "score": 3.071339,
+      "shared_subjects": [
+        "files",
+        "user"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 157,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.070727,
+      "shared_subjects": [
+        "read",
+        "var"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 158,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/projects/datacron.md",
+      "score": 3.068846,
+      "shared_subjects": [
+        "archive",
+        "review"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 159,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/projects/onecert-windows-roadmap.md",
+      "score": 3.067486,
+      "shared_subjects": [
+        "event",
+        "log"
+      ],
+      "conflict_types": [
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 160,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/heimdall-history.md",
+      "score": 3.066355,
+      "shared_subjects": [
+        "classe",
+        "migration",
+        "override",
+        "string"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 161,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/heimdall-master-password.md",
+      "score": 3.066355,
+      "shared_subjects": [
+        "bridge",
+        "cable",
+        "migration",
+        "webview2"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 162,
+      "a": "_memory/projects/heimdall-release.md",
+      "b": "_memory/projects/heimdall-updater.md",
+      "score": 3.060895,
+      "shared_subjects": [
+        "build.ps1",
+        "core",
+        "installer",
+        "retry",
+        "telecharger",
+        "upload"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 163,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "_memory/projects/themeforge-magellan.md",
+      "score": 3.060151,
+      "shared_subjects": [
+        "branding",
+        "runtime",
+        "themes",
+        "voie"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 164,
+      "a": "_memory/facts/datacron-reliability-program-2026-07-10.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "score": 3.059705,
+      "shared_subjects": [
+        "branch",
+        "cosmetique",
+        "fiabilite"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 165,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/facts/worldline-ansible-windows-ci.md",
+      "score": 3.053672,
+      "shared_subjects": [
+        "charge",
+        "confluence",
+        "sources"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 166,
+      "a": "_memory/projects/heimdall-external-vault.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "score": 3.049015,
+      "shared_subjects": [
+        "2026-06-20",
+        "anti-deadlock",
+        "attente"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 167,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 3.04864,
+      "shared_subjects": [
+        "execution",
+        "lit",
+        "root"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 168,
+      "a": "_memory/facts/datacron-redteam-data-integrity.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 3.045288,
+      "shared_subjects": [
+        "coherence"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 169,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/ansible-gpo.md",
+      "score": 3.042535,
+      "shared_subjects": [
+        "policy"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 170,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/projects/charon-archive-lots.md",
+      "score": 3.039736,
+      "shared_subjects": [
+        "archive",
+        "briefs"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 171,
+      "a": "_memory/projects/heimdall-macro-expect.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 3.036729,
+      "shared_subjects": [
+        "enter",
+        "envoyer",
+        "ssh",
+        "terminal",
+        "winrm"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 172,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "score": 3.035676,
+      "shared_subjects": [
+        "passed",
+        "suite",
+        "tag"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 173,
+      "a": "_memory/projects/ansible-gpo.md",
+      "b": "_memory/projects/dts-pingcastle.md",
+      "score": 3.035581,
+      "shared_subjects": [
+        "dts-pingcastle"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 174,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/themeforge-magellan.md",
+      "score": 3.028043,
+      "shared_subjects": [
+        "tag"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 175,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/themeforge-magellan.md",
+      "score": 3.028043,
+      "shared_subjects": [
+        "tag"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 176,
+      "a": "_memory/facts/onecert-english-only.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 3.026848,
+      "shared_subjects": [
+        "gui",
+        "produit"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 177,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/winsight.md",
+      "score": 3.026848,
+      "shared_subjects": [
+        "cf.",
+        "cli"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 178,
+      "a": "_memory/projects/defender-idle-clone.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 3.024639,
+      "shared_subjects": [
+        "approuve",
+        "couche",
+        "idle"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 179,
+      "a": "_memory/projects/themeforge-magellan.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 3.021076,
+      "shared_subjects": [
+        "branding"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 180,
+      "a": "_memory/projects/heimdall-per-profile-logging.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 3.017232,
+      "shared_subjects": [
+        "transcript"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 181,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/projects/heimdall-testenv.md",
+      "score": 3.014689,
+      "shared_subjects": [
+        "ftp",
+        "heimdall-testenv",
+        "sftp",
+        "vnc"
+      ],
+      "conflict_types": [
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 182,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/heimdall-external-vault.md",
+      "score": 3.009142,
+      "shared_subjects": [
+        "integration",
+        "tag"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 183,
+      "a": "_memory/projects/heimdall-context-menus.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 3.003579,
+      "shared_subjects": [
+        "copie",
+        "pane",
+        "presse-papier",
+        "sftp",
+        "solution"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 184,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.989153,
+      "shared_subjects": [
+        "lit",
+        "raw",
+        "self-contained",
+        "win-x64"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 185,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 2.985772,
+      "shared_subjects": [
+        "approbation",
+        "premier",
+        "root",
+        "tester",
+        "tools"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 186,
+      "a": "_memory/projects/themeforge-magellan.md",
+      "b": "synthetic/syn-activation-05.md",
+      "score": 2.985227,
+      "shared_subjects": [
+        "branding"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 187,
+      "a": "_memory/projects/themeforge-magellan.md",
+      "b": "synthetic/syn-state-05.md",
+      "score": 2.985227,
+      "shared_subjects": [
+        "branding"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 188,
+      "a": "_memory/projects/scrybe.md",
+      "b": "_memory/projects/winsight.md",
+      "score": 2.985192,
+      "shared_subjects": [
+        "net10.0-windows",
+        "new",
+        "webview2",
+        "x64"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 189,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/heimdall-parity-audit.md",
+      "score": 2.981993,
+      "shared_subjects": [
+        "copie",
+        "dry-run",
+        "dryrun",
+        "inline",
+        "publish"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 190,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 2.976634,
+      "shared_subjects": [
+        "boucle",
+        "campagne",
+        "perimetre",
+        "tag"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 191,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.974552,
+      "shared_subjects": [
+        "avancement",
+        "idempotent",
+        "log"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 192,
+      "a": "_memory/projects/heimdall.md",
+      "b": "_memory/projects/winsight.md",
+      "score": 2.974439,
+      "shared_subjects": [
+        "superviseur"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 193,
+      "a": "_memory/projects/winsight.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.966677,
+      "shared_subjects": [
+        "tel"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 194,
+      "a": "_memory/facts/datacron-reliability-program-2026-07-10.md",
+      "b": "_memory/projects/datacron.md",
+      "score": 2.96561,
+      "shared_subjects": [
+        "passed",
+        "statut"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 195,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/datacron.md",
+      "score": 2.96561,
+      "shared_subjects": [
+        "classe",
+        "couverture",
+        "medium"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 196,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.964115,
+      "shared_subjects": [
+        "build.ps1",
+        "inline",
+        "publish"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 197,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/themeforge-v2-dropin.md",
+      "score": 2.962047,
+      "shared_subjects": [
+        "campagne"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 198,
+      "a": "_memory/projects/heimdall.md",
+      "b": "_memory/projects/themeforge-v2-dropin.md",
+      "score": 2.962047,
+      "shared_subjects": [
+        "campagne"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 199,
+      "a": "_memory/projects/magellan-agents-skills.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.962011,
+      "shared_subjects": [
+        "extraction"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 200,
+      "a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "b": "_memory/projects/defender-idle-clone.md",
+      "score": 2.955244,
+      "shared_subjects": [
+        "clone"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 201,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/defender-idle-clone.md",
+      "score": 2.955244,
+      "shared_subjects": [
+        "clone"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 202,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/charon.md",
+      "score": 2.948316,
+      "shared_subjects": [
+        "2026-06-13",
+        "briefs",
+        "head",
+        "lit",
+        "utilisent"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 203,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/projects/heimdall-history.md",
+      "score": 2.946563,
+      "shared_subjects": [
+        "annotation",
+        "legacy",
+        "normalisation",
+        "partagee",
+        "rendre"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 204,
+      "a": "_memory/facts/onecert-nxlog-certificats.md",
+      "b": "_memory/projects/heimdall-history.md",
+      "score": 2.946563,
+      "shared_subjects": [
+        "acl",
+        "applique",
+        "cert"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 205,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/themeforge-v2-dropin.md",
+      "score": 2.946563,
+      "shared_subjects": [
+        "identite",
+        "rendre",
+        "themes",
+        "verte"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 206,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 2.943744,
+      "shared_subjects": [
+        "visuelle"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 207,
+      "a": "_memory/projects/heimdall-testenv.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 2.943744,
+      "shared_subjects": [
+        "desormais"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 208,
+      "a": "_memory/facts/onecert-windows-test-sandbox.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.943391,
+      "shared_subjects": [
+        "apply",
+        "plan",
+        "pointer",
+        "tache",
+        "tester"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 209,
+      "a": "_memory/projects/scrybe.md",
+      "b": "_memory/projects/themeforge-magellan.md",
+      "score": 2.941865,
+      "shared_subjects": [
+        "runtime"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 210,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 2.941153,
+      "shared_subjects": [
+        "acl",
+        "key",
+        "pfx",
+        "plugin"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 211,
+      "a": "_memory/projects/heimdall-testenv.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 2.937851,
+      "shared_subjects": [
+        "127.0.0.1",
+        "connexion",
+        "ftp",
+        "runtime",
+        "sftp",
+        "ssh"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 212,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.935358,
+      "shared_subjects": [
+        "besoin",
+        "chemins",
+        "ok.",
+        "tester"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 213,
+      "a": "_memory/projects/datacron-karpathy-wiki-design.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.934645,
+      "shared_subjects": [
+        "implementation"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 214,
+      "a": "_memory/projects/heimdall-release.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.93395,
+      "shared_subjects": [
+        "1er",
+        "conservee",
+        "heimdall.next",
+        "publish"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 215,
+      "a": "_memory/facts/onecert-nxlog-certificats.md",
+      "b": "synthetic/syn-state-03.md",
+      "score": 2.933061,
+      "shared_subjects": [
+        "key",
+        "nxlog"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 216,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.931483,
+      "shared_subjects": [
+        "execute",
+        "mesure",
+        "produit",
+        "unicode"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 217,
+      "a": "_memory/projects/objectifs-annuels-2026.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.930687,
+      "shared_subjects": [
+        "adsec",
+        "ansible",
+        "deploye",
+        "fait.",
+        "guillaume",
+        "molecule"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 218,
+      "a": "_memory/preferences/gouts-musique.md",
+      "b": "_memory/projects/heimdall-cmdlib-ux.md",
+      "score": 2.928144,
+      "shared_subjects": [
+        "espace"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 219,
+      "a": "_memory/projects/datacron-karpathy-wiki-design.md",
+      "b": "_memory/projects/datacron.md",
+      "score": 2.924709,
+      "shared_subjects": [
+        "gates"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 220,
+      "a": "_memory/projects/heimdall-updater.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.921522,
+      "shared_subjects": [
+        "conflit",
+        "nettoyer",
+        "prets",
+        "prompts",
+        "settings",
+        "verte"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 221,
+      "a": "_memory/facts/profil-cognitif-julien.md",
+      "b": "_memory/INIT.md",
+      "score": 2.921093,
+      "shared_subjects": [
+        "fact",
+        "preferences"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 222,
+      "a": "_memory/projects/defender-idle-clone.md",
+      "b": "_memory/projects/onecert-windows-roadmap.md",
+      "score": 2.914935,
+      "shared_subjects": [
+        "roadmap"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 223,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 2.91007,
+      "shared_subjects": [
+        "volet"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 224,
+      "a": "_memory/projects/onecert-windows.md",
+      "b": "synthetic/syn-obligation-04.md",
+      "score": 2.91007,
+      "shared_subjects": [
+        "co-authored-by"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 225,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/heimdall-context-menus.md",
+      "score": 2.905153,
+      "shared_subjects": [
+        "bin",
+        "exe",
+        "onglets",
+        "soldes",
+        "statut"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 226,
+      "a": "_memory/projects/charon.md",
+      "b": "synthetic/syn-obligation-02.md",
+      "score": 2.903743,
+      "shared_subjects": [
+        "apache",
+        "header"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 227,
+      "a": "_memory/projects/themeforge-magellan.md",
+      "b": "_memory/projects/themeforge-v2-dropin.md",
+      "score": 2.903152,
+      "shared_subjects": [
+        "packages",
+        "publie"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 228,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/heimdall-fr-truncation.md",
+      "score": 2.900729,
+      "shared_subjects": [
+        "codebase"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 229,
+      "a": "_memory/projects/heimdall.md",
+      "b": "_memory/projects/isoforge.md",
+      "score": 2.897794,
+      "shared_subjects": [
+        "editions"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 230,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/heimdall-parity-audit.md",
+      "score": 2.897351,
+      "shared_subjects": [
+        "conpty",
+        "dto",
+        "powershell.exe"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 231,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/heimdall-history.md",
+      "score": 2.895797,
+      "shared_subjects": [
+        "assistant.md",
+        "override",
+        "revue",
+        "technique"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 232,
+      "a": "_memory/projects/heimdall-external-vault.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 2.893554,
+      "shared_subjects": [
+        "alias",
+        "fleches",
+        "heimdall.app",
+        "injection",
+        "propre."
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 233,
+      "a": "_memory/projects/dts-pingcastle.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 2.893085,
+      "shared_subjects": [
+        "dts",
+        "durcissement"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 234,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/defender-idle-clone.md",
+      "score": 2.893078,
+      "shared_subjects": [
+        "apache",
+        "base64",
+        "couche",
+        "fin",
+        "migration"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 235,
+      "a": "_memory/projects/onecert-windows.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.889995,
+      "shared_subjects": [
+        "bootstrap",
+        "chocolatey",
+        "execution",
+        "log",
+        "ouverte"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 236,
+      "a": "_memory/projects/expert-skills.md",
+      "b": "_memory/projects/magellan-agents-skills.md",
+      "score": 2.888065,
+      "shared_subjects": [
+        "skills"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 237,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/projects/heimdall-external-vault.md",
+      "score": 2.887173,
+      "shared_subjects": [
+        "hint"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 238,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/objectifs-annuels-2026.md",
+      "score": 2.8865,
+      "shared_subjects": [
+        "2026-07-08"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 239,
+      "a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "b": "_memory/projects/heimdall-history.md",
+      "score": 2.885974,
+      "shared_subjects": [
+        "aussi",
+        "charge",
+        "handler",
+        "winrm"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 240,
+      "a": "_memory/facts/skills-architecture.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.883822,
+      "shared_subjects": [
+        "architecture",
+        "extraction",
+        "standards"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 241,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/projects/heimdall-history.md",
+      "score": 2.883822,
+      "shared_subjects": [
+        "correctif"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 242,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/defender-idle-clone.md",
+      "score": 2.882001,
+      "shared_subjects": [
+        "idle"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 243,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/heimdall-master-password.md",
+      "score": 2.879137,
+      "shared_subjects": [
+        "editeur",
+        "necessite",
+        "vue"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 244,
+      "a": "_memory/projects/heimdall-context-menus.md",
+      "b": "_memory/projects/heimdall-parity-audit.md",
+      "score": 2.873435,
+      "shared_subjects": [
+        "browser",
+        "corriger",
+        "pane",
+        "paste",
+        "remote"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 245,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/heimdall-fr-truncation.md",
+      "score": 2.869779,
+      "shared_subjects": [
+        "long",
+        "post-connect"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 246,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/expert-skills.md",
+      "score": 2.868529,
+      "shared_subjects": [
+        "skill",
+        "skills",
+        "var"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 247,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/magellan-agents-skills.md",
+      "score": 2.868529,
+      "shared_subjects": [
+        "outils",
+        "skills"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 248,
+      "a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.866262,
+      "shared_subjects": [
+        "aussi",
+        "distant",
+        "nom",
+        "sources"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 249,
+      "a": "_memory/projects/heimdall-context-menus.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 2.865611,
+      "shared_subjects": [
+        "exe",
+        "solution"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 250,
+      "a": "_memory/projects/dts-pingcastle.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 2.86516,
+      "shared_subjects": [
+        "categorie",
+        "durcissement",
+        "global",
+        "passer"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 251,
+      "a": "_memory/projects/themeforge-v2-dropin.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.86507,
+      "shared_subjects": [
+        "cables",
+        "ignore",
+        "packaging",
+        "verte"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 252,
+      "a": "_memory/projects/heimdall-context-menus.md",
+      "b": "_memory/projects/heimdall-master-password.md",
+      "score": 2.864749,
+      "shared_subjects": [
+        "hello",
+        "sftp",
+        "webview2"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 253,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "synthetic/syn-state-05.md",
+      "score": 2.862328,
+      "shared_subjects": [
+        "package",
+        "wpf."
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 254,
+      "a": "_memory/projects/heimdall-macro-expect.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.861809,
+      "shared_subjects": [
+        "implementation"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 255,
+      "a": "_memory/projects/heimdall-release.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 2.860389,
+      "shared_subjects": [
+        "juin",
+        "matrice"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 256,
+      "a": "_memory/projects/heimdall-release.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.858706,
+      "shared_subjects": [
+        "bucket",
+        "en.json",
+        "fr.json",
+        "packaging",
+        "verifs"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 257,
+      "a": "_memory/facts/onecert-nxlog-certificats.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "score": 2.858262,
+      "shared_subjects": [
+        "acl",
+        "cert",
+        "issuer",
+        "key"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 258,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/heimdall-per-profile-logging.md",
+      "score": 2.857871,
+      "shared_subjects": [
+        "winrm"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 259,
+      "a": "_memory/projects/heimdall-context-menus.md",
+      "b": "_memory/projects/themeforge-v2-dropin.md",
+      "score": 2.85769,
+      "shared_subjects": [
+        "solution"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 260,
+      "a": "_memory/INIT.md",
+      "b": "_memory/projects/charon.md",
+      "score": 2.857628,
+      "shared_subjects": [
+        "briefs",
+        "head"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 261,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.857628,
+      "shared_subjects": [
+        "ascii",
+        "brief",
+        "briefs",
+        "lit"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 262,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "synthetic/syn-state-01.md",
+      "score": 2.856909,
+      "shared_subjects": [
+        "chroma"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 263,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/heimdall-parity-audit.md",
+      "score": 2.855672,
+      "shared_subjects": [
+        "ecrire",
+        "french"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 264,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.855672,
+      "shared_subjects": [
+        "5.1",
+        "artefacts",
+        "ecrire",
+        "ses"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 265,
+      "a": "_memory/projects/themeforge.md",
+      "b": "synthetic/syn-obligation-02.md",
+      "score": 2.855308,
+      "shared_subjects": [
+        "apache",
+        "header"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 266,
+      "a": "_memory/projects/heimdall-fr-truncation.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.850124,
+      "shared_subjects": [
+        "boutons"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 267,
+      "a": "_memory/projects/ansible-gpo.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 2.849715,
+      "shared_subjects": [
+        "remonte"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 268,
+      "a": "_memory/preferences/gouts-musique.md",
+      "b": "_memory/projects/charon.md",
+      "score": 2.849588,
+      "shared_subjects": [
+        "espace"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 269,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/projects/charon.md",
+      "score": 2.849352,
+      "shared_subjects": [
+        "brief",
+        "briefs",
+        "points",
+        "racine"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 270,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/heimdall-fr-truncation.md",
+      "score": 2.84817,
+      "shared_subjects": [
+        "styles"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 271,
+      "a": "_memory/projects/heimdall-release.md",
+      "b": "_memory/projects/winsight.md",
+      "score": 2.84735,
+      "shared_subjects": [
+        "resize",
+        "terminal"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 272,
+      "a": "_memory/INIT.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 2.846135,
+      "shared_subjects": [
+        "meta"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 273,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/heimdall-cmdlib-ux.md",
+      "score": 2.845267,
+      "shared_subjects": [
+        "badges",
+        "impose",
+        "lit",
+        "raw"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 274,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/expert-skills.md",
+      "score": 2.845157,
+      "shared_subjects": [
+        "pattern"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 275,
+      "a": "_memory/facts/onecert-nxlog-certificats.md",
+      "b": "_memory/projects/themeforge.md",
+      "score": 2.844752,
+      "shared_subjects": [
+        "lister",
+        "reutilisable"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 276,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "synthetic/syn-activation-01.md",
+      "score": 2.843948,
+      "shared_subjects": [
+        "path."
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 277,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "synthetic/syn-state-03.md",
+      "score": 2.842981,
+      "shared_subjects": [
+        "directory",
+        "key"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 278,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 2.842156,
+      "shared_subjects": [
+        "autofill",
+        "block",
+        "findings",
+        "reconnect"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 279,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/heimdall-cmdlib-ux.md",
+      "score": 2.841952,
+      "shared_subjects": [
+        "classe",
+        "correct.",
+        "xaml"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 280,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/projects/heimdall-parity-audit.md",
+      "score": 2.840904,
+      "shared_subjects": [
+        "child",
+        "detaille",
+        "harness"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 281,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/facts/onecert-no-license-magellan.md",
+      "score": 2.840679,
+      "shared_subjects": [
+        "injecter"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 282,
+      "a": "_memory/projects/skills-portables-et-formateurs.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.840513,
+      "shared_subjects": [
+        "brut",
+        "packaging"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 283,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/heimdall-per-profile-logging.md",
+      "score": 2.837166,
+      "shared_subjects": [
+        "policy"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 284,
+      "a": "_memory/projects/ansible-gpo.md",
+      "b": "_memory/projects/heimdall-history.md",
+      "score": 2.834248,
+      "shared_subjects": [
+        "page"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 285,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/heimdall-updater.md",
+      "score": 2.834248,
+      "shared_subjects": [
+        "args",
+        "package",
+        "page",
+        "verifiable",
+        "verte"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 286,
+      "a": "_memory/projects/onecert-windows.md",
+      "b": "synthetic/syn-value-03.md",
+      "score": 2.83177,
+      "shared_subjects": [
+        "inventory"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 287,
+      "a": "_memory/projects/heimdall-macro-expect.md",
+      "b": "_memory/projects/heimdall-master-password.md",
+      "score": 2.830429,
+      "shared_subjects": [
+        "editeur",
+        "terminal",
+        "vnc",
+        "webview2"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 288,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/projects/themeforge-v2-dropin.md",
+      "score": 2.828595,
+      "shared_subjects": [
+        "impl",
+        "publish",
+        "recommended",
+        "trusted"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 289,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.825782,
+      "shared_subjects": [
+        "cache",
+        "case-insensitive",
+        "justifie",
+        "positif",
+        "scan",
+        "using"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 290,
+      "a": "_memory/projects/heimdall-fr-truncation.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 2.82485,
+      "shared_subjects": [
+        "boutons"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 291,
+      "a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.823018,
+      "shared_subjects": [
+        "handler",
+        "lint",
+        "pieges",
+        "sources"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 292,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 2.821137,
+      "shared_subjects": [
+        "command",
+        "panneau",
+        "quote",
+        "root"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 293,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/winsight.md",
+      "score": 2.82063,
+      "shared_subjects": [
+        "pure"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 294,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 2.820342,
+      "shared_subjects": [
+        "assistant.md",
+        "regles",
+        "user-facing",
+        "utilisent"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 295,
+      "a": "_memory/projects/expert-skills.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.817663,
+      "shared_subjects": [
+        "pattern",
+        "save",
+        "server",
+        "skill"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 296,
+      "a": "_memory/projects/ansible-gpo.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.815438,
+      "shared_subjects": [
+        "2026-06-03"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 297,
+      "a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "b": "_memory/projects/charon.md",
+      "score": 2.814673,
+      "shared_subjects": [
+        "guide",
+        "user",
+        "worldline"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 298,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "_memory/projects/themeforge-v2-dropin.md",
+      "score": 2.814392,
+      "shared_subjects": [
+        "combobox",
+        "hook",
+        "lisibilite",
+        "partage",
+        "store"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 299,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/heimdall-updater.md",
+      "score": 2.813926,
+      "shared_subjects": [
+        "en+fr",
+        "in-app",
+        "rendre",
+        "sha256"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 300,
+      "a": "_memory/facts/concurrent-agents-corrupt-git-shared-drive.md",
+      "b": "_memory/projects/magellan-agents-skills.md",
+      "score": 2.810107,
+      "shared_subjects": [
+        "agents"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 301,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "score": 2.80811,
+      "shared_subjects": [
+        "corrections",
+        "natif"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 302,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/isoforge.md",
+      "score": 2.807117,
+      "shared_subjects": [
+        "premier",
+        "server",
+        "workflow"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 303,
+      "a": "_memory/projects/heimdall-external-vault.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 2.80698,
+      "shared_subjects": [
+        "execution",
+        "integration",
+        "pass"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 304,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/projects/heimdall-updater.md",
+      "score": 2.806444,
+      "shared_subjects": [
+        "core",
+        "heimdall-release.md",
+        "prompts"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 305,
+      "a": "_memory/projects/heimdall-updater.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.806444,
+      "shared_subjects": [
+        "build.ps1",
+        "core",
+        "prompts",
+        "pur"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 306,
+      "a": "_memory/projects/magellan-agents-skills.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 2.804063,
+      "shared_subjects": [
+        "outils",
+        "recreer"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 307,
+      "a": "_memory/projects/magellan-agents-skills.md",
+      "b": "_memory/projects/skills-portables-et-formateurs.md",
+      "score": 2.804063,
+      "shared_subjects": [
+        "skills"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 308,
+      "a": "_memory/projects/magellan-agents-skills.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.804063,
+      "shared_subjects": [
+        "outils"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 309,
+      "a": "_memory/INIT.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.80396,
+      "shared_subjects": [
+        "bootstrap",
+        "init",
+        "memoire"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 310,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/projects/heimdall-per-profile-logging.md",
+      "score": 2.803564,
+      "shared_subjects": [
+        "hint"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 311,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 2.801327,
+      "shared_subjects": [
+        "2026-07-08",
+        "pure"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 312,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.799911,
+      "shared_subjects": [
+        "injection",
+        "policy",
+        "views",
+        "xaml"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 313,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/heimdall-parity-audit.md",
+      "score": 2.79864,
+      "shared_subjects": [
+        "cache",
+        "head",
+        "line",
+        "lit",
+        "rename"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 314,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/heimdall-parity-audit.md",
+      "score": 2.798203,
+      "shared_subjects": [
+        "classe",
+        "resolution"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 315,
+      "a": "_memory/projects/ansible-gpo.md",
+      "b": "_memory/projects/datacron.md",
+      "score": 2.792535,
+      "shared_subjects": [
+        "policy"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 316,
+      "a": "_memory/projects/ansible-gpo.md",
+      "b": "_memory/projects/themeforge-v2-dropin.md",
+      "score": 2.792535,
+      "shared_subjects": [
+        "policy"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 317,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/heimdall-updater.md",
+      "score": 2.791084,
+      "shared_subjects": [
+        "core",
+        "nettoyer"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 318,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 2.789566,
+      "shared_subjects": [
+        "log",
+        "volet"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 319,
+      "a": "_memory/projects/expert-skills.md",
+      "b": "_memory/projects/heimdall-cmdlib-ux.md",
+      "score": 2.788953,
+      "shared_subjects": [
+        "contenir",
+        "description",
+        "pattern"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 320,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/heimdall-macro-expect.md",
+      "score": 2.788953,
+      "shared_subjects": [
+        "contenir"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 321,
+      "a": "_memory/facts/profil-cognitif-julien.md",
+      "b": "_memory/preferences/julien.md",
+      "score": 2.787744,
+      "shared_subjects": [
+        "preferences"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 322,
+      "a": "_memory/projects/heimdall.md",
+      "b": "_memory/projects/objectifs-annuels-2026.md",
+      "score": 2.784536,
+      "shared_subjects": [
+        "revue"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 323,
+      "a": "_memory/projects/heimdall.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.784536,
+      "shared_subjects": [
+        "chemins",
+        "ecrire",
+        "revue"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 324,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/projects/heimdall-cmdlib-ux.md",
+      "score": 2.78382,
+      "shared_subjects": [
+        "publish",
+        "toutes"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 325,
+      "a": "_memory/projects/heimdall-master-password.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "score": 2.78254,
+      "shared_subjects": [
+        "aleatoire",
+        "anssi",
+        "pkcs"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 326,
+      "a": "_memory/projects/expert-skills.md",
+      "b": "_memory/projects/heimdall-history.md",
+      "score": 2.78242,
+      "shared_subjects": [
+        "5.1",
+        "fond",
+        "microsoft"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 327,
+      "a": "_memory/projects/heimdall-history.md",
+      "b": "_memory/projects/skills-portables-et-formateurs.md",
+      "score": 2.78242,
+      "shared_subjects": [
+        "5.1",
+        "brut"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 328,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.781579,
+      "shared_subjects": [
+        "archive",
+        "partout"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 329,
+      "a": "_memory/projects/defender-idle-clone.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "score": 2.780738,
+      "shared_subjects": [
+        "core",
+        "maj"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 330,
+      "a": "_memory/projects/onecert-windows-roadmap.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.780211,
+      "shared_subjects": [
+        "features",
+        "produit",
+        "stores",
+        "structurees"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 331,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/magellan-agents-skills.md",
+      "score": 2.779652,
+      "shared_subjects": [
+        "agents"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 332,
+      "a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "b": "_memory/projects/datacron-karpathy-wiki-design.md",
+      "score": 2.779464,
+      "shared_subjects": [
+        "lint"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 333,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.777894,
+      "shared_subjects": [
+        "implementation",
+        "passee",
+        "quoting"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 334,
+      "a": "_memory/projects/heimdall-external-vault.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "score": 2.774147,
+      "shared_subjects": [
+        "empeche",
+        "exit",
+        "key",
+        "pass"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 335,
+      "a": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "b": "synthetic/syn-obligation-02.md",
+      "score": 2.772927,
+      "shared_subjects": [
+        "header",
+        "licensing"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 336,
+      "a": "_memory/projects/datacron.md",
+      "b": "_memory/projects/heimdall-context-menus.md",
+      "score": 2.772026,
+      "shared_subjects": [
+        "memoire"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 337,
+      "a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "b": "_memory/projects/heimdall-external-vault.md",
+      "score": 2.77189,
+      "shared_subjects": [
+        "views"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 338,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.770665,
+      "shared_subjects": [
+        "garder",
+        "justifie",
+        "var"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 339,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.769755,
+      "shared_subjects": [
+        "hint",
+        "server",
+        "textbox"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 340,
+      "a": "_memory/projects/win11forge.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.767982,
+      "shared_subjects": [
+        "chemins",
+        "ecrire",
+        "gui",
+        "ses"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 341,
+      "a": "_memory/facts/onecert-nxlog-certificats.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.767476,
+      "shared_subjects": [
+        "applique",
+        "gui",
+        "store"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 342,
+      "a": "_memory/projects/defender-idle-clone.md",
+      "b": "_memory/projects/heimdall-cmdlib-ux.md",
+      "score": 2.763541,
+      "shared_subjects": [
+        "defender"
+      ],
+      "conflict_types": [
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 343,
+      "a": "_memory/projects/defender-idle-clone.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.763389,
+      "shared_subjects": [
+        "chaine",
+        "principal",
+        "supervise",
+        "utf-8"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 344,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/winsight.md",
+      "score": 2.763267,
+      "shared_subjects": [
+        "var"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 345,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/heimdall-external-vault.md",
+      "score": 2.763259,
+      "shared_subjects": [
+        "5.1",
+        "assistant.md"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 346,
+      "a": "_memory/projects/heimdall-external-vault.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.762157,
+      "shared_subjects": [
+        "injection",
+        "stub"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 347,
+      "a": "_memory/projects/heimdall.md",
+      "b": "synthetic/syn-value-01.md",
+      "score": 2.761962,
+      "shared_subjects": [
+        "127.0.0.1.",
+        "invalid",
+        "vnc"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 348,
+      "a": "_memory/projects/isoforge.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.761875,
+      "shared_subjects": [
+        "poste"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 349,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/scrybe.md",
+      "score": 2.76111,
+      "shared_subjects": [
+        "workflow"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 350,
+      "a": "_memory/facts/onecert-no-license-magellan.md",
+      "b": "_memory/projects/heimdall-updater.md",
+      "score": 2.760854,
+      "shared_subjects": [
+        "prompts"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 351,
+      "a": "_memory/facts/onecert-no-license-magellan.md",
+      "b": "_memory/projects/heimdall.md",
+      "score": 2.760854,
+      "shared_subjects": [
+        "prompts"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 352,
+      "a": "_memory/projects/expert-skills.md",
+      "b": "_memory/projects/heimdall-fr-truncation.md",
+      "score": 2.760835,
+      "shared_subjects": [
+        "pattern"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 353,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "score": 2.759726,
+      "shared_subjects": [
+        "5.1",
+        "briefs",
+        "elevee"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 354,
+      "a": "_memory/projects/heimdall-external-vault.md",
+      "b": "_memory/projects/heimdall-master-password.md",
+      "score": 2.757644,
+      "shared_subjects": [
+        "cable",
+        "dpapi",
+        "vnc",
+        "vue"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 355,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "score": 2.753414,
+      "shared_subjects": [
+        "mesure",
+        "pousse",
+        "suppression"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    },
+    {
+      "rank": 356,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/preferences/julien.md",
+      "score": 2.751761,
+      "shared_subjects": [
+        "revue",
+        "spec"
+      ],
+      "conflict_types": [
+        "polarity",
+        "value_or_state"
+      ]
+    },
+    {
+      "rank": 357,
+      "a": "_memory/projects/heimdall-fr-truncation.md",
+      "b": "_memory/projects/win11forge.md",
+      "score": 2.750863,
+      "shared_subjects": [
+        "latent"
+      ],
+      "conflict_types": [
+        "polarity"
+      ]
+    }
+  ],
+  "claim_samples": [
+    {
+      "rank": 1,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/heimdall-release.md",
+      "best_claim_match": {
+        "score": 6.135386,
+        "shared_subjects": [
+          "command",
+          "ctrl+k",
+          "library"
+        ],
+        "shared_subject_weight": 10.573061,
+        "subject_overlap": 0.619771,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KV2CMDLIBUXCHANTIER00001:462",
+        "claim_b_id": "01KTBQ9F7M0N1HEIMDRELEAS01:717",
+        "claim_a": {
+          "sujet": [
+            "audit",
+            "chantier",
+            "command",
+            "ctrl+k",
+            "decision",
+            "heimdall",
+            "library",
+            "memory",
+            "project",
+            "refonte",
+            "restant"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "attente",
+            "command",
+            "ctrl+k",
+            "depuis",
+            "drill-in",
+            "envoi",
+            "heimdall",
+            "heimdall.next",
+            "jouables",
+            "library",
+            "linux",
+            "memory",
+            "parametres",
+            "presse-papiers",
+            "project",
+            "release",
+            "repli",
+            "runbook",
+            "session",
+            "snippets",
+            "terminal",
+            "theme",
+            "windows"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 2,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/heimdall.md",
+      "best_claim_match": {
+        "score": 6.135386,
+        "shared_subjects": [
+          "command",
+          "ctrl+k",
+          "library"
+        ],
+        "shared_subject_weight": 10.573061,
+        "subject_overlap": 0.619771,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KV2CMDLIBUXCHANTIER00001:462",
+        "claim_b_id": "01KS3BFJZXDSHG0GN7TWS507RS:122",
+        "claim_a": {
+          "sujet": [
+            "audit",
+            "chantier",
+            "command",
+            "ctrl+k",
+            "decision",
+            "heimdall",
+            "library",
+            "memory",
+            "project",
+            "refonte",
+            "restant"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "command",
+            "ctrl+k",
+            "dedd89c5",
+            "depuis",
+            "drill-in",
+            "envoi",
+            "heimdall",
+            "jouables",
+            "library",
+            "linux",
+            "parametres",
+            "presse-papiers",
+            "projet",
+            "repli",
+            "session",
+            "snippets",
+            "terminal",
+            "theme",
+            "vers",
+            "windows"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 3,
+      "a": "_memory/projects/heimdall-context-menus.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "best_claim_match": {
+        "score": 5.463048,
+        "shared_subjects": [
+          "contextuels",
+          "menus"
+        ],
+        "shared_subject_weight": 7.80833,
+        "subject_overlap": 0.394191,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KVCTXMENUSHEIMDALL00001:24",
+        "claim_b_id": "01KWKVJSKASBWTFFYVHKENZZN2:245",
+        "claim_a": {
+          "sujet": [
+            "contextuels",
+            "decision",
+            "enabled.",
+            "enrichissement",
+            "heimdall",
+            "memory",
+            "menus",
+            "mobaxterm-killer",
+            "project",
+            "session",
+            "seulement"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "2026-07-05",
+            "bonne",
+            "brushes",
+            "checkmark",
+            "cle",
+            "colonnes",
+            "commoncontrols.xaml",
+            "complementaire",
+            "complet",
+            "contextmenu",
+            "contextuels",
+            "diff",
+            "direction",
+            "existantes",
+            "hex.",
+            "hover",
+            "icone",
+            "implicites",
+            "juillet",
+            "juin",
+            "litteral",
+            "livre",
+            "menuitem",
+            "menuitem.separatorstylekey",
+            "menus",
+            "onecert",
+            "part",
+            "popup",
+            "pressed",
+            "repliees",
+            "separator",
+            "sous-menus",
+            "styles",
+            "template",
+            "tests",
+            "theme",
+            "themes",
+            "tooltip",
+            "transcript",
+            "uniquement",
+            "verifie",
+            "via",
+            "windows",
+            "zero"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled",
+            "zero"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 4,
+      "a": "_memory/projects/win11forge.md",
+      "b": "synthetic/syn-activation-05.md",
+      "best_claim_match": {
+        "score": 5.306499,
+        "shared_subjects": [
+          "branding",
+          "feature"
+        ],
+        "shared_subject_weight": 6.591935,
+        "subject_overlap": 0.364572,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KT43VEVEA88WES3FMFTBHSD9:266",
+        "claim_b_id": "syn-activation-05:3",
+        "claim_a": {
+          "sujet": [
+            "12d1f3c",
+            "a77730d",
+            "app",
+            "applications-prereqs-and-scan-label",
+            "basees",
+            "branding",
+            "choco",
+            "command",
+            "commits",
+            "conflit",
+            "creer",
+            "depuis",
+            "false",
+            "feat",
+            "feature",
+            "final",
+            "fix",
+            "garder",
+            "keep",
+            "logs",
+            "main",
+            "memory",
+            "merge",
+            "omission",
+            "ordre",
+            "positives",
+            "post-",
+            "project",
+            "projet",
+            "prs",
+            "puis",
+            "rebase",
+            "rebuild+smoke",
+            "refresh",
+            "resolution",
+            "routage",
+            "seulement",
+            "smoke",
+            "state",
+            "suppress",
+            "test",
+            "trailing-zero",
+            "update",
+            "updates",
+            "utf-8",
+            "vendor",
+            "vraies",
+            "win11forge",
+            "winforge"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled",
+            "zero"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "branding",
+            "decision",
+            "feature",
+            "heimdall",
+            "integration",
+            "interface.",
+            "into",
+            "magellan",
+            "memory",
+            "project",
+            "status",
+            "theme",
+            "themeforge",
+            "validation"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled",
+            "enabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 5,
+      "a": "_memory/projects/heimdall-master-password.md",
+      "b": "_memory/projects/heimdall-parity-audit.md",
+      "best_claim_match": {
+        "score": 5.084187,
+        "shared_subjects": [
+          "lock",
+          "workspace"
+        ],
+        "shared_subject_weight": 6.237113,
+        "subject_overlap": 0.267609,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KWMSTRPWVAULTHEIMDALL001:106",
+        "claim_b_id": "01KVXPARITYAUDITHEIMDAL001:86",
+        "claim_a": {
+          "sujet": [
+            "anssi",
+            "cable",
+            "chantier",
+            "decision",
+            "depuis",
+            "flag",
+            "heimdall",
+            "lock",
+            "memory",
+            "necessite",
+            "project",
+            "security",
+            "settings",
+            "vault",
+            "workspace"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "2026-06-24",
+            "audit",
+            "commence",
+            "contexte",
+            "decision",
+            "gros",
+            "heimdall",
+            "killer",
+            "lock",
+            "memory",
+            "mobaxterm",
+            "mremoteng",
+            "parite",
+            "parity",
+            "project",
+            "suivant",
+            "vault",
+            "workspace"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 6,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "synthetic/syn-activation-04.md",
+      "best_claim_match": {
+        "score": 4.957073,
+        "shared_subjects": [
+          "cortex"
+        ],
+        "shared_subject_weight": 3.344549,
+        "subject_overlap": 0.319755,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KX6FRESHCONTRACT0710DTCRN1:488",
+        "claim_b_id": "syn-activation-04:2",
+        "claim_a": {
+          "sujet": [
+            "2026-07-10",
+            "contrat",
+            "cortex",
+            "datacron",
+            "decision",
+            "draft.",
+            "fraicheur",
+            "index",
+            "knowledge",
+            "memory",
+            "mesure",
+            "operations",
+            "produit",
+            "projects",
+            "sources"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "cortex",
+            "draft",
+            "index",
+            "index."
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 7,
+      "a": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "b": "synthetic/syn-state-01.md",
+      "best_claim_match": {
+        "score": 4.896656,
+        "shared_subjects": [
+          "store"
+        ],
+        "shared_subject_weight": 3.093235,
+        "subject_overlap": 0.424598,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KWEE8AN8NGGKP7H4RT1P24S4:67",
+        "claim_b_id": "syn-state-01:1",
+        "claim_a": {
+          "sujet": [
+            "avancement",
+            "certif",
+            "claire",
+            "degradation",
+            "deja",
+            "disabled.",
+            "erreur",
+            "exige",
+            "header",
+            "host",
+            "idempotent",
+            "iis",
+            "implementation",
+            "onecert",
+            "propre",
+            "session",
+            "sinon",
+            "sni",
+            "store",
+            "windows"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "semantic",
+            "store"
+          ],
+          "portée": "replacement_state",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "canonical"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 8,
+      "a": "_memory/projects/win11forge.md",
+      "b": "synthetic/syn-state-05.md",
+      "best_claim_match": {
+        "score": 4.869617,
+        "shared_subjects": [
+          "branding"
+        ],
+        "shared_subject_weight": 3.4987,
+        "subject_overlap": 0.26986,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KT43VEVEA88WES3FMFTBHSD9:395",
+        "claim_b_id": "syn-state-05:3",
+        "claim_a": {
+          "sujet": [
+            "application.installarguments",
+            "autoritaire",
+            "branding",
+            "brut",
+            "contrat",
+            "cote",
+            "direct-download",
+            "fail-closed",
+            "get-filehash",
+            "hex",
+            "install",
+            "lit",
+            "memory",
+            "orchestrateur",
+            "project",
+            "projet",
+            "sources.directurl",
+            "sources.sha256",
+            "top-level",
+            "valide",
+            "verifie",
+            "whitelist",
+            "win11forge",
+            "winforge"
+          ],
+          "portée": "replacement_state",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "canonical"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "branding",
+            "decision",
+            "heimdall",
+            "memory",
+            "net10.0-windows",
+            "package",
+            "project",
+            "theme",
+            "themeforge",
+            "wpf."
+          ],
+          "portée": "replacement_state",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "net10.0-windows"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 9,
+      "a": "_memory/facts/onecert-nxlog-certificats.md",
+      "b": "_memory/projects/heimdall-updater.md",
+      "best_claim_match": {
+        "score": 4.776696,
+        "shared_subjects": [
+          "lister"
+        ],
+        "shared_subject_weight": 3.681022,
+        "subject_overlap": 0.216107,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KWMVJK1P9AX9E733TG7E5CHF:29",
+        "claim_b_id": "01KV1HEIMDALLUPDATER000001:164",
+        "claim_a": {
+          "sujet": [
+            "add",
+            "availablecertificateinfo",
+            "cert",
+            "certificate",
+            "certificats",
+            "endpoint",
+            "fichiers",
+            "flux",
+            "gui",
+            "ionecertapiclient.getmanagedcertificatesasync",
+            "issuer",
+            "lister",
+            "listing",
+            "nxlog",
+            "onecert",
+            "pem",
+            "piste",
+            "plugin",
+            "san",
+            "selectionner",
+            "via"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "design",
+            "disabled.",
+            "heimdall",
+            "in-app",
+            "lister",
+            "plus",
+            "prets",
+            "prompts",
+            "update"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 10,
+      "a": "synthetic/syn-activation-04.md",
+      "b": "synthetic/syn-value-03.md",
+      "best_claim_match": {
+        "score": 4.707073,
+        "shared_subjects": [
+          "cortex"
+        ],
+        "shared_subject_weight": 3.344549,
+        "subject_overlap": 0.319755,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "syn-activation-04:2",
+        "claim_b_id": "syn-value-03:3",
+        "claim_a": {
+          "sujet": [
+            "cortex",
+            "draft",
+            "index",
+            "index."
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "areas",
+            "cortex",
+            "indicates",
+            "inventory",
+            "missing.",
+            "six-collection",
+            "that",
+            "two"
+          ],
+          "portée": "obligation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "six",
+            "two"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 11,
+      "a": "_memory/projects/defender-idle-clone.md",
+      "b": "_memory/projects/themeforge-magellan.md",
+      "best_claim_match": {
+        "score": 4.700525,
+        "shared_subjects": [
+          "effet"
+        ],
+        "shared_subject_weight": 3.4987,
+        "subject_overlap": 0.185315,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KWEW2SRN18FNKSCTCDMN5ZN3:114",
+        "claim_b_id": "01KVMAGELLANTHEME000000001:83",
+        "claim_a": {
+          "sujet": [
+            "clone",
+            "defender",
+            "effet",
+            "fin",
+            "generateurs",
+            "global",
+            "idle",
+            "kickoff",
+            "minutee",
+            "multi-devises",
+            "offline",
+            "projet",
+            "recherche"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "a66f2d6",
+            "avait",
+            "branding",
+            "commit",
+            "decision",
+            "effet",
+            "heimdall",
+            "magellan",
+            "main",
+            "memory",
+            "origin",
+            "project",
+            "push",
+            "readme",
+            "retard",
+            "sandbox",
+            "theme",
+            "themeforge"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 12,
+      "a": "_memory/facts/datacron-reliability-program-2026-07-10.md",
+      "b": "_memory/projects/heimdall.md",
+      "best_claim_match": {
+        "score": 4.689779,
+        "shared_subjects": [
+          "bilan"
+        ],
+        "shared_subject_weight": 3.904165,
+        "subject_overlap": 0.163723,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KX60K766R5Z94FNJ3NWSJADY:11",
+        "claim_b_id": "01KS3BFJZXDSHG0GN7TWS507RS:476",
+        "claim_a": {
+          "sujet": [
+            "2026-07-10",
+            "bilan",
+            "bloquante",
+            "branch",
+            "cote",
+            "datacron",
+            "entreprise",
+            "fiabilite",
+            "gate",
+            "github",
+            "imposer",
+            "job",
+            "programme",
+            "protection",
+            "selectionnant",
+            "statut"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "bilan",
+            "code+runtime",
+            "entierement",
+            "gateway",
+            "heimdall",
+            "projet",
+            "shippe",
+            "ssh-i4",
+            "vide"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 13,
+      "a": "_memory/projects/scrybe.md",
+      "b": "_memory/projects/win11forge.md",
+      "best_claim_match": {
+        "score": 4.683148,
+        "shared_subjects": [
+          "logs"
+        ],
+        "shared_subject_weight": 3.4987,
+        "subject_overlap": 0.176626,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KTGX99Q8FZG6CNWZ7Y6G9WV2:230",
+        "claim_b_id": "01KT43VEVEA88WES3FMFTBHSD9:266",
+        "claim_a": {
+          "sujet": [
+            "acceptance",
+            "json",
+            "locale",
+            "logs",
+            "projet",
+            "scrybe",
+            "secret",
+            "textbox",
+            "vault"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "12d1f3c",
+            "a77730d",
+            "app",
+            "applications-prereqs-and-scan-label",
+            "basees",
+            "branding",
+            "choco",
+            "command",
+            "commits",
+            "conflit",
+            "creer",
+            "depuis",
+            "false",
+            "feat",
+            "feature",
+            "final",
+            "fix",
+            "garder",
+            "keep",
+            "logs",
+            "main",
+            "memory",
+            "merge",
+            "omission",
+            "ordre",
+            "positives",
+            "post-",
+            "project",
+            "projet",
+            "prs",
+            "puis",
+            "rebase",
+            "rebuild+smoke",
+            "refresh",
+            "resolution",
+            "routage",
+            "seulement",
+            "smoke",
+            "state",
+            "suppress",
+            "test",
+            "trailing-zero",
+            "update",
+            "updates",
+            "utf-8",
+            "vendor",
+            "vraies",
+            "win11forge",
+            "winforge"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled",
+            "zero"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 14,
+      "a": "_memory/projects/objectifs-annuels-2026.md",
+      "b": "_memory/projects/onecert-windows-roadmap.md",
+      "best_claim_match": {
+        "score": 4.662516,
+        "shared_subjects": [
+          "roadmap"
+        ],
+        "shared_subject_weight": 3.681022,
+        "subject_overlap": 0.159017,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KX0RXRZQNDAHRM6Q8EMXY7GP:35",
+        "claim_b_id": "01KWSDT8QGZJ5XBXV1SB5Q689E:53",
+        "claim_a": {
+          "sujet": [
+            "2026-07-08",
+            "adrien",
+            "adsec",
+            "aloois",
+            "annuels",
+            "ansible",
+            "binome",
+            "cahier",
+            "charges",
+            "christine",
+            "conduit",
+            "conseil",
+            "equipe",
+            "eric",
+            "guillaume",
+            "hugo",
+            "julien",
+            "manager",
+            "molecule",
+            "n+1",
+            "nsbf",
+            "objectifs",
+            "observabilite",
+            "onecert",
+            "pierre",
+            "revue",
+            "riyad",
+            "roadmap",
+            "roles",
+            "romain",
+            "run",
+            "septembre",
+            "tests",
+            "windows",
+            "yasmine",
+            "zach"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "anticipation",
+            "app",
+            "blindage",
+            "features",
+            "haproxy",
+            "linux",
+            "onecert",
+            "retire",
+            "roadmap",
+            "windows"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 15,
+      "a": "_memory/projects/onecert-windows-roadmap.md",
+      "b": "_memory/projects/skills-portables-et-formateurs.md",
+      "best_claim_match": {
+        "score": 4.662516,
+        "shared_subjects": [
+          "roadmap"
+        ],
+        "shared_subject_weight": 3.681022,
+        "subject_overlap": 0.159017,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KWSDT8QGZJ5XBXV1SB5Q689E:53",
+        "claim_b_id": "01KWY0KNXMENKK2MEV3SDTPBXG:46",
+        "claim_a": {
+          "sujet": [
+            "anticipation",
+            "app",
+            "blindage",
+            "features",
+            "haproxy",
+            "linux",
+            "onecert",
+            "retire",
+            "roadmap",
+            "windows"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "anthropic",
+            "dual-coding",
+            "famille",
+            "feynman",
+            "formateur",
+            "gate",
+            "interleaving",
+            "methodo",
+            "portables",
+            "recall",
+            "retrieval",
+            "roadmap",
+            "skills",
+            "spaced"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 16,
+      "a": "_memory/projects/heimdall-release.md",
+      "b": "_memory/projects/themeforge-v2-dropin.md",
+      "best_claim_match": {
+        "score": 4.655741,
+        "shared_subjects": [
+          "campagne"
+        ],
+        "shared_subject_weight": 3.4987,
+        "subject_overlap": 0.162923,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KTBQ9F7M0N1HEIMDRELEAS01:143",
+        "claim_b_id": "01KPN2DDFXJZNXF8HJT1BS0GNP:426",
+        "claim_a": {
+          "sujet": [
+            "attente",
+            "campagne",
+            "heimdall",
+            "heimdall.next",
+            "memory",
+            "project",
+            "release",
+            "residuel",
+            "runbook",
+            "solder"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "1er",
+            "campagne",
+            "design",
+            "drop-in",
+            "fenetre",
+            "jours",
+            "login",
+            "memory",
+            "policy",
+            "project",
+            "reussi",
+            "subtilite",
+            "tagguer",
+            "themeforge",
+            "v2.0"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 17,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "_memory/facts/datacron-reliability-program-2026-07-10.md",
+      "best_claim_match": {
+        "score": 4.640902,
+        "shared_subjects": [
+          "2026-07-10"
+        ],
+        "shared_subject_weight": 3.904165,
+        "subject_overlap": 0.139284,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KX6FRESHCONTRACT0710DTCRN1:221",
+        "claim_b_id": "01KX60K766R5Z94FNJ3NWSJADY:11",
+        "claim_a": {
+          "sujet": [
+            "2026-07-10",
+            "contrat",
+            "cortex",
+            "datacron",
+            "decision",
+            "disabled.",
+            "fraicheur",
+            "mesure",
+            "produit",
+            "unknown"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "2026-07-10",
+            "bilan",
+            "bloquante",
+            "branch",
+            "cote",
+            "datacron",
+            "entreprise",
+            "fiabilite",
+            "gate",
+            "github",
+            "imposer",
+            "job",
+            "programme",
+            "protection",
+            "selectionnant",
+            "statut"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 18,
+      "a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "b": "_memory/projects/win11forge.md",
+      "best_claim_match": {
+        "score": 4.639316,
+        "shared_subjects": [
+          "command"
+        ],
+        "shared_subject_weight": 2.987874,
+        "subject_overlap": 0.175143,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KV2CMDLIBUXCHANTIER00001:462",
+        "claim_b_id": "01KT43VEVEA88WES3FMFTBHSD9:266",
+        "claim_a": {
+          "sujet": [
+            "audit",
+            "chantier",
+            "command",
+            "ctrl+k",
+            "decision",
+            "heimdall",
+            "library",
+            "memory",
+            "project",
+            "refonte",
+            "restant"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "12d1f3c",
+            "a77730d",
+            "app",
+            "applications-prereqs-and-scan-label",
+            "basees",
+            "branding",
+            "choco",
+            "command",
+            "commits",
+            "conflit",
+            "creer",
+            "depuis",
+            "false",
+            "feat",
+            "feature",
+            "final",
+            "fix",
+            "garder",
+            "keep",
+            "logs",
+            "main",
+            "memory",
+            "merge",
+            "omission",
+            "ordre",
+            "positives",
+            "post-",
+            "project",
+            "projet",
+            "prs",
+            "puis",
+            "rebase",
+            "rebuild+smoke",
+            "refresh",
+            "resolution",
+            "routage",
+            "seulement",
+            "smoke",
+            "state",
+            "suppress",
+            "test",
+            "trailing-zero",
+            "update",
+            "updates",
+            "utf-8",
+            "vendor",
+            "vraies",
+            "win11forge",
+            "winforge"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled",
+            "zero"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 19,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/projects/scrybe.md",
+      "best_claim_match": {
+        "score": 4.626806,
+        "shared_subjects": [
+          "toggle"
+        ],
+        "shared_subject_weight": 3.344549,
+        "subject_overlap": 0.154621,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KVXPARITYAUDITHEIMDAL001:332",
+        "claim_b_id": "01KTGX99Q8FZG6CNWZ7Y6G9WV2:185",
+        "claim_a": {
+          "sujet": [
+            "2026-06-24",
+            "audit",
+            "contraire",
+            "contrat",
+            "decision",
+            "exigeait",
+            "fige",
+            "heimdall",
+            "lot",
+            "memory",
+            "mobaxterm",
+            "mremoteng",
+            "parite",
+            "parity",
+            "project",
+            "redemarrage",
+            "toggle"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "mineur",
+            "mort",
+            "pousse",
+            "projet",
+            "quand",
+            "repository",
+            "scrybe",
+            "start",
+            "temps",
+            "themeforge",
+            "toggle",
+            "windows"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 20,
+      "a": "_memory/projects/objectifs-annuels-2026.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "best_claim_match": {
+        "score": 4.625243,
+        "shared_subjects": [
+          "adrien",
+          "equipe",
+          "hugo",
+          "riyad",
+          "septembre",
+          "zach"
+        ],
+        "shared_subject_weight": 25.151083,
+        "subject_overlap": 0.306578,
+        "conflict_types": [
+          "polarity"
+        ],
+        "claim_a_id": "01KX0RXRZQNDAHRM6Q8EMXY7GP:35",
+        "claim_b_id": "01KWKVJSKASBWTFFYVHKENZZN2:539",
+        "claim_a": {
+          "sujet": [
+            "2026-07-08",
+            "adrien",
+            "adsec",
+            "aloois",
+            "annuels",
+            "ansible",
+            "binome",
+            "cahier",
+            "charges",
+            "christine",
+            "conduit",
+            "conseil",
+            "equipe",
+            "eric",
+            "guillaume",
+            "hugo",
+            "julien",
+            "manager",
+            "molecule",
+            "n+1",
+            "nsbf",
+            "objectifs",
+            "observabilite",
+            "onecert",
+            "pierre",
+            "revue",
+            "riyad",
+            "roadmap",
+            "roles",
+            "romain",
+            "run",
+            "septembre",
+            "tests",
+            "windows",
+            "yasmine",
+            "zach"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "adrien",
+            "complementaire",
+            "critique",
+            "direction",
+            "equipe",
+            "ete",
+            "exploitabilite",
+            "hugo",
+            "jugement",
+            "juillet",
+            "juin",
+            "massive.",
+            "onecert",
+            "outils",
+            "ouvert",
+            "presentation",
+            "reunion",
+            "riyad",
+            "septembre",
+            "transcript",
+            "windows",
+            "zach"
+          ],
+          "portée": "assertion",
+          "polarité": "negative",
+          "valeur_ou_état": [],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 21,
+      "a": "_memory/projects/heimdall-external-vault.md",
+      "b": "_memory/projects/win11forge.md",
+      "best_claim_match": {
+        "score": 4.622658,
+        "shared_subjects": [
+          "integration"
+        ],
+        "shared_subject_weight": 2.987874,
+        "subject_overlap": 0.166814,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KVKETEVGSJHKTR10AA4Z39F9:201",
+        "claim_b_id": "01KT43VEVEA88WES3FMFTBHSD9:179",
+        "claim_a": {
+          "sujet": [
+            "2026-06-20",
+            "assistant.md",
+            "audit",
+            "bug",
+            "external",
+            "gitignore",
+            "heimdall",
+            "integration",
+            "memory",
+            "project",
+            "vault"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "assistant",
+            "branding",
+            "conseille",
+            "coup",
+            "eleve.",
+            "etendre",
+            "final",
+            "integration",
+            "memory",
+            "pr14-pr18",
+            "project",
+            "projet",
+            "smoke",
+            "smoke-pr14-pr17",
+            "unique",
+            "valider",
+            "win11forge",
+            "winforge"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled",
+            "unique"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 22,
+      "a": "_memory/projects/heimdall-parity-audit.md",
+      "b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "best_claim_match": {
+        "score": 4.610936,
+        "shared_subjects": [
+          "footer"
+        ],
+        "shared_subject_weight": 4.191847,
+        "subject_overlap": 0.112794,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KVXPARITYAUDITHEIMDAL001:187",
+        "claim_b_id": "01KWKVJSKASBWTFFYVHKENZZN2:331",
+        "claim_a": {
+          "sujet": [
+            "2026-06-24",
+            "audit",
+            "cle",
+            "decision",
+            "deja",
+            "ferme",
+            "finding",
+            "fix",
+            "footer",
+            "heimdall",
+            "memory",
+            "mobaxterm",
+            "mremoteng",
+            "ouvre",
+            "parite",
+            "parity",
+            "precedent",
+            "project",
+            "puis",
+            "segment"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "complementaire",
+            "direction",
+            "duplique",
+            "footer",
+            "general",
+            "hors",
+            "juillet",
+            "juin",
+            "key.",
+            "mineurs",
+            "onecert",
+            "secret",
+            "transcript",
+            "windows",
+            "wording"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 23,
+      "a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "b": "_memory/projects/win11forge.md",
+      "best_claim_match": {
+        "score": 4.594096,
+        "shared_subjects": [
+          "branding"
+        ],
+        "shared_subject_weight": 3.4987,
+        "subject_overlap": 0.1321,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KWKVJSKASBWTFFYVHKENZZN2:84",
+        "claim_b_id": "01KT43VEVEA88WES3FMFTBHSD9:241",
+        "claim_a": {
+          "sujet": [
+            "branding",
+            "complementaire",
+            "cosmetique",
+            "direction",
+            "disabled.",
+            "gui",
+            "juillet",
+            "juin",
+            "magellan",
+            "onecert",
+            "transcript",
+            "windows"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "2.7.3",
+            "2.7.3.0",
+            "branding",
+            "false",
+            "memory",
+            "project",
+            "projet",
+            "test-isnewerversion",
+            "win11forge",
+            "winforge"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": [
+            "current"
+          ]
+        }
+      }
+    },
+    {
+      "rank": 24,
+      "a": "_memory/projects/charon.md",
+      "b": "_memory/projects/heimdall-history.md",
+      "best_claim_match": {
+        "score": 4.586992,
+        "shared_subjects": [
+          "points"
+        ],
+        "shared_subject_weight": 3.344549,
+        "subject_overlap": 0.134714,
+        "conflict_types": [
+          "polarity",
+          "value_or_state"
+        ],
+        "claim_a_id": "01KTV2DCYD60E2JWWNAWJY9WAS:719",
+        "claim_b_id": "01KSGAEE2DTPP96E16ETEBTAPD:520",
+        "claim_a": {
+          "sujet": [
+            "charon",
+            "cycle",
+            "equivalent",
+            "isresultsempty+hasresults",
+            "memory",
+            "notifie",
+            "points",
+            "project",
+            "projet"
+          ],
+          "portée": "activation",
+          "polarité": "positive",
+          "valeur_ou_état": [
+            "enabled"
+          ],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "chantiers",
+            "ci-dessus",
+            "defaut",
+            "detaillees",
+            "heimdall",
+            "heimdall.next",
+            "mecanismes",
+            "memory",
+            "points",
+            "project",
+            "projet",
+            "scope",
+            "transports"
+          ],
+          "portée": "activation",
+          "polarité": "negative",
+          "valeur_ou_état": [
+            "disabled"
+          ],
+          "contexte_temporel": []
+        }
+      }
+    },
+    {
+      "rank": 25,
+      "a": "_memory/projects/charon-archive-lots.md",
+      "b": "_memory/projects/charon.md",
+      "best_claim_match": {
+        "score": 4.585348,
+        "shared_subjects": [
+          "charon"
+        ],
+        "shared_subject_weight": 4.191847,
+        "subject_overlap": 1.0,
+        "conflict_types": [
+          "polarity"
+        ],
+        "claim_a_id": "01KTYDDCPCW9W769YMC2RNBCZW:13",
+        "claim_b_id": "01KTV2DCYD60E2JWWNAWJY9WAS:362",
+        "claim_a": {
+          "sujet": [
+            "archive",
+            "briefs",
+            "charon",
+            "detaille",
+            "feature-complete",
+            "fondation",
+            "lots",
+            "projet",
+            "v0.1"
+          ],
+          "portée": "assertion",
+          "polarité": "positive",
+          "valeur_ou_état": [],
+          "contexte_temporel": []
+        },
+        "claim_b": {
+          "sujet": [
+            "charon",
+            "lot",
+            "memory",
+            "project",
+            "projet",
+            "tranche"
+          ],
+          "portée": "assertion",
+          "polarité": "negative",
+          "valeur_ou_état": [],
+          "contexte_temporel": []
+        }
+      }
+    }
+  ]
+}
