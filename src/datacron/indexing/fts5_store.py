@@ -26,7 +26,7 @@ from typing import Any, Final, cast, final
 
 import aiosqlite
 
-from datacron.core.frontmatter import coerce_string_list
+from datacron.core.frontmatter import coerce_string_list, extract_tags
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, ChunkType, IndexStats, Note, SearchResult
 from datacron.core.paths import read_ulid_mappings
@@ -51,7 +51,9 @@ CREATE TABLE IF NOT EXISTS notes (
     created TEXT NOT NULL,
     updated TEXT NOT NULL,
     indexed_at TEXT NOT NULL,
-    fs_mtime INTEGER
+    fs_mtime INTEGER,
+    tags_json TEXT,
+    sort_key TEXT
 );
 """
 
@@ -99,8 +101,10 @@ INSERT INTO notes (
     created,
     updated,
     indexed_at,
-    fs_mtime
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    fs_mtime,
+    tags_json,
+    sort_key
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(note_id) DO UPDATE SET
     rel_path = excluded.rel_path,
     title = excluded.title,
@@ -109,7 +113,9 @@ ON CONFLICT(note_id) DO UPDATE SET
     created = excluded.created,
     updated = excluded.updated,
     indexed_at = excluded.indexed_at,
-    fs_mtime = excluded.fs_mtime;
+    fs_mtime = excluded.fs_mtime,
+    tags_json = excluded.tags_json,
+    sort_key = excluded.sort_key;
 """
 
 _INSERT_CHUNK_SQL: Final[str] = """
@@ -244,6 +250,31 @@ SELECT note_id
 FROM ulid_paths
 WHERE rel_path = ?
 LIMIT 1;
+"""
+
+_NOTE_PATH_FILTER_SQL: Final[str] = """
+FROM notes
+WHERE tags_json IS NOT NULL
+  AND sort_key IS NOT NULL
+  AND (? IS NULL OR substr(rel_path, 1, length(?) + 1) = ? || '/')
+  AND NOT EXISTS (
+      SELECT 1
+      FROM json_each(?) AS required
+      WHERE NOT EXISTS (
+          SELECT 1
+          FROM json_each(notes.tags_json) AS actual
+          WHERE actual.value = required.value
+      )
+  )
+"""
+
+_COUNT_NOTE_PATHS_SQL: Final[str] = f"SELECT COUNT(*) {_NOTE_PATH_FILTER_SQL};"
+
+_LIST_NOTE_PATHS_SQL: Final[str] = f"""
+SELECT rel_path
+{_NOTE_PATH_FILTER_SQL}
+ORDER BY sort_key COLLATE BINARY
+LIMIT ? OFFSET ?;
 """
 
 _LIST_INDEXED_NOTES_WITH_MTIME_SQL: Final[str] = """
@@ -482,6 +513,44 @@ class SQLiteFTS5Store:
             row = await cursor.fetchone()
         return None if row is None else str(row[0])
 
+    async def list_note_paths(
+        self,
+        *,
+        folder: str | None,
+        tags: list[str],
+        limit: int,
+        offset: int,
+    ) -> tuple[list[str], int]:
+        """Return one SQL-paginated path page in filesystem discovery order."""
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+
+        connection = self._require_connection()
+        async with connection.execute("PRAGMA table_info(notes);") as cursor:
+            columns = {str(row[1]) for row in await cursor.fetchall()}
+        if not {"tags_json", "sort_key"} <= columns:
+            raise RuntimeError("Indexed note discovery columns are unavailable.")
+        normalized_folder = folder.rstrip("/") if folder else None
+        required_tags = sorted({tag.strip().lower() for tag in tags if tag.strip()})
+        parameters = (
+            normalized_folder,
+            normalized_folder,
+            normalized_folder,
+            json.dumps(required_tags, ensure_ascii=False),
+        )
+        async with connection.execute(_COUNT_NOTE_PATHS_SQL, parameters) as cursor:
+            count_row = await cursor.fetchone()
+        total = 0 if count_row is None else int(count_row[0])
+        start = min(offset, total)
+        async with connection.execute(
+            _LIST_NOTE_PATHS_SQL,
+            (*parameters, limit, start),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [str(row[0]) for row in rows], total
+
     async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
         """Return ``rel_path -> (note_id, content_hash)`` for the current index."""
         connection = self._require_connection()
@@ -603,12 +672,47 @@ class SQLiteFTS5Store:
 
         Databases created before ``fs_mtime`` existed keep working: the column
         is added with NULL values, which callers treat as "always re-read".
+        Discovery metadata is reconstructed from the indexed frontmatter and
+        chunks, so upgrading does not require a filesystem-wide note read.
+        Nested keys using the legacy slash separator are recalculated once;
+        their existing tag JSON is preserved.
         """
         async with connection.execute("PRAGMA table_info(notes);") as cursor:
             rows = await cursor.fetchall()
         columns = {str(row[1]) for row in rows}
         if "fs_mtime" not in columns:
             await connection.execute("ALTER TABLE notes ADD COLUMN fs_mtime INTEGER;")
+        if "tags_json" not in columns:
+            await connection.execute("ALTER TABLE notes ADD COLUMN tags_json TEXT;")
+        if "sort_key" not in columns:
+            await connection.execute("ALTER TABLE notes ADD COLUMN sort_key TEXT;")
+
+        async with connection.execute(
+            "SELECT note_id, rel_path, frontmatter_json, tags_json FROM notes "
+            "WHERE tags_json IS NULL OR sort_key IS NULL "
+            "OR (instr(rel_path, '/') > 0 AND instr(sort_key, char(0)) = 0);"
+        ) as cursor:
+            unprepared = await cursor.fetchall()
+        for row in unprepared:
+            tags_json = row["tags_json"]
+            if tags_json is None:
+                metadata_raw = json.loads(str(row["frontmatter_json"]))
+                metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+                async with connection.execute(
+                    "SELECT content FROM chunks_fts WHERE note_id = ? ORDER BY rowid;",
+                    (str(row["note_id"]),),
+                ) as cursor:
+                    chunk_rows = await cursor.fetchall()
+                indexed_body = "\n".join(str(chunk[0]) for chunk in chunk_rows)
+                tags_json = json.dumps(extract_tags(metadata, indexed_body), ensure_ascii=False)
+            await connection.execute(
+                "UPDATE notes SET tags_json = ?, sort_key = ? WHERE note_id = ?;",
+                (
+                    str(tags_json),
+                    _vault_order_key(str(row["rel_path"])),
+                    str(row["note_id"]),
+                ),
+            )
 
     async def _migrate_ulid_sidecar(
         self,
@@ -703,7 +807,7 @@ def _validate_chunks_belong_to_note(note: Note, chunks: list[Chunk]) -> None:
 
 def _note_row(
     note: Note, indexed_at: str, fs_mtime_ns: int | None
-) -> tuple[str, str, str, str, str, str, str, str, int | None]:
+) -> tuple[str, str, str, str, str, str, str, str, int | None, str, str]:
     return (
         note.id,
         note.rel_path,
@@ -714,6 +818,20 @@ def _note_row(
         note.updated.isoformat(),
         indexed_at,
         fs_mtime_ns,
+        json.dumps(note.tags, ensure_ascii=False),
+        _vault_order_key(note.rel_path),
+    )
+
+
+def _vault_order_key(rel_path: str) -> str:
+    """Encode the reader's files-before-subdirectories traversal order.
+
+    NUL separates path components so an exact directory name sorts before
+    prefix siblings such as ``proj-x`` and ``proj.old``.
+    """
+    parts = rel_path.split("/")
+    return "\x00".join(
+        f"{'0' if index == len(parts) - 1 else '1'}{part}" for index, part in enumerate(parts)
     )
 
 

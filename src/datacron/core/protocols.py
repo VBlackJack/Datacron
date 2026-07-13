@@ -155,6 +155,17 @@ class FTS5Store(Protocol):
         """Return the indexed note ID for ``rel_path``, if present."""
         ...
 
+    async def list_note_paths(
+        self,
+        *,
+        folder: str | None,
+        tags: list[str],
+        limit: int,
+        offset: int,
+    ) -> tuple[list[str], int]:
+        """Return a paginated discovery-order path page and total count."""
+        ...
+
     async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
         """Return ``rel_path -> (note_id, content_hash)`` for index freshness checks."""
         ...
