@@ -1787,11 +1787,12 @@ def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
 
 
 def _error_response(tool: str, exc: BaseException, started: float, **fields: Any) -> dict[str, Any]:
-    _audit(tool, started, error=type(exc).__name__, error_message=str(exc), **fields)
+    message = sanitize_metadata_value(str(exc))
+    _audit(tool, started, error=type(exc).__name__, error_message=message, **fields)
     return {
         "error": {
             "type": type(exc).__name__,
-            "message": str(exc),
+            "message": message,
         }
     }
 
