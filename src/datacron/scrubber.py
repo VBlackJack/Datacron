@@ -271,7 +271,6 @@ async def run_integrity_scrub(
 
     run_started = clock()
     canary_anomalies, canary_bytes, canaries_checked = await _check_canaries(
-        root,
         settings,
         scope,
     )
@@ -305,7 +304,7 @@ async def run_integrity_scrub(
             break
         rel_path = paths[position]
         expected_hash = indexed[rel_path][1]
-        note_anomaly, size_bytes = await _check_note(root, rel_path, expected_hash, scope)
+        note_anomaly, size_bytes = await _check_note(rel_path, expected_hash, scope)
         if note_observer is not None:
             note_observer(rel_path)
         anomalies.pop(("note", rel_path), None)
@@ -426,7 +425,6 @@ def read_scrubber_health(
 
 
 async def _check_note(
-    root: Path,
     rel_path: str,
     expected_hash: str,
     scope: VaultScope,
@@ -493,7 +491,6 @@ async def _check_note(
 
 
 async def _check_canaries(
-    root: Path,
     settings: Settings,
     scope: VaultScope,
 ) -> tuple[list[ScrubAnomaly], int, int]:

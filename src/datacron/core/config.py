@@ -37,6 +37,7 @@ DEFAULT_LOG_LEVEL: Final[str] = "INFO"
 DEFAULT_LOG_DIR: Final[Path] = Path.home() / ".datacron" / "logs"
 DEFAULT_MAX_RESULT_TOKENS: Final[int] = 8000
 DEFAULT_MAX_RESULT_COUNT: Final[int] = 20
+TOKEN_ESTIMATE_CHARS_PER_TOKEN: Final[int] = 4
 TEMPORAL_OVERFETCH_FACTOR: Final[int] = 3
 SUPERSEDED_DEMOTION_FACTOR: Final[float] = 0.1
 CONFIDENCE_PENALTY: Final[dict[str, float]] = {"low": 0.7, "needs_verification": 0.5}
