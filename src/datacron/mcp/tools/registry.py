@@ -15,13 +15,10 @@
 
 from __future__ import annotations
 
-import re
-from typing import Any, Final
+from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from datacron.core.hashing import HASH_HEX_LENGTH
-from datacron.core.logger import get_logger
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
 from datacron.mcp.tools.ops import _audit_query_impl, _get_health_impl, _get_note_history_impl
 from datacron.mcp.tools.read import _get_note_impl, _list_notes_impl
@@ -34,19 +31,7 @@ from datacron.mcp.tools.write import (
     _set_frontmatter_impl,
 )
 
-_LOGGER = get_logger(__name__)
-
 GetNoteFormat = str  # "full" | "map" -- kept loose for FastMCP schema
-_VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map"})
-_ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
-_HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
-_CHUNK_ID_SEPARATOR: Final[str] = "::"
-_MEMORY_ORIGINS: Final[frozenset[str]] = frozenset({"ai", "human", "merged"})
-_MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
-    {"high", "medium", "low", "needs_verification"}
-)
-_CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
-_ULID_CREATE_ATTEMPTS: Final[int] = 5
 
 
 def register_tools(server: FastMCP[Any], app: Any) -> None:

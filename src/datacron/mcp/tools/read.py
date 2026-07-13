@@ -20,8 +20,7 @@ import time
 from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
-from datacron.core.hashing import FRESHNESS_CONTRACT_ID, HASH_HEX_LENGTH
-from datacron.core.logger import get_logger
+from datacron.core.hashing import FRESHNESS_CONTRACT_ID
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.core.paths import PathConfinementError
 from datacron.mcp.sandbox import (
@@ -29,6 +28,7 @@ from datacron.mcp.sandbox import (
     wrap_vault_content,
 )
 from datacron.mcp.tools.payloads import (
+    _LOGGER,
     _audit,
     _bounded_count,
     _error_response,
@@ -40,19 +40,11 @@ from datacron.mcp.tools.payloads import (
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
-_LOGGER = get_logger(__name__)
-
 GetNoteFormat = str  # "full" | "map" -- kept loose for FastMCP schema
 _VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map"})
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
 _CHUNK_ID_SEPARATOR: Final[str] = "::"
-_MEMORY_ORIGINS: Final[frozenset[str]] = frozenset({"ai", "human", "merged"})
-_MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
-    {"high", "medium", "low", "needs_verification"}
-)
-_CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
-_ULID_CREATE_ATTEMPTS: Final[int] = 5
 
 
 class StaleChunkError(ValueError):
