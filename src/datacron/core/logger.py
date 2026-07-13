@@ -49,6 +49,7 @@ from datacron.core.security import SecretRedactor
 __all__ = ["configure_logging", "get_logger", "shutdown_logging"]
 
 _ROOT_LOGGER_NAME: Final[str] = "datacron"
+_LOG_BACKUP_COUNT: Final[int] = 14
 _setup_lock = threading.Lock()
 _listener: QueueListener | None = None
 _log_queue: queue.Queue[logging.LogRecord] | None = None
@@ -79,7 +80,7 @@ def _build_file_handler(
     handler = TimedRotatingFileHandler(
         filename=log_path,
         when="midnight",
-        backupCount=14,
+        backupCount=_LOG_BACKUP_COUNT,
         encoding="utf-8",
         delay=True,
         utc=False,
