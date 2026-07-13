@@ -674,6 +674,8 @@ class SQLiteFTS5Store:
         is added with NULL values, which callers treat as "always re-read".
         Discovery metadata is reconstructed from the indexed frontmatter and
         chunks, so upgrading does not require a filesystem-wide note read.
+        Nested keys using the legacy slash separator are recalculated once;
+        their existing tag JSON is preserved.
         """
         async with connection.execute("PRAGMA table_info(notes);") as cursor:
             rows = await cursor.fetchall()
@@ -686,23 +688,27 @@ class SQLiteFTS5Store:
             await connection.execute("ALTER TABLE notes ADD COLUMN sort_key TEXT;")
 
         async with connection.execute(
-            "SELECT note_id, rel_path, frontmatter_json FROM notes "
-            "WHERE tags_json IS NULL OR sort_key IS NULL;"
+            "SELECT note_id, rel_path, frontmatter_json, tags_json FROM notes "
+            "WHERE tags_json IS NULL OR sort_key IS NULL "
+            "OR (instr(rel_path, '/') > 0 AND instr(sort_key, char(0)) = 0);"
         ) as cursor:
             unprepared = await cursor.fetchall()
         for row in unprepared:
-            metadata_raw = json.loads(str(row["frontmatter_json"]))
-            metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
-            async with connection.execute(
-                "SELECT content FROM chunks_fts WHERE note_id = ? ORDER BY rowid;",
-                (str(row["note_id"]),),
-            ) as cursor:
-                chunk_rows = await cursor.fetchall()
-            indexed_body = "\n".join(str(chunk[0]) for chunk in chunk_rows)
+            tags_json = row["tags_json"]
+            if tags_json is None:
+                metadata_raw = json.loads(str(row["frontmatter_json"]))
+                metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+                async with connection.execute(
+                    "SELECT content FROM chunks_fts WHERE note_id = ? ORDER BY rowid;",
+                    (str(row["note_id"]),),
+                ) as cursor:
+                    chunk_rows = await cursor.fetchall()
+                indexed_body = "\n".join(str(chunk[0]) for chunk in chunk_rows)
+                tags_json = json.dumps(extract_tags(metadata, indexed_body), ensure_ascii=False)
             await connection.execute(
                 "UPDATE notes SET tags_json = ?, sort_key = ? WHERE note_id = ?;",
                 (
-                    json.dumps(extract_tags(metadata, indexed_body), ensure_ascii=False),
+                    str(tags_json),
                     _vault_order_key(str(row["rel_path"])),
                     str(row["note_id"]),
                 ),
@@ -818,9 +824,13 @@ def _note_row(
 
 
 def _vault_order_key(rel_path: str) -> str:
-    """Encode the reader's files-before-subdirectories traversal order."""
+    """Encode the reader's files-before-subdirectories traversal order.
+
+    NUL separates path components so an exact directory name sorts before
+    prefix siblings such as ``proj-x`` and ``proj.old``.
+    """
     parts = rel_path.split("/")
-    return "/".join(
+    return "\x00".join(
         f"{'0' if index == len(parts) - 1 else '1'}{part}" for index, part in enumerate(parts)
     )
 

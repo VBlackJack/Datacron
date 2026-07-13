@@ -298,6 +298,19 @@ class TestListNotes:
     ) -> None:
         from datacron.mcp.tools import _list_notes_impl
 
+        prefix_siblings = (
+            ("proj/a.md", "01HQXR7K9YZ8M2N3PQRSTV4WX9"),
+            ("proj/sub/c.md", "01HQXR7K9YZ8M2N3PQRSTV4WXA"),
+            ("proj-x/b.md", "01HQXR7K9YZ8M2N3PQRSTV4WXB"),
+            ("proj.old/f.md", "01HQXR7K9YZ8M2N3PQRSTV4WXC"),
+        )
+        for rel_path, note_id in prefix_siblings:
+            _write_memory_note(
+                tmp_vault,
+                rel_path,
+                f"# {rel_path}\n",
+                metadata_overrides={"id": note_id},
+            )
         settings = Settings(
             read_paths=[tmp_vault],
             write_paths=[tmp_vault],
@@ -312,6 +325,7 @@ class TestListNotes:
         )
         cases = (
             (None, None, 2, 2),
+            (None, None, 3, 6),
             (None, ["intro"], 20, 0),
             ("subfolder", None, 20, 0),
         )
