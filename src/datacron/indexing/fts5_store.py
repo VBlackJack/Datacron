@@ -247,6 +247,13 @@ FROM notes
 ORDER BY indexed_at ASC;
 """
 
+_GET_NOTE_REL_PATH_SQL: Final[str] = """
+SELECT rel_path
+FROM ulid_paths
+WHERE note_id = ?
+LIMIT 1;
+"""
+
 _LIST_INDEXED_NOTES_WITH_MTIME_SQL: Final[str] = """
 SELECT rel_path, note_id, content_hash, fs_mtime
 FROM notes
@@ -468,6 +475,13 @@ class SQLiteFTS5Store:
         async with connection.execute(_LIST_CHUNKS_WITH_WIKILINKS_SQL) as cursor:
             rows = cast("list[sqlite3.Row]", await cursor.fetchall())
         return [_chunk_from_row(row) for row in rows]
+
+    async def get_note_rel_path(self, note_id: str) -> str | None:
+        """Return the indexed vault-relative path for ``note_id``, if present."""
+        connection = self._require_connection()
+        async with connection.execute(_GET_NOTE_REL_PATH_SQL, (note_id,)) as cursor:
+            row = await cursor.fetchone()
+        return None if row is None else str(row[0])
 
     async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
         """Return ``rel_path -> (note_id, content_hash)`` for the current index."""

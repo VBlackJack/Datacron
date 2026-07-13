@@ -16,8 +16,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final, TypeAlias
@@ -30,11 +31,14 @@ from datacron.core.config import (
 )
 from datacron.core.durability import atomic_durable_write, durable_flush_directory
 from datacron.core.hashing import sha256_bytes
+from datacron.core.logger import get_logger
 
 JsonScalar: TypeAlias = str | int | float | bool | None
 
 _HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{64}$")
 _OPERATIONS_FILENAME: Final[str] = "operations.jsonl"
+_FORMAT_VERSION: Final[int] = 2
+_LOGGER = get_logger(__name__)
 
 
 class OperationLogError(RuntimeError):
@@ -70,6 +74,8 @@ class OperationRecord:
     actor: str
     parameters: dict[str, JsonScalar]
     history_stored: bool
+    prev_hash: str | None = None
+    format_version: int = _FORMAT_VERSION
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -84,6 +90,8 @@ class OperationRecord:
             "actor": self.actor,
             "parameters": self.parameters,
             "history_stored": self.history_stored,
+            "prev_hash": self.prev_hash,
+            "format_version": self.format_version,
         }
 
     @classmethod
@@ -106,6 +114,8 @@ class OperationRecord:
         note_id = payload.get("note_id")
         parameters = payload.get("parameters")
         history_stored = payload.get("history_stored")
+        prev_hash = payload.get("prev_hash")
+        format_version = payload.get("format_version", 1)
         if before_hash is not None and not isinstance(before_hash, str):
             raise OperationLogError("before_hash must be a string or null")
         if note_id is not None and not isinstance(note_id, str):
@@ -114,6 +124,10 @@ class OperationRecord:
             raise OperationLogError("parameters must be a JSON object")
         if not isinstance(history_stored, bool):
             raise OperationLogError("history_stored must be a boolean")
+        if prev_hash is not None and not isinstance(prev_hash, str):
+            raise OperationLogError("prev_hash must be a string or null")
+        if not isinstance(format_version, int) or isinstance(format_version, bool):
+            raise OperationLogError("format_version must be an integer")
         cleaned_parameters: dict[str, JsonScalar] = {}
         for key, value in parameters.items():
             scalar = isinstance(value, (str, int, float, bool, type(None)))
@@ -132,6 +146,8 @@ class OperationRecord:
             actor=str(payload["actor"]),
             parameters=cleaned_parameters,
             history_stored=history_stored,
+            prev_hash=prev_hash,
+            format_version=format_version,
         )
         record.validate()
         return record
@@ -141,6 +157,12 @@ class OperationRecord:
             raise OperationLogError("before_hash is not a lowercase SHA-256")
         if not _HASH_PATTERN.fullmatch(self.after_hash):
             raise OperationLogError("after_hash is not a lowercase SHA-256")
+        if self.prev_hash is not None and not _HASH_PATTERN.fullmatch(self.prev_hash):
+            raise OperationLogError("prev_hash is not a lowercase SHA-256")
+        if self.format_version not in {1, _FORMAT_VERSION}:
+            raise OperationLogError(f"unsupported operation log format: {self.format_version}")
+        if self.format_version == 1 and self.prev_hash is not None:
+            raise OperationLogError("legacy operation records cannot contain prev_hash")
         try:
             parsed = datetime.fromisoformat(self.timestamp)
         except ValueError as exc:
@@ -166,6 +188,9 @@ class OperationJournal:
         self._history_dir = self._sidecar / HISTORY_DIR_NAME
         self._retention_days = retention_days
         self._history_mode = history_mode
+        self._tail_record: OperationRecord | None = None
+        self._tail_hash: str | None = None
+        self._tail_loaded = False
 
     @property
     def history_enabled(self) -> bool:
@@ -173,9 +198,9 @@ class OperationJournal:
 
     def next_timestamp(self, now: datetime | None = None) -> str:
         candidate = (now or datetime.now(tz=UTC)).astimezone(UTC)
-        records = self.read_records()
-        if records:
-            previous = datetime.fromisoformat(records[-1].timestamp).astimezone(UTC)
+        self._ensure_tail_state()
+        if self._tail_record is not None:
+            previous = datetime.fromisoformat(self._tail_record.timestamp).astimezone(UTC)
             if candidate <= previous:
                 candidate = previous + timedelta(microseconds=1)
         return candidate.isoformat(timespec="microseconds")
@@ -229,17 +254,30 @@ class OperationJournal:
 
     def append_record(self, record: OperationRecord) -> bool:
         record.validate()
-        existing = self._operations_path.read_bytes() if self._operations_path.is_file() else b""
-        if existing and not existing.endswith(b"\n"):
-            raise OperationLogError("operation log does not end at a JSONL boundary")
-        records = _parse_records(existing)
-        if any(item.operation_id == record.operation_id for item in records):
+        self._load_tail_state()
+        if self._tail_record is not None and self._tail_record.operation_id == record.operation_id:
             return False
+        chained = replace(
+            record,
+            prev_hash=self._tail_hash,
+            format_version=_FORMAT_VERSION,
+        )
+        chained.validate()
+        line = _record_line(chained)
         self._oplog_dir.mkdir(parents=True, exist_ok=True)
-        updated = existing + _record_line(record)
-        if not updated.startswith(existing):
-            raise OperationLogError("operation log append changed its existing prefix")
-        _atomic_write(self._operations_path, updated)
+        created = not self._operations_path.exists()
+        try:
+            with self._operations_path.open("ab") as stream:
+                stream.write(line)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except OSError as exc:
+            raise OperationLogError("failed to append the operation log") from exc
+        if created:
+            _durable_flush_directory(self._oplog_dir)
+        self._tail_record = chained
+        self._tail_hash = sha256_bytes(line)
+        self._tail_loaded = True
         return True
 
     def remove_pending(self, operation_id: str) -> None:
@@ -252,10 +290,63 @@ class OperationJournal:
     def read_records(self) -> list[OperationRecord]:
         if not self._operations_path.is_file():
             return []
-        return _parse_records(self._operations_path.read_bytes())
+        self._ensure_tail_state()
+        return _parse_records(self._operations_path.read_bytes(), verify_chain=True)
 
     def has_record(self, operation_id: str) -> bool:
+        # Recovery queries are outside the append hot path, so a full verified scan
+        # preserves idempotence without maintaining a second durable index.
         return any(record.operation_id == operation_id for record in self.read_records())
+
+    def _ensure_tail_state(self) -> None:
+        if not self._tail_loaded:
+            self._load_tail_state()
+
+    def _load_tail_state(self) -> None:
+        tail = _read_tail_records(self._operations_path)
+        if not tail:
+            self._tail_record = None
+            self._tail_hash = None
+            self._tail_loaded = True
+            return
+        tail_record, tail_line = tail[-1]
+        if tail_record.format_version == 1:
+            self._migrate_legacy_log()
+            return
+        if any(record.format_version != _FORMAT_VERSION for record, _line in tail):
+            raise OperationLogError("operation log tail mixes legacy and chained records")
+        expected_prev_hash = sha256_bytes(tail[-2][1]) if len(tail) == 2 else None
+        if tail_record.prev_hash != expected_prev_hash:
+            raise OperationLogError("operation log tail hash chain mismatch")
+        self._tail_record = tail_record
+        self._tail_hash = sha256_bytes(tail_line)
+        self._tail_loaded = True
+
+    def _migrate_legacy_log(self) -> None:
+        data = self._operations_path.read_bytes()
+        legacy_records = _parse_records(data, verify_chain=False)
+        if any(record.format_version != 1 for record in legacy_records):
+            raise OperationLogError("operation log contains mixed legacy and chained records")
+        chained_records: list[OperationRecord] = []
+        previous_hash: str | None = None
+        for record in legacy_records:
+            chained = replace(
+                record,
+                prev_hash=previous_hash,
+                format_version=_FORMAT_VERSION,
+            )
+            chained_records.append(chained)
+            previous_hash = sha256_bytes(_record_line(chained))
+        migrated = b"".join(_record_line(record) for record in chained_records)
+        _atomic_write(self._operations_path, migrated)
+        _LOGGER.warning(
+            "Migrated %d legacy operation records to chained format version %d",
+            len(chained_records),
+            _FORMAT_VERSION,
+        )
+        self._tail_record = chained_records[-1] if chained_records else None
+        self._tail_hash = previous_hash
+        self._tail_loaded = True
 
     def purge_history(self, now: datetime | None = None) -> list[str]:
         if not self._history_dir.is_dir():
@@ -295,13 +386,14 @@ def _record_line(record: OperationRecord) -> bytes:
     return f"{rendered}\n".encode("ascii")
 
 
-def _parse_records(data: bytes) -> list[OperationRecord]:
+def _parse_records(data: bytes, *, verify_chain: bool) -> list[OperationRecord]:
     try:
         text = data.decode("ascii", errors="strict")
     except UnicodeDecodeError as exc:
         raise OperationLogError("operation log must be ASCII JSONL") from exc
     records: list[OperationRecord] = []
     seen: set[str] = set()
+    previous_hash: str | None = None
     for line_number, line in enumerate(text.splitlines(), start=1):
         if not line:
             continue
@@ -312,8 +404,49 @@ def _parse_records(data: bytes) -> list[OperationRecord]:
         record = OperationRecord.from_dict(payload)
         if record.operation_id in seen:
             raise OperationLogError(f"duplicate operation_id at line {line_number}")
+        if verify_chain:
+            if record.format_version != _FORMAT_VERSION:
+                raise OperationLogError(f"legacy operation record remains at line {line_number}")
+            if record.prev_hash != previous_hash:
+                raise OperationLogError(f"operation hash chain mismatch at line {line_number}")
         seen.add(record.operation_id)
         records.append(record)
+        previous_hash = sha256_bytes(_record_line(record))
+    return records
+
+
+def _read_tail_records(path: Path) -> list[tuple[OperationRecord, bytes]]:
+    if not path.is_file():
+        return []
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            end = stream.tell()
+            if end == 0:
+                return []
+            stream.seek(-1, os.SEEK_END)
+            if stream.read(1) != b"\n":
+                raise OperationLogError("operation log does not end at a JSONL boundary")
+            position = end
+            chunks: list[bytes] = []
+            newline_count = 0
+            while position > 0 and newline_count < 3:
+                read_size = min(4096, position)
+                position -= read_size
+                stream.seek(position)
+                chunk = stream.read(read_size)
+                chunks.append(chunk)
+                newline_count += chunk.count(b"\n")
+            lines = b"".join(reversed(chunks)).splitlines()[-2:]
+    except OSError as exc:
+        raise OperationLogError("failed to read operation log tail") from exc
+    records: list[tuple[OperationRecord, bytes]] = []
+    for line in lines:
+        try:
+            payload = json.loads(line.decode("ascii", errors="strict"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise OperationLogError("invalid operation log tail record") from exc
+        records.append((OperationRecord.from_dict(payload), line + b"\n"))
     return records
 
 

@@ -15,8 +15,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -26,6 +28,7 @@ from datacron.core.operation_log import (
     HistoryUnavailableError,
     OperationContext,
     OperationJournal,
+    OperationLogError,
     OperationRecord,
 )
 from datacron.core.vault_writer import FilesystemVaultWriter
@@ -160,3 +163,79 @@ def test_monotonic_timestamp_advances_when_wall_clock_moves_back(tmp_path: Path)
     )
 
     assert timestamp == future + timedelta(microseconds=1)
+
+
+def test_full_read_detects_corruption_in_middle_of_hash_chain(tmp_path: Path) -> None:
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    now = datetime(2026, 7, 10, tzinfo=UTC)
+    for index in range(3):
+        journal.append_record(
+            _record(
+                f"operation-{index}",
+                now + timedelta(seconds=index),
+                sha256_bytes(f"before-{index}".encode()),
+                sha256_bytes(f"after-{index}".encode()),
+            )
+        )
+    path = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+    lines = path.read_text(encoding="ascii").splitlines()
+    middle = json.loads(lines[1])
+    middle["actor"] = "tampered"
+    lines[1] = json.dumps(middle, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    path.write_text("\n".join(lines) + "\n", encoding="ascii")
+
+    with pytest.raises(OperationLogError, match="hash chain mismatch"):
+        journal.read_records()
+
+
+def test_legacy_log_is_migrated_once_then_accepts_appends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = datetime(2026, 7, 10, tzinfo=UTC)
+    path = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+    path.parent.mkdir(parents=True)
+    legacy_payloads: list[dict[str, object]] = []
+    for index in range(2):
+        payload = _record(
+            f"legacy-{index}",
+            now + timedelta(seconds=index),
+            sha256_bytes(f"before-{index}".encode()),
+            sha256_bytes(f"after-{index}".encode()),
+        ).to_dict()
+        del payload["format_version"]
+        del payload["prev_hash"]
+        legacy_payloads.append(payload)
+    path.write_text(
+        "".join(
+            f"{json.dumps(payload, separators=(',', ':'), sort_keys=True)}\n"
+            for payload in legacy_payloads
+        ),
+        encoding="ascii",
+    )
+    migration_warning = Mock()
+    monkeypatch.setattr("datacron.core.operation_log._LOGGER.warning", migration_warning)
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+
+    journal.append_record(
+        _record(
+            "new-operation",
+            now + timedelta(seconds=2),
+            sha256_bytes(b"before-new"),
+            sha256_bytes(b"after-new"),
+        )
+    )
+
+    records = journal.read_records()
+    assert [record.operation_id for record in records] == [
+        "legacy-0",
+        "legacy-1",
+        "new-operation",
+    ]
+    assert all(record.format_version == 2 for record in records)
+    assert records[0].prev_hash is None
+    assert all(record.prev_hash is not None for record in records[1:])
+    migration_warning.assert_called_once_with(
+        "Migrated %d legacy operation records to chained format version %d",
+        2,
+        2,
+    )
