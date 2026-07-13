@@ -18,10 +18,10 @@ import pytest
 from datacron.core.config import Settings
 from datacron.core.frontmatter import serialize
 from datacron.core.models import SearchResult
+from datacron.core.protocols import FTS5Store
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
-from datacron.indexing.ripgrep import RipgrepError, RipgrepWrapper
-from datacron.indexing.wikilinks import RegexWikilinksExtractor
+from datacron.indexing.ripgrep import RegexFallbackError, RipgrepError, RipgrepWrapper
 from datacron.mcp.server import DatacronApp, build_app
 from datacron.mcp.tools import (
     _get_backlinks_impl,
@@ -89,7 +89,6 @@ async def indexed_app(tmp_vault: Path) -> AsyncIterator[DatacronApp]:
         chunker=MarkdownChunker(),
         store=store,
         ripgrep=RipgrepWrapper(),
-        wikilinks=RegexWikilinksExtractor(),
     )
     notes = await app.vault_reader.list_notes()
     for note in notes:
@@ -343,8 +342,19 @@ class _StubRipgrep:
         limit: int = 20,
         store: Any = None,
         rg_path: str | None = None,
+        fallback_max_pattern_length: int | None = None,
+        fallback_timeout_seconds: float | None = None,
     ) -> list[SearchResult]:
-        self.calls.append({"pattern": pattern, "glob": glob, "limit": limit, "rg_path": rg_path})
+        self.calls.append(
+            {
+                "pattern": pattern,
+                "glob": glob,
+                "limit": limit,
+                "rg_path": rg_path,
+                "fallback_max_pattern_length": fallback_max_pattern_length,
+                "fallback_timeout_seconds": fallback_timeout_seconds,
+            }
+        )
         return self._results[:limit]
 
 
@@ -398,6 +408,8 @@ class TestSearchRegex:
                 "glob": "*.md",
                 "limit": 20,
                 "rg_path": "rg",
+                "fallback_max_pattern_length": 512,
+                "fallback_timeout_seconds": 2.0,
             }
         ]  # limit bounded by max_result_count
 
@@ -443,6 +455,42 @@ class TestSearchRegex:
         assert "pattern rejected by ripgrep" in result["error"]["message"]
         assert "regex parse error" in result["error"]["message"]
         assert "internal error" not in result["error"]["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_regex_fallback_timeout_returns_clear_error(
+        self,
+        stubbed_app: DatacronApp,
+    ) -> None:
+        class _TimedOutFallback:
+            async def search(
+                self,
+                pattern: str,
+                vault_root: Path,
+                glob: str | None = None,
+                limit: int = 20,
+                store: FTS5Store | None = None,
+                rg_path: str | None = None,
+                fallback_max_pattern_length: int | None = None,
+                fallback_timeout_seconds: float | None = None,
+            ) -> list[SearchResult]:
+                raise RegexFallbackError("regex fallback timed out -- install ripgrep")
+
+        replaced = build_app(
+            settings=stubbed_app.settings,
+            vault_root=stubbed_app.vault_root,
+            chunker=stubbed_app.chunker,
+            store=stubbed_app.store,
+            ripgrep=_TimedOutFallback(),
+        )
+
+        result = await _search_regex_impl(replaced, pattern="(a+)+$", glob=None, limit=5)
+
+        assert result == {
+            "error": {
+                "type": "ValueError",
+                "message": "regex fallback timed out -- install ripgrep",
+            }
+        }
 
     @pytest.mark.asyncio
     async def test_results_are_sandbox_wrapped(
