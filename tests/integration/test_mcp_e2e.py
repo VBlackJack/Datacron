@@ -87,6 +87,7 @@ class TestMcpE2E:
                 "revert_note",
                 "get_note_history",
                 "audit_query",
+                "contradiction_scan",
             } <= tool_names
         finally:
             await _close_session(session, streams)
