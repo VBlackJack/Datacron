@@ -26,8 +26,10 @@ from typing import Any, Final, cast, final
 
 import aiosqlite
 
+from datacron.core.frontmatter import coerce_string_list
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, ChunkType, IndexStats, Note, SearchResult
+from datacron.core.paths import read_ulid_mappings
 from datacron.core.query_expansion import expand_terms, normalize_term_map
 from datacron.core.temporal import TemporalMeta
 
@@ -623,7 +625,7 @@ class SQLiteFTS5Store:
         if not source_path.exists():
             return
 
-        mappings = await asyncio.to_thread(_read_ulid_mappings, source_path)
+        mappings = await asyncio.to_thread(read_ulid_mappings, source_path)
         rows = list(mappings.items())
         await connection.executemany(
             "INSERT OR IGNORE INTO ulid_paths(rel_path, note_id) VALUES (?, ?)",
@@ -772,16 +774,8 @@ def _temporal_meta_from_frontmatter(value: Any) -> TemporalMeta:
         raise ValueError("Stored frontmatter_json is not a JSON object.")
     return TemporalMeta(
         confidence=_optional_str(parsed.get("confidence")),
-        supersedes=_string_list(parsed.get("supersedes")),
+        supersedes=coerce_string_list(parsed.get("supersedes"), split_delimited=False),
     )
-
-
-def _string_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    return [str(value).strip()] if str(value).strip() else []
 
 
 def _optional_str(value: Any) -> str | None:
@@ -795,16 +789,6 @@ def _json_default(value: object) -> str:
     if isinstance(value, datetime):
         return value.isoformat()
     return str(value)
-
-
-def _read_ulid_mappings(path: Path) -> dict[str, str]:
-    raw = path.read_text(encoding="utf-8")
-    if not raw.strip():
-        return {}
-    data = json.loads(raw)
-    if not isinstance(data, dict):
-        raise ValueError(f"ULID sidecar {path} is not a JSON object (found {type(data).__name__}).")
-    return {str(rel_path): str(note_id) for rel_path, note_id in data.items()}
 
 
 def _write_ulid_mappings(path: Path, mappings: dict[str, str]) -> None:

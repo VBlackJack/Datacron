@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import errno
-import json
 import os
 import re
 import sqlite3
@@ -53,6 +52,7 @@ from datacron.core.operation_log import (
 from datacron.core.paths import (
     PathConfinementError,
     assert_within_write_paths,
+    read_ulid_mappings,
     sidecar_dir,
     sidecar_index_db,
 )
@@ -469,13 +469,14 @@ class FilesystemVaultWriter:
         if not sidecar_path.is_file():
             return None
         try:
-            payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            payload = read_ulid_mappings(
+                sidecar_path,
+                require_string_pairs=True,
+                invalid_object_is_empty=True,
+            )
+        except (OSError, UnicodeDecodeError, ValueError):
             return None
-        if not isinstance(payload, dict):
-            return None
-        value = payload.get(rel_path.as_posix())
-        return value if isinstance(value, str) else None
+        return payload.get(rel_path.as_posix())
 
     def _resolve_target(self, rel_path: str) -> tuple[Path, Path]:
         candidate = (self._vault_root / rel_path).expanduser().resolve()
@@ -550,12 +551,16 @@ class FilesystemVaultWriter:
         if not sidecar_path.is_file():
             return False
         try:
-            payload = json.loads(sidecar_path.read_bytes().decode("utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            payload = read_ulid_mappings(
+                sidecar_path,
+                require_string_pairs=True,
+                invalid_object_is_empty=True,
+            )
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
             raise UlidVerificationError(
                 f"could not verify ULID uniqueness in sidecar {sidecar_path}"
             ) from exc
-        return isinstance(payload, dict) and note_id in payload.values()
+        return note_id in payload.values()
 
     def _ulid_exists_in_frontmatter(self, note_id: str) -> bool:
         for current_dir, dirnames, filenames in os.walk(self._vault_root):

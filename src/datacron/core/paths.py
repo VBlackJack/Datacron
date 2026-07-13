@@ -21,6 +21,7 @@ configured roots is rejected before it reaches the filesystem.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal
@@ -40,6 +41,7 @@ __all__ = [
     "assert_within_read_paths",
     "assert_within_write_paths",
     "is_within",
+    "read_ulid_mappings",
     "sidecar_dir",
     "sidecar_index_db",
     "sidecar_index_dir",
@@ -51,6 +53,30 @@ AccessKind = Literal["read", "write"]
 
 class PathConfinementError(PermissionError):
     """Raised when a path falls outside the configured allowed roots."""
+
+
+def read_ulid_mappings(
+    path: Path,
+    *,
+    require_string_pairs: bool = False,
+    invalid_object_is_empty: bool = False,
+) -> dict[str, str]:
+    """Read a ULID sidecar while preserving the caller's validation policy."""
+    raw = path.read_text(encoding="utf-8")
+    if not raw.strip():
+        return {}
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        if invalid_object_is_empty:
+            return {}
+        raise ValueError(f"ULID sidecar {path} is not a JSON object (found {type(data).__name__}).")
+    if require_string_pairs:
+        return {
+            rel_path: note_id
+            for rel_path, note_id in data.items()
+            if isinstance(rel_path, str) and isinstance(note_id, str)
+        }
+    return {str(rel_path): str(note_id) for rel_path, note_id in data.items()}
 
 
 def _resolve(path: Path) -> Path:
