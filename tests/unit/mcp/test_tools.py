@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -23,6 +24,8 @@ from datacron.core.frontmatter import parse, serialize
 from datacron.core.hashing import hash_text
 from datacron.core.models import Note
 from datacron.core.operation_log import OperationContext, OperationRecord
+from datacron.core.paths import sidecar_dir
+from datacron.core.vault import ULID_SIDECAR_FILENAME
 from datacron.core.vault_writer import FilesystemVaultWriter
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
@@ -747,10 +750,22 @@ class TestGetNoteFull:
     async def test_unknown_ulid_with_healthy_sidecar_does_not_scan(
         self,
         app_with_open_store: DatacronApp,
+        tmp_vault: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from datacron.mcp.tools import _get_note_impl
 
+        live_notes = await app_with_open_store.vault_reader.stat_notes()
+        mappings = {
+            rel_path: (await app_with_open_store.vault_reader.read_note(path)).id
+            for rel_path, (path, _mtime_ns) in live_notes.items()
+        }
+        sidecar = sidecar_dir(tmp_vault)
+        sidecar.mkdir(parents=True, exist_ok=True)
+        (sidecar / ULID_SIDECAR_FILENAME).write_text(
+            json.dumps(mappings),
+            encoding="utf-8",
+        )
         calls = 0
 
         async def counting_list_notes(
