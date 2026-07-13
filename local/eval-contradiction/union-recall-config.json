@@ -1,0 +1,24 @@
+{
+  "corpus": "corpus.json",
+  "labels": "labels.jsonl",
+  "synthetic_spec": "synthetic-spec.json",
+  "providers": [
+    {
+      "provider": "lexical-v1",
+      "artifact": "top100-candidates.json",
+      "top_n": 100,
+      "model_id": null
+    },
+    {
+      "provider": "semantic-cortex-v1",
+      "artifact": "semantic-top100-candidates.json",
+      "top_n": 100,
+      "model_id": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    }
+  ],
+  "cutoffs": [25, 50, 100, 200],
+  "fail_fast": {
+    "cutoff": 100,
+    "max_recall_to_stop": 0.15
+  }
+}
