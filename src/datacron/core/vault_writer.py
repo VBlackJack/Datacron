@@ -675,7 +675,6 @@ if sys.platform == "win32":
         msvcrt.locking(file_handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 else:
-
     _LOCK_BUSY_ERRNOS: Final[frozenset[int]] = frozenset(
         {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, errno.EDEADLK}
     )
