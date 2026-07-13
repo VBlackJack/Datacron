@@ -23,6 +23,9 @@ from pathlib import Path
 _IMPORT_COMMAND = (
     "import datacron.mcp.tools, datacron.core.vault_writer, datacron.core.operation_log"
 )
+_CONFIGURE_LOGGING_COMMAND = (
+    "from datacron.core.logger import configure_logging; configure_logging()"
+)
 
 
 def _run_import(
@@ -68,3 +71,31 @@ def test_imports_are_silent_and_do_not_create_runtime_directories(tmp_path: Path
 
 def test_imports_do_not_parse_invalid_logging_environment(tmp_path: Path) -> None:
     _run_import(tmp_path, log_level="INVALID")
+
+    home = tmp_path / "configure-home"
+    working_directory = tmp_path / "configure-work"
+    home.mkdir()
+    working_directory.mkdir()
+    environment = {
+        key: value for key, value in os.environ.items() if not key.upper().startswith("DATACRON_")
+    }
+    environment.update(
+        {
+            "DATACRON_LOG_LEVEL": "INVALID",
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", _CONFIGURE_LOGGING_COMMAND],
+        cwd=working_directory,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "Invalid DATACRON_LOG_LEVEL" in completed.stderr
