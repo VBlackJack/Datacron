@@ -1,0 +1,154 @@
+{
+  "token_pattern": "[a-z0-9][a-z0-9_.+-]*",
+  "sentence_split_pattern": "(?<=[.!?;])\\s+|\\s+[—–]\\s+",
+  "markdown_strip_pattern": "[`*_>#|]+|^\\s*[-+]\\s+|^\\s*\\d+[.)]\\s+",
+  "value_scope": "value_threshold",
+  "scope_negative_polarity": {"obligation": "forbidden"},
+  "scope_positive_polarity": {"obligation": "required"},
+  "stopwords": [
+    "a", "afin", "all", "also", "an", "and", "are", "as", "at", "au", "aux", "avec",
+    "be", "been", "both", "by", "ce", "ces", "cette", "comme", "dans", "de", "des", "do",
+    "does", "du", "elle", "en", "est", "et", "every", "for", "from", "has", "have", "il",
+    "in", "is", "it", "its", "la", "le", "les", "leur", "mais", "more", "must", "ne", "of",
+    "on", "ou", "par", "pas", "pour", "que", "qui", "remain", "same", "se", "should", "sur",
+    "the", "their", "this", "to", "tous", "tout", "une", "un", "with", "will"
+  ],
+  "aliases": {
+    "repository": ["repo", "repository", "depot", "checkout", "working tree"],
+    "assistant": ["ai", "assistant", "agent ia", "agents", "automated worker", "claude", "codex", "workers"],
+    "license": ["licence", "license", "spdx", "apache 2.0"],
+    "localization": ["i18n", "internationalization", "localisation", "localization", "translation"],
+    "english": ["anglais", "english"],
+    "french": ["francais", "french"],
+    "update": ["mise a jour", "self-update", "updater", "update"],
+    "logging": ["journalisation", "logging", "session log"],
+    "profile": ["per-profile", "per-profil", "profile", "profil"],
+    "vault": ["coffre", "passphrase", "master password", "vault"],
+    "index": ["indexed", "indexing", "indexation", "indexe", "index"],
+    "draft": ["_drafts", "brouillon", "drafts", "draft"],
+    "theme": ["palette", "theme", "visual package"],
+    "certificate": ["certificat", "certificate", "credential bundle", "tls material"],
+    "collection": ["area", "collection", "section", "top-level collection"],
+    "mismatch": ["divergence", "ecart", "hash_divergences", "incoherence", "mismatch"],
+    "canonical": ["authoritative", "authority", "canonical", "source of truth"],
+    "container": ["compose", "container", "docker"],
+    "physical": ["appliance", "materiel", "physical"],
+    "framework": ["target framework", "framework", "tfm"],
+    "enabled": ["active", "available", "enabled", "fonctionnel", "implemented", "inclure", "included", "wired"],
+    "disabled": ["absent", "backlog", "disabled", "excluded", "not implemented", "unavailable", "unwired"],
+    "required": ["doit", "devrait", "has to", "mandatory", "must", "needs to", "obligatoire", "required", "shall", "should"],
+    "forbidden": ["cannot", "forbidden", "interdit", "jamais", "may not", "must not", "ne doit pas", "prohibited", "should not"],
+    "permitted": ["acceptable", "allowed", "autorise", "may", "peut", "permitted"],
+    "exclusive": ["one at a time", "single language", "single-language", "un seul"],
+    "concurrent": ["concurrent", "concurrently", "en parallele", "parallel", "simultane", "simultanement", "simultaneously"],
+    "serialized": ["one after another", "serialise", "serialises", "serialized"],
+    "policy": ["decision", "policy", "regle", "rule"],
+    "attribution": ["ai attribution", "attribution", "co-authored-by", "mention ia"],
+    "certification": ["certifie", "certifiee", "certified", "highest trust badge", "publication approval", "trust badge"],
+    "contradiction": ["contradiction", "incompatible claims", "semantic disagreement"],
+    "blocking": ["block publication", "blocking", "bloquant", "bloquants"],
+    "banned": ["ban", "banned", "interdiction"],
+    "false_state": ["false", "faux", "fausse", "invalidated", "invalide"],
+    "default_state": ["default", "idiom", "idiome", "par defaut"],
+    "revised": ["corrected", "corrige", "corrigee", "revised", "revision"],
+    "resolved": ["closed", "clos", "complete", "resolved", "resolu", "termine"],
+    "deferred": ["backlog", "deferred", "open", "ouvert", "re-deferred", "redefere"],
+    "shipped": ["livre", "publie", "released", "shippe", "shipped"],
+    "flat_file": ["file export", "fichier plat", "flat file", "pem", "pfx"],
+    "certificate_store": ["certificate store", "localmachine\\my", "magasin de certificats windows", "magasin windows", "windows certificate store"],
+    "markdown_source": ["local markdown", "markdown"],
+    "chroma_store": ["chroma", "chromadb", "semantic store"],
+    "cardinality_one": ["exactly one", "single credential", "un certificat", "unique credential"],
+    "cardinality_many": ["multiple", "plusieurs", "second certificate", "several"],
+    "zero_state": ["aucune divergence", "no divergence", "zero", "zero mismatch"],
+    "current": ["actuel", "current", "etat courant", "today"],
+    "replaced": ["remplace", "replaced", "superseded"]
+  },
+  "negative_markers": [
+    "aucun", "aucune", "disabled", "exclu", "false_state", "forbidden", "impossible", "interdit",
+    "jamais", "ne", "no", "non", "not", "pas", "prohibited", "rejected", "sans", "unavailable"
+  ],
+  "positive_markers": [
+    "active", "autorise", "canonical", "complete", "default_state", "enabled", "fonctionnel",
+    "implemented", "inclus", "obligatoire", "present", "required", "resolved", "shipped", "supporte", "wired"
+  ],
+  "deontic_polarity_markers": {
+    "forbidden": ["exclusive", "forbidden"],
+    "required": ["blocking", "required"],
+    "permitted": ["permitted"]
+  },
+  "temporal_markers": [
+    "ancien", "current", "deferred", "deprecated", "historique", "maintenant", "replaced", "resolved",
+    "revised", "shipped", "today"
+  ],
+  "scope_markers": {
+    "obligation": [
+      "attribution", "blocking", "certification", "exclusive", "forbidden", "mandatory", "obligatoire",
+      "permitted", "policy", "required"
+    ],
+    "activation": [
+      "active", "available", "deferred", "disabled", "enabled", "excluded", "implemented", "resolved",
+      "shipped", "supporte", "unavailable", "wired"
+    ],
+    "replacement_state": [
+      "banned", "canonical", "certificate_store", "current", "default_state", "false_state", "flat_file",
+      "markdown_source", "chroma_store", "replaced", "revised", "serialized", "source", "target", "targets"
+    ],
+    "value_threshold": [
+      "baseline", "cardinality", "cardinality_many", "cardinality_one", "collection", "count", "framework",
+      "mismatch", "nombre", "port", "seuil", "version", "zero_state"
+    ]
+  },
+  "claim_trigger_terms": [
+    "attribution", "banned", "blocking", "canonical", "cardinality_many", "cardinality_one", "certificate",
+    "certificate_store", "certification", "chroma_store", "collection", "concurrent", "container", "current",
+    "default_state", "deferred", "disabled", "enabled", "exclusive", "false_state", "flat_file", "forbidden",
+    "framework", "index", "license", "localization", "logging", "markdown_source", "mismatch", "permitted",
+    "physical", "policy", "profile", "replaced", "required", "resolved", "revised", "serialized", "shipped",
+    "theme", "update", "vault", "zero_state"
+  ],
+  "state_values": [
+    "banned", "blocking", "canonical", "cardinality_many", "cardinality_one", "certificate_store", "chroma_store",
+    "concurrent", "container", "default_state", "deferred", "disabled", "enabled", "english", "exclusive",
+    "false_state", "flat_file", "french", "localization", "markdown_source", "physical", "replaced", "resolved",
+    "revised", "serialized", "shipped", "zero_state"
+  ],
+  "value_patterns": [
+    "\\b(?:aes|rsa)[-_ ]?\\d{3,4}(?:[-_ ]?(?:cbc|gcm|oaep))?\\b",
+    "\\bnet\\d+(?:\\.\\d+)?(?:-windows)?\\b",
+    "\\b(?:port|vncport)\\s*[:=]?\\s*\\d{1,5}\\b",
+    "\\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|twelve|single|multiple|unique)\\b",
+    "\\b\\d{1,3}\\s*(?:collections?|sections?|mismatches?|divergences?|certificates?|credentials?)\\b",
+    "\\bmismatch\\s*[:=]?\\s*\\d{1,4}\\b"
+  ],
+  "hardening_rules": [
+    {
+      "id": "longest-alias-first",
+      "justification": "Les modaux composés comme 'ne doit pas' doivent être normalisés avant leurs sous-termes positifs."
+    },
+    {
+      "id": "deontic-tristate",
+      "justification": "Obligation, interdiction et permission sont des polarités distinctes applicables à toute règle ou politique."
+    },
+    {
+      "id": "exclusive-vs-concurrent",
+      "justification": "L'exclusivité et l'exécution concurrente sont des états incompatibles d'une même politique d'accès."
+    },
+    {
+      "id": "revision-lifecycle",
+      "justification": "Faux/corrigé/résolu/re-déféré/livré décrivent des révisions d'état générales, sans dépendre d'une note."
+    },
+    {
+      "id": "storage-form-and-authority",
+      "justification": "Fichier plat, magasin, Markdown canonique et store dérivé sont des choix d'état incompatibles récurrents."
+    },
+    {
+      "id": "cardinality-and-keyed-values",
+      "justification": "Les cardinalités et valeurs numériques divergentes sur le même champ sont des conflits génériques."
+    },
+    {
+      "id": "frontmatter-supersedes-context",
+      "justification": "Une relation supersedes autorise un appariement plus sensible, mais seulement si des claims sémantiques divergent."
+    }
+  ]
+}

@@ -65,10 +65,34 @@ def stratum_metrics(coverage: list[dict[str, Any]], cutoff: int | None) -> list[
     return result
 
 
+def coverage_key(item: dict[str, Any]) -> tuple[str, str]:
+    """Return the normalized pair key stored in an evidence coverage record."""
+    return pair_key(str(item["note_a"]), str(item["note_b"]))
+
+
+def anti_leak_findings(
+    scan_paths: list[Path],
+    positive_paths: set[str],
+    positive_ids: set[str],
+) -> list[dict[str, str]]:
+    """Find forbidden literal positive identities in implementation or rule files."""
+    findings: list[dict[str, str]] = []
+    literals = sorted(positive_paths | positive_ids, key=lambda value: (-len(value), value))
+    for path in scan_paths:
+        text = path.read_text(encoding="utf-8")
+        for literal in literals:
+            if literal in text:
+                findings.append({"path": path.as_posix(), "literal": literal})
+    return findings
+
+
 def render_report(evidence: dict[str, Any]) -> str:
-    """Render a French measurement-first report with both fail-fast gates."""
+    """Render the French LOT 9.5 measurement-first report."""
     recall_gate = evidence["gates"]["recall"]
     budget_gate = evidence["gates"]["budget"]
+    ratio_gate = evidence["gates"]["anti_all_pairs"]
+    target_gate = evidence["gates"]["target_stratum"]
+    non_regression_gate = evidence["gates"]["non_regression"]
     pool = evidence["pool"]
     status = "PASS — LOT 10 éligible" if evidence["gates"]["lot10_eligible"] else "STOP"
     lines = [
@@ -82,7 +106,7 @@ def render_report(evidence: dict[str, Any]) -> str:
         (
             f"Le pool plein récupère {recall_gate['present']}/{recall_gate['total']} "
             f"positifs synthétiques (rappel {recall_gate['observed_recall']:.2f}) contre "
-            f"le plafond LOT 8 de {recall_gate['baseline_recall']:.2f}."
+            f"le plafond LOT 9 de {recall_gate['baseline_recall']:.2f}."
         ),
         (
             f"Le générateur émet {pool['candidate_pairs']} paires uniques, soit "
@@ -91,8 +115,13 @@ def render_report(evidence: dict[str, Any]) -> str:
         ),
         "",
         (
-            f"Garde rappel : {'PASS' if recall_gate['pass'] else 'FAIL'} ; "
-            f"garde budget : {'PASS' if budget_gate['pass'] else 'FAIL'}."
+            f"Gardes : rappel {'PASS' if recall_gate['pass'] else 'FAIL'}, "
+            f"budget {'PASS' if budget_gate['pass'] else 'FAIL'}, "
+            f"anti-all-pairs {'PASS' if ratio_gate['pass'] else 'FAIL'}, "
+            f"strate cible {'PASS' if target_gate['pass'] else 'FAIL'}, "
+            f"non-régression {'PASS' if non_regression_gate['pass'] else 'FAIL'}, "
+            f"déterminisme {'PASS' if evidence['gates']['determinism']['pass'] else 'FAIL'} "
+            f"et anti-fuite {'PASS' if evidence['gates']['anti_leak']['pass'] else 'FAIL'}."
         ),
         "",
         "## Rappel et taille du ranking",
@@ -127,6 +156,39 @@ def render_report(evidence: dict[str, Any]) -> str:
         lines.append(
             f"| {item['stratum']} | {item['present']}/{item['total']} | {item['recall']:.2f} |"
         )
+    curation = evidence["curation_diagnostic"]
+    delta = evidence["delta_vs_lot9"]
+    lines.extend(
+        [
+            "",
+            "## Curation et delta vs LOT 9",
+            "",
+            (
+                f"Curation : {curation['present']}/{curation['total']} "
+                f"({curation['recall']:.2f}), mesure **in-sample et diagnostique uniquement**. "
+                "Elle n'entre dans aucune gate ; sa validation est différée à un pilote externe."
+            ),
+            "",
+            (
+                f"Le pool gagne {delta['pool_pair_delta']:+d} paires vs LOT 9 "
+                f"({pool['lot9_candidate_pairs']} → {pool['candidate_pairs']}) et "
+                f"{delta['synthetic_recall_delta']:+.2f} de rappel synthétique."
+            ),
+            "",
+            "Positifs nouvellement récupérés :",
+        ]
+    )
+    for item in delta["newly_recovered"]:
+        lines.append(
+            f"- `{item['note_a']}` ↔ `{item['note_b']}` "
+            f"({item['label_source']}, {item['stratum'] or 'sans strate'}, rang {item['rank']})."
+        )
+    if not delta["lost"]:
+        lines.append("- Aucun positif LOT 9 perdu.")
+    else:
+        lines.append("Positifs LOT 9 perdus :")
+        for item in delta["lost"]:
+            lines.append(f"- `{item['note_a']}` ↔ `{item['note_b']}`.")
     canary = evidence["canary"]
     lines.extend(
         [
@@ -136,6 +198,24 @@ def render_report(evidence: dict[str, Any]) -> str:
             f"Canary {'présente' if canary['present'] else 'absente'} du pool"
             + (f" au rang {canary['rank']}." if canary["present"] else "."),
             "Elle reste séparée de toutes les métriques synthétiques.",
+            "",
+            "## Règles ajoutées et anti-fuite",
+            "",
+        ]
+    )
+    for rule in evidence["hardening_rules"]:
+        lines.append(f"- `{rule['id']}` — {rule['justification']}")
+    anti_leak = evidence["anti_leak"]
+    lines.extend(
+        [
+            "",
+            (
+                f"Scan anti-fuite : {'PASS' if anti_leak['pass'] else 'FAIL'}, "
+                f"{anti_leak['positive_path_literals_checked']} chemins et "
+                f"{anti_leak['positive_id_literals_checked']} identifiants positifs recherchés "
+                f"dans {len(anti_leak['scan_paths'])} fichiers de code/règles/config."
+            ),
+            "Aucune règle n'est indexée sur l'identité d'une note ou paire labellisée.",
             "",
             "## Méthode",
             "",
@@ -166,6 +246,7 @@ def render_report(evidence: dict[str, Any]) -> str:
             f"- `labels.jsonl` SHA-256 : `{inputs['labels']['sha256']}`.",
             f"- `synthetic-spec.json` SHA-256 : `{inputs['synthetic_spec']['sha256']}`.",
             f"- Règles SHA-256 : `{inputs['rules']['sha256']}`.",
+            f"- Évidence LOT 9 SHA-256 : `{inputs['lot9_baseline_evidence']['sha256']}`.",
             "",
             "Le fichier de labels courant contient 274 paires ; il est réutilisé tel quel, "
             "sans réétiquetage. `model_id` et `prompt_sha256` sont nuls car l'extraction "
@@ -177,10 +258,10 @@ def render_report(evidence: dict[str, Any]) -> str:
     )
     if evidence["gates"]["lot10_eligible"]:
         lines.append(
-            "Les deux gardes sont franchies : un LOT 10 peut mesurer un juge sur ce pool, "
+            "Toutes les gardes sont franchies : un LOT 10 peut mesurer un juge sur ce pool, "
             "sans que ce handoff constitue une décision de production. Une contre-vérification "
-            "superviseur doit recalculer rappel et budget et muter les règles pour vérifier "
-            "la réaction des gardes avant merge."
+            "superviseur doit recalculer rappel, strates et pool depuis les artefacts, puis "
+            "inspecter les règles contre la fuite avant merge."
         )
     elif not recall_gate["pass"]:
         lines.append(
@@ -219,6 +300,7 @@ def main() -> int:  # noqa: PLR0915
     labels_path = Path(str(config["labels_path"]))
     spec_path = Path(str(config["synthetic_spec_path"]))
     rules_path = Path(str(config["rules_path"]))
+    baseline_path = Path(str(config["baseline_evidence_path"]))
     corpus = cast("list[dict[str, Any]]", load_json(corpus_path))
     labels = [
         cast("dict[str, Any]", json.loads(line))
@@ -226,6 +308,8 @@ def main() -> int:  # noqa: PLR0915
         if line.strip()
     ]
     spec = cast("dict[str, Any]", load_json(spec_path))
+    rules = cast("dict[str, Any]", load_json(rules_path))
+    baseline = cast("dict[str, Any]", load_json(baseline_path))
     notes = provider.load_corpus(corpus_path, config)
 
     trial_results: list[dict[str, Any]] = []
@@ -277,6 +361,31 @@ def main() -> int:  # noqa: PLR0915
         for item in curation_labels
     )
 
+    baseline_coverage = {
+        coverage_key(item): item
+        for item in cast("list[dict[str, Any]]", baseline["positive_coverage"])
+    }
+    current_coverage = {coverage_key(item): item for item in coverage}
+    newly_recovered = [
+        item
+        for key, item in current_coverage.items()
+        if item["present"] and not bool(baseline_coverage.get(key, {}).get("present"))
+    ]
+    lost_positives = [
+        item
+        for key, item in baseline_coverage.items()
+        if item["present"] and not bool(current_coverage.get(key, {}).get("present"))
+    ]
+    positive_paths = {
+        path for item in coverage for path in (str(item["note_a"]), str(item["note_b"]))
+    }
+    positive_ids = {str(item["id"]) for item in corpus if str(item["path"]) in positive_paths}
+    leak_findings = anti_leak_findings(
+        [Path(str(path)) for path in cast("list[str]", config["anti_leak_scan_paths"])],
+        positive_paths,
+        positive_ids,
+    )
+
     cutoff_metrics: list[dict[str, Any]] = []
     for cutoff_value in cast("list[int]", config["cutoffs"]):
         cutoff = int(cutoff_value)
@@ -311,16 +420,53 @@ def main() -> int:  # noqa: PLR0915
         item["label_source"] == "curation" and item["present"] for item in coverage
     )
     all_possible_pairs = len(notes) * (len(notes) - 1) // 2
-    baseline_recall = float(config["baseline_full_pool_recall"])
+    baseline_recall = float(baseline["full_pool_recall"]["synthetic_recall"])
     max_pool_pairs = int(config["max_pool_pairs"])
     full_recall = synthetic_present_full / len(synthetic_entries)
     recall_pass = full_recall > baseline_recall
     budget_pass = len(candidates) <= max_pool_pairs
+    pool_ratio = len(candidates) / all_possible_pairs
+    ratio_pass = pool_ratio <= float(config["max_pool_ratio"])
+    current_strata = stratum_metrics(coverage, None)
+    current_strata_by_name = {str(item["stratum"]): item for item in current_strata}
+    baseline_strata_by_name = {
+        str(item["stratum"]): item
+        for item in cast("list[dict[str, Any]]", baseline["recall_by_stratum"]["full_pool"])
+    }
+    target_stratum = str(config["target_stratum"])
+    target_present = int(current_strata_by_name[target_stratum]["present"])
+    target_minimum = int(config["target_stratum_min_present"])
+    target_pass = target_present >= target_minimum
+    non_regression_comparisons = [
+        {
+            "stratum": stratum,
+            "baseline_present": int(baseline_strata_by_name[stratum]["present"]),
+            "observed_present": int(current_strata_by_name[stratum]["present"]),
+            "total": int(current_strata_by_name[stratum]["total"]),
+            "pass": int(current_strata_by_name[stratum]["present"])
+            >= int(baseline_strata_by_name[stratum]["present"]),
+        }
+        for stratum in cast("list[str]", config["non_regression_strata"])
+    ]
+    non_regression_pass = all(item["pass"] for item in non_regression_comparisons)
+    determinism_pass = len({item["ranking_sha256"] for item in trial_results}) == 1
+    anti_leak_pass = not leak_findings
+    all_gates_pass = all(
+        (
+            recall_pass,
+            budget_pass,
+            ratio_pass,
+            target_pass,
+            non_regression_pass,
+            determinism_pass,
+            anti_leak_pass,
+        )
+    )
     canary = cast("dict[str, Any]", spec["canary"])
     canary_key = pair_key(str(canary["note_a"]), str(canary["note_b"]))
     evidence: dict[str, Any] = {
-        "schema_version": 1,
-        "measurement": "claim-decomposition-candidate-generation",
+        "schema_version": 2,
+        "measurement": "claim-decomposition-candidate-generation-hardening",
         "measurement_date": "2026-07-13",
         "provider": str(getattr(provider, "PROVIDER_NAME", args.detector.stem)),
         "model_id": None,
@@ -352,12 +498,19 @@ def main() -> int:  # noqa: PLR0915
                 "path": args.detector.as_posix(),
                 "sha256": sha256_file(args.detector),
             },
+            "lot9_baseline_evidence": {
+                "path": baseline_path.as_posix(),
+                "sha256": sha256_file(baseline_path),
+            },
         },
         "pool": {
             "candidate_pairs": len(candidates),
             "all_possible_pairs": all_possible_pairs,
-            "ratio_of_all_pairs": len(candidates) / all_possible_pairs,
+            "ratio_of_all_pairs": pool_ratio,
             "is_all_pairs": len(candidates) == all_possible_pairs,
+            "lot9_candidate_pairs": int(baseline["pool"]["candidate_pairs"]),
+            "lot9_ratio_of_all_pairs": float(baseline["pool"]["ratio_of_all_pairs"]),
+            "candidate_pair_delta": len(candidates) - int(baseline["pool"]["candidate_pairs"]),
         },
         "recall_at_cutoffs": cutoff_metrics,
         "full_pool_recall": {
@@ -368,12 +521,38 @@ def main() -> int:  # noqa: PLR0915
             "curation_total": len(curation_labels),
             "curation_recall": curation_present_full / len(curation_labels),
         },
+        "curation_diagnostic": {
+            "in_sample": True,
+            "diagnostic_only": True,
+            "used_as_gate": False,
+            "present": curation_present_full,
+            "total": len(curation_labels),
+            "recall": curation_present_full / len(curation_labels),
+            "validation_deferred_to_pilot": True,
+        },
         "recall_by_stratum": {
             "cutoffs": {
                 str(cutoff): stratum_metrics(coverage, cutoff)
                 for cutoff in cast("list[int]", config["cutoffs"])
             },
-            "full_pool": stratum_metrics(coverage, None),
+            "full_pool": current_strata,
+        },
+        "delta_vs_lot9": {
+            "synthetic_recall_delta": full_recall - baseline_recall,
+            "pool_pair_delta": len(candidates) - int(baseline["pool"]["candidate_pairs"]),
+            "newly_recovered": newly_recovered,
+            "lost": lost_positives,
+        },
+        "hardening_rules": cast("list[dict[str, str]]", rules["hardening_rules"]),
+        "anti_leak": {
+            "scan_paths": [
+                Path(str(path)).as_posix()
+                for path in cast("list[str]", config["anti_leak_scan_paths"])
+            ],
+            "positive_path_literals_checked": len(positive_paths),
+            "positive_id_literals_checked": len(positive_ids),
+            "findings": leak_findings,
+            "pass": anti_leak_pass,
         },
         "canary": {
             "note_a": canary_key[0],
@@ -383,7 +562,7 @@ def main() -> int:  # noqa: PLR0915
             "included_in_synthetic_metrics": False,
         },
         "determinism": {
-            "identical": len({item["ranking_sha256"] for item in trial_results}) == 1,
+            "identical": determinism_pass,
             "trials": trial_results,
         },
         "gates": {
@@ -401,7 +580,27 @@ def main() -> int:  # noqa: PLR0915
                 "observed_pool_pairs": len(candidates),
                 "pass": budget_pass,
             },
-            "lot10_eligible": recall_pass and budget_pass,
+            "anti_all_pairs": {
+                "operator": "<=",
+                "max_pool_ratio": float(config["max_pool_ratio"]),
+                "observed_pool_ratio": pool_ratio,
+                "pass": ratio_pass,
+            },
+            "target_stratum": {
+                "stratum": target_stratum,
+                "operator": ">=",
+                "minimum_present": target_minimum,
+                "observed_present": target_present,
+                "total": int(current_strata_by_name[target_stratum]["total"]),
+                "pass": target_pass,
+            },
+            "non_regression": {
+                "comparisons": non_regression_comparisons,
+                "pass": non_regression_pass,
+            },
+            "determinism": {"pass": determinism_pass},
+            "anti_leak": {"pass": anti_leak_pass},
+            "lot10_eligible": all_gates_pass,
         },
         "positive_coverage": coverage,
         "ranking": [

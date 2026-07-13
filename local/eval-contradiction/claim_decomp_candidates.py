@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 
 LOGGER = logging.getLogger("datacron.contradiction.claim_decomp")
-PROVIDER_NAME = "claim-decomposition-rules-v1"
+PROVIDER_NAME = "claim-decomposition-rules-v2"
 DEFAULT_CONFIG: dict[str, Any] = {"provider": PROVIDER_NAME}
 
 
@@ -28,6 +28,7 @@ class Note:
     path: str
     title: str
     tags: tuple[str, ...]
+    supersedes: tuple[str, ...]
     body: str
 
 
@@ -83,6 +84,7 @@ def load_corpus(corpus_path: Path, config: dict[str, Any]) -> list[Note]:
             path=str(item["path"]),
             title=str(item["title"]),
             tags=tuple(str(tag) for tag in item.get("tags", [])),
+            supersedes=tuple(str(note_id) for note_id in item.get("supersedes", [])),
             body=str(item.get("body", "")),
         )
         for item in data
@@ -107,10 +109,17 @@ def _ascii_lower(text: str) -> str:
 def _normalize(text: str, rules: dict[str, Any]) -> str:
     normalized = _ascii_lower(text)
     aliases = cast("dict[str, list[str]]", rules["aliases"])
-    for canonical, variants in aliases.items():
-        for variant in sorted(variants, key=len, reverse=True):
-            pattern = rf"(?<!\w){re.escape(_ascii_lower(variant))}(?!\w)"
-            normalized = re.sub(pattern, canonical, normalized)
+    replacements = sorted(
+        (
+            (_ascii_lower(variant), canonical)
+            for canonical, variants in aliases.items()
+            for variant in variants
+        ),
+        key=lambda item: (-len(item[0]), item[0], item[1]),
+    )
+    for variant, canonical in replacements:
+        pattern = rf"(?<!\w){re.escape(variant)}(?!\w)"
+        normalized = re.sub(pattern, canonical, normalized)
     return re.sub(r"\s+", " ", normalized).strip()
 
 
@@ -165,13 +174,22 @@ def _scope(text: str, rules: dict[str, Any], values: list[str]) -> str:
     return scope if count > 0 else (str(rules["value_scope"]) if values else "assertion")
 
 
-def _polarity(text: str, rules: dict[str, Any]) -> str:
+def _polarity(text: str, scope: str, rules: dict[str, Any]) -> str:
+    if scope == "obligation":
+        deontic = cast("dict[str, list[str]]", rules["deontic_polarity_markers"])
+        ranked = [
+            (len(_matching_terms(text, terms)), -index, polarity)
+            for index, (polarity, terms) in enumerate(deontic.items())
+        ]
+        count, _, polarity = max(ranked)
+        if count > 0:
+            return polarity
     negative = len(_matching_terms(text, cast("list[str]", rules["negative_markers"])))
     positive = len(_matching_terms(text, cast("list[str]", rules["positive_markers"])))
     if negative > positive:
-        return "negative"
+        return str(rules["scope_negative_polarity"].get(scope, "negative"))
     if positive > negative:
-        return "positive"
+        return str(rules["scope_positive_polarity"].get(scope, "positive"))
     return "neutral"
 
 
@@ -180,6 +198,8 @@ def _claims(note: Note, rules: dict[str, Any], config: dict[str, Any]) -> list[C
     marker_vocabulary = set(cast("list[str]", rules["negative_markers"]))
     marker_vocabulary.update(cast("list[str]", rules["positive_markers"]))
     marker_vocabulary.update(cast("list[str]", rules["temporal_markers"]))
+    for terms in cast("dict[str, list[str]]", rules["deontic_polarity_markers"]).values():
+        marker_vocabulary.update(terms)
     for terms in cast("dict[str, list[str]]", rules["scope_markers"]).values():
         marker_vocabulary.update(terms)
     title_tokens = set(_tokens(_normalize(note.title, rules), rules))
@@ -193,8 +213,8 @@ def _claims(note: Note, rules: dict[str, Any], config: dict[str, Any]) -> list[C
     for index, segment in enumerate(_segments(note, rules, config), 1):
         normalized = _normalize(segment, rules)
         values = _extract_values(normalized, rules)
-        polarity = _polarity(normalized, rules)
         scope = _scope(normalized, rules, values)
+        polarity = _polarity(normalized, scope, rules)
         trigger_terms = cast("list[str]", rules["claim_trigger_terms"])
         if polarity == "neutral" and not values and not _matching_terms(normalized, trigger_terms):
             continue
@@ -247,8 +267,11 @@ def _conflicts(claim_a: Claim, claim_b: Claim, config: dict[str, Any]) -> list[s
     if not _compatible_scopes(claim_a.scope, claim_b.scope, config):
         return []
     conflicts: list[str] = []
-    if {claim_a.polarity, claim_b.polarity} == {"negative", "positive"}:
-        conflicts.append("polarity")
+    polarities = {claim_a.polarity, claim_b.polarity}
+    for conflict in cast("list[dict[str, Any]]", config["polarity_conflicts"]):
+        if polarities == set(map(str, conflict["states"])):
+            conflicts.append(str(conflict["kind"]))
+            break
     values_a = set(claim_a.value_or_state)
     values_b = set(claim_b.value_or_state)
     if values_a and values_b and values_a != values_b:
@@ -278,6 +301,7 @@ def _match_payload(
     overlap: float,
     conflicts: list[str],
     score: float,
+    supersedes_context: bool,
 ) -> dict[str, Any]:
     return {
         "score": round(score, 6),
@@ -285,6 +309,7 @@ def _match_payload(
         "shared_subject_weight": round(shared_weight, 6),
         "subject_overlap": round(overlap, 6),
         "conflict_types": conflicts,
+        "supersedes_context": supersedes_context,
         "claim_a_id": claim_a.claim_id,
         "claim_b_id": claim_b.claim_id,
         "claim_a": _claim_payload(claim_a),
@@ -317,12 +342,24 @@ def _all_candidates(notes: list[Note], config: dict[str, Any]) -> list[Candidate
     possible_pairs: set[tuple[int, int]] = set()
     for postings in eligible_postings.values():
         possible_pairs.update(combinations(sorted(postings), 2))
+    note_index_by_id = {note.note_id: index for index, note in enumerate(notes)}
+    supersedes_pairs: set[tuple[int, int]] = set()
+    for note_index, note in enumerate(notes):
+        for superseded_id in note.supersedes:
+            superseded_index = note_index_by_id.get(superseded_id)
+            if superseded_index is None or superseded_index == note_index:
+                continue
+            supersedes_pairs.add(
+                (min(note_index, superseded_index), max(note_index, superseded_index))
+            )
+    possible_pairs.update(supersedes_pairs)
 
     term_weights = {
         term: math.log((len(notes) + 1) / (frequency + 1)) + 1.0
         for term, frequency in document_frequency.items()
         if frequency <= maximum_frequency
     }
+    lifecycle_values = set(map(str, config["lifecycle_state_values"]))
     features_by_note: list[list[tuple[frozenset[str], float]]] = []
     for claims in claims_by_note:
         note_features: list[tuple[frozenset[str], float]] = []
@@ -335,6 +372,24 @@ def _all_candidates(notes: list[Note], config: dict[str, Any]) -> list[Candidate
     for index_a, index_b in sorted(possible_pairs):
         matches: list[dict[str, Any]] = []
         evaluations = 0
+        supersedes_context = (index_a, index_b) in supersedes_pairs
+        minimum_shared_subjects = int(
+            config[
+                "supersedes_min_shared_subjects" if supersedes_context else "min_shared_subjects"
+            ]
+        )
+        minimum_shared_weight = float(
+            config[
+                "supersedes_min_shared_subject_weight"
+                if supersedes_context
+                else "min_shared_subject_weight"
+            ]
+        )
+        minimum_overlap = float(
+            config[
+                "supersedes_min_subject_overlap" if supersedes_context else "min_subject_overlap"
+            ]
+        )
         for claim_a, features_a in zip(
             claims_by_note[index_a], features_by_note[index_a], strict=True
         ):
@@ -348,11 +403,11 @@ def _all_candidates(notes: list[Note], config: dict[str, Any]) -> list[Candidate
                     features_b[1],
                     term_weights,
                 )
-                if len(shared) < int(config["min_shared_subjects"]):
+                if len(shared) < minimum_shared_subjects:
                     continue
-                if shared_weight < float(config["min_shared_subject_weight"]):
+                if shared_weight < minimum_shared_weight:
                     continue
-                if overlap < float(config["min_subject_overlap"]):
+                if overlap < minimum_overlap:
                     continue
                 evaluations += 1
                 if evaluations > int(config["max_claim_pair_evaluations"]):
@@ -366,6 +421,20 @@ def _all_candidates(notes: list[Note], config: dict[str, Any]) -> list[Candidate
                     + float(config["subject_overlap_weight"]) * overlap
                     + float(config["shared_subject_weight_factor"]) * shared_weight
                     + float(config["same_scope_bonus"]) * float(claim_a.scope == claim_b.scope)
+                    + float(config["replacement_state_bonus"])
+                    * float(
+                        "replacement_state" in {claim_a.scope, claim_b.scope}
+                        and "value_or_state" in conflicts
+                    )
+                    + float(config["lifecycle_state_bonus"])
+                    * float(
+                        bool(
+                            lifecycle_values
+                            & (set(claim_a.value_or_state) | set(claim_b.value_or_state))
+                        )
+                        and bool(conflicts)
+                    )
+                    + float(config["supersedes_bonus"]) * float(supersedes_context)
                 )
                 matches.append(
                     _match_payload(
@@ -376,6 +445,7 @@ def _all_candidates(notes: list[Note], config: dict[str, Any]) -> list[Candidate
                         overlap,
                         conflicts,
                         score,
+                        supersedes_context,
                     )
                 )
             if evaluations > int(config["max_claim_pair_evaluations"]):
@@ -405,6 +475,7 @@ def _all_candidates(notes: list[Note], config: dict[str, Any]) -> list[Candidate
                     f"claim_matches={len(matches)}",
                     f"best_conflicts={','.join(best['conflict_types'])}",
                     f"best_subject_overlap={best['subject_overlap']:.6f}",
+                    f"supersedes_context={str(supersedes_context).lower()}",
                 ],
             )
         )

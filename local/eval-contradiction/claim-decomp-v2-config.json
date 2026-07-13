@@ -1,0 +1,69 @@
+{
+  "provider": "claim-decomposition-rules-v2",
+  "rules_path": "local/eval-contradiction/claim-decomp-v2-rules.json",
+  "corpus_path": "local/eval-contradiction/corpus.json",
+  "labels_path": "local/eval-contradiction/labels.jsonl",
+  "synthetic_spec_path": "local/eval-contradiction/synthetic-spec.json",
+  "baseline_evidence_path": "local/eval-contradiction/evidence-claim-decomp.json",
+  "anti_leak_scan_paths": [
+    "local/eval-contradiction/claim_decomp_candidates.py",
+    "local/eval-contradiction/measure_claim_decomp.py",
+    "local/eval-contradiction/claim-decomp-v2-config.json",
+    "local/eval-contradiction/claim-decomp-v2-rules.json"
+  ],
+  "min_segment_chars": 18,
+  "max_segment_chars": 520,
+  "min_token_chars": 3,
+  "max_claims_per_note": 280,
+  "max_subject_note_frequency": 10,
+  "min_shared_subjects": 1,
+  "min_shared_subject_weight": 2.0,
+  "min_subject_overlap": 0.04,
+  "supersedes_min_shared_subjects": 1,
+  "supersedes_min_shared_subject_weight": 1.0,
+  "supersedes_min_subject_overlap": 0.02,
+  "max_claim_pair_evaluations": 1400,
+  "max_matches_per_pair": 5,
+  "evidence_claim_sample_size": 25,
+  "compatible_scope_pairs": [
+    ["assertion", "activation"],
+    ["assertion", "obligation"],
+    ["assertion", "replacement_state"],
+    ["activation", "obligation"],
+    ["activation", "replacement_state"],
+    ["obligation", "replacement_state"],
+    ["replacement_state", "value_threshold"]
+  ],
+  "polarity_conflicts": [
+    {"states": ["negative", "positive"], "kind": "polarity"},
+    {"states": ["forbidden", "required"], "kind": "deontic_polarity"},
+    {"states": ["forbidden", "permitted"], "kind": "deontic_polarity"}
+  ],
+  "conflict_weights": {
+    "polarity": 2.0,
+    "deontic_polarity": 2.4,
+    "value_or_state": 1.8
+  },
+  "subject_overlap_weight": 2.0,
+  "shared_subject_weight_factor": 0.08,
+  "same_scope_bonus": 0.25,
+  "replacement_state_bonus": 0.4,
+  "lifecycle_state_bonus": 0.4,
+  "lifecycle_state_values": ["deferred", "replaced", "resolved", "revised", "shipped"],
+  "supersedes_bonus": 0.5,
+  "min_score": 3.26,
+  "full_min_score": 3.26,
+  "top_n": 2556,
+  "max_pool_pairs": 400,
+  "max_pool_ratio": 0.25,
+  "baseline_full_pool_recall": 0.55,
+  "target_stratum": "obligation_interdiction",
+  "target_stratum_min_present": 3,
+  "non_regression_strata": [
+    "activation_deactivation",
+    "replacement_state",
+    "value_threshold"
+  ],
+  "cutoffs": [25, 50, 100, 200],
+  "trials": 3
+}
