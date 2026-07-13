@@ -29,7 +29,11 @@ from typing import TYPE_CHECKING, Any, Final
 from mcp.server.fastmcp import FastMCP
 
 from datacron import __version__
-from datacron.core.config import INDEX_DB_FILENAME, VAULT_CONFIG_FILENAME
+from datacron.core.config import (
+    INDEX_DB_FILENAME,
+    TOKEN_ESTIMATE_CHARS_PER_TOKEN,
+    VAULT_CONFIG_FILENAME,
+)
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
 from datacron.core.paths import sidecar_dir, sidecar_index_dir
@@ -46,6 +50,7 @@ URI_VAULT_MAP: Final[str] = "datacron://vault/map"
 URI_VAULT_INFO: Final[str] = "datacron://vault/info"
 URI_POLICY_ACTIVE: Final[str] = "datacron://policy/active"
 _TRUNCATION_MARKER: Final[str] = "[...vault map truncated to fit token budget...]"
+_VAULT_MAP_TAG_LIMIT: Final[int] = 5
 
 
 def register_resources(server: FastMCP[DatacronApp], app: DatacronApp) -> None:
@@ -224,7 +229,7 @@ def _format_note_line(app: DatacronApp, note: Note) -> str:
     important_marker = " *" if note.frontmatter.get("important") is True else ""
     tag_suffix = ""
     if note.tags:
-        tags = [_sanitize_retrieval_metadata(app, tag) for tag in note.tags[:5]]
+        tags = [_sanitize_retrieval_metadata(app, tag) for tag in note.tags[:_VAULT_MAP_TAG_LIMIT]]
         tag_suffix = f"  [{', '.join(tags)}{', ...' if len(note.tags) > 5 else ''}]"
     return f"- `{filename}` - {title}{important_marker}{tag_suffix}"
 
@@ -238,10 +243,13 @@ def _sanitize_retrieval_metadata(app: DatacronApp, value: str) -> str:
 def _truncate_to_token_budget(text: str, max_tokens: int) -> str:
     """Truncate ``text`` so its ~token count stays under ``max_tokens``.
 
-    Uses the same len // 4 heuristic as the chunker; appends a visible
+    Uses the same shared characters-per-token heuristic as the chunker; appends a visible
     marker so consumers know content was cut.
     """
-    char_budget = max(0, max_tokens * 4 - len(_TRUNCATION_MARKER))
+    char_budget = max(
+        0,
+        max_tokens * TOKEN_ESTIMATE_CHARS_PER_TOKEN - len(_TRUNCATION_MARKER),
+    )
     if len(text) <= char_budget:
         return text
     safe_tail = "\n\n" + _TRUNCATION_MARKER + "\n"
