@@ -345,6 +345,10 @@ async def test_list_note_paths_paginates_in_vault_order_and_filters(
             rel_path="a/deep/child.md",
             tags=["deep"],
         ),
+        note_factory(id="01HQXR7K9YZ8M2N3PQRSTV4WX9", rel_path="proj/a.md"),
+        note_factory(id="01HQXR7K9YZ8M2N3PQRSTV4WXA", rel_path="proj/sub/c.md"),
+        note_factory(id="01HQXR7K9YZ8M2N3PQRSTV4WXB", rel_path="proj-x/b.md"),
+        note_factory(id="01HQXR7K9YZ8M2N3PQRSTV4WXC", rel_path="proj.old/f.md"),
     ]
     store = SQLiteFTS5Store()
     await store.open(_db_path(tmp_path))
@@ -364,14 +368,22 @@ async def test_list_note_paths_paginates_in_vault_order_and_filters(
         limit=10,
         offset=0,
     )
+    boundary_page, boundary_total = await store.list_note_paths(
+        folder=None,
+        tags=[],
+        limit=3,
+        offset=5,
+    )
     await store.close()
 
-    assert total == 4
+    assert total == 8
     assert page == ["zeta.md", "a/nested.md"]
     assert shared_total == 2
     assert shared == ["alpha.md", "a/nested.md"]
     assert nested_total == 2
     assert nested == ["a/nested.md", "a/deep/child.md"]
+    assert boundary_total == 8
+    assert boundary_page == ["proj/sub/c.md", "proj-x/b.md", "proj.old/f.md"]
 
 
 async def test_delete_note_removes_note_chunks_and_ulid_path(
@@ -749,6 +761,42 @@ async def test_legacy_db_without_fs_mtime_is_migrated(tmp_path: Path) -> None:
         1,
     )
     await store.close()
+
+
+async def test_legacy_discovery_sort_keys_are_backfilled(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+) -> None:
+    db_path = _db_path(tmp_path)
+    notes = (
+        note_factory(id=_NOTE_ID, rel_path="proj/a.md"),
+        note_factory(id=_OTHER_NOTE_ID, rel_path="proj-x/b.md"),
+    )
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    for note in notes:
+        await store.upsert_note(note, [])
+    await store.close()
+
+    with sqlite3.connect(db_path) as connection:
+        connection.executemany(
+            "UPDATE notes SET sort_key = ? WHERE rel_path = ?;",
+            (("1proj/0a.md", "proj/a.md"), ("1proj-x/0b.md", "proj-x/b.md")),
+        )
+        connection.commit()
+
+    await store.open(db_path)
+    paths, total = await store.list_note_paths(folder=None, tags=[], limit=10, offset=0)
+    await store.close()
+
+    with sqlite3.connect(db_path) as connection:
+        migrated = dict(connection.execute("SELECT rel_path, sort_key FROM notes;"))
+    assert total == 2
+    assert paths == ["proj/a.md", "proj-x/b.md"]
+    assert migrated == {
+        "proj/a.md": "1proj\x000a.md",
+        "proj-x/b.md": "1proj-x\x000b.md",
+    }
 
 
 async def test_upsert_replaces_stale_note_id_for_same_path(
