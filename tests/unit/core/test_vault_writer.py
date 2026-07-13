@@ -58,14 +58,14 @@ def _patch_lock_primitive(monkeypatch: pytest.MonkeyPatch, *, busy: bool) -> Non
             if busy:
                 raise busy_error
 
-        monkeypatch.setattr(vault_writer_module.msvcrt, "locking", fake_locking)
+        monkeypatch.setattr(vars(vault_writer_module)["msvcrt"], "locking", fake_locking)
     else:
 
         def fake_flock(descriptor: int, operation: int) -> None:
             if busy:
                 raise busy_error
 
-        monkeypatch.setattr(vault_writer_module.fcntl, "flock", fake_flock)
+        monkeypatch.setattr(vars(vault_writer_module)["fcntl"], "flock", fake_flock)
 
 
 def _writer(vault: Path) -> FilesystemVaultWriter:
@@ -301,6 +301,9 @@ def test_advisory_lock_raises_when_same_lock_is_already_held(tmp_path: Path) -> 
         Settings(write_paths=[tmp_path], vault_lock_timeout_seconds=0.2),
     )
 
-    with writer._advisory_lock("oplog"), pytest.raises(VaultLockBusyError):
-        with writer._advisory_lock("oplog"):
-            pass
+    with (
+        writer._advisory_lock("oplog"),
+        pytest.raises(VaultLockBusyError),
+        writer._advisory_lock("oplog"),
+    ):
+        pass
