@@ -20,6 +20,7 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
+from datacron.mcp.tools.advisory import _contradiction_scan_impl
 from datacron.mcp.tools.ops import _audit_query_impl, _get_health_impl, _get_note_history_impl
 from datacron.mcp.tools.read import _get_note_impl, _list_notes_impl
 from datacron.mcp.tools.search import _get_backlinks_impl, _search_regex_impl, _search_text_impl
@@ -135,6 +136,18 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
     )
     async def get_backlinks(target: str, limit: int = 20) -> dict[str, Any]:
         return await _get_backlinks_impl(app, target=target, limit=limit)
+
+    @server.tool(
+        name="contradiction_scan",
+        title="Scan frozen contradiction candidates",
+        description=(
+            "Return a cache-only advisory report over the frozen contradiction pool. "
+            "The report is not validated on real content (0/4), judge confidence is "
+            "uncalibrated, and its candidates must never block writes, merges, health, or CI."
+        ),
+    )
+    async def contradiction_scan() -> dict[str, Any]:
+        return await _contradiction_scan_impl()
 
     @server.tool(
         name="get_health",
