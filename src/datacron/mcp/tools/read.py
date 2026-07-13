@@ -36,6 +36,7 @@ from datacron.mcp.tools.payloads import (
     _redact_retrieval_text,
     _sanitize_retrieval_metadata,
 )
+from datacron.mcp.tools.search import _repair_index_on_read
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -66,7 +67,22 @@ async def _list_notes_impl(
         exc, context = validation_error
         return _error_response("list_notes", exc, started, folder=folder, **context)
     try:
-        notes = await app.vault_reader.list_notes(folder=folder)
+        indexed_page = await _list_notes_from_index(
+            app,
+            folder=folder,
+            tags=tags,
+            limit=bounded_limit,
+            offset=offset,
+        )
+        if indexed_page is None:
+            notes = await app.vault_reader.list_notes(folder=folder)
+            filtered = _filter_by_tags(notes, tags)
+            total = len(filtered)
+            start = min(offset, total)
+            returned = filtered[start : start + bounded_limit]
+        else:
+            returned, total = indexed_page
+            start = min(offset, total)
     except (FileNotFoundError, ValueError, PathConfinementError) as exc:
         return _error_response("list_notes", exc, started, folder=folder)
     except Exception:
@@ -75,11 +91,7 @@ async def _list_notes_impl(
         _LOGGER.exception("list_notes failed (folder=%r)", folder)
         return _error_response("list_notes", RuntimeError("internal error"), started, folder=folder)
 
-    filtered = _filter_by_tags(notes, tags)
-    total = len(filtered)
-    start = min(offset, total)
     end = min(start + bounded_limit, total)
-    returned = filtered[start:end]
     next_offset = end if end < total else None
     payload = {
         "notes": [_note_summary(app, note) for note in returned],
@@ -102,6 +114,46 @@ async def _list_notes_impl(
         returned=len(returned),
     )
     return payload
+
+
+async def _list_notes_from_index(
+    app: DatacronApp,
+    *,
+    folder: str | None,
+    tags: list[str] | None,
+    limit: int,
+    offset: int,
+) -> tuple[list[Note], int] | None:
+    """Return an index-selected note page, or ``None`` for filesystem fallback."""
+    authorized_folder = app.scope.authorize_rel_path(folder or "", "read")
+    relative_folder = authorized_folder.relative_to(app.vault_root)
+    normalized_folder = None if relative_folder.name == "" else relative_folder.as_posix()
+    try:
+        repair = await _repair_index_on_read(app)
+        rel_paths, total = await app.store.list_note_paths(
+            folder=normalized_folder,
+            tags=tags or [],
+            limit=limit,
+            offset=offset,
+        )
+    except RuntimeError:
+        return None
+
+    indexed_after = (
+        repair["indexed_notes_before"] + repair["reindexed_notes"] - repair["deleted_notes"]
+    )
+    if repair["checked_notes"] and indexed_after <= 0:
+        return None
+    if any(not app.scope.allows_rel_path(rel_path, "read") for rel_path in rel_paths):
+        return None
+
+    notes: list[Note] = []
+    try:
+        for rel_path in rel_paths:
+            notes.append(await _read_note_by_rel_path(app, rel_path))
+    except FileNotFoundError:
+        return None
+    return notes, total
 
 
 async def _get_note_impl(

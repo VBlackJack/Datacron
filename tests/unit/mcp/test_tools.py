@@ -288,6 +288,100 @@ class TestListNotes:
         assert final_page["truncated"] is True
 
     @pytest.mark.asyncio
+    async def test_index_payload_matches_filesystem_fallback(
+        self,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datacron.mcp.tools import _list_notes_impl
+
+        settings = Settings(
+            read_paths=[tmp_vault],
+            write_paths=[tmp_vault],
+            vault_root=tmp_vault,
+            max_result_count=20,
+            max_result_tokens=8000,
+        )
+        fallback_app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+        )
+        cases = (
+            (None, None, 2, 2),
+            (None, ["intro"], 20, 0),
+            ("subfolder", None, 20, 0),
+        )
+        expected = [
+            await _list_notes_impl(
+                fallback_app,
+                folder=folder,
+                tags=tags,
+                limit=limit,
+                offset=offset,
+            )
+            for folder, tags, limit, offset in cases
+        ]
+
+        store = SQLiteFTS5Store()
+        await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+        indexed_app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+
+        async def fail_full_listing(
+            folder: str | None = None,
+            limit: int | None = None,
+        ) -> list[Note]:
+            raise AssertionError(f"unexpected filesystem listing: {folder=}, {limit=}")
+
+        monkeypatch.setattr(indexed_app.vault_reader, "list_notes", fail_full_listing)
+        try:
+            actual = [
+                await _list_notes_impl(
+                    indexed_app,
+                    folder=folder,
+                    tags=tags,
+                    limit=limit,
+                    offset=offset,
+                )
+                for folder, tags, limit, offset in cases
+            ]
+        finally:
+            await store.close()
+
+        assert actual == expected
+
+    @pytest.mark.asyncio
+    async def test_index_unavailable_uses_filesystem_fallback(
+        self,
+        app: DatacronApp,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datacron.mcp.tools import _list_notes_impl
+
+        calls = 0
+        original_list_notes = app.vault_reader.list_notes
+
+        async def counting_list_notes(
+            folder: str | None = None,
+            limit: int | None = None,
+        ) -> list[Note]:
+            nonlocal calls
+            calls += 1
+            return await original_list_notes(folder=folder, limit=limit)
+
+        monkeypatch.setattr(app.vault_reader, "list_notes", counting_list_notes)
+
+        result = await _list_notes_impl(app, folder=None, tags=None, limit=20)
+
+        assert result["total"] == 6
+        assert calls == 1
+
+    @pytest.mark.asyncio
     async def test_negative_offset_returns_error_response(self, app: DatacronApp) -> None:
         from datacron.mcp.tools import _list_notes_impl
 
