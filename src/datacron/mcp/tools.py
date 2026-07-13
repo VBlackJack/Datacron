@@ -51,7 +51,6 @@ from datacron.core.operation_log import (
     OperationRecord,
 )
 from datacron.core.paths import PathConfinementError
-from datacron.core.scope import ScopedVaultReader
 from datacron.core.temporal import rerank_temporal
 from datacron.core.vault_writer import UlidCollisionError
 from datacron.indexing.reconcile import ReconcileStats, reconcile
@@ -1982,9 +1981,6 @@ async def _get_backlinks_impl(
             started,
             target=target,
         )
-
-    if isinstance(app.vault_reader, ScopedVaultReader):
-        app.vault_reader.bind_note_path_lookup(app.store.get_note_rel_path)
 
     try:
         resolved_id = await _resolve_backlink_target(app, cleaned)

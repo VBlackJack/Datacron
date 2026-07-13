@@ -182,6 +182,7 @@ def build_app(
         from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
 
         store = SQLiteFTS5Store(term_map=vault_config.query_expansion)
+    resolved_reader.bind_note_path_lookup(store.get_note_rel_path)
     if vault_writer is None:
         from datacron.core.vault_writer import FilesystemVaultWriter  # noqa: PLC0415
 
