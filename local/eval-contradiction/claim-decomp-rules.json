@@ -1,0 +1,83 @@
+{
+  "token_pattern": "[a-z0-9][a-z0-9_.+-]*",
+  "sentence_split_pattern": "(?<=[.!?;])\\s+|\\s+[—–]\\s+",
+  "markdown_strip_pattern": "[`*_>#|]+|^\\s*[-+]\\s+|^\\s*\\d+[.)]\\s+",
+  "value_scope": "value_threshold",
+  "stopwords": [
+    "a", "afin", "all", "also", "an", "and", "are", "as", "at", "au", "aux", "avec",
+    "be", "been", "both", "by", "ce", "ces", "cette", "comme", "dans", "de", "des", "do",
+    "does", "du", "elle", "en", "est", "et", "every", "for", "from", "has", "have", "il",
+    "in", "is", "it", "its", "la", "le", "les", "leur", "mais", "more", "must", "ne", "of",
+    "on", "ou", "par", "pas", "pour", "que", "qui", "remain", "same", "se", "should", "sur",
+    "the", "their", "this", "to", "tous", "tout", "une", "un", "with", "will"
+  ],
+  "aliases": {
+    "repository": ["repo", "repository", "depot", "checkout"],
+    "assistant": ["ai", "assistant", "agent ia", "automated worker", "claude", "codex"],
+    "license": ["licence", "license", "spdx", "apache 2.0"],
+    "localization": ["i18n", "internationalization", "localisation", "localization", "translation"],
+    "english": ["anglais", "english"],
+    "french": ["francais", "french"],
+    "update": ["mise a jour", "self-update", "updater", "update"],
+    "logging": ["journalisation", "logging", "session log"],
+    "profile": ["per-profile", "per-profil", "profile", "profil"],
+    "vault": ["coffre", "passphrase", "master password", "vault"],
+    "index": ["indexed", "indexing", "indexation", "indexe", "index"],
+    "draft": ["_drafts", "brouillon", "drafts", "draft"],
+    "theme": ["palette", "theme", "visual package"],
+    "certificate": ["certificat", "certificate", "credential bundle", "tls material"],
+    "collection": ["area", "collection", "section", "top-level collection"],
+    "mismatch": ["divergence", "ecart", "incoherence", "mismatch"],
+    "canonical": ["authoritative", "authority", "canonical", "source of truth"],
+    "container": ["compose", "container", "docker"],
+    "physical": ["appliance", "materiel", "physical"],
+    "framework": ["target framework", "framework", "tfm"],
+    "enabled": ["active", "available", "enabled", "fonctionnel", "implemented", "inclure", "included", "wired"],
+    "disabled": ["absent", "backlog", "disabled", "excluded", "not implemented", "unavailable", "unwired"],
+    "required": ["doit", "mandatory", "must", "obligatoire", "required", "shall"],
+    "forbidden": ["forbidden", "interdit", "jamais", "must not", "prohibited"],
+    "current": ["actuel", "current", "etat courant", "today"],
+    "replaced": ["remplace", "replaced", "superseded"]
+  },
+  "negative_markers": [
+    "aucun", "aucune", "disabled", "exclu", "forbidden", "impossible", "interdit", "jamais",
+    "ne", "no", "non", "not", "pas", "prohibited", "sans", "unavailable"
+  ],
+  "positive_markers": [
+    "active", "autorise", "canonical", "complete", "enabled", "fonctionnel", "implemented", "inclus",
+    "obligatoire", "present", "required", "supporte", "wired"
+  ],
+  "temporal_markers": [
+    "ancien", "backlog", "current", "deprecated", "historique", "maintenant", "replaced", "today"
+  ],
+  "scope_markers": {
+    "obligation": [
+      "autorise", "forbidden", "interdit", "mandatory", "must", "obligatoire", "prohibited", "required", "should"
+    ],
+    "activation": [
+      "active", "available", "disabled", "enabled", "excluded", "implemented", "supporte", "unavailable", "wired"
+    ],
+    "replacement_state": [
+      "canonical", "current", "remplace", "replaced", "source", "target", "targets"
+    ],
+    "value_threshold": [
+      "baseline", "cardinality", "collection", "count", "framework", "mismatch", "nombre", "port", "seuil", "version"
+    ]
+  },
+  "claim_trigger_terms": [
+    "activation", "canonical", "certificate", "collection", "container", "current", "disabled", "enabled",
+    "forbidden", "framework", "index", "license", "localization", "logging", "mismatch", "physical",
+    "profile", "replaced", "required", "theme", "update", "vault"
+  ],
+  "state_values": [
+    "canonical", "container", "disabled", "enabled", "english", "french", "localization", "physical",
+    "replaced"
+  ],
+  "value_patterns": [
+    "\\b(?:aes|rsa)[-_ ]?\\d{3,4}(?:[-_ ]?(?:cbc|gcm|oaep))?\\b",
+    "\\bnet\\d+(?:\\.\\d+)?(?:-windows)?\\b",
+    "\\b(?:port|vncport)\\s*[:=]?\\s*\\d{1,5}\\b",
+    "\\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|twelve|single|multiple|unique)\\b",
+    "\\b\\d{1,3}\\s*(?:collections?|sections?|mismatches?|divergences?|certificates?|credentials?)\\b"
+  ]
+}
