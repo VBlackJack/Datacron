@@ -66,6 +66,7 @@ from datacron.core.scope import (
 )
 from datacron.core.security import SecretRedactor
 from datacron.core.vault import build_configured_reader
+from datacron.core.vault_writer import VaultLockBusyError
 from datacron.mcp.identity import CallerIdentityProvider, StdioCallerIdentityProvider
 
 __all__ = [
@@ -209,6 +210,28 @@ def build_app(
     )
 
 
+async def _startup_recover_operations(app: DatacronApp) -> None:
+    """Run write-path recovery at startup without blocking tool registration.
+
+    A contended ``oplog`` advisory lock -- another datacron writer still holding
+    it -- must not stall the MCP lifespan: if it did, ``initialize`` would never
+    be answered and the client would drop the server with zero tools registered.
+    On lock contention we log a warning and defer recovery (retried on the next
+    write). Every other error still propagates and aborts startup.
+    """
+    try:
+        recovered = await app.vault_writer.recover_operations()
+    except VaultLockBusyError as exc:
+        _LOGGER.warning(
+            "Startup operation-log recovery deferred: %s; tools will register now "
+            "and recovery is retried on the next write",
+            exc,
+        )
+        return
+    if recovered:
+        _LOGGER.warning("Recovered %d committed operation-log entries", recovered)
+
+
 def create_server(app: DatacronApp) -> FastMCP[DatacronApp]:
     """Return a fully-wired :class:`FastMCP` server bound to ``app``."""
     from datacron.mcp.resources import register_resources  # noqa: PLC0415
@@ -225,9 +248,7 @@ def create_server(app: DatacronApp) -> FastMCP[DatacronApp]:
             _LOGGER.error("Vault root %s does not exist or is not a directory", app.vault_root)
             raise FileNotFoundError(f"Vault root not found: {app.vault_root}")
         if app.write_policy.writes_allowed:
-            recovered = await app.vault_writer.recover_operations()
-            if recovered:
-                _LOGGER.warning("Recovered %d committed operation-log entries", recovered)
+            await _startup_recover_operations(app)
         else:
             _LOGGER.info("Writable startup recovery skipped by active write policy")
         db_path = sidecar_index_db(app.vault_root)
