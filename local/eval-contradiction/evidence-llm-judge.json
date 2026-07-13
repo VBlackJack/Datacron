@@ -1,0 +1,3271 @@
+{
+  "schema_version": 1,
+  "measurement": "llm-judge-on-frozen-ranking",
+  "measurement_date": "2026-07-13",
+  "production_decision": null,
+  "provider": "llm-judge-frozen-ranking-v1",
+  "provider_version": "1.0.0",
+  "model": {
+    "model_id": "qwen3:8b",
+    "model_version": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+    "observed_versions": [
+      "qwen3:8b"
+    ],
+    "api_backend": "ollama_chat",
+    "api_endpoint": "http://127.0.0.1:11434/api/chat",
+    "temperature": 0.0,
+    "seed": 0,
+    "prompt_sha256": "60a53b334df6c605dd9baa37c8669c7703d3c8364efe158ced2d84a61536dd93",
+    "confidence_threshold": 0.7,
+    "context_selection": "cross-note-block-overlap-v3"
+  },
+  "frozen_input": {
+    "evidence_path": "local/eval-contradiction/evidence-claim-decomp-v2.json",
+    "evidence_sha256": "eb421b383c460440cc4749ef649f3f7e23280b8d91d282d079b411f19c80012a",
+    "expected_evidence_sha256": "eb421b383c460440cc4749ef649f3f7e23280b8d91d282d079b411f19c80012a",
+    "ranking_sha256": "f6e1c1d31a40da7134b285dce1f0690bd033680b22d1fcac8cbc2aa9c619681b",
+    "expected_ranking_sha256": "f6e1c1d31a40da7134b285dce1f0690bd033680b22d1fcac8cbc2aa9c619681b",
+    "pairs": 393,
+    "regenerated": false
+  },
+  "inputs": {
+    "corpus": {
+      "path": "local/eval-contradiction/corpus.json",
+      "sha256": "c1dbfee8d4f1df41c34a9e06cd5d1eab9d3619816e2106e8d29e71de90fd1b42"
+    },
+    "labels": {
+      "path": "local/eval-contradiction/labels.jsonl",
+      "sha256": "28c0a51aa2b72d4d2d6a50851c4197c8bec0fc5e0c634682da8f5a3d4815165c"
+    },
+    "synthetic_spec": {
+      "path": "local/eval-contradiction/synthetic-spec.json",
+      "sha256": "54f600d6f55145e0981dacb59dd0dcecaad0367b9fed27e19c3005d546c2dd44"
+    },
+    "prompt": {
+      "path": "local/eval-contradiction/llm-judge-prompt.md",
+      "sha256": "60a53b334df6c605dd9baa37c8669c7703d3c8364efe158ced2d84a61536dd93"
+    },
+    "config": {
+      "path": "local/eval-contradiction/llm-judge-config.json",
+      "sha256": "f5773eb4e4722443cf1240e67cb18de159df33e9300c34c1888a00162a7bf15c"
+    },
+    "cache": {
+      "path": "local/eval-contradiction/llm-judge-cache.json",
+      "sha256": "4f67b276b55d01e36c82479032d938d73324f01c6fad7fbd5990243e79d5e0e5"
+    },
+    "provider_module": {
+      "path": "local/eval-contradiction/llm_judge_candidates.py",
+      "sha256": "af3141a8b43058c1be406163101f770c33846a7692902c90abfe7e6f648d3a1c"
+    }
+  },
+  "population": {
+    "pool_pairs": 393,
+    "adjudicated_pairs": 139,
+    "adjudicated_positives": 16,
+    "adjudicated_negatives": 123,
+    "unjudged_pairs": 254
+  },
+  "adjudicated_metrics": {
+    "adjudicated_pairs": 139,
+    "positive_total": 16,
+    "negative_total": 123,
+    "true_positives": 13,
+    "false_positives": 6,
+    "true_negatives": 117,
+    "false_negatives": 3,
+    "precision": 0.6842105263157895,
+    "judge_recall": 0.8125,
+    "generator_recall_ceiling": 0.75,
+    "end_to_end_recall": 0.609375,
+    "keep_all_precision": 0.11510791366906475,
+    "precision_lift_vs_keep_all": 5.944078947368421
+  },
+  "positive_recall_by_stratum": [
+    {
+      "stratum": "activation_deactivation",
+      "retained": 5,
+      "total": 5,
+      "recall": 1.0
+    },
+    {
+      "stratum": "curation",
+      "retained": 0,
+      "total": 1,
+      "recall": 0.0
+    },
+    {
+      "stratum": "obligation_interdiction",
+      "retained": 3,
+      "total": 3,
+      "recall": 1.0
+    },
+    {
+      "stratum": "replacement_state",
+      "retained": 2,
+      "total": 4,
+      "recall": 0.5
+    },
+    {
+      "stratum": "value_threshold",
+      "retained": 3,
+      "total": 3,
+      "recall": 1.0
+    }
+  ],
+  "unjudged_backlog": {
+    "total": 254,
+    "declared_contradiction": 5,
+    "not_declared_contradiction": 249,
+    "precision_inferred": false,
+    "retained_pairs": [
+      {
+        "note_a": "_memory/facts/concurrent-agents-corrupt-git-shared-drive.md",
+        "note_b": "_memory/facts/sandbox-mount-nul-artefact.md"
+      },
+      {
+        "note_a": "_memory/facts/datacron-reliability-program-2026-07-10.md",
+        "note_b": "_memory/projects/datacron-karpathy-wiki-design.md"
+      },
+      {
+        "note_a": "_memory/facts/onecert-nxlog-certificats.md",
+        "note_b": "_memory/projects/onecert-windows.md"
+      },
+      {
+        "note_a": "_memory/projects/datacron.md",
+        "note_b": "synthetic/syn-state-01.md"
+      },
+      {
+        "note_a": "_memory/projects/heimdall.md",
+        "note_b": "synthetic/syn-activation-01.md"
+      }
+    ]
+  },
+  "false_positive_analysis": {
+    "total": 6,
+    "by_judge_scope": {
+      "activation": 1,
+      "obligation": 2,
+      "replacement_state": 2,
+      "value_threshold": 1
+    },
+    "pairs": [
+      {
+        "note_a": "_memory/facts/worldline-ansible-windows-ci.md",
+        "note_b": "_memory/projects/onecert-windows.md",
+        "label": 0,
+        "label_source": "curation",
+        "stratum": null,
+        "retained": true,
+        "judgment": {
+          "confidence": 0.99,
+          "contradiction": true,
+          "polarity_conflict": true,
+          "rationale": "Le module `win_ini_file` est simultanément rejeté et remplacé par une alternative.",
+          "scope": "replacement_state"
+        },
+        "cache_key": "ad9f02d49b23ebe990bc47c9874339de53f24bcb780b4ec93992cffa45ae7469",
+        "frozen_rank": 245
+      },
+      {
+        "note_a": "_memory/preferences/julien.md",
+        "note_b": "_memory/projects/scrybe.md",
+        "label": 0,
+        "label_source": "curation",
+        "stratum": null,
+        "retained": true,
+        "judgment": {
+          "confidence": 0.99,
+          "contradiction": true,
+          "polarity_conflict": true,
+          "rationale": "Le même fichier est simultanément tronqué et non-tronqué selon les outils.",
+          "scope": "activation"
+        },
+        "cache_key": "59a9832dc1c0d8379eca87dcf82ee454a1348d5b88d9a91ae94c535e2200b678",
+        "frozen_rank": 301
+      },
+      {
+        "note_a": "_memory/projects/ansible-gpo.md",
+        "note_b": "_memory/projects/dts-pingcastle.md",
+        "label": 0,
+        "label_source": "curation",
+        "stratum": null,
+        "retained": true,
+        "judgment": {
+          "confidence": 0.99,
+          "contradiction": true,
+          "polarity_conflict": true,
+          "rationale": "Le catalogue GPO est simultanément final et en réserve.",
+          "scope": "replacement_state"
+        },
+        "cache_key": "af9a3ae011e446a4f3c3d87bf0af23711d6fac4c8619639847d272f7073147dd",
+        "frozen_rank": 267
+      },
+      {
+        "note_a": "_memory/projects/expert-skills.md",
+        "note_b": "_memory/projects/skills-portables-et-formateurs.md",
+        "label": 0,
+        "label_source": "curation",
+        "stratum": null,
+        "retained": true,
+        "judgment": {
+          "confidence": 0.99,
+          "contradiction": true,
+          "polarity_conflict": true,
+          "rationale": "Les Experts Microsoft sont simultanément créés et ajoutés comme Formateurs.",
+          "scope": "obligation"
+        },
+        "cache_key": "d3cd34bd56bac8fbff80f22c535e72ef61458900ced39879fdc2a79cf15bbccb",
+        "frozen_rank": 268
+      },
+      {
+        "note_a": "_memory/projects/themeforge-magellan.md",
+        "note_b": "_memory/projects/themeforge.md",
+        "label": 0,
+        "label_source": "curation",
+        "stratum": null,
+        "retained": true,
+        "judgment": {
+          "confidence": 0.99,
+          "contradiction": true,
+          "polarity_conflict": true,
+          "rationale": "Le tag v2.1.0 pointe sur un commit frere avec un theme Magellan, mais le theme Magellan est valide dans le contexte de v1.3.0.",
+          "scope": "value_threshold"
+        },
+        "cache_key": "d24f01167ee6da3e1da94d298fc7d5f151daf9a9b5b6d01df4fe0a48e56c6fae",
+        "frozen_rank": 273
+      },
+      {
+        "note_a": "_memory/projects/themeforge-v2-dropin.md",
+        "note_b": "_memory/projects/themeforge.md",
+        "label": 0,
+        "label_source": "curation",
+        "stratum": null,
+        "retained": true,
+        "judgment": {
+          "confidence": 0.99,
+          "contradiction": true,
+          "polarity_conflict": true,
+          "rationale": "La publication via Trusted Publishing est requise et interdite simultanément.",
+          "scope": "obligation"
+        },
+        "cache_key": "780816a577ec61187faa71388260141545212bd05b1ea36e87b70a8770188507",
+        "frozen_rank": 214
+      }
+    ]
+  },
+  "false_negatives": [
+    {
+      "note_a": "_memory/facts/skills-architecture.md",
+      "note_b": "_memory/preferences/julien.md",
+      "label": 1,
+      "label_source": "curation",
+      "stratum": "curation",
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et portées distinctes (architecture vs préférences workflow).",
+        "scope": "different_scope"
+      },
+      "cache_key": "fdedb781e3ce23c2052cf9dc7d8d305c2fa672fc836cd6ccacd86f63bedfdd99",
+      "frozen_rank": 282
+    },
+    {
+      "note_a": "_memory/projects/heimdall-testenv.md",
+      "note_b": "synthetic/syn-state-04.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "replacement_state",
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des environnements et protocoles différents, pas des affirmations incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "8b420a5e926a246401933894e475af8c7e111a9756cdefd06e4d8caff367f252",
+      "frozen_rank": 231
+    },
+    {
+      "note_a": "_memory/projects/themeforge-magellan.md",
+      "note_b": "synthetic/syn-state-05.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "replacement_state",
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les deux notes décrivent des sujets et portées différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "240efd6bb730c525f77d20c659d06e177c597a6ac8a3d8da8ae36b6a97e0d527",
+      "frozen_rank": 13
+    }
+  ],
+  "adjudicated_coverage": [
+    {
+      "note_a": "_memory/INIT.md",
+      "note_b": "_memory/preferences/julien.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des processus et configurations compatibles dans le même contexte de travail.",
+        "scope": "different_scope"
+      },
+      "cache_key": "9e8933c2d38e59cf1a7403163bf5adfadc7a7aeabe1c24a2889064852ac8ab2a",
+      "frozen_rank": 217
+    },
+    {
+      "note_a": "_memory/INIT.md",
+      "note_b": "_memory/projects/datacron.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des états et des processus compatibles sans opposition directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "f8781727d8b53d249d17699b6c192ff1117e4eb71fe4235b5b08794ab4ef549f",
+      "frozen_rank": 223
+    },
+    {
+      "note_a": "_memory/facts/concurrent-agents-corrupt-git-shared-drive.md",
+      "note_b": "synthetic/syn-obligation-01.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "obligation_interdiction",
+      "retained": true,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Les écritures concurrentes corrompent Git, contrairement à la politique de travail parallèle.",
+        "scope": "activation"
+      },
+      "cache_key": "fac4533c248c4ae17606b8cc4b2259db8bcf2c46d654fb32d6c48edf7fba5f6a",
+      "frozen_rank": 39
+    },
+    {
+      "note_a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "note_b": "_memory/projects/charon.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des projets et lots distincts avec des contextes et portées différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "c25b5791be7a9f3a790529cc890e8e71e73b7aa26e1f8cced7df3dcd7bea8a14",
+      "frozen_rank": 90
+    },
+    {
+      "note_a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "note_b": "_memory/projects/datacron.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de résolutions et de configurations différentes sans contradiction directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "a79bd6f429c5ea221f7f5194a62d850778e788d75eb3086bc6d159f403663788",
+      "frozen_rank": 259
+    },
+    {
+      "note_a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "note_b": "_memory/projects/heimdall-history.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de systèmes et projets distincts avec des contextes et portées divergents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "9442403f263cc66336a8f3a2f25ab6301c09b4cb7ed85b8550e42001685df6f8",
+      "frozen_rank": 339
+    },
+    {
+      "note_a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les deux notes traitent de problèmes distincts dans des contextes temporels et techniques différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "1d3aa79d1f49e63ca94029a6de79b58d02436baf87fa117bf9daf4b42ea6b87b",
+      "frozen_rank": 77
+    },
+    {
+      "note_a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "note_b": "synthetic/syn-activation-04.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "activation_deactivation",
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "La même section est simultanément exclue et indexée.",
+        "scope": "activation"
+      },
+      "cache_key": "ba75ff3aa4eb41b8cfc983979580600bfeeafbd4db043c51ba5b91057321db9f",
+      "frozen_rank": 47
+    },
+    {
+      "note_a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "note_b": "synthetic/syn-value-03.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "value_threshold",
+      "retained": true,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le nombre de collections est simultanément 6 et 8, contradiction sur la portée.",
+        "scope": "value_threshold"
+      },
+      "cache_key": "c6f2d0da31e9885e126643a010e072eb6470aedb85e3d6bac74b05fb20a5a0d8",
+      "frozen_rank": 55
+    },
+    {
+      "note_a": "_memory/facts/heimdall-rdp-audit-2026-07-08.md",
+      "note_b": "_memory/projects/heimdall-history.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets distincts (audit vs historique de projet) avec portées et contextes incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "7687c6c4c5945194717c837bbd01bcd48a5ebb0ceaa1d606bf4f4cb764a18ad2",
+      "frozen_rank": 371
+    },
+    {
+      "note_a": "_memory/facts/onecert-no-license-magellan.md",
+      "note_b": "synthetic/syn-obligation-02.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "obligation_interdiction",
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Les mêmes fichiers doivent avoir des en-têtes Apache 2.0 et un fichier LICENSE, mais la note A interdit cela.",
+        "scope": "obligation"
+      },
+      "cache_key": "20aa9ff7987eff38508f96af57905a65612fa6eddf77a78e10b9d9e948daf15d",
+      "frozen_rank": 347
+    },
+    {
+      "note_a": "_memory/facts/onecert-nxlog-certificats.md",
+      "note_b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de composants et de fonctionnalités distinctes du système OneCert.",
+        "scope": "different_scope"
+      },
+      "cache_key": "350a34d7215188330b2e2b390e952eec40ecca62728f9c4c608d00e0ea919440",
+      "frozen_rank": 38
+    },
+    {
+      "note_a": "_memory/facts/onecert-nxlog-certificats.md",
+      "note_b": "synthetic/syn-state-03.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "replacement_state",
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le stockage PEM est autorisé dans la note A et interdit dans la note B.",
+        "scope": "activation"
+      },
+      "cache_key": "972f219a4a4806be34a1906bab2d7dc2894985845dc7f7df1db4f86e3a22e9aa",
+      "frozen_rank": 391
+    },
+    {
+      "note_a": "_memory/facts/skills-architecture.md",
+      "note_b": "_memory/preferences/julien.md",
+      "label": 1,
+      "label_source": "curation",
+      "stratum": "curation",
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et portées distinctes (architecture vs préférences workflow).",
+        "scope": "different_scope"
+      },
+      "cache_key": "fdedb781e3ce23c2052cf9dc7d8d305c2fa672fc836cd6ccacd86f63bedfdd99",
+      "frozen_rank": 282
+    },
+    {
+      "note_a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "note_b": "_memory/projects/onecert-windows.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le module `win_ini_file` est simultanément rejeté et remplacé par une alternative.",
+        "scope": "replacement_state"
+      },
+      "cache_key": "ad9f02d49b23ebe990bc47c9874339de53f24bcb780b4ec93992cffa45ae7469",
+      "frozen_rank": 245
+    },
+    {
+      "note_a": "_memory/preferences/julien.md",
+      "note_b": "_memory/projects/heimdall-history.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et portées distinctes (workflow vs projet Heimdall.Next).",
+        "scope": "different_scope"
+      },
+      "cache_key": "c0ff4a165dce1c03c41695ece060e6b513deacb6ae33638df94b57edd34d28b5",
+      "frozen_rank": 119
+    },
+    {
+      "note_a": "_memory/preferences/julien.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et contextes distincts (préférences workflow vs état courant d'un projet).",
+        "scope": "different_scope"
+      },
+      "cache_key": "9b08a6410435369daf33011e0822f3048ed61e66c4589f1af0d609ebe6187169",
+      "frozen_rank": 287
+    },
+    {
+      "note_a": "_memory/preferences/julien.md",
+      "note_b": "_memory/projects/scrybe.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le même fichier est simultanément tronqué et non-tronqué selon les outils.",
+        "scope": "activation"
+      },
+      "cache_key": "59a9832dc1c0d8379eca87dcf82ee454a1348d5b88d9a91ae94c535e2200b678",
+      "frozen_rank": 301
+    },
+    {
+      "note_a": "_memory/preferences/julien.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets et de portées distinctes (sandbox vs. WinForge), sans opposition directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "90c1f0effa1d13105c1a216afcf9ae7cfe1aea4114d0fa77aa84b181099b6d92",
+      "frozen_rank": 288
+    },
+    {
+      "note_a": "_memory/projects/ansible-gpo.md",
+      "note_b": "_memory/projects/dts-pingcastle.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le catalogue GPO est simultanément final et en réserve.",
+        "scope": "replacement_state"
+      },
+      "cache_key": "af9a3ae011e446a4f3c3d87bf0af23711d6fac4c8619639847d272f7073147dd",
+      "frozen_rank": 267
+    },
+    {
+      "note_a": "_memory/projects/charon-archive-lots.md",
+      "note_b": "_memory/projects/charon.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les lots et les validations sont compatibles dans le contexte du projet.",
+        "scope": "different_scope"
+      },
+      "cache_key": "5278e48a8f93eac4abe902ae71acba01798baecd879923f8cfc5aa4b54f9de92",
+      "frozen_rank": 9
+    },
+    {
+      "note_a": "_memory/projects/charon-archive-lots.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets et des états techniques distincts, sans contradiction directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "697b76e934b1b2385c965858cfb0d579975d5b83810b399049441f274c9ee273",
+      "frozen_rank": 94
+    },
+    {
+      "note_a": "_memory/projects/charon.md",
+      "note_b": "_memory/projects/datacron.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les projets et les lots décrits sont distincts et ne contredisent pas.",
+        "scope": "different_scope"
+      },
+      "cache_key": "00f1e1821e4cd29131429c749f11e73669862d5bc53dd7847e595536b8433b42",
+      "frozen_rank": 64
+    },
+    {
+      "note_a": "_memory/projects/charon.md",
+      "note_b": "_memory/projects/heimdall-cmdlib-ux.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts avec des contextes et portées incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "7042a6540c6d834b1766ef0f6ec2eb5463f5fee5757d5bbbd07b5438953df65d",
+      "frozen_rank": 123
+    },
+    {
+      "note_a": "_memory/projects/charon.md",
+      "note_b": "_memory/projects/heimdall-history.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des projets distincts avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "219d137c4b4a858c024cfd497af7bc053d8abf216f6e880c9c580a4e590abba3",
+      "frozen_rank": 304
+    },
+    {
+      "note_a": "_memory/projects/charon.md",
+      "note_b": "_memory/projects/heimdall-parity-audit.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des projets distincts avec des contextes et portées différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "996a8b5e421e3762137507e69a5f589d3cc9cde4ae0ff304b06cedf8931eeef6",
+      "frozen_rank": 106
+    },
+    {
+      "note_a": "_memory/projects/charon.md",
+      "note_b": "_memory/projects/heimdall-release.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts (Charon vs Heimdall.Next) avec des contextes et portées différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "f18a9ed3324b7a86248bf8ca61ef716cdc725fa0329687bb497e3f005c69fef3",
+      "frozen_rank": 124
+    },
+    {
+      "note_a": "_memory/projects/charon.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les projets et les sujets décrits sont distincts et compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "1592f2ceae45bc105362f92be57a46ef9f04a8169cc904f3a276b5794637f874",
+      "frozen_rank": 173
+    },
+    {
+      "note_a": "_memory/projects/charon.md",
+      "note_b": "_memory/projects/scrybe.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts (Charon vs Scrybe) avec des contextes et portées différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "e6ca8021390bf799f86bde73597586edb3397838c0fc98f233dd3c38b3802887",
+      "frozen_rank": 75
+    },
+    {
+      "note_a": "_memory/projects/charon.md",
+      "note_b": "_memory/projects/themeforge-v2-dropin.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts avec des contextes et portées différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "07856ffb747f5a915638e498358f3b0e3edf8d5100626a739ab14c870a7bba0e",
+      "frozen_rank": 204
+    },
+    {
+      "note_a": "_memory/projects/charon.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les projets et les états décrits sont distincts et compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "621edc046bf6b87e4dcc74c9417f149408d0b145f7fe60aea1501bcfb02f0694",
+      "frozen_rank": 86
+    },
+    {
+      "note_a": "_memory/projects/datacron-karpathy-wiki-design.md",
+      "note_b": "synthetic/syn-obligation-05.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "obligation_interdiction",
+      "retained": true,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Une affirmation est certifiée alors qu'une contradiction persiste.",
+        "scope": "obligation"
+      },
+      "cache_key": "2cccfaf5a806e5dd39b5cf47cdb48c472bd52f4d26b3213372c62a73ec6d1d42",
+      "frozen_rank": 368
+    },
+    {
+      "note_a": "_memory/projects/datacron.md",
+      "note_b": "_memory/projects/heimdall-cmdlib-ux.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets distincts (Datacron vs Heimdall) avec des portées et contextes incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "129099be8470cc4aea3ea33ba3d92275471e87eec6ec67bae62dc5b55433f1dc",
+      "frozen_rank": 58
+    },
+    {
+      "note_a": "_memory/projects/datacron.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts (Datacron vs Heimdall) avec des contextes et portées incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "ae3e5a5284b777747ca706d9fff4819a9bf09c095d767a0cfc2be130707c19bf",
+      "frozen_rank": 137
+    },
+    {
+      "note_a": "_memory/projects/datacron.md",
+      "note_b": "_memory/projects/scrybe.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts (Datacron vs Scrybe) avec des contextes et portées différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "d7c873b45a76c14db0c4890791e1c5a2d5a717dc25ad122d2be1766f3b60e00e",
+      "frozen_rank": 65
+    },
+    {
+      "note_a": "_memory/projects/datacron.md",
+      "note_b": "_memory/projects/themeforge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "3b785dd545465921a801c9eab5bd2b597ec77578937f6ad92790fe528be96ce4",
+      "frozen_rank": 283
+    },
+    {
+      "note_a": "_memory/projects/datacron.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts avec des contextes et des portées incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "51c7f369f9c90b4c661c2a82900b5952a2e93f62b7985fb5db64e30547ca3370",
+      "frozen_rank": 136
+    },
+    {
+      "note_a": "_memory/projects/expert-skills.md",
+      "note_b": "_memory/projects/skills-portables-et-formateurs.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Les Experts Microsoft sont simultanément créés et ajoutés comme Formateurs.",
+        "scope": "obligation"
+      },
+      "cache_key": "d3cd34bd56bac8fbff80f22c535e72ef61458900ced39879fdc2a79cf15bbccb",
+      "frozen_rank": 268
+    },
+    {
+      "note_a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "note_b": "_memory/projects/heimdall-external-vault.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des résolutions distinctes de Build.ps1 et des intégrations externes, sans opposition directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "fe7157458009d17b6589f35ce16314016748c7d70de565bd0ccd13c9ded97be4",
+      "frozen_rank": 102
+    },
+    {
+      "note_a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "note_b": "_memory/projects/heimdall-fr-truncation.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les deux notes traitent de problèmes UI distincts dans le même projet, sans opposition de polarité ou de portée.",
+        "scope": "different_scope"
+      },
+      "cache_key": "1e18edca438879128c7cd47bbbe16ddc56751745f7a518ecdb0cf2d1278a454d",
+      "frozen_rank": 388
+    },
+    {
+      "note_a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "note_b": "_memory/projects/heimdall-history.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des résolutions distinctes de chantiers dans le même projet, sans opposition de polarité ou de portée.",
+        "scope": "different_scope"
+      },
+      "cache_key": "156fee864d86c76fb0ddc64ccb9a9b549d14e89cd55306c7121d257707171949",
+      "frozen_rank": 327
+    },
+    {
+      "note_a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "note_b": "_memory/projects/heimdall-parity-audit.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des étapes distinctes d'un projet avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "2e7f5ac621cd3d8b1b11cb5b9269177625f1683ff6bc7ef6fcf5b1323a86c5e5",
+      "frozen_rank": 96
+    },
+    {
+      "note_a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "note_b": "_memory/projects/heimdall-release.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des résolutions distinctes dans des contextes de développement et de déploiement non conflictuels.",
+        "scope": "different_scope"
+      },
+      "cache_key": "43bfb7dadf3989d96b6734a47d8a248301fdf98e5e5c36c4f68bafeff8507382",
+      "frozen_rank": 7
+    },
+    {
+      "note_a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "note_b": "_memory/projects/heimdall-testenv.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des résolutions distinctes dans des contextes de déploiement et de test.",
+        "scope": "different_scope"
+      },
+      "cache_key": "e7bee8189f165252ec3e1e8433b3cf8f55fd56cc45bb0de7560877b45e8f4c92",
+      "frozen_rank": 128
+    },
+    {
+      "note_a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "note_b": "_memory/projects/heimdall-updater.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des étapes résolues et des décisions architecturales compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "6545f28f0e145039660bd04675d2b7afd2d6ea54960ce18223157aca6f5457b8",
+      "frozen_rank": 166
+    },
+    {
+      "note_a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des résolutions distinctes dans des contextes temporels et techniques différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "8ea365efa4120195f9d55a39a8dd48bed005803c4f316da52f37abd3f5ccd2d5",
+      "frozen_rank": 3
+    },
+    {
+      "note_a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "note_b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des projets distincts avec des étapes et des résultats non conflictuels.",
+        "scope": "different_scope"
+      },
+      "cache_key": "87d487afc912df27353a0ffd56e37d59a8a7d7075c9b666edc661abbc62a1eb1",
+      "frozen_rank": 93
+    },
+    {
+      "note_a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "note_b": "_memory/projects/scrybe.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des projets distincts avec des contextes et des portées différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "28506016fccf7920beec5bb7679f029c782ff29755b9f8c77706435296b8448b",
+      "frozen_rank": 118
+    },
+    {
+      "note_a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "note_b": "_memory/projects/themeforge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "ee37c84fe2a713da3b2bce167f92e88747b59fc0ef2af10f0e62bfd4ef4b7b8b",
+      "frozen_rank": 112
+    },
+    {
+      "note_a": "_memory/projects/heimdall-cmdlib-ux.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les sujets et portées diffèrent (refonte UX vs gestion des mises à jour), pas de contradiction directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "1c51b36a71edc4f0fdbc2e99ee423d6e60ac759b00935779f73e36a54b07d875",
+      "frozen_rank": 33
+    },
+    {
+      "note_a": "_memory/projects/heimdall-context-menus.md",
+      "note_b": "_memory/projects/heimdall-fr-truncation.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les deux notes traitent de la mise en forme des libellés FR, sans opposition de polarité ou de portée.",
+        "scope": "different_scope"
+      },
+      "cache_key": "5ac09a2402d136b2ea53597c8be09b23e80263dc2f549e593c0f1d67dc6d15c1",
+      "frozen_rank": 274
+    },
+    {
+      "note_a": "_memory/projects/heimdall-context-menus.md",
+      "note_b": "_memory/projects/heimdall-parity-audit.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des lots de développement distincts avec des contextes temporels et des portées compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "96ff90336ac42249cac1103a82e5bc1dd5fddb4f97de3ff482eaf1c479b11b1e",
+      "frozen_rank": 298
+    },
+    {
+      "note_a": "_memory/projects/heimdall-context-menus.md",
+      "note_b": "_memory/projects/heimdall-release.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des fonctionnalités et des améliorations distinctes du même projet sans contradiction.",
+        "scope": "different_scope"
+      },
+      "cache_key": "9ca7fb97683f167236ffbb2f63434121faf4cd81bee95609ccfe6f070d034b53",
+      "frozen_rank": 203
+    },
+    {
+      "note_a": "_memory/projects/heimdall-context-menus.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et contextes distincts (développement vs bug RDP).",
+        "scope": "different_scope"
+      },
+      "cache_key": "44b33f0ae19a8369e80496bea5f4848b74243d00a71aa948377084e0b944b7fa",
+      "frozen_rank": 319
+    },
+    {
+      "note_a": "_memory/projects/heimdall-external-vault.md",
+      "note_b": "_memory/projects/heimdall-history.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des chantiers et correctifs distincts dans le même projet, sans opposition directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "bf77ed8150bd2825046a5219655e07601603f8c61f191126a243f2bf09cc4dc1",
+      "frozen_rank": 88
+    },
+    {
+      "note_a": "_memory/projects/heimdall-external-vault.md",
+      "note_b": "_memory/projects/heimdall-master-password.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les deux notes traitent de sujets distincts (typographie vs sécurité) avec des portées et contextes compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "fdb19898e03926b3a7be4ccc3f5fb3cd5509a26767b79cfe2efe0d1e4f981892",
+      "frozen_rank": 313
+    },
+    {
+      "note_a": "_memory/projects/heimdall-external-vault.md",
+      "note_b": "_memory/projects/heimdall-release.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et contextes distincts (sécurité RDP vs intégration vault).",
+        "scope": "different_scope"
+      },
+      "cache_key": "539a3ca6674f19b6d987a69f35547e3a6d9dceed3c31ae2e2a4af65b12d35c55",
+      "frozen_rank": 103
+    },
+    {
+      "note_a": "_memory/projects/heimdall-external-vault.md",
+      "note_b": "_memory/projects/heimdall-updater.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des composants et décisions distinctes du système Heimdall.",
+        "scope": "different_scope"
+      },
+      "cache_key": "dc463496f96ef31b2284d52c9a213b0468e90c3e2cf459878150a07f8fb79327",
+      "frozen_rank": 78
+    },
+    {
+      "note_a": "_memory/projects/heimdall-external-vault.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et contextes distincts (intégration vault vs bug RDP).",
+        "scope": "different_scope"
+      },
+      "cache_key": "68684ffa47bcc96d144f71b229144ba8977f1b8c7c90e3e2f48a2f5ea605f4bd",
+      "frozen_rank": 234
+    },
+    {
+      "note_a": "_memory/projects/heimdall-external-vault.md",
+      "note_b": "_memory/projects/onecert-windows.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et contextes distincts (intégration vs gestion de certificats).",
+        "scope": "different_scope"
+      },
+      "cache_key": "3f0d2ed7c3f38f692392c60f270e1a01c97647b3271b3fc56f3fed5a3a910858",
+      "frozen_rank": 322
+    },
+    {
+      "note_a": "_memory/projects/heimdall-external-vault.md",
+      "note_b": "_memory/projects/scrybe.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets et commits distincts, sans conflit de portée ou de polarité.",
+        "scope": "different_scope"
+      },
+      "cache_key": "342e2243fb2aa03e4669cd06365f46eda643817760e3d302bc9d63072d72a448",
+      "frozen_rank": 158
+    },
+    {
+      "note_a": "_memory/projects/heimdall-external-vault.md",
+      "note_b": "_memory/projects/themeforge-magellan.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et contextes distincts (Heimdall vs ThemeForge) avec des dates et décisions compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "c202b9bf924dcc069b6cdd3cc9566b5ac58e1215aa1e7392c99907482f3478a3",
+      "frozen_rank": 10
+    },
+    {
+      "note_a": "_memory/projects/heimdall-external-vault.md",
+      "note_b": "_memory/projects/themeforge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "c4b99500480f6b9e7f43f89b93598cd01232f829f69e099b16d572bb5bd54c20",
+      "frozen_rank": 285
+    },
+    {
+      "note_a": "_memory/projects/heimdall-external-vault.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des systèmes et processus distincts avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "47e4d975be3861066ce4098b199dad87c161ddd9ced1559ba1733426e6da45d3",
+      "frozen_rank": 116
+    },
+    {
+      "note_a": "_memory/projects/heimdall-fr-truncation.md",
+      "note_b": "_memory/projects/heimdall-release.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets distincts (UI fixes vs release process) avec portées et contextes compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "57ae570ba4c28c73a89f2eb2e3bbf6208e4a20af6ede0eaa0fb1cefb9731c084",
+      "frozen_rank": 235
+    },
+    {
+      "note_a": "_memory/projects/heimdall-fr-truncation.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les deux notes traitent de problèmes distincts : troncature des boutons vs timeout watchdog RDP.",
+        "scope": "different_scope"
+      },
+      "cache_key": "53582e96a0a8a72f175c5fac41900512de61b3fc927b14da503834bb4ef684b6",
+      "frozen_rank": 160
+    },
+    {
+      "note_a": "_memory/projects/heimdall-history.md",
+      "note_b": "_memory/projects/heimdall-master-password.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets et de portées distinctes (bugs UI vs sécurité crypto).",
+        "scope": "different_scope"
+      },
+      "cache_key": "60de8d283be1d0dfa979c2ada6e637eb720cbc33d77d26ac1cf11931cd8094c4",
+      "frozen_rank": 80
+    },
+    {
+      "note_a": "_memory/projects/heimdall-history.md",
+      "note_b": "_memory/projects/heimdall-per-profile-logging.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les deux notes décrivent des fonctionnalités distinctes et compatibles du projet Heimdall.",
+        "scope": "different_scope"
+      },
+      "cache_key": "2ab0ee3d880ae7f69e8e525feccb1a4b4620d6d6d37a6f61fdef9fd086eb0dbc",
+      "frozen_rank": 281
+    },
+    {
+      "note_a": "_memory/projects/heimdall-history.md",
+      "note_b": "_memory/projects/heimdall-release.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des aspects distincts du projet Heimdall.Next : une livraison technique et un runbook de release.",
+        "scope": "different_scope"
+      },
+      "cache_key": "289a24be58e1744bcdbd77582821dbc17786b0eae0ef64f57e4fc124b55a1c39",
+      "frozen_rank": 344
+    },
+    {
+      "note_a": "_memory/projects/heimdall-history.md",
+      "note_b": "_memory/projects/heimdall-testenv.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des composants et des états différents du même projet, sans opposition directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "cdb5866a08309752e7cb734e6ec3d787aedcd11e1cdef3cdc82ea672d96499d6",
+      "frozen_rank": 98
+    },
+    {
+      "note_a": "_memory/projects/heimdall-history.md",
+      "note_b": "_memory/projects/heimdall-updater.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des aspects distincts du projet (historique vs. design) sans contradiction.",
+        "scope": "different_scope"
+      },
+      "cache_key": "ac37a7c9271a4a4984ae1546dcced595d51fdaa7eb73722afc2ca3a1e95d30bf",
+      "frozen_rank": 297
+    },
+    {
+      "note_a": "_memory/projects/heimdall-history.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les deux notes décrivent des états et des corrections techniques liées au projet Heimdall, sans contradiction directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "84ae57aa5c539af163e645bb70117777f2c314ad46d8c0d5ee94f56ffb110f64",
+      "frozen_rank": 147
+    },
+    {
+      "note_a": "_memory/projects/heimdall-history.md",
+      "note_b": "_memory/projects/scrybe.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des états et des corrections distinctes sans opposition directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "77e3f701a34e23c95b116e1cab5759f8905cb20368875a7524900976300ecb9d",
+      "frozen_rank": 152
+    },
+    {
+      "note_a": "_memory/projects/heimdall-history.md",
+      "note_b": "_memory/projects/themeforge-magellan.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des contextes et des sujets distincts (développement Heimdall vs ThemeForge).",
+        "scope": "different_scope"
+      },
+      "cache_key": "e221ce2f67eba8fd9e9ea9acd0bc7cf41e40de76d1f78f6a5a10a952f92d16b3",
+      "frozen_rank": 271
+    },
+    {
+      "note_a": "_memory/projects/heimdall-history.md",
+      "note_b": "_memory/projects/themeforge-v2-dropin.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de projets distincts (Heimdall.Next vs ThemeForge v2.0) avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "1425b4ff4df8d8dfda3465a318e0434f8855d667308ae855200c0d7e7b100d1e",
+      "frozen_rank": 323
+    },
+    {
+      "note_a": "_memory/projects/heimdall-history.md",
+      "note_b": "_memory/projects/themeforge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des chantiers distincts avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "6ef57f0c48b2d43d41fed8f7fc2198c73e19842e6690d0d48665cccee42f1bd7",
+      "frozen_rank": 37
+    },
+    {
+      "note_a": "_memory/projects/heimdall-history.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "8ca09b553155efb1e49ee8a0fa08d546f113e51cae8c674790c4323b9a4a154d",
+      "frozen_rank": 186
+    },
+    {
+      "note_a": "_memory/projects/heimdall-macro-expect.md",
+      "note_b": "_memory/projects/heimdall-master-password.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets distincts (macros vs sécurité) avec des portées et contextes compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "f3b0e008cefdcd6d2aaf41965c53ba1e32e50e3f0d4c6d08428c0ea56dfea287",
+      "frozen_rank": 233
+    },
+    {
+      "note_a": "_memory/projects/heimdall-macro-expect.md",
+      "note_b": "_memory/projects/heimdall-release.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de fonctionnalités distinctes (macros vs UI/UX/RDP) avec des contextes temporels et de portée différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "0fb3a25293baa97bf8f4a6a2ff2fbf097a5f130934ed0d65c7293741570477e6",
+      "frozen_rank": 181
+    },
+    {
+      "note_a": "_memory/projects/heimdall-master-password.md",
+      "note_b": "_memory/projects/heimdall-parity-audit.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des composants et des décisions distinctes dans le même projet, sans opposition directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "b79c77e00ba55ed01c9730ff7a8810c451c69f3cc4a0b57dc04ad0f590fdce34",
+      "frozen_rank": 12
+    },
+    {
+      "note_a": "_memory/projects/heimdall-master-password.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et contextes distincts (sécurité vs RDP).",
+        "scope": "different_scope"
+      },
+      "cache_key": "d0b517e60efe68743503823f6129312513924cf54a35dbb0b212237e1680b63f",
+      "frozen_rank": 57
+    },
+    {
+      "note_a": "_memory/projects/heimdall-master-password.md",
+      "note_b": "_memory/projects/themeforge-magellan.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets distincts (sécurité vs infrastructure) avec des portées et contextes incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "57fd8fe9f142a6a95d383f76fd2e27e0a3bf288d578774753e10b26d74548c70",
+      "frozen_rank": 348
+    },
+    {
+      "note_a": "_memory/projects/heimdall-master-password.md",
+      "note_b": "synthetic/syn-activation-03.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "activation_deactivation",
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le mode de verrouillage est simultanément autorisé et interdit.",
+        "scope": "activation"
+      },
+      "cache_key": "06a397cef2aff5f94b524ec6b76dec2813e76308df9889cfc638bb5d5c883ef4",
+      "frozen_rank": 247
+    },
+    {
+      "note_a": "_memory/projects/heimdall-master-password.md",
+      "note_b": "synthetic/syn-value-04.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "value_threshold",
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le même champ DEK est simultanément chiffré avec AES-256-GCM et AES-128-CBC.",
+        "scope": "value_threshold"
+      },
+      "cache_key": "37e887e236bc874a322d75a9deb8416d4f93acd1a53a979a94b1800bd3847749",
+      "frozen_rank": 225
+    },
+    {
+      "note_a": "_memory/projects/heimdall-parity-audit.md",
+      "note_b": "_memory/projects/heimdall-release.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des composants et fonctionnalités distinctes du système.",
+        "scope": "different_scope"
+      },
+      "cache_key": "28228e47ad1dac3e4a6ef4fd7a9a9f433590a53d61c04463bb809320f23390cc",
+      "frozen_rank": 321
+    },
+    {
+      "note_a": "_memory/projects/heimdall-parity-audit.md",
+      "note_b": "_memory/projects/heimdall-testenv.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des composants et actions distincts dans des contextes compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "1f0708eee9c0500666051ef6a6dd7121028aa8d1fa8d150983811c8629d9adb7",
+      "frozen_rank": 392
+    },
+    {
+      "note_a": "_memory/projects/heimdall-parity-audit.md",
+      "note_b": "_memory/projects/heimdall-updater.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et portées distinctes (audit vs mise à jour).",
+        "scope": "different_scope"
+      },
+      "cache_key": "c7b948c39129fac29d8e31a4325e31e3cbfd81c76a858a5acaa958cce431d2ef",
+      "frozen_rank": 67
+    },
+    {
+      "note_a": "_memory/projects/heimdall-parity-audit.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des états et des fixes distincts dans le même projet, sans opposition directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "e42d4792478bae0eb531fee07b22a800a1ca0ca3330be2e4052dad32c2eb0176",
+      "frozen_rank": 111
+    },
+    {
+      "note_a": "_memory/projects/heimdall-parity-audit.md",
+      "note_b": "_memory/projects/scrybe.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets et commits distincts avec des contextes et portées differentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "fdc5352a83c0f4a1e628f8af9d4c372df4c71d219b216f11cb0ff974abc116b2",
+      "frozen_rank": 218
+    },
+    {
+      "note_a": "_memory/projects/heimdall-parity-audit.md",
+      "note_b": "_memory/projects/themeforge-magellan.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des développements distincts dans des projets séparés (Heimdall vs ThemeForge) sans contradiction directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "b8f32666e49cca639e52edae1c2d4697f7ca358815a11737bf1a0f2a4acd7d83",
+      "frozen_rank": 272
+    },
+    {
+      "note_a": "_memory/projects/heimdall-parity-audit.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts et des contextes temporels différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "942e2b9d7ef589c687e5251fb8e7257a7b1d78fdef896dbb4b5c44785fd26eea",
+      "frozen_rank": 187
+    },
+    {
+      "note_a": "_memory/projects/heimdall-per-profile-logging.md",
+      "note_b": "_memory/projects/heimdall-testenv.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets distincts (logging vs testenv) avec des portées et contextes compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "61511f1658c875a4adc7eb1c83c0090a675f99514748fa7523419d29bdadcbb3",
+      "frozen_rank": 184
+    },
+    {
+      "note_a": "_memory/projects/heimdall-per-profile-logging.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets distincts (logging vs. RDP watchdog) avec des portées et contextes temporels compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "9fffa9f3af8d1bbee9b8148c5a7ebc76dc0d9fd075d7b69200f6607debacb528",
+      "frozen_rank": 340
+    },
+    {
+      "note_a": "_memory/projects/heimdall-per-profile-logging.md",
+      "note_b": "synthetic/syn-activation-02.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "activation_deactivation",
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le logging par profil est décrit comme complet et implémenté, alors qu'il est explicitement marqué comme non implémenté et désactivé.",
+        "scope": "activation"
+      },
+      "cache_key": "60bea3f0ce46feaa533349f7c662f99a56eef78b9763b925ddc0341ce18405cf",
+      "frozen_rank": 25
+    },
+    {
+      "note_a": "_memory/projects/heimdall-release.md",
+      "note_b": "_memory/projects/heimdall-testenv.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets distincts (release vs testenv) avec portées et contextes compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "e0b708dab13df3f693ef12205b38d642705e71a7f4aa128bd1aa1e463d6d53d3",
+      "frozen_rank": 174
+    },
+    {
+      "note_a": "_memory/projects/heimdall-release.md",
+      "note_b": "_memory/projects/heimdall-updater.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les deux notes décrivent le même processus de publication et les mêmes problèmes, avec des informations complémentaires.",
+        "scope": "different_scope"
+      },
+      "cache_key": "0805036a110cbf2f7273f99db0d28ed074c56eb9aa3a07541cf5ad3f301ec796",
+      "frozen_rank": 49
+    },
+    {
+      "note_a": "_memory/projects/heimdall-release.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les deux notes décrivent des problèmes distincts dans le même projet, sans opposition directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "1015101d84245bda9a6dd9d7512880f2e81733cbd054615706f3d24b95097005",
+      "frozen_rank": 71
+    },
+    {
+      "note_a": "_memory/projects/heimdall-release.md",
+      "note_b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des composants et fonctionnalités distinctes sans contradiction.",
+        "scope": "different_scope"
+      },
+      "cache_key": "36e71e0eca4672659c5949ea73c05dfd897554953aed7918f6ad8e5f6602d78b",
+      "frozen_rank": 46
+    },
+    {
+      "note_a": "_memory/projects/heimdall-release.md",
+      "note_b": "_memory/projects/scrybe.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des projets et commits distincts avec des contextes et portées différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "bfcd7a6d787982337b0f87a40d154f87e7e6f51655a41fd283c844fe38116531",
+      "frozen_rank": 100
+    },
+    {
+      "note_a": "_memory/projects/heimdall-release.md",
+      "note_b": "_memory/projects/themeforge-magellan.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des contextes et des sujets distincts (release vs. theme) sans contradiction.",
+        "scope": "different_scope"
+      },
+      "cache_key": "8f67b8874484e5b6b36c7b8c93cc2328d7c12999ab8521fae19892c60289ccef",
+      "frozen_rank": 277
+    },
+    {
+      "note_a": "_memory/projects/heimdall-release.md",
+      "note_b": "_memory/projects/themeforge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets et composants distincts avec des contextes et portées incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "64c3307d9a911746077c0419bf69be40e00fb951b9b5e524daac6c26976519b7",
+      "frozen_rank": 52
+    },
+    {
+      "note_a": "_memory/projects/heimdall-release.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.98,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets distincts (Heimdall.Next vs Win11Forge) avec des portées et contextes incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "352fc01875b429f6f2e720d4e4a74408a405f48657792202ec32ec1e863b76f6",
+      "frozen_rank": 130
+    },
+    {
+      "note_a": "_memory/projects/heimdall-testenv.md",
+      "note_b": "synthetic/syn-state-04.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "replacement_state",
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des environnements et protocoles différents, pas des affirmations incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "8b420a5e926a246401933894e475af8c7e111a9756cdefd06e4d8caff367f252",
+      "frozen_rank": 231
+    },
+    {
+      "note_a": "_memory/projects/heimdall-testenv.md",
+      "note_b": "synthetic/syn-value-01.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "value_threshold",
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le même profil VNC exige simultanément 5901 et 5900.",
+        "scope": "value_threshold"
+      },
+      "cache_key": "74697c2ec6b59bf9f12e6c9c00d79602978eb3a91c9530a68d4e86e5e474f045",
+      "frozen_rank": 62
+    },
+    {
+      "note_a": "_memory/projects/heimdall-updater.md",
+      "note_b": "_memory/projects/heimdall.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et portées distinctes (développement updater vs bug RDP).",
+        "scope": "different_scope"
+      },
+      "cache_key": "9e58d558b5fa2f3751b6128e7e1476adb1b81be4a5f185dc7d95bf740771e4bb",
+      "frozen_rank": 185
+    },
+    {
+      "note_a": "_memory/projects/heimdall-updater.md",
+      "note_b": "_memory/projects/scrybe.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts avec des sujets et portées différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "00e1caad21af0be0536a1e90655949223539970b7810461abd45a718dbd0b897",
+      "frozen_rank": 97
+    },
+    {
+      "note_a": "_memory/projects/heimdall-updater.md",
+      "note_b": "_memory/projects/themeforge-magellan.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des développements distincts de deux projets avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "f185a1c623e167c94f02ce8c937ba860f269c047ce96c9dac73fc948fcc70a1f",
+      "frozen_rank": 18
+    },
+    {
+      "note_a": "_memory/projects/heimdall-updater.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des composants et des problèmes distincts dans des contextes temporels et de portée différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "0202f400660a6ebe7355489f960096a13d95a9afbe82519799d0f880a5755045",
+      "frozen_rank": 289
+    },
+    {
+      "note_a": "_memory/projects/heimdall-updater.md",
+      "note_b": "synthetic/syn-activation-01.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "activation_deactivation",
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "La même action est simultanément activée et désactivée.",
+        "scope": "activation"
+      },
+      "cache_key": "3bd80dd21b6eb75bd1feef91258694d598bcc5068e8eaec726c53584888063e7",
+      "frozen_rank": 182
+    },
+    {
+      "note_a": "_memory/projects/heimdall.md",
+      "note_b": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des systèmes et composants distincts avec des contextes et portées incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "740513b5e742e8daa55d8c4ca1573b807d626035dba7cc581aa3c9f28a71b44c",
+      "frozen_rank": 34
+    },
+    {
+      "note_a": "_memory/projects/heimdall.md",
+      "note_b": "_memory/projects/scrybe.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts (Heimdall vs Scrybe) avec des contextes et portées différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "a2961186751e368e64fd82005ca40a7f518affd79c7cab47bf8b6bb47fa1024e",
+      "frozen_rank": 105
+    },
+    {
+      "note_a": "_memory/projects/heimdall.md",
+      "note_b": "_memory/projects/themeforge-magellan.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets distincts (RDP watchdog vs ThemeForge) avec portées et contextes incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "c686c9b025d7fea85eb277fa013adee5959d8b4763dda9aaae3276b5c76194fc",
+      "frozen_rank": 209
+    },
+    {
+      "note_a": "_memory/projects/heimdall.md",
+      "note_b": "_memory/projects/themeforge-v2-dropin.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et contextes distincts (développement RDP vs déploiement ThemeForge).",
+        "scope": "different_scope"
+      },
+      "cache_key": "da38d297ba3947275908da32c39ccd4f6a9224b8a778c9b95cf121ed1854b720",
+      "frozen_rank": 24
+    },
+    {
+      "note_a": "_memory/projects/heimdall.md",
+      "note_b": "_memory/projects/themeforge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts avec des contextes et des champs d'application différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "5f7f29cb2728f79665ea7538eb5706c0f760d23aa3a741a07cb567fc78f8c6af",
+      "frozen_rank": 72
+    },
+    {
+      "note_a": "_memory/projects/heimdall.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts avec des problèmes et solutions différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "cffbd08ccdc433e35050aa7530b2ca91328cb0adc5bfa75d1e8725ae3015cdd1",
+      "frozen_rank": 127
+    },
+    {
+      "note_a": "_memory/projects/heimdall.md",
+      "note_b": "_memory/projects/winsight.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts avec des contextes et des champs d'application différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "24d393a71f502a5dec0426b7dc74f5068674a452af4f060c2098bd0a6aaf1fab",
+      "frozen_rank": 70
+    },
+    {
+      "note_a": "_memory/projects/heimdall.md",
+      "note_b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets distincts (RDP watchdog vs OneCert Windows) avec portées et contextes compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "2a0e59bc058a1b87ee6a0a8c200896cc7ee9ad02f5ba34379421f086aa3b8387",
+      "frozen_rank": 63
+    },
+    {
+      "note_a": "_memory/projects/isoforge.md",
+      "note_b": "synthetic/syn-state-02.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "replacement_state",
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le même projet est décrit comme construisant une image Windows et une image Linux.",
+        "scope": "different_scope"
+      },
+      "cache_key": "fc483385dedc5069d84eb8b6e428621c6c9394d3864bb8d58403d86ff769519b",
+      "frozen_rank": 370
+    },
+    {
+      "note_a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "note_b": "_memory/projects/onecert-windows-roadmap.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des étapes et fonctionnalités distinctes sans opposition directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "517f8f9e46510dd507a4a261a07337893c5021f84d22bd3fad32874c0bcca680",
+      "frozen_rank": 6
+    },
+    {
+      "note_a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "note_b": "_memory/projects/onecert-windows.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des aspects complémentaires du projet OneCert Windows sans contradiction directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "ecb610584c0b7a5300a7dfd14071acd426fb054106cdd6e9969a20ac23199d5d",
+      "frozen_rank": 41
+    },
+    {
+      "note_a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "note_b": "_memory/projects/scrybe.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et contextes distincts (développement logiciel vs configuration système).",
+        "scope": "different_scope"
+      },
+      "cache_key": "70fc0b74c21018963da35f0f3a22a2c42f5d40c573bf8d98547636534e9cdf8c",
+      "frozen_rank": 35
+    },
+    {
+      "note_a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.98,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets et composants distincts avec des contextes temporels et de portée différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "1c260312b5ff182cb6ef8c93cc765534bf93eb5ea553cdd8d49c0d60ea29950e",
+      "frozen_rank": 99
+    },
+    {
+      "note_a": "_memory/projects/onecert-windows-direction-juillet-2026.md",
+      "note_b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des étapes de validation et de déploiement compatibles dans le même contexte.",
+        "scope": "different_scope"
+      },
+      "cache_key": "c3b6dfeb15fc373aeafac1c3ab62fca458e787b765a42f570cbbf7a1a9d039ee",
+      "frozen_rank": 19
+    },
+    {
+      "note_a": "_memory/projects/onecert-windows-roadmap.md",
+      "note_b": "_memory/projects/onecert-windows.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.98,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des corrections et ajustements de code, pas des affirmations contradictoires.",
+        "scope": "different_scope"
+      },
+      "cache_key": "78ddbb5d86aa91d2c460f548e49ff9883def9b0cf3bd1609c93582a23dfc1a0f",
+      "frozen_rank": 295
+    },
+    {
+      "note_a": "_memory/projects/onecert-windows-roadmap.md",
+      "note_b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des étapes et validations distinctes dans le même contexte sans opposition directe.",
+        "scope": "different_scope"
+      },
+      "cache_key": "fafa4654c4dc2b582b74a44afc0862bdc2478ed92297b87a8ec128543dd7dd0d",
+      "frozen_rank": 91
+    },
+    {
+      "note_a": "_memory/projects/onecert-windows.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts (OneCert vs Win11Forge) avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "5dadc4449aae7ac96d3a4bc9f224ee693906e621d207e7b4ff59cfa96f321c5e",
+      "frozen_rank": 16
+    },
+    {
+      "note_a": "_memory/projects/onecert-windows.md",
+      "note_b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des étapes de développement et de test compatibles dans le même contexte.",
+        "scope": "different_scope"
+      },
+      "cache_key": "64eefb840af6848603f6bcca3078e381769dbf5fa5a6d9ceebc454b8b67f5e6d",
+      "frozen_rank": 26
+    },
+    {
+      "note_a": "_memory/projects/scrybe.md",
+      "note_b": "_memory/projects/themeforge-v2-dropin.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes décrivent des projets distincts avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "f730f8354e24f163fc48e0d4616991b6c8f9f6329a2da5433a4618f2cf694347",
+      "frozen_rank": 206
+    },
+    {
+      "note_a": "_memory/projects/scrybe.md",
+      "note_b": "_memory/projects/themeforge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts avec des contextes et portées divergents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "02c505ef4eb3a78d3ef9f98a98129a7b267eade3e95d1500f4f75722556fbe2b",
+      "frozen_rank": 11
+    },
+    {
+      "note_a": "_memory/projects/scrybe.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des projets distincts avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "d980269201976ab1d20c7d52360d15566d4b9942d40ee1e8ff9014e8542ebb38",
+      "frozen_rank": 168
+    },
+    {
+      "note_a": "_memory/projects/scrybe.md",
+      "note_b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets distincts (projet Scrybe vs OneCert Windows) avec portées et contextes incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "a829eddec5ca685f2ef98b0c7f030cb37058ea514d88a1c9d552fc1838fa4c8d",
+      "frozen_rank": 59
+    },
+    {
+      "note_a": "_memory/projects/themeforge-magellan.md",
+      "note_b": "_memory/projects/themeforge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le tag v2.1.0 pointe sur un commit frere avec un theme Magellan, mais le theme Magellan est valide dans le contexte de v1.3.0.",
+        "scope": "value_threshold"
+      },
+      "cache_key": "d24f01167ee6da3e1da94d298fc7d5f151daf9a9b5b6d01df4fe0a48e56c6fae",
+      "frozen_rank": 273
+    },
+    {
+      "note_a": "_memory/projects/themeforge-magellan.md",
+      "note_b": "synthetic/syn-activation-05.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "activation_deactivation",
+      "retained": true,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le theme Magellan est valide et publié, mais l'application ne le sélectionne pas.",
+        "scope": "activation"
+      },
+      "cache_key": "4b08e8630f34d1a6b521b8a75079c8fb5c7dc13c35af8960f7f6836ce5c6f3a1",
+      "frozen_rank": 17
+    },
+    {
+      "note_a": "_memory/projects/themeforge-magellan.md",
+      "note_b": "synthetic/syn-state-05.md",
+      "label": 1,
+      "label_source": "synthetique",
+      "stratum": "replacement_state",
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les deux notes décrivent des sujets et portées différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "240efd6bb730c525f77d20c659d06e177c597a6ac8a3d8da8ae36b6a97e0d527",
+      "frozen_rank": 13
+    },
+    {
+      "note_a": "_memory/projects/themeforge-v2-dropin.md",
+      "note_b": "_memory/projects/themeforge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": true,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "La publication via Trusted Publishing est requise et interdite simultanément.",
+        "scope": "obligation"
+      },
+      "cache_key": "780816a577ec61187faa71388260141545212bd05b1ea36e87b70a8770188507",
+      "frozen_rank": 214
+    },
+    {
+      "note_a": "_memory/projects/themeforge-v2-dropin.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de deux projets distincts avec des contextes temporels et des portées différentes.",
+        "scope": "different_scope"
+      },
+      "cache_key": "3d041f1c05f5a3446e41b90cb22e1309c4a475a9db66c2bf533314cb4809580f",
+      "frozen_rank": 162
+    },
+    {
+      "note_a": "_memory/projects/themeforge.md",
+      "note_b": "_memory/projects/win11forge.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les projets et les problèmes traités sont distincts et compatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "3a476e06dafa563ab93df49b07bce36061264191e3898b43dc64d6a7f4ee22dc",
+      "frozen_rank": 83
+    },
+    {
+      "note_a": "_memory/projects/win11forge.md",
+      "note_b": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes traitent de sujets distincts (gestion des mises à jour vs implémentation d'un certificat) avec des portées et contextes incompatibles.",
+        "scope": "different_scope"
+      },
+      "cache_key": "756564fdaeab4925e2ee71c48d77b72873243b382532b8e77dcda0c5d2f3c12f",
+      "frozen_rank": 95
+    },
+    {
+      "note_a": "_memory/sessions/2026-07-01-onecert-windows-bricks.md",
+      "note_b": "synthetic/syn-activation-01.md",
+      "label": 0,
+      "label_source": "curation",
+      "stratum": null,
+      "retained": false,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": false,
+        "polarity_conflict": false,
+        "rationale": "Les notes concernent des sujets et portées différents.",
+        "scope": "different_scope"
+      },
+      "cache_key": "6e6a7defb4efd084b2e09ea743dab0e66586b508c718ff120f71acbab865fece",
+      "frozen_rank": 108
+    }
+  ],
+  "runtime": {
+    "cache_entries": 393,
+    "cache_sha256": "4f67b276b55d01e36c82479032d938d73324f01c6fad7fbd5990243e79d5e0e5",
+    "api_calls_recorded": 393,
+    "input_tokens": 1152518,
+    "output_tokens": 26528,
+    "total_tokens": 1179046,
+    "generation_latency_seconds": 648.494,
+    "generation_latency_median_seconds": 1.626,
+    "estimated_cost_upper_bound_usd": 0.0,
+    "cost_ignores_any_provider_cache_discount": true
+  },
+  "determinism": {
+    "identical": true,
+    "trials": [
+      {
+        "trial": 1,
+        "ranking_sha256": "f1db36e3e428677e0daf185360d2e729daa4e12d31624e2fb5cc089f74f5cb7c",
+        "provider_ranking_sha256": "f1db36e3e428677e0daf185360d2e729daa4e12d31624e2fb5cc089f74f5cb7c",
+        "retained_pairs": 24,
+        "cache_hits": 393,
+        "cache_misses": 0,
+        "cache_only": true,
+        "latency_seconds": 6.668
+      },
+      {
+        "trial": 2,
+        "ranking_sha256": "f1db36e3e428677e0daf185360d2e729daa4e12d31624e2fb5cc089f74f5cb7c",
+        "provider_ranking_sha256": "f1db36e3e428677e0daf185360d2e729daa4e12d31624e2fb5cc089f74f5cb7c",
+        "retained_pairs": 24,
+        "cache_hits": 393,
+        "cache_misses": 0,
+        "cache_only": true,
+        "latency_seconds": 6.642
+      },
+      {
+        "trial": 3,
+        "ranking_sha256": "f1db36e3e428677e0daf185360d2e729daa4e12d31624e2fb5cc089f74f5cb7c",
+        "provider_ranking_sha256": "f1db36e3e428677e0daf185360d2e729daa4e12d31624e2fb5cc089f74f5cb7c",
+        "retained_pairs": 24,
+        "cache_hits": 393,
+        "cache_misses": 0,
+        "cache_only": true,
+        "latency_seconds": 6.753
+      }
+    ]
+  },
+  "anti_leak": {
+    "scan_paths": [
+      "local/eval-contradiction/llm_judge_candidates.py",
+      "local/eval-contradiction/measure_llm_judge.py",
+      "local/eval-contradiction/llm-judge-config.json",
+      "local/eval-contradiction/llm-judge-prompt.md"
+    ],
+    "pool_path_literals_checked": 68,
+    "labeled_path_literals_checked": 71,
+    "note_id_literals_checked": 72,
+    "few_shots_checked": 3,
+    "literal_findings": [],
+    "few_shot_findings": [],
+    "pass": true
+  },
+  "gates": {
+    "frozen_input": {
+      "pass": true
+    },
+    "population_boundary": {
+      "pass": true
+    },
+    "determinism": {
+      "pass": true
+    },
+    "anti_leak": {
+      "pass": true
+    },
+    "recall_preservation": {
+      "operator": ">=",
+      "minimum_retained": 13,
+      "observed_retained": 13,
+      "pass": true
+    },
+    "viability_signal": {
+      "decision_authority": "Julien",
+      "decision_made": false,
+      "operator": ">=",
+      "precision_threshold": 0.5,
+      "observed_precision": 0.6842105263157895,
+      "pass": true
+    },
+    "measurement_valid": true
+  },
+  "retained_ranking": [
+    {
+      "output_rank": 1,
+      "a": "_memory/projects/themeforge-magellan.md",
+      "b": "synthetic/syn-activation-05.md",
+      "cache_key": "4b08e8630f34d1a6b521b8a75079c8fb5c7dc13c35af8960f7f6836ce5c6f3a1",
+      "confidence": 0.95,
+      "frozen_rank": 17,
+      "frozen_score": 5.704502,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le theme Magellan est valide et publié, mais l'application ne le sélectionne pas.",
+        "scope": "activation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.950000",
+        "scope=activation"
+      ]
+    },
+    {
+      "output_rank": 2,
+      "a": "_memory/projects/heimdall-per-profile-logging.md",
+      "b": "synthetic/syn-activation-02.md",
+      "cache_key": "60bea3f0ce46feaa533349f7c662f99a56eef78b9763b925ddc0341ce18405cf",
+      "confidence": 0.99,
+      "frozen_rank": 25,
+      "frozen_score": 5.633796,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le logging par profil est décrit comme complet et implémenté, alors qu'il est explicitement marqué comme non implémenté et désactivé.",
+        "scope": "activation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=activation"
+      ]
+    },
+    {
+      "output_rank": 3,
+      "a": "_memory/facts/concurrent-agents-corrupt-git-shared-drive.md",
+      "b": "synthetic/syn-obligation-01.md",
+      "cache_key": "fac4533c248c4ae17606b8cc4b2259db8bcf2c46d654fb32d6c48edf7fba5f6a",
+      "confidence": 0.95,
+      "frozen_rank": 39,
+      "frozen_score": 5.430163,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Les écritures concurrentes corrompent Git, contrairement à la politique de travail parallèle.",
+        "scope": "activation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.950000",
+        "scope=activation"
+      ]
+    },
+    {
+      "output_rank": 4,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "synthetic/syn-activation-04.md",
+      "cache_key": "ba75ff3aa4eb41b8cfc983979580600bfeeafbd4db043c51ba5b91057321db9f",
+      "confidence": 0.99,
+      "frozen_rank": 47,
+      "frozen_score": 5.371014,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "La même section est simultanément exclue et indexée.",
+        "scope": "activation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=activation"
+      ]
+    },
+    {
+      "output_rank": 5,
+      "a": "_memory/facts/datacron-cortex-freshness-contract-2026-07-10.md",
+      "b": "synthetic/syn-value-03.md",
+      "cache_key": "c6f2d0da31e9885e126643a010e072eb6470aedb85e3d6bac74b05fb20a5a0d8",
+      "confidence": 0.95,
+      "frozen_rank": 55,
+      "frozen_score": 5.348748,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le nombre de collections est simultanément 6 et 8, contradiction sur la portée.",
+        "scope": "value_threshold"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.950000",
+        "scope=value_threshold"
+      ]
+    },
+    {
+      "output_rank": 6,
+      "a": "_memory/projects/heimdall-testenv.md",
+      "b": "synthetic/syn-value-01.md",
+      "cache_key": "74697c2ec6b59bf9f12e6c9c00d79602978eb3a91c9530a68d4e86e5e474f045",
+      "confidence": 0.99,
+      "frozen_rank": 62,
+      "frozen_score": 5.313004,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le même profil VNC exige simultanément 5901 et 5900.",
+        "scope": "value_threshold"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=value_threshold"
+      ]
+    },
+    {
+      "output_rank": 7,
+      "a": "_memory/projects/heimdall-updater.md",
+      "b": "synthetic/syn-activation-01.md",
+      "cache_key": "3bd80dd21b6eb75bd1feef91258694d598bcc5068e8eaec726c53584888063e7",
+      "confidence": 0.99,
+      "frozen_rank": 182,
+      "frozen_score": 4.989199,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "La même action est simultanément activée et désactivée.",
+        "scope": "activation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=activation"
+      ]
+    },
+    {
+      "output_rank": 8,
+      "a": "_memory/facts/onecert-nxlog-certificats.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "cache_key": "bb6dfcef7f25e9e490c1642e5330e3f7ad1da8f4fb60927efd2b89c9d74c89e9",
+      "confidence": 0.99,
+      "frozen_rank": 208,
+      "frozen_score": 4.908237,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le plugin PEM-dir est explicitement absent dans la note A, mais implicitement requis dans la note B via la correction CI.",
+        "scope": "different_scope"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=different_scope"
+      ]
+    },
+    {
+      "output_rank": 9,
+      "a": "_memory/projects/themeforge-v2-dropin.md",
+      "b": "_memory/projects/themeforge.md",
+      "cache_key": "780816a577ec61187faa71388260141545212bd05b1ea36e87b70a8770188507",
+      "confidence": 0.99,
+      "frozen_rank": 214,
+      "frozen_score": 4.879896,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "La publication via Trusted Publishing est requise et interdite simultanément.",
+        "scope": "obligation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=obligation"
+      ]
+    },
+    {
+      "output_rank": 10,
+      "a": "_memory/projects/heimdall-master-password.md",
+      "b": "synthetic/syn-value-04.md",
+      "cache_key": "37e887e236bc874a322d75a9deb8416d4f93acd1a53a979a94b1800bd3847749",
+      "confidence": 0.99,
+      "frozen_rank": 225,
+      "frozen_score": 4.756814,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le même champ DEK est simultanément chiffré avec AES-256-GCM et AES-128-CBC.",
+        "scope": "value_threshold"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=value_threshold"
+      ]
+    },
+    {
+      "output_rank": 11,
+      "a": "_memory/facts/worldline-ansible-windows-ci.md",
+      "b": "_memory/projects/onecert-windows.md",
+      "cache_key": "ad9f02d49b23ebe990bc47c9874339de53f24bcb780b4ec93992cffa45ae7469",
+      "confidence": 0.99,
+      "frozen_rank": 245,
+      "frozen_score": 4.628005,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le module `win_ini_file` est simultanément rejeté et remplacé par une alternative.",
+        "scope": "replacement_state"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=replacement_state"
+      ]
+    },
+    {
+      "output_rank": 12,
+      "a": "_memory/projects/heimdall-master-password.md",
+      "b": "synthetic/syn-activation-03.md",
+      "cache_key": "06a397cef2aff5f94b524ec6b76dec2813e76308df9889cfc638bb5d5c883ef4",
+      "confidence": 0.99,
+      "frozen_rank": 247,
+      "frozen_score": 4.61395,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le mode de verrouillage est simultanément autorisé et interdit.",
+        "scope": "activation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=activation"
+      ]
+    },
+    {
+      "output_rank": 13,
+      "a": "_memory/facts/datacron-reliability-program-2026-07-10.md",
+      "b": "_memory/projects/datacron-karpathy-wiki-design.md",
+      "cache_key": "bec26f778bf9b8d6e1c53997158edfc9a1a78062b9981d34f9eb432924d2bee5",
+      "confidence": 0.99,
+      "frozen_rank": 261,
+      "frozen_score": 4.157337,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "La meme action est simultanement requise et interdite.",
+        "scope": "obligation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=obligation"
+      ]
+    },
+    {
+      "output_rank": 14,
+      "a": "_memory/projects/ansible-gpo.md",
+      "b": "_memory/projects/dts-pingcastle.md",
+      "cache_key": "af9a3ae011e446a4f3c3d87bf0af23711d6fac4c8619639847d272f7073147dd",
+      "confidence": 0.99,
+      "frozen_rank": 267,
+      "frozen_score": 3.962333,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le catalogue GPO est simultanément final et en réserve.",
+        "scope": "replacement_state"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=replacement_state"
+      ]
+    },
+    {
+      "output_rank": 15,
+      "a": "_memory/projects/expert-skills.md",
+      "b": "_memory/projects/skills-portables-et-formateurs.md",
+      "cache_key": "d3cd34bd56bac8fbff80f22c535e72ef61458900ced39879fdc2a79cf15bbccb",
+      "confidence": 0.99,
+      "frozen_rank": 268,
+      "frozen_score": 3.92247,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Les Experts Microsoft sont simultanément créés et ajoutés comme Formateurs.",
+        "scope": "obligation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=obligation"
+      ]
+    },
+    {
+      "output_rank": 16,
+      "a": "_memory/facts/concurrent-agents-corrupt-git-shared-drive.md",
+      "b": "_memory/facts/sandbox-mount-nul-artefact.md",
+      "cache_key": "bbc1d97885426a90115d44cede7b8de1bab501382f4c76532553f0405ba26982",
+      "confidence": 0.99,
+      "frozen_rank": 269,
+      "frozen_score": 3.904015,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le même signal NUL est à la fois une preuve de corruption et un artefact du mount.",
+        "scope": "other"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=other"
+      ]
+    },
+    {
+      "output_rank": 17,
+      "a": "_memory/projects/themeforge-magellan.md",
+      "b": "_memory/projects/themeforge.md",
+      "cache_key": "d24f01167ee6da3e1da94d298fc7d5f151daf9a9b5b6d01df4fe0a48e56c6fae",
+      "confidence": 0.99,
+      "frozen_rank": 273,
+      "frozen_score": 3.864006,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le tag v2.1.0 pointe sur un commit frere avec un theme Magellan, mais le theme Magellan est valide dans le contexte de v1.3.0.",
+        "scope": "value_threshold"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=value_threshold"
+      ]
+    },
+    {
+      "output_rank": 18,
+      "a": "_memory/preferences/julien.md",
+      "b": "_memory/projects/scrybe.md",
+      "cache_key": "59a9832dc1c0d8379eca87dcf82ee454a1348d5b88d9a91ae94c535e2200b678",
+      "confidence": 0.99,
+      "frozen_rank": 301,
+      "frozen_score": 3.556891,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le même fichier est simultanément tronqué et non-tronqué selon les outils.",
+        "scope": "activation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=activation"
+      ]
+    },
+    {
+      "output_rank": 19,
+      "a": "_memory/projects/heimdall.md",
+      "b": "synthetic/syn-activation-01.md",
+      "cache_key": "d97f281013456c497a6f8852063905609f9c6af5cbd307ccd6ce276ffc9764bb",
+      "confidence": 0.99,
+      "frozen_rank": 312,
+      "frozen_score": 3.505417,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "L'installation est simultanément activée et désactivée pour le même sujet.",
+        "scope": "activation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=activation"
+      ]
+    },
+    {
+      "output_rank": 20,
+      "a": "_memory/facts/onecert-no-license-magellan.md",
+      "b": "synthetic/syn-obligation-02.md",
+      "cache_key": "20aa9ff7987eff38508f96af57905a65612fa6eddf77a78e10b9d9e948daf15d",
+      "confidence": 0.99,
+      "frozen_rank": 347,
+      "frozen_score": 3.372925,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Les mêmes fichiers doivent avoir des en-têtes Apache 2.0 et un fichier LICENSE, mais la note A interdit cela.",
+        "scope": "obligation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=obligation"
+      ]
+    },
+    {
+      "output_rank": 21,
+      "a": "_memory/projects/datacron-karpathy-wiki-design.md",
+      "b": "synthetic/syn-obligation-05.md",
+      "cache_key": "2cccfaf5a806e5dd39b5cf47cdb48c472bd52f4d26b3213372c62a73ec6d1d42",
+      "confidence": 0.95,
+      "frozen_rank": 368,
+      "frozen_score": 3.320377,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Une affirmation est certifiée alors qu'une contradiction persiste.",
+        "scope": "obligation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.950000",
+        "scope=obligation"
+      ]
+    },
+    {
+      "output_rank": 22,
+      "a": "_memory/projects/isoforge.md",
+      "b": "synthetic/syn-state-02.md",
+      "cache_key": "fc483385dedc5069d84eb8b6e428621c6c9394d3864bb8d58403d86ff769519b",
+      "confidence": 0.99,
+      "frozen_rank": 370,
+      "frozen_score": 3.308444,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le même projet est décrit comme construisant une image Windows et une image Linux.",
+        "scope": "different_scope"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=different_scope"
+      ]
+    },
+    {
+      "output_rank": 23,
+      "a": "_memory/projects/datacron.md",
+      "b": "synthetic/syn-state-01.md",
+      "cache_key": "815adcd1a8da0e78e0d0cbf765c021a0cc74ca491c3d461e73156ab00df874ee",
+      "confidence": 0.95,
+      "frozen_rank": 385,
+      "frozen_score": 3.27883,
+      "judgment": {
+        "confidence": 0.95,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "La même action est simultanément requise et interdite.",
+        "scope": "obligation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.950000",
+        "scope=obligation"
+      ]
+    },
+    {
+      "output_rank": 24,
+      "a": "_memory/facts/onecert-nxlog-certificats.md",
+      "b": "synthetic/syn-state-03.md",
+      "cache_key": "972f219a4a4806be34a1906bab2d7dc2894985845dc7f7df1db4f86e3a22e9aa",
+      "confidence": 0.99,
+      "frozen_rank": 391,
+      "frozen_score": 3.266133,
+      "judgment": {
+        "confidence": 0.99,
+        "contradiction": true,
+        "polarity_conflict": true,
+        "rationale": "Le stockage PEM est autorisé dans la note A et interdit dans la note B.",
+        "scope": "activation"
+      },
+      "reasons": [
+        "cached_llm_judgment",
+        "confidence=0.990000",
+        "scope=activation"
+      ]
+    }
+  ]
+}
