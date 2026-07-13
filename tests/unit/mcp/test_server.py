@@ -21,7 +21,8 @@ import pytest
 
 from datacron.core.config import Settings
 from datacron.core.paths import PathConfinementError, sidecar_index_db, sidecar_vault_config
-from datacron.mcp.server import build_app
+from datacron.core.vault_writer import OperationRecoveryError, VaultLockBusyError
+from datacron.mcp.server import _startup_recover_operations, build_app
 
 
 class TestBuildAppReadPaths:
@@ -85,3 +86,45 @@ query_expansion:
             await app.store.close()
 
         assert {result.chunk.note_rel_path for result in results} == {"monitoring.md"}
+
+
+class TestStartupRecovery:
+    """Startup recovery must not stall tool registration on a contended lock."""
+
+    @pytest.mark.asyncio
+    async def test_contended_oplog_lock_does_not_block_startup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        settings = Settings(read_paths=[vault], write_paths=[vault], vault_root=vault)
+        app = build_app(settings=settings, vault_root=vault)
+
+        async def _busy_recover() -> int:
+            raise VaultLockBusyError(
+                "vault lock 'oplog' busy -- another datacron writer is holding it"
+            )
+
+        monkeypatch.setattr(app.vault_writer, "recover_operations", _busy_recover)
+
+        # Returns normally: the lifespan can now answer initialize and register
+        # tools even while another writer still holds the oplog lock.
+        await _startup_recover_operations(app)
+
+    @pytest.mark.asyncio
+    async def test_unrelated_recovery_error_still_propagates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        settings = Settings(read_paths=[vault], write_paths=[vault], vault_root=vault)
+        app = build_app(settings=settings, vault_root=vault)
+
+        async def _broken_recover() -> int:
+            raise OperationRecoveryError("history is corrupt")
+
+        monkeypatch.setattr(app.vault_writer, "recover_operations", _broken_recover)
+
+        # Only lock contention is downgraded; genuine recovery failures still abort.
+        with pytest.raises(OperationRecoveryError):
+            await _startup_recover_operations(app)
