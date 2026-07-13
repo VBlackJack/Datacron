@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Final
 from mcp.server.fastmcp import Context, FastMCP
 from ulid import ULID
 
-from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
+from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR, TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.durability import DurabilityUnavailableError, ReadOnlyModeError
 from datacron.core.frontmatter import FrontmatterError, parse, serialize
 from datacron.core.hashing import FRESHNESS_CONTRACT_ID, HASH_HEX_LENGTH
@@ -74,7 +74,6 @@ _VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map"})
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
 _CHUNK_ID_SEPARATOR: Final[str] = "::"
-_TOKEN_ESTIMATE_DIVISOR: Final[int] = 4
 _MEMORY_ORIGINS: Final[frozenset[str]] = frozenset({"ai", "human", "merged"})
 _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
     {"high", "medium", "low", "needs_verification"}
@@ -1263,7 +1262,7 @@ def _bounded_count(requested: int, ceiling: int) -> int:
 
 
 def _estimate_tokens(text: str) -> int:
-    return max(1, len(text) // _TOKEN_ESTIMATE_DIVISOR)
+    return max(1, len(text) // TOKEN_ESTIMATE_CHARS_PER_TOKEN)
 
 
 def _validate_get_note_request(
@@ -1683,7 +1682,7 @@ def _build_full_payload(
     limit: int | None,
 ) -> dict[str, Any]:
     max_tokens = app.settings.get_note_max_tokens
-    max_chars = max_tokens * _TOKEN_ESTIMATE_DIVISOR
+    max_chars = max_tokens * TOKEN_ESTIMATE_CHARS_PER_TOKEN
     retrieval_content = _redact_retrieval_text(app, note.content)
     total_chars = len(retrieval_content)
     start = min(offset, total_chars)

@@ -129,23 +129,6 @@ INSERT INTO chunks_fts (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
-_SELECT_CHUNK_COLUMNS: Final[str] = """
-chunk_id,
-note_id,
-note_rel_path,
-header_path,
-section_title,
-chunk_type,
-content,
-ordinal,
-content_hash,
-token_count,
-line_start,
-line_end,
-wikilinks_out_json,
-lang
-"""
-
 _SEARCH_SQL: Final[str] = """
 SELECT
     chunk_id,

@@ -22,7 +22,6 @@ from datacron.core.protocols import FTS5Store
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.ripgrep import RegexFallbackError, RipgrepError, RipgrepWrapper
-from datacron.indexing.wikilinks import RegexWikilinksExtractor
 from datacron.mcp.server import DatacronApp, build_app
 from datacron.mcp.tools import (
     _get_backlinks_impl,
@@ -90,7 +89,6 @@ async def indexed_app(tmp_vault: Path) -> AsyncIterator[DatacronApp]:
         chunker=MarkdownChunker(),
         store=store,
         ripgrep=RipgrepWrapper(),
-        wikilinks=RegexWikilinksExtractor(),
     )
     notes = await app.vault_reader.list_notes()
     for note in notes:

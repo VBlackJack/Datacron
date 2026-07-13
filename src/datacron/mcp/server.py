@@ -57,7 +57,6 @@ from datacron.core.protocols import (
     RipgrepWrapper,
     VaultReader,
     VaultWriter,
-    WikilinksExtractor,
 )
 from datacron.core.scope import (
     ScopedVaultReader,
@@ -95,7 +94,7 @@ class DatacronApp:
 
     Built once at startup and held in the FastMCP lifespan context so each
     tool invocation can read the same VaultReader, chunker, store, ripgrep
-    wrapper, wikilinks extractor, and Settings.
+    wrapper, and Settings.
 
     The ``store`` is constructed unopened by :func:`build_app`; the
     lifespan in :func:`create_server` opens it on startup and closes it
@@ -109,7 +108,6 @@ class DatacronApp:
     store: FTS5Store
     vault_writer: VaultWriter
     ripgrep: RipgrepWrapper
-    wikilinks: WikilinksExtractor
     scope: VaultScope
     identity_provider: CallerIdentityProvider
     secret_redactor: SecretRedactor
@@ -127,7 +125,6 @@ def build_app(
     store: FTS5Store | None = None,
     vault_writer: VaultWriter | None = None,
     ripgrep: RipgrepWrapper | None = None,
-    wikilinks: WikilinksExtractor | None = None,
     scope: VaultScope | None = None,
     identity_provider: CallerIdentityProvider | None = None,
     secret_redactor: SecretRedactor | None = None,
@@ -148,8 +145,6 @@ def build_app(
             the configured filesystem writer bound to ``vault_root``.
         ripgrep: Optional pre-built :class:`RipgrepWrapper`. Defaults to
             a fresh ``RipgrepWrapper()`` (stateless).
-        wikilinks: Optional pre-built :class:`WikilinksExtractor`. Defaults
-            to ``RegexWikilinksExtractor()`` (stateless).
 
     Concrete indexing classes are imported lazily inside the function so a
     test that supplies its own doubles never triggers the heavyweight
@@ -197,10 +192,6 @@ def build_app(
         from datacron.indexing.ripgrep import RipgrepWrapper as _RipgrepWrapper  # noqa: PLC0415
 
         ripgrep = _RipgrepWrapper()
-    if wikilinks is None:
-        from datacron.indexing.wikilinks import RegexWikilinksExtractor  # noqa: PLC0415
-
-        wikilinks = RegexWikilinksExtractor()
     return DatacronApp(
         settings=resolved_settings,
         vault_root=resolved_root,
@@ -209,7 +200,6 @@ def build_app(
         store=store,
         vault_writer=resolved_writer,
         ripgrep=ripgrep,
-        wikilinks=wikilinks,
         scope=resolved_scope,
         identity_provider=identity_provider or StdioCallerIdentityProvider(),
         secret_redactor=secret_redactor or SecretRedactor.from_settings(resolved_settings),
