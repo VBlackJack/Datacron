@@ -25,7 +25,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Final, final
+from typing import Final, NoReturn, final
 from uuid import uuid4
 
 if sys.platform == "win32":
@@ -113,6 +113,14 @@ class UlidVerificationError(ValueError):
 
 class OperationRecoveryError(OperationLogError):
     """Raised when a pending operation cannot be reconciled by exact hash."""
+
+
+class VaultLockBusyError(RuntimeError):
+    """Raised when an advisory lock stays held past the configured timeout.
+
+    Signals contention from another datacron writer process rather than a
+    corrupt or unusable vault, so callers may defer the work and retry later.
+    """
 
 
 @final
@@ -513,7 +521,7 @@ class FilesystemVaultWriter:
             if lock_file.tell() == 0:
                 lock_file.write(b"\x00")
                 lock_file.flush()
-            _lock_file(lock_file)
+            _lock_file(lock_file, key, self._settings.vault_lock_timeout_seconds)
             try:
                 yield
             finally:
@@ -535,7 +543,9 @@ class FilesystemVaultWriter:
         if not db_path.is_file():
             return False
         try:
-            with sqlite3.connect(db_path, timeout=5.0) as connection:
+            with sqlite3.connect(
+                db_path, timeout=self._settings.vault_lock_timeout_seconds
+            ) as connection:
                 row = connection.execute(
                     "SELECT 1 FROM ulid_paths WHERE note_id = ? LIMIT 1",
                     (note_id,),
@@ -625,13 +635,27 @@ def _inject(fault_injector: FaultInjector | None, point: str) -> None:
         fault_injector(point)
 
 
+def _raise_vault_lock_busy(key: str, timeout_seconds: float, cause: OSError) -> NoReturn:
+    """Log advisory-lock contention and raise a typed, bounded-timeout error."""
+    _LOGGER.warning(
+        "Vault advisory lock %r still held after %.1fs; another datacron writer is holding it",
+        key,
+        timeout_seconds,
+    )
+    raise VaultLockBusyError(
+        f"vault lock {key!r} busy after {timeout_seconds:.1f}s "
+        "-- another datacron writer is holding it"
+    ) from cause
+
+
 if sys.platform == "win32":
 
-    def _lock_file(lock_file: object) -> None:
+    def _lock_file(lock_file: object, key: str, timeout_seconds: float) -> None:
         file_handle = lock_file
         if not hasattr(file_handle, "fileno") or not hasattr(file_handle, "seek"):
             raise TypeError("lock file must expose fileno and seek")
         file_handle.seek(0)
+        deadline = time.monotonic() + timeout_seconds
         while True:
             try:
                 msvcrt.locking(file_handle.fileno(), msvcrt.LK_NBLCK, 1)
@@ -639,6 +663,8 @@ if sys.platform == "win32":
             except OSError as exc:
                 if exc.errno not in {errno.EACCES, errno.EDEADLK}:
                     raise
+                if time.monotonic() >= deadline:
+                    _raise_vault_lock_busy(key, timeout_seconds, exc)
                 time.sleep(_LOCK_RETRY_SECONDS)
 
     def _unlock_file(lock_file: object) -> None:
@@ -650,10 +676,25 @@ if sys.platform == "win32":
 
 else:
 
-    def _lock_file(lock_file: object) -> None:
+    _LOCK_BUSY_ERRNOS: Final[frozenset[int]] = frozenset(
+        {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, errno.EDEADLK}
+    )
+
+    def _lock_file(lock_file: object, key: str, timeout_seconds: float) -> None:
         if not hasattr(lock_file, "fileno"):
             raise TypeError("lock file must expose fileno")
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        file_descriptor = lock_file.fileno()
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            try:
+                fcntl.flock(file_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return
+            except OSError as exc:
+                if exc.errno not in _LOCK_BUSY_ERRNOS:
+                    raise
+                if time.monotonic() >= deadline:
+                    _raise_vault_lock_busy(key, timeout_seconds, exc)
+                time.sleep(_LOCK_RETRY_SECONDS)
 
     def _unlock_file(lock_file: object) -> None:
         if not hasattr(lock_file, "fileno"):
