@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from typing import TYPE_CHECKING, Any, Final
@@ -22,7 +23,8 @@ from typing import TYPE_CHECKING, Any, Final
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.hashing import FRESHNESS_CONTRACT_ID
 from datacron.core.models import Chunk, ChunkType, Note
-from datacron.core.paths import PathConfinementError
+from datacron.core.paths import PathConfinementError, read_ulid_mappings, sidecar_dir
+from datacron.core.vault import ULID_SIDECAR_FILENAME
 from datacron.mcp.sandbox import (
     sanitize_payload_strings,
     wrap_vault_content,
@@ -304,20 +306,65 @@ async def _resolve_note(app: DatacronApp, id_or_path: str) -> Note | None:
 
 
 async def _resolve_note_by_ulid(app: DatacronApp, note_id: str) -> Note | None:
-    # Fast path: the index maps rel_path -> note_id without reading notes.
-    indexed = await app.store.list_indexed_notes_with_mtime()
-    for rel_path, (indexed_note_id, _hash, _mtime) in indexed.items():
-        if indexed_note_id == note_id:
-            try:
-                return await _read_note_by_rel_path(app, rel_path)
-            except FileNotFoundError:
-                break
+    # Fast path: resolve the indexed identity without loading the note catalog.
+    try:
+        indexed_rel_path = await app.store.get_note_rel_path(note_id)
+    except RuntimeError:
+        indexed_rel_path = None
+    if indexed_rel_path is not None:
+        indexed_note = await _try_read_note_by_rel_path(app, indexed_rel_path)
+        if indexed_note is not None:
+            return indexed_note
+
+    # The sidecar is authoritative when it covers every live note path. A
+    # healthy complete mapping can reject an unknown ULID after a stat-only
+    # sweep, without parsing and hashing the whole vault.
+    sidecar_note, sidecar_is_conclusive = await _resolve_note_from_sidecar(app, note_id)
+    if sidecar_note is not None or sidecar_is_conclusive:
+        return sidecar_note
 
     # Fallback: fresh notes can exist on disk before the next reindex.
     for note in await app.vault_reader.list_notes():
         if note.id == note_id:
             return note
     return None
+
+
+async def _resolve_note_from_sidecar(
+    app: DatacronApp,
+    note_id: str,
+) -> tuple[Note | None, bool]:
+    """Return a sidecar match and whether the lookup is authoritative."""
+    sidecar_path = sidecar_dir(app.vault_root) / ULID_SIDECAR_FILENAME
+    if not sidecar_path.is_file():
+        return None, False
+    try:
+        mappings = await asyncio.to_thread(
+            read_ulid_mappings,
+            sidecar_path,
+            require_string_pairs=True,
+        )
+    except (OSError, UnicodeError, ValueError):
+        return None, False
+
+    matching_paths = [rel_path for rel_path, mapped_id in mappings.items() if mapped_id == note_id]
+    if len(matching_paths) == 1:
+        note = await _try_read_note_by_rel_path(app, matching_paths[0])
+        return (note, True) if note is not None and note.id == note_id else (None, False)
+    if matching_paths:
+        return None, False
+    try:
+        live_paths = await app.vault_reader.stat_notes()
+    except OSError:
+        return None, False
+    return None, live_paths.keys() <= mappings.keys()
+
+
+async def _try_read_note_by_rel_path(app: DatacronApp, rel_path: str) -> Note | None:
+    try:
+        return await _read_note_by_rel_path(app, rel_path)
+    except (FileNotFoundError, PathConfinementError, ValueError):
+        return None
 
 
 async def _read_note_by_rel_path(app: DatacronApp, rel_path: str) -> Note:
