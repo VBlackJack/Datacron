@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Final
 from mcp.server.fastmcp import Context, FastMCP
 from ulid import ULID
 
-from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
+from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR, TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.durability import DurabilityUnavailableError, ReadOnlyModeError
 from datacron.core.frontmatter import FrontmatterError, parse, serialize
 from datacron.core.hashing import FRESHNESS_CONTRACT_ID, HASH_HEX_LENGTH
@@ -51,11 +51,10 @@ from datacron.core.operation_log import (
     OperationRecord,
 )
 from datacron.core.paths import PathConfinementError
-from datacron.core.scope import ScopedVaultReader
 from datacron.core.temporal import rerank_temporal
 from datacron.core.vault_writer import UlidCollisionError
 from datacron.indexing.reconcile import ReconcileStats, reconcile
-from datacron.indexing.ripgrep import RipgrepError
+from datacron.indexing.ripgrep import RegexFallbackError, RipgrepError
 from datacron.mcp.sandbox import (
     sanitize_metadata_value,
     sanitize_payload_strings,
@@ -75,7 +74,6 @@ _VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map"})
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
 _CHUNK_ID_SEPARATOR: Final[str] = "::"
-_TOKEN_ESTIMATE_DIVISOR: Final[int] = 4
 _MEMORY_ORIGINS: Final[frozenset[str]] = frozenset({"ai", "human", "merged"})
 _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
     {"high", "medium", "low", "needs_verification"}
@@ -1264,7 +1262,7 @@ def _bounded_count(requested: int, ceiling: int) -> int:
 
 
 def _estimate_tokens(text: str) -> int:
-    return max(1, len(text) // _TOKEN_ESTIMATE_DIVISOR)
+    return max(1, len(text) // TOKEN_ESTIMATE_CHARS_PER_TOKEN)
 
 
 def _validate_get_note_request(
@@ -1684,7 +1682,7 @@ def _build_full_payload(
     limit: int | None,
 ) -> dict[str, Any]:
     max_tokens = app.settings.get_note_max_tokens
-    max_chars = max_tokens * _TOKEN_ESTIMATE_DIVISOR
+    max_chars = max_tokens * TOKEN_ESTIMATE_CHARS_PER_TOKEN
     retrieval_content = _redact_retrieval_text(app, note.content)
     total_chars = len(retrieval_content)
     start = min(offset, total_chars)
@@ -1787,11 +1785,12 @@ def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
 
 
 def _error_response(tool: str, exc: BaseException, started: float, **fields: Any) -> dict[str, Any]:
-    _audit(tool, started, error=type(exc).__name__, error_message=str(exc), **fields)
+    message = sanitize_metadata_value(str(exc))
+    _audit(tool, started, error=type(exc).__name__, error_message=message, **fields)
     return {
         "error": {
             "type": type(exc).__name__,
-            "message": str(exc),
+            "message": message,
         }
     }
 
@@ -1907,14 +1906,17 @@ async def _search_regex_impl(
             limit=bounded_limit,
             store=app.store,
             rg_path=app.settings.ripgrep_path,
+            fallback_max_pattern_length=app.settings.regex_fallback_max_pattern_length,
+            fallback_timeout_seconds=app.settings.regex_fallback_timeout_seconds,
         )
         raw_results = [
             result
             for result in raw_results
             if app.scope.allows_rel_path(result.chunk.note_rel_path, "read")
         ]
-    except FileNotFoundError as exc:
-        return _error_response("search_regex", exc, started, pattern=pattern, glob=glob)
+    except (FileNotFoundError, RegexFallbackError) as exc:
+        mapped_exc = ValueError(str(exc)) if isinstance(exc, RegexFallbackError) else exc
+        return _error_response("search_regex", mapped_exc, started, pattern=pattern, glob=glob)
     except RipgrepError as exc:
         message = exc.stderr.strip() or str(exc)
         return _error_response(
@@ -1978,9 +1980,6 @@ async def _get_backlinks_impl(
             started,
             target=target,
         )
-
-    if isinstance(app.vault_reader, ScopedVaultReader):
-        app.vault_reader.bind_note_path_lookup(app.store.get_note_rel_path)
 
     try:
         resolved_id = await _resolve_backlink_target(app, cleaned)

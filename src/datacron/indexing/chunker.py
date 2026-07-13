@@ -22,7 +22,7 @@ from typing import Any, Final, final
 
 from mistletoe import block_token
 
-from datacron.core.config import DEFAULT_CHUNK_MAX_TOKENS
+from datacron.core.config import DEFAULT_CHUNK_MAX_TOKENS, TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, ChunkType, Note
@@ -31,7 +31,6 @@ from datacron.indexing.wikilinks import extract_wikilink_targets
 _NON_ALPHANUMERIC_PATTERN = re.compile(r"[^a-z0-9]+")
 _REPEATED_DASH_PATTERN = re.compile(r"-+")
 _HEADING_SEPARATOR: Final[str] = " / "
-_TOKEN_ESTIMATE_DIVISOR: Final[int] = 4
 
 __all__ = ["MarkdownChunker"]
 
@@ -54,7 +53,7 @@ class MarkdownChunker:
         if max_tokens < 1:
             raise ValueError("max_tokens must be >= 1")
         self._max_tokens = max_tokens
-        self._max_chars = max_tokens * _TOKEN_ESTIMATE_DIVISOR
+        self._max_chars = max_tokens * TOKEN_ESTIMATE_CHARS_PER_TOKEN
 
     def chunk(self, note: Note) -> list[Chunk]:
         """Return all chunks for ``note`` in document order.
@@ -151,7 +150,7 @@ class MarkdownChunker:
             content=content,
             ordinal=ordinal,
             content_hash=hash_text(content),
-            token_count=len(content) // _TOKEN_ESTIMATE_DIVISOR,
+            token_count=len(content) // TOKEN_ESTIMATE_CHARS_PER_TOKEN,
             line_start=line_start,
             line_end=line_end,
             wikilinks_out=extract_wikilink_targets(content, chunk_type),

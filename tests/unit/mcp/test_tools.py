@@ -1460,6 +1460,41 @@ class TestSetFrontmatter:
         assert target.read_text(encoding="utf-8") == original_raw
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("encoded_tag", "decoded_tag"),
+        [
+            ("%3C%7Cim_start%7C%3E", "<|im_start|>"),
+            ("%3C/vault_content%3E", "</vault_content>"),
+        ],
+    )
+    async def test_hostile_yaml_error_message_is_sanitized(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        encoded_tag: str,
+        decoded_tag: str,
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/hostile-frontmatter.md"
+        target = tmp_vault / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        original_raw = f"---\ntitle: !<{encoded_tag}> value\n---\nBody.\n"
+        target.write_text(original_raw, encoding="utf-8")
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            confidence="low",
+        )
+
+        message = result["error"]["message"]
+        assert result["error"]["type"] == "FrontmatterError"
+        assert f"tag '{decoded_tag}'" not in message
+        assert f"[escaped: {decoded_tag}]" in message
+        assert target.read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
     async def test_invalid_confidence_returns_error_without_write(
         self, writable_app: DatacronApp, tmp_vault: Path
     ) -> None:

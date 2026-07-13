@@ -129,23 +129,6 @@ INSERT INTO chunks_fts (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
-_SELECT_CHUNK_COLUMNS: Final[str] = """
-chunk_id,
-note_id,
-note_rel_path,
-header_path,
-section_title,
-chunk_type,
-content,
-ordinal,
-content_hash,
-token_count,
-line_start,
-line_end,
-wikilinks_out_json,
-lang
-"""
-
 _SEARCH_SQL: Final[str] = """
 SELECT
     chunk_id,
@@ -251,6 +234,13 @@ _GET_NOTE_REL_PATH_SQL: Final[str] = """
 SELECT rel_path
 FROM ulid_paths
 WHERE note_id = ?
+LIMIT 1;
+"""
+
+_GET_NOTE_ID_SQL: Final[str] = """
+SELECT note_id
+FROM ulid_paths
+WHERE rel_path = ?
 LIMIT 1;
 """
 
@@ -480,6 +470,13 @@ class SQLiteFTS5Store:
         """Return the indexed vault-relative path for ``note_id``, if present."""
         connection = self._require_connection()
         async with connection.execute(_GET_NOTE_REL_PATH_SQL, (note_id,)) as cursor:
+            row = await cursor.fetchone()
+        return None if row is None else str(row[0])
+
+    async def get_note_id(self, rel_path: str) -> str | None:
+        """Return the indexed note ID for ``rel_path``, if present."""
+        connection = self._require_connection()
+        async with connection.execute(_GET_NOTE_ID_SQL, (rel_path,)) as cursor:
             row = await cursor.fetchone()
         return None if row is None else str(row[0])
 

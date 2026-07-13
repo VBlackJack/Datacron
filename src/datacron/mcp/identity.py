@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, final, runtime_checkable
+from typing import Any, Final, Protocol, final, runtime_checkable
 
 from mcp.server.fastmcp import Context
 
@@ -25,6 +25,8 @@ __all__ = [
     "CallerIdentityProvider",
     "StdioCallerIdentityProvider",
 ]
+
+_MAX_ACTOR_LENGTH: Final[int] = 200
 
 
 @dataclass(frozen=True)
@@ -77,4 +79,4 @@ class StdioCallerIdentityProvider:
 
 
 def _clean_actor(value: str) -> str:
-    return " ".join(value.split())[:200] or "mcp-client:unidentified"
+    return " ".join(value.split())[:_MAX_ACTOR_LENGTH] or "mcp-client:unidentified"
