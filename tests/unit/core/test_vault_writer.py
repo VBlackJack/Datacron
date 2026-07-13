@@ -9,20 +9,63 @@
 
 from __future__ import annotations
 
+import errno
 import os
+import sys
+import time
 from pathlib import Path
 
 import pytest
 
+import datacron.core.vault_writer as vault_writer_module
 from datacron.core.config import Settings, VaultConfig
 from datacron.core.hashing import sha256_bytes
 from datacron.core.paths import PathConfinementError
 from datacron.core.vault_writer import (
     FilesystemVaultWriter,
     UlidCollisionError,
+    VaultLockBusyError,
     WriteConflictError,
     atomic_durable_write,
 )
+
+
+class _FakeLockHandle:
+    """Minimal file-like stub exposing only what ``_lock_file`` touches."""
+
+    def __init__(self, descriptor: int = 0) -> None:
+        self._descriptor = descriptor
+
+    def fileno(self) -> int:
+        return self._descriptor
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return 0
+
+
+def _patch_lock_primitive(monkeypatch: pytest.MonkeyPatch, *, busy: bool) -> None:
+    """Replace the platform lock primitive so lock tests run cross-platform.
+
+    ``busy=True`` makes every acquisition attempt report contention (EACCES,
+    which both the ``msvcrt`` and ``fcntl`` branches treat as "held"); ``busy``
+    ``False`` makes the first attempt succeed immediately.
+    """
+    busy_error = OSError(errno.EACCES, "resource temporarily unavailable")
+
+    if sys.platform == "win32":
+
+        def fake_locking(descriptor: int, mode: int, nbytes: int) -> None:
+            if busy:
+                raise busy_error
+
+        monkeypatch.setattr(vault_writer_module.msvcrt, "locking", fake_locking)
+    else:
+
+        def fake_flock(descriptor: int, operation: int) -> None:
+            if busy:
+                raise busy_error
+
+        monkeypatch.setattr(vault_writer_module.fcntl, "flock", fake_flock)
 
 
 def _writer(vault: Path) -> FilesystemVaultWriter:
@@ -219,3 +262,45 @@ def test_atomic_durable_write_orders_file_replace_and_directory_fsync(
 
     assert events == ["file_fsync", "replace", "directory_fsync"]
     assert returned_hash == sha256_bytes(b"new")
+
+
+def test_lock_file_returns_promptly_when_lock_is_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_lock_primitive(monkeypatch, busy=False)
+
+    start = time.monotonic()
+    vault_writer_module._lock_file(_FakeLockHandle(), "oplog", 5.0)
+
+    # A free lock must be granted on the first attempt, well under the budget.
+    assert time.monotonic() - start < 1.0
+
+
+def test_lock_file_raises_bounded_timeout_when_lock_stays_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_lock_primitive(monkeypatch, busy=True)
+    timeout_seconds = 0.2
+
+    start = time.monotonic()
+    with pytest.raises(VaultLockBusyError) as excinfo:
+        vault_writer_module._lock_file(_FakeLockHandle(), "oplog", timeout_seconds)
+    elapsed = time.monotonic() - start
+
+    # Bounded: it waits at least the timeout, then gives up instead of spinning
+    # forever (the historical bug). Upper bound stays generous for slow CI.
+    assert elapsed >= timeout_seconds
+    assert elapsed < timeout_seconds + 5.0
+    assert "oplog" in str(excinfo.value)
+    assert "busy" in str(excinfo.value)
+
+
+def test_advisory_lock_raises_when_same_lock_is_already_held(tmp_path: Path) -> None:
+    writer = FilesystemVaultWriter(
+        tmp_path,
+        Settings(write_paths=[tmp_path], vault_lock_timeout_seconds=0.2),
+    )
+
+    with writer._advisory_lock("oplog"), pytest.raises(VaultLockBusyError):
+        with writer._advisory_lock("oplog"):
+            pass

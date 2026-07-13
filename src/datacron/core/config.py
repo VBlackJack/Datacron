@@ -44,6 +44,10 @@ CONFIDENCE_PENALTY: Final[dict[str, float]] = {"low": 0.7, "needs_verification":
 DEFAULT_RIPGREP_PATH: Final[str] = "rg"
 DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH: Final[int] = 512
 DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS: Final[float] = 2.0
+# Bounded wait for a contended vault advisory lock (and the sidecar index
+# busy-wait) before giving up. Mirrors the historical 5s SQLite busy timeout so
+# a single source of truth governs "how long to wait on a busy vault resource".
+DEFAULT_VAULT_LOCK_TIMEOUT_SECONDS: Final[float] = 5.0
 DEFAULT_CHUNK_MAX_TOKENS: Final[int] = 1024
 # get_note(full) budget, decoupled from the search budget (max_result_tokens).
 # Search returns many snippets and must stay bounded; reading one note can be
@@ -225,6 +229,10 @@ class Settings(BaseSettings):
     )
     regex_fallback_timeout_seconds: float = Field(
         default=DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS,
+        gt=0,
+    )
+    vault_lock_timeout_seconds: float = Field(
+        default=DEFAULT_VAULT_LOCK_TIMEOUT_SECONDS,
         gt=0,
     )
     chunk_max_tokens: int = Field(default=DEFAULT_CHUNK_MAX_TOKENS, ge=1)
