@@ -26,7 +26,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from datacron.core.models import Chunk, Note
+from datacron.core.models import Chunk, Note, SearchResult
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.ripgrep import (
     RegexFallbackError,
@@ -403,9 +403,15 @@ async def test_pathological_fallback_regex_returns_before_timeout(
     indexed: _IndexedFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    poisoned_chunk = indexed.chunks["alpha_intro"].model_copy(update={"content": f"{'a' * 64}!"})
+
+    async def _iter_poisoned_chunks(_store: SQLiteFTS5Store) -> AsyncIterator[Chunk]:
+        yield poisoned_chunk
+
     async def _create(*_args: str, **_kwargs: object) -> _FakeProcess:
         raise FileNotFoundError("missing")
 
+    monkeypatch.setattr(SQLiteFTS5Store, "iter_all_chunks", _iter_poisoned_chunks)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _create)
     timeout_seconds = 0.5
     started = time.perf_counter()
@@ -420,6 +426,32 @@ async def test_pathological_fallback_regex_returns_before_timeout(
         )
 
     assert time.perf_counter() - started < timeout_seconds
+
+
+async def test_fallback_enforces_global_timeout(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import datacron.indexing.ripgrep as ripgrep_module
+
+    async def _create(*_args: str, **_kwargs: object) -> _FakeProcess:
+        raise FileNotFoundError("missing")
+
+    def _slow_scan(*_args: object) -> list[SearchResult]:
+        time.sleep(0.1)
+        return []
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _create)
+    monkeypatch.setattr(ripgrep_module, "_scan_indexed_chunks", _slow_scan)
+
+    with pytest.raises(RegexFallbackError, match="regex fallback timed out -- install ripgrep"):
+        await RipgrepWrapper().search(
+            "safe-pattern",
+            indexed.vault_root,
+            store=indexed.store,
+            rg_path="missing-rg",
+            fallback_timeout_seconds=0.01,
+        )
 
 
 async def test_rg_error_exit_raises_typed_error_and_logs_warning(
