@@ -22,13 +22,25 @@ same normalization rules.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
-from typing import Any, Final
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from pathlib import Path
+from typing import Any, Final, TypeVar
 
 import frontmatter
 import yaml
 
-__all__ = ["FrontmatterError", "extract_tags", "parse", "serialize"]
+__all__ = [
+    "FrontmatterError",
+    "build_tiered_alias_index",
+    "coerce_string_list",
+    "extract_tags",
+    "parse",
+    "resolve_note_title",
+    "serialize",
+]
+
+_ItemT = TypeVar("_ItemT")
+_IdentityT = TypeVar("_IdentityT")
 
 _FENCED_CODE_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?ms)^[ \t]*(?P<fence>`{3,}|~{3,})[^\n]*\n.*?^[ \t]*(?P=fence)[ \t]*(?=\n|$)"
@@ -83,15 +95,78 @@ def serialize(metadata: Mapping[str, Any], body: str) -> str:
     return f"---\n{dumped}\n---\n{body}"
 
 
-def _coerce_tag_iterable(value: object) -> list[str]:
+def coerce_string_list(
+    value: object,
+    *,
+    split_delimited: bool = True,
+    keep_empty_scalar: bool = False,
+) -> list[str]:
+    """Coerce a scalar or collection to stripped strings.
+
+    Comma and semicolon splitting can be disabled for consumers whose stored
+    scalar format is intentionally opaque. ``keep_empty_scalar`` preserves the
+    legacy distinction between an empty scalar and an empty collection.
+    """
     if value is None:
         return []
     if isinstance(value, str):
-        parts = [p.strip() for p in value.replace(";", ",").split(",")]
-        return [p for p in parts if p]
+        if split_delimited:
+            parts = [part.strip() for part in value.replace(";", ",").split(",")]
+            return [part for part in parts if part]
+        stripped = value.strip()
+        return [stripped] if stripped or keep_empty_scalar else []
     if isinstance(value, (list, tuple, set)):
         return [str(item).strip() for item in value if str(item).strip()]
-    return [str(value).strip()]
+    stripped = str(value).strip()
+    return [stripped] if stripped or keep_empty_scalar else []
+
+
+def resolve_note_title(
+    metadata: Mapping[str, object],
+    body: str,
+    path: Path,
+    *,
+    h1_pattern: re.Pattern[str],
+    empty_h1_falls_back: bool = False,
+) -> str:
+    """Resolve a note title from frontmatter, first H1, then filename stem."""
+    title = metadata.get("title")
+    if isinstance(title, str) and title.strip():
+        return title.strip()
+    heading = h1_pattern.search(body)
+    if heading:
+        resolved = heading.group(1).strip()
+        if resolved or not empty_h1_falls_back:
+            return resolved
+    return path.stem
+
+
+def build_tiered_alias_index(
+    items: Sequence[_ItemT],
+    *,
+    identity: Callable[[_ItemT], _IdentityT],
+    title: Callable[[_ItemT], Iterable[str]],
+    stem: Callable[[_ItemT], Iterable[str]],
+    aliases: Callable[[_ItemT], Iterable[str]],
+    normalize: Callable[[str], str],
+) -> dict[str, _IdentityT | None]:
+    """Build a pure title-to-stem-to-alias index with tiered precedence."""
+    index: dict[str, _IdentityT | None] = {}
+    tiers: tuple[Callable[[_ItemT], Iterable[str]], ...] = (title, stem, aliases)
+    for extract in tiers:
+        tier: dict[str, _IdentityT | None] = {}
+        for item in items:
+            item_identity = identity(item)
+            for raw in extract(item):
+                key = normalize(raw)
+                if not key or key in index:
+                    continue
+                if key in tier and tier[key] != item_identity:
+                    tier[key] = None
+                else:
+                    tier[key] = item_identity
+        index.update(tier)
+    return index
 
 
 def _strip_code_spans(body: str) -> str:
@@ -120,7 +195,7 @@ def extract_tags(metadata: dict[str, Any], body: str) -> list[str]:
     preserve first-seen order.
     """
     candidates: list[str] = []
-    candidates.extend(_coerce_tag_iterable(metadata.get("tags")))
+    candidates.extend(coerce_string_list(metadata.get("tags"), keep_empty_scalar=True))
     scrubbed_body = _strip_code_spans(body)
     candidates.extend(
         match.group(1)
