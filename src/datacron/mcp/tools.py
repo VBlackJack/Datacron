@@ -55,7 +55,7 @@ from datacron.core.scope import ScopedVaultReader
 from datacron.core.temporal import rerank_temporal
 from datacron.core.vault_writer import UlidCollisionError
 from datacron.indexing.reconcile import ReconcileStats, reconcile
-from datacron.indexing.ripgrep import RipgrepError
+from datacron.indexing.ripgrep import RegexFallbackError, RipgrepError
 from datacron.mcp.sandbox import (
     sanitize_metadata_value,
     sanitize_payload_strings,
@@ -1908,14 +1908,17 @@ async def _search_regex_impl(
             limit=bounded_limit,
             store=app.store,
             rg_path=app.settings.ripgrep_path,
+            fallback_max_pattern_length=app.settings.regex_fallback_max_pattern_length,
+            fallback_timeout_seconds=app.settings.regex_fallback_timeout_seconds,
         )
         raw_results = [
             result
             for result in raw_results
             if app.scope.allows_rel_path(result.chunk.note_rel_path, "read")
         ]
-    except FileNotFoundError as exc:
-        return _error_response("search_regex", exc, started, pattern=pattern, glob=glob)
+    except (FileNotFoundError, RegexFallbackError) as exc:
+        mapped_exc = ValueError(str(exc)) if isinstance(exc, RegexFallbackError) else exc
+        return _error_response("search_regex", mapped_exc, started, pattern=pattern, glob=glob)
     except RipgrepError as exc:
         message = exc.stderr.strip() or str(exc)
         return _error_response(

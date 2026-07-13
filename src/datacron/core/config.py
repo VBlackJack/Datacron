@@ -41,6 +41,8 @@ TEMPORAL_OVERFETCH_FACTOR: Final[int] = 3
 SUPERSEDED_DEMOTION_FACTOR: Final[float] = 0.1
 CONFIDENCE_PENALTY: Final[dict[str, float]] = {"low": 0.7, "needs_verification": 0.5}
 DEFAULT_RIPGREP_PATH: Final[str] = "rg"
+DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH: Final[int] = 512
+DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS: Final[float] = 2.0
 DEFAULT_CHUNK_MAX_TOKENS: Final[int] = 1024
 # get_note(full) budget, decoupled from the search budget (max_result_tokens).
 # Search returns many snippets and must stay bounded; reading one note can be
@@ -216,6 +218,14 @@ class Settings(BaseSettings):
     max_result_tokens: int = Field(default=DEFAULT_MAX_RESULT_TOKENS, ge=1)
     max_result_count: int = Field(default=DEFAULT_MAX_RESULT_COUNT, ge=1)
     ripgrep_path: str = Field(default=DEFAULT_RIPGREP_PATH)
+    regex_fallback_max_pattern_length: int = Field(
+        default=DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH,
+        ge=1,
+    )
+    regex_fallback_timeout_seconds: float = Field(
+        default=DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS,
+        gt=0,
+    )
     chunk_max_tokens: int = Field(default=DEFAULT_CHUNK_MAX_TOKENS, ge=1)
     get_note_max_tokens: int = Field(default=DEFAULT_GET_NOTE_MAX_TOKENS, ge=1)
     redact_secrets: str = DEFAULT_REDACT_SECRETS
