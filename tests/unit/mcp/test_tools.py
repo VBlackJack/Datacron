@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -23,6 +24,8 @@ from datacron.core.frontmatter import parse, serialize
 from datacron.core.hashing import hash_text
 from datacron.core.models import Note
 from datacron.core.operation_log import OperationContext, OperationRecord
+from datacron.core.paths import sidecar_dir
+from datacron.core.vault import ULID_SIDECAR_FILENAME
 from datacron.core.vault_writer import FilesystemVaultWriter
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
@@ -286,6 +289,114 @@ class TestListNotes:
         assert final_page["offset"] == 4
         assert final_page["next_offset"] is None
         assert final_page["truncated"] is True
+
+    @pytest.mark.asyncio
+    async def test_index_payload_matches_filesystem_fallback(
+        self,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datacron.mcp.tools import _list_notes_impl
+
+        prefix_siblings = (
+            ("proj/a.md", "01HQXR7K9YZ8M2N3PQRSTV4WX9"),
+            ("proj/sub/c.md", "01HQXR7K9YZ8M2N3PQRSTV4WXA"),
+            ("proj-x/b.md", "01HQXR7K9YZ8M2N3PQRSTV4WXB"),
+            ("proj.old/f.md", "01HQXR7K9YZ8M2N3PQRSTV4WXC"),
+        )
+        for rel_path, note_id in prefix_siblings:
+            _write_memory_note(
+                tmp_vault,
+                rel_path,
+                f"# {rel_path}\n",
+                metadata_overrides={"id": note_id},
+            )
+        settings = Settings(
+            read_paths=[tmp_vault],
+            write_paths=[tmp_vault],
+            vault_root=tmp_vault,
+            max_result_count=20,
+            max_result_tokens=8000,
+        )
+        fallback_app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+        )
+        cases = (
+            (None, None, 2, 2),
+            (None, None, 3, 6),
+            (None, ["intro"], 20, 0),
+            ("subfolder", None, 20, 0),
+        )
+        expected = [
+            await _list_notes_impl(
+                fallback_app,
+                folder=folder,
+                tags=tags,
+                limit=limit,
+                offset=offset,
+            )
+            for folder, tags, limit, offset in cases
+        ]
+
+        store = SQLiteFTS5Store()
+        await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+        indexed_app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+
+        async def fail_full_listing(
+            folder: str | None = None,
+            limit: int | None = None,
+        ) -> list[Note]:
+            raise AssertionError(f"unexpected filesystem listing: {folder=}, {limit=}")
+
+        monkeypatch.setattr(indexed_app.vault_reader, "list_notes", fail_full_listing)
+        try:
+            actual = [
+                await _list_notes_impl(
+                    indexed_app,
+                    folder=folder,
+                    tags=tags,
+                    limit=limit,
+                    offset=offset,
+                )
+                for folder, tags, limit, offset in cases
+            ]
+        finally:
+            await store.close()
+
+        assert actual == expected
+
+    @pytest.mark.asyncio
+    async def test_index_unavailable_uses_filesystem_fallback(
+        self,
+        app: DatacronApp,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datacron.mcp.tools import _list_notes_impl
+
+        calls = 0
+        original_list_notes = app.vault_reader.list_notes
+
+        async def counting_list_notes(
+            folder: str | None = None,
+            limit: int | None = None,
+        ) -> list[Note]:
+            nonlocal calls
+            calls += 1
+            return await original_list_notes(folder=folder, limit=limit)
+
+        monkeypatch.setattr(app.vault_reader, "list_notes", counting_list_notes)
+
+        result = await _list_notes_impl(app, folder=None, tags=None, limit=20)
+
+        assert result["total"] == 6
+        assert calls == 1
 
     @pytest.mark.asyncio
     async def test_negative_offset_returns_error_response(self, app: DatacronApp) -> None:
@@ -589,27 +700,103 @@ class TestGetNoteFull:
         assert calls["n"] == 0
 
     @pytest.mark.asyncio
-    async def test_full_accepts_unindexed_ulid_by_scan_fallback(
-        self, app_with_open_store: DatacronApp, tmp_vault: Path
+    async def test_full_accepts_unindexed_ulid_from_sidecar_without_scan(
+        self,
+        app_with_open_store: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from datacron.mcp.tools import _get_note_impl
 
         note = await app_with_open_store.vault_reader.read_note(tmp_vault / "welcome.md")
         assert await app_with_open_store.store.list_indexed_notes_with_mtime() == {}
+        await app_with_open_store.store.delete_note(note.id)
+        calls = 0
+
+        async def counting_list_notes(
+            folder: str | None = None,
+            limit: int | None = None,
+        ) -> list[Note]:
+            nonlocal calls
+            calls += 1
+            return []
+
+        monkeypatch.setattr(app_with_open_store.vault_reader, "list_notes", counting_list_notes)
 
         result = await _get_note_impl(app_with_open_store, id_or_path=note.id, fmt="full")
 
         assert result["rel_path"] == "welcome.md"
         assert result["id"] == note.id
+        assert calls == 0
 
     @pytest.mark.asyncio
-    async def test_unknown_ulid_returns_error(self, app_with_open_store: DatacronApp) -> None:
+    async def test_unindexed_note_missing_from_sidecar_keeps_scan_fallback(
+        self,
+        app_with_open_store: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         from datacron.mcp.tools import _get_note_impl
 
+        target, _raw = _write_memory_note(tmp_vault, "late-note.md", "# Late note\n")
+        note = await app_with_open_store.vault_reader.read_note(target)
+        assert await app_with_open_store.store.get_note_rel_path(note.id) is None
+        calls = 0
+        original_list_notes = app_with_open_store.vault_reader.list_notes
+
+        async def counting_list_notes(
+            folder: str | None = None,
+            limit: int | None = None,
+        ) -> list[Note]:
+            nonlocal calls
+            calls += 1
+            return await original_list_notes(folder=folder, limit=limit)
+
+        monkeypatch.setattr(app_with_open_store.vault_reader, "list_notes", counting_list_notes)
+
+        result = await _get_note_impl(app_with_open_store, id_or_path=note.id, fmt="full")
+
+        assert result["rel_path"] == "late-note.md"
+        assert result["id"] == note.id
+        assert calls == 1
+
+    @pytest.mark.asyncio
+    async def test_unknown_ulid_with_healthy_sidecar_does_not_scan(
+        self,
+        app_with_open_store: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datacron.mcp.tools import _get_note_impl
+
+        live_notes = await app_with_open_store.vault_reader.stat_notes()
+        mappings = {
+            rel_path: (await app_with_open_store.vault_reader.read_note(path)).id
+            for rel_path, (path, _mtime_ns) in live_notes.items()
+        }
+        sidecar = sidecar_dir(tmp_vault)
+        sidecar.mkdir(parents=True, exist_ok=True)
+        (sidecar / ULID_SIDECAR_FILENAME).write_text(
+            json.dumps(mappings),
+            encoding="utf-8",
+        )
+        calls = 0
+
+        async def counting_list_notes(
+            folder: str | None = None,
+            limit: int | None = None,
+        ) -> list[Note]:
+            nonlocal calls
+            calls += 1
+            return []
+
+        monkeypatch.setattr(app_with_open_store.vault_reader, "list_notes", counting_list_notes)
         bogus = "01ZZZZZZZZZZZZZZZZZZZZZZZZ"
         result = await _get_note_impl(app_with_open_store, id_or_path=bogus, fmt="full")
+
         assert "error" in result
         assert result["error"]["type"] == "FileNotFoundError"
+        assert calls == 0
 
     @pytest.mark.asyncio
     async def test_invalid_format_returns_error(self, app: DatacronApp) -> None:
