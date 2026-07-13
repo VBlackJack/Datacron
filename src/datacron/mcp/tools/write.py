@@ -47,6 +47,7 @@ from datacron.mcp.tools.search import (
 )
 from datacron.mcp.tools.write_validation import (
     _clean_string_list,
+    _map_write_path_error,
     _parse_preserving_bom,
     _serialize_preserving_bom,
     _validate_append_journal_request,
@@ -147,14 +148,9 @@ async def _create_note_ai_impl(
     except (DurabilityUnavailableError, ReadOnlyModeError) as exc:
         return _error_response("create_note_ai", exc, started, rel_path=rel_path)
     except PathConfinementError as exc:
-        mapped_exc = (
-            PathConfinementError("writes disabled -- set DATACRON_WRITE_PATHS")
-            if not app.settings.write_paths
-            else exc
-        )
         return _error_response(
             "create_note_ai",
-            mapped_exc,
+            _map_write_path_error(exc, writes_configured=bool(app.settings.write_paths)),
             started,
             rel_path=rel_path,
             title=title,
@@ -256,14 +252,9 @@ async def _append_journal_impl(
     except (DurabilityUnavailableError, ReadOnlyModeError) as exc:
         return _error_response("append_journal", exc, started, rel_path=rel_path)
     except PathConfinementError as exc:
-        mapped_exc = (
-            PathConfinementError("writes disabled -- set DATACRON_WRITE_PATHS")
-            if not app.settings.write_paths
-            else exc
-        )
         return _error_response(
             "append_journal",
-            mapped_exc,
+            _map_write_path_error(exc, writes_configured=bool(app.settings.write_paths)),
             started,
             rel_path=rel_path,
             heading=heading,
@@ -401,14 +392,9 @@ async def _set_frontmatter_impl(
     except (DurabilityUnavailableError, ReadOnlyModeError) as exc:
         return _error_response("set_frontmatter", exc, started, rel_path=rel_path)
     except PathConfinementError as exc:
-        mapped_exc = (
-            PathConfinementError("writes disabled -- set DATACRON_WRITE_PATHS")
-            if not app.settings.write_paths
-            else exc
-        )
         return _error_response(
             "set_frontmatter",
-            mapped_exc,
+            _map_write_path_error(exc, writes_configured=bool(app.settings.write_paths)),
             started,
             rel_path=rel_path,
         )
@@ -534,14 +520,9 @@ async def _patch_note_section_impl(
     except (DurabilityUnavailableError, ReadOnlyModeError) as exc:
         return _error_response("patch_note_section", exc, started, rel_path=rel_path)
     except PathConfinementError as exc:
-        mapped_exc = (
-            PathConfinementError("writes disabled -- set DATACRON_WRITE_PATHS")
-            if not app.settings.write_paths
-            else exc
-        )
         return _error_response(
             "patch_note_section",
-            mapped_exc,
+            _map_write_path_error(exc, writes_configured=bool(app.settings.write_paths)),
             started,
             rel_path=rel_path,
             heading=heading,
@@ -624,11 +605,18 @@ async def _revert_note_impl(
         )
         index_stats = await _reconcile_serialized(app)
         await _invalidate_alias_cache_if_index_changed(app, index_stats)
+    except PathConfinementError as exc:
+        return _error_response(
+            "revert_note",
+            _map_write_path_error(exc, writes_configured=bool(app.settings.write_paths)),
+            started,
+            note=note,
+            to_hash=to_hash,
+        )
     except (
         FileNotFoundError,
         HistoryUnavailableError,
         OperationLogError,
-        PathConfinementError,
         DurabilityUnavailableError,
         ReadOnlyModeError,
         ValueError,

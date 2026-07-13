@@ -22,6 +22,7 @@ from typing import Any, Final
 from datacron.core.frontmatter import parse, serialize
 from datacron.core.hashing import HASH_HEX_LENGTH
 from datacron.core.logger import get_logger
+from datacron.core.paths import PathConfinementError
 
 _LOGGER = get_logger(__name__)
 
@@ -36,6 +37,18 @@ _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
 )
 _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
 _ULID_CREATE_ATTEMPTS: Final[int] = 5
+_WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
+
+
+def _map_write_path_error(
+    exc: PathConfinementError,
+    *,
+    writes_configured: bool,
+) -> PathConfinementError:
+    """Map an empty write allowlist to the stable public error message."""
+    if writes_configured:
+        return exc
+    return PathConfinementError(_WRITES_DISABLED_MESSAGE)
 
 
 def _validate_memory_frontmatter(
