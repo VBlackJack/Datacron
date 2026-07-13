@@ -683,27 +683,91 @@ class TestGetNoteFull:
         assert calls["n"] == 0
 
     @pytest.mark.asyncio
-    async def test_full_accepts_unindexed_ulid_by_scan_fallback(
-        self, app_with_open_store: DatacronApp, tmp_vault: Path
+    async def test_full_accepts_unindexed_ulid_from_sidecar_without_scan(
+        self,
+        app_with_open_store: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from datacron.mcp.tools import _get_note_impl
 
         note = await app_with_open_store.vault_reader.read_note(tmp_vault / "welcome.md")
         assert await app_with_open_store.store.list_indexed_notes_with_mtime() == {}
+        await app_with_open_store.store.delete_note(note.id)
+        calls = 0
+
+        async def counting_list_notes(
+            folder: str | None = None,
+            limit: int | None = None,
+        ) -> list[Note]:
+            nonlocal calls
+            calls += 1
+            return []
+
+        monkeypatch.setattr(app_with_open_store.vault_reader, "list_notes", counting_list_notes)
 
         result = await _get_note_impl(app_with_open_store, id_or_path=note.id, fmt="full")
 
         assert result["rel_path"] == "welcome.md"
         assert result["id"] == note.id
+        assert calls == 0
 
     @pytest.mark.asyncio
-    async def test_unknown_ulid_returns_error(self, app_with_open_store: DatacronApp) -> None:
+    async def test_unindexed_note_missing_from_sidecar_keeps_scan_fallback(
+        self,
+        app_with_open_store: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         from datacron.mcp.tools import _get_note_impl
 
+        target, _raw = _write_memory_note(tmp_vault, "late-note.md", "# Late note\n")
+        note = await app_with_open_store.vault_reader.read_note(target)
+        assert await app_with_open_store.store.get_note_rel_path(note.id) is None
+        calls = 0
+        original_list_notes = app_with_open_store.vault_reader.list_notes
+
+        async def counting_list_notes(
+            folder: str | None = None,
+            limit: int | None = None,
+        ) -> list[Note]:
+            nonlocal calls
+            calls += 1
+            return await original_list_notes(folder=folder, limit=limit)
+
+        monkeypatch.setattr(app_with_open_store.vault_reader, "list_notes", counting_list_notes)
+
+        result = await _get_note_impl(app_with_open_store, id_or_path=note.id, fmt="full")
+
+        assert result["rel_path"] == "late-note.md"
+        assert result["id"] == note.id
+        assert calls == 1
+
+    @pytest.mark.asyncio
+    async def test_unknown_ulid_with_healthy_sidecar_does_not_scan(
+        self,
+        app_with_open_store: DatacronApp,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datacron.mcp.tools import _get_note_impl
+
+        calls = 0
+
+        async def counting_list_notes(
+            folder: str | None = None,
+            limit: int | None = None,
+        ) -> list[Note]:
+            nonlocal calls
+            calls += 1
+            return []
+
+        monkeypatch.setattr(app_with_open_store.vault_reader, "list_notes", counting_list_notes)
         bogus = "01ZZZZZZZZZZZZZZZZZZZZZZZZ"
         result = await _get_note_impl(app_with_open_store, id_or_path=bogus, fmt="full")
+
         assert "error" in result
         assert result["error"]["type"] == "FileNotFoundError"
+        assert calls == 0
 
     @pytest.mark.asyncio
     async def test_invalid_format_returns_error(self, app: DatacronApp) -> None:
