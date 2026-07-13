@@ -27,7 +27,6 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, final
@@ -40,10 +39,18 @@ from datacron.core.config import (
     VaultConfig,
     load_vault_config,
 )
-from datacron.core.frontmatter import FrontmatterError, extract_tags, parse
+from datacron.core.frontmatter import (
+    FrontmatterError,
+    build_tiered_alias_index,
+    coerce_string_list,
+    extract_tags,
+    parse,
+    resolve_note_title,
+)
 from datacron.core.hashing import sha256_bytes
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
+from datacron.core.paths import read_ulid_mappings
 
 __all__ = ["FilesystemVaultReader", "JsonIdStore", "build_configured_reader"]
 
@@ -83,17 +90,6 @@ def _normalize_rel_path(path: Path, vault_root: Path) -> str:
     return str(PurePosixPath(*rel.parts))
 
 
-def _coerce_aliases(value: object) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        parts = [p.strip() for p in value.replace(";", ",").split(",")]
-        return [p for p in parts if p]
-    if isinstance(value, (list, tuple, set)):
-        return [str(item).strip() for item in value if str(item).strip()]
-    return [str(value).strip()]
-
-
 def _coerce_datetime(value: object, fallback: datetime) -> datetime:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=UTC)
@@ -104,31 +100,6 @@ def _coerce_datetime(value: object, fallback: datetime) -> datetime:
             return fallback
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
     return fallback
-
-
-def _first_h1(body: str) -> str | None:
-    match = _H1_PATTERN.search(body)
-    return match.group(1).strip() if match else None
-
-
-def _resolve_title(metadata: dict[str, object], body: str, path: Path) -> str:
-    front_title = metadata.get("title")
-    if isinstance(front_title, str) and front_title.strip():
-        return front_title.strip()
-    h1 = _first_h1(body)
-    if h1:
-        return h1
-    return path.stem
-
-
-def _read_id_mapping(path: Path) -> dict[str, str]:
-    raw = path.read_text(encoding="utf-8")
-    if not raw.strip():
-        return {}
-    data = json.loads(raw)
-    if not isinstance(data, dict):
-        raise ValueError(f"ULID sidecar {path} is not a JSON object (found {type(data).__name__}).")
-    return {str(k): str(v) for k, v in data.items()}
 
 
 @final
@@ -153,7 +124,7 @@ class JsonIdStore:
     def _load_sync(self) -> dict[str, str]:
         primary_exists = self._path.exists()
         try:
-            primary = _read_id_mapping(self._path) if primary_exists else {}
+            primary = read_ulid_mappings(self._path) if primary_exists else {}
         except OSError as exc:
             _LOGGER.error("Failed to read ULID sidecar %s: %s", self._path, exc)
             raise
@@ -163,7 +134,7 @@ class JsonIdStore:
             return primary
 
         try:
-            migrated = _read_id_mapping(migrated_path)
+            migrated = read_ulid_mappings(migrated_path)
         except OSError as exc:
             _LOGGER.error("Failed to read migrated ULID sidecar %s: %s", migrated_path, exc)
             raise
@@ -286,9 +257,15 @@ class FilesystemVaultReader:
 
         rel_path = _normalize_rel_path(resolved, self._vault_root)
         note_id = await self._resolve_id(metadata, rel_path)
-        title = _resolve_title(metadata, body, resolved)
+        title = resolve_note_title(
+            metadata,
+            body,
+            resolved,
+            h1_pattern=_H1_PATTERN,
+            empty_h1_falls_back=True,
+        )
         tags = extract_tags(metadata, body)
-        aliases = _coerce_aliases(metadata.get("aliases"))
+        aliases = coerce_string_list(metadata.get("aliases"), keep_empty_scalar=True)
 
         fs_ctime = datetime.fromtimestamp(stat.st_ctime, tz=UTC)
         fs_mtime = datetime.fromtimestamp(stat.st_mtime, tz=UTC)
@@ -415,42 +392,25 @@ class FilesystemVaultReader:
                 except (OSError, ValueError) as exc:
                     _LOGGER.warning("Alias index: skipping %s: %s", path, exc)
 
-            index: dict[str, str | None] = {}
             # Strict global priority per contracts section 2.6: title -> filename stem
             # -> aliases. A higher tier shadows lower tiers entirely. Within a
             # tier, multiple notes claiming the same key resolve to None
             # (ambiguous within that tier).
-            self._merge_alias_tier(index, notes, lambda n: (n.title,))
-            self._merge_alias_tier(index, notes, lambda n: (Path(n.rel_path).stem,))
-            self._merge_alias_tier(index, notes, lambda n: tuple(n.aliases))
-
-            self._alias_cache = index
-            return index
-
-    @staticmethod
-    def _merge_alias_tier(
-        index: dict[str, str | None],
-        notes: list[Note],
-        extract: Callable[[Note], Iterable[str]],
-    ) -> None:
-        tier: dict[str, str | None] = {}
-        for note in notes:
-            for raw in extract(note):
-                key = raw.strip().lower()
-                if not key or key in index:
-                    continue
-                if key in tier:
-                    if tier[key] != note.id:
-                        tier[key] = None
-                else:
-                    tier[key] = note.id
-        for key, value in tier.items():
-            if value is None:
-                _LOGGER.warning(
-                    "Alias %r ambiguous within priority tier; marking unresolved.",
-                    key,
-                )
-            index[key] = value
+            self._alias_cache = build_tiered_alias_index(
+                notes,
+                identity=lambda note: note.id,
+                title=lambda note: (note.title,),
+                stem=lambda note: (Path(note.rel_path).stem,),
+                aliases=lambda note: note.aliases,
+                normalize=lambda value: value.strip().lower(),
+            )
+            for key, value in self._alias_cache.items():
+                if value is None:
+                    _LOGGER.warning(
+                        "Alias %r ambiguous within priority tier; marking unresolved.",
+                        key,
+                    )
+            return self._alias_cache
 
 
 # ---------------------------------------------------------------------------

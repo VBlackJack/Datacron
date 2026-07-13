@@ -905,7 +905,7 @@ class TestCreateNoteAi:
         tmp_vault: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from datacron.mcp import tools
+        from datacron.mcp.tools import write as tools
 
         colliding_id = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
         replacement_id = "01HQXR7K9YZ8M2N3PQRSTV4WXA"
