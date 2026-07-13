@@ -35,10 +35,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
-from datacron.core.frontmatter import FrontmatterError, parse
+from datacron.core.frontmatter import (
+    FrontmatterError,
+    build_tiered_alias_index,
+    coerce_string_list,
+    parse,
+    resolve_note_title,
+)
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
+from datacron.core.paths import read_ulid_mappings
 from datacron.indexing.chunker import MarkdownChunker
 
 __all__ = [
@@ -81,7 +88,7 @@ class ReliabilityNote:
 
     @property
     def supersedes(self) -> tuple[str, ...]:
-        return tuple(_string_list(self.metadata.get("supersedes")))
+        return tuple(coerce_string_list(self.metadata.get("supersedes")))
 
 
 @dataclass(frozen=True)
@@ -244,8 +251,8 @@ def _load_notes(root: Path) -> tuple[list[ReliabilityNote], list[str]]:
                 rel_path=rel_path,
                 metadata=metadata,
                 body=body,
-                title=_resolve_title(metadata, body, path),
-                aliases=tuple(_string_list(metadata.get("aliases"))),
+                title=resolve_note_title(metadata, body, path, h1_pattern=_H1_PATTERN),
+                aliases=tuple(coerce_string_list(metadata.get("aliases"))),
                 mixed_eol=_has_mixed_eol(raw),
                 content_hash=hashlib.sha256(raw).hexdigest(),
             )
@@ -283,18 +290,15 @@ def _load_sidecar_ids(root: Path) -> dict[str, str]:
         if not path.is_file():
             continue
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload = read_ulid_mappings(
+                path,
+                require_string_pairs=True,
+                invalid_object_is_empty=True,
+            )
         except (OSError, json.JSONDecodeError) as exc:
             _logger().warning("cannot read ID sidecar %s: %s", path, exc)
             continue
-        if isinstance(payload, dict):
-            merged.update(
-                {
-                    str(rel_path): str(note_id)
-                    for rel_path, note_id in payload.items()
-                    if isinstance(rel_path, str) and isinstance(note_id, str)
-                }
-            )
+        merged.update(payload)
     return merged
 
 
@@ -439,29 +443,14 @@ def _append_broken_wikilink(
 
 
 def _build_alias_index(notes: Sequence[ReliabilityNote]) -> dict[str, str | None]:
-    index: dict[str, str | None] = {}
-    _merge_alias_tier(index, notes, lambda note: (note.title,))
-    _merge_alias_tier(index, notes, lambda note: (Path(note.rel_path).stem,))
-    _merge_alias_tier(index, notes, lambda note: note.aliases)
-    return index
-
-
-def _merge_alias_tier(
-    index: dict[str, str | None],
-    notes: Sequence[ReliabilityNote],
-    extract: Any,
-) -> None:
-    tier: dict[str, str | None] = {}
-    for note in notes:
-        for raw in extract(note):
-            key = _normalize_alias(str(raw))
-            if not key or key in index:
-                continue
-            if key in tier and tier[key] != note.rel_path:
-                tier[key] = None
-            else:
-                tier[key] = note.rel_path
-    index.update(tier)
+    return build_tiered_alias_index(
+        notes,
+        identity=lambda note: note.rel_path,
+        title=lambda note: (note.title,),
+        stem=lambda note: (Path(note.rel_path).stem,),
+        aliases=lambda note: note.aliases,
+        normalize=_normalize_alias,
+    )
 
 
 def _build_aggressive_alias_index(
@@ -545,26 +534,6 @@ def _canonical_cycle(cycle: Iterable[str]) -> tuple[str, ...]:
     rotations = [tuple(nodes[index:] + nodes[:index]) for index in range(len(nodes))]
     selected = min(rotations)
     return (*selected, selected[0])
-
-
-def _resolve_title(metadata: Mapping[str, Any], body: str, path: Path) -> str:
-    title = metadata.get("title")
-    if isinstance(title, str) and title.strip():
-        return title.strip()
-    heading = _H1_PATTERN.search(body)
-    return heading.group(1).strip() if heading else path.stem
-
-
-def _string_list(value: object) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        values = value.replace(";", ",").split(",")
-    elif isinstance(value, (list, tuple, set)):
-        values = [str(item) for item in value]
-    else:
-        values = [str(value)]
-    return [item.strip() for item in values if item.strip()]
 
 
 def _normalize_alias(value: str) -> str:
