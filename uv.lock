@@ -374,7 +374,7 @@ requires-dist = [
     { name = "python-ulid", specifier = ">=2.4" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.7" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.13.2" },
     { name = "typer", specifier = ">=0.12" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
 ]
