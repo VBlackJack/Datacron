@@ -151,6 +151,10 @@ class FTS5Store(Protocol):
         """Return the indexed vault-relative path for ``note_id``, if present."""
         ...
 
+    async def get_note_id(self, rel_path: str) -> str | None:
+        """Return the indexed note ID for ``rel_path``, if present."""
+        ...
+
     async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
         """Return ``rel_path -> (note_id, content_hash)`` for index freshness checks."""
         ...
@@ -206,6 +210,8 @@ class RipgrepWrapper(Protocol):
         limit: int = 20,
         store: FTS5Store | None = None,
         rg_path: str | None = None,
+        fallback_max_pattern_length: int | None = None,
+        fallback_timeout_seconds: float | None = None,
     ) -> list[SearchResult]:
         """Run ripgrep against ``vault_root`` and resolve matches."""
         ...

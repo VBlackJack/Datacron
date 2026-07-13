@@ -26,17 +26,23 @@ from asyncio.subprocess import PIPE
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, final
 
-from datacron.core.config import DEFAULT_RIPGREP_PATH
+from datacron.core.config import (
+    DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH,
+    DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS,
+    DEFAULT_RIPGREP_PATH,
+)
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, SearchResult
 from datacron.core.protocols import FTS5Store
-from datacron.indexing.fts5_store import SQLiteFTS5Store
 
-__all__ = ["RipgrepError", "RipgrepWrapper"]
+__all__ = ["RegexFallbackError", "RipgrepError", "RipgrepWrapper"]
 
 _LOGGER = get_logger(__name__)
 _RIPGREP_PATH_ENV: Final[str] = "DATACRON_RIPGREP_PATH"
 _NO_MATCH_RETURN_CODE: Final[int] = 1
+_NESTED_QUANTIFIER_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"\([^)]*(?:\+|\*)[^)]*\)(?:\+|\*|\{)"
+)
 
 
 class RipgrepError(RuntimeError):
@@ -47,6 +53,10 @@ class RipgrepError(RuntimeError):
         self.stderr = stderr
         message = stderr.strip() or "(no stderr)"
         super().__init__(f"ripgrep exited with status {returncode}: {message}")
+
+
+class RegexFallbackError(RuntimeError):
+    """Raised when the bounded Python regex fallback cannot run safely."""
 
 
 @final
@@ -61,6 +71,8 @@ class RipgrepWrapper:
         limit: int = 20,
         store: FTS5Store | None = None,
         rg_path: str | None = None,
+        fallback_max_pattern_length: int | None = None,
+        fallback_timeout_seconds: float | None = None,
     ) -> list[SearchResult]:
         """Search with ripgrep, falling back to indexed chunks if the binary is absent.
 
@@ -89,6 +101,16 @@ class RipgrepWrapper:
                 glob=glob,
                 limit=limit,
                 store=store,
+                max_pattern_length=(
+                    DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH
+                    if fallback_max_pattern_length is None
+                    else fallback_max_pattern_length
+                ),
+                timeout_seconds=(
+                    DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS
+                    if fallback_timeout_seconds is None
+                    else fallback_timeout_seconds
+                ),
             )
 
         if proc.stdout is None or proc.stderr is None:
@@ -177,10 +199,40 @@ async def _fallback_indexed_regex_search(
     glob: str | None,
     limit: int,
     store: FTS5Store,
+    max_pattern_length: int,
+    timeout_seconds: float,
 ) -> list[SearchResult]:
+    if len(pattern) > max_pattern_length:
+        raise RegexFallbackError(
+            f"regex fallback pattern exceeds {max_pattern_length} characters -- install ripgrep"
+        )
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            chunks = [chunk async for chunk in store.iter_all_chunks()]
+            return await asyncio.to_thread(
+                _scan_indexed_chunks,
+                pattern,
+                glob,
+                limit,
+                chunks,
+            )
+    except TimeoutError:
+        raise RegexFallbackError("regex fallback timed out -- install ripgrep") from None
+
+
+def _scan_indexed_chunks(
+    pattern: str,
+    glob: str | None,
+    limit: int,
+    chunks: list[Chunk],
+) -> list[SearchResult]:
+    # Python's re engine can hold the GIL during nested-quantifier backtracking,
+    # so reject that common catastrophic shape before relying on async timeout.
+    if _NESTED_QUANTIFIER_PATTERN.search(pattern):
+        raise RegexFallbackError("regex fallback timed out -- install ripgrep")
     compiled = re.compile(pattern)
     results: list[SearchResult] = []
-    async for chunk in store.iter_all_chunks():
+    for chunk in chunks:
         if glob and not fnmatch.fnmatch(chunk.note_rel_path, glob):
             continue
         snippet = _first_matching_line_snippet(chunk.content, compiled)
@@ -278,22 +330,7 @@ async def _resolve_chunk(store: FTS5Store, rel_path: str, line_number: int) -> C
 
 
 async def _note_id_for_rel_path(store: FTS5Store, rel_path: str) -> str | None:
-    if not isinstance(store, SQLiteFTS5Store):
-        _LOGGER.info(
-            "ripgrep match dropped: store does not expose ulid_paths lookup for %s",
-            rel_path,
-        )
-        return None
-
-    connection = store._require_connection()
-    async with connection.execute(
-        "SELECT note_id FROM ulid_paths WHERE rel_path = ? LIMIT 1;",
-        (rel_path,),
-    ) as cursor:
-        row = await cursor.fetchone()
-    if row is None:
-        return None
-    return str(row[0])
+    return await store.get_note_id(rel_path)
 
 
 def _relative_path_from_match(path_payload: object, vault_root: Path) -> str | None:

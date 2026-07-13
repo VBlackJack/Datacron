@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +28,12 @@ import pytest
 
 from datacron.core.models import Chunk, Note
 from datacron.indexing.fts5_store import SQLiteFTS5Store
-from datacron.indexing.ripgrep import RipgrepError, RipgrepWrapper, _build_command
+from datacron.indexing.ripgrep import (
+    RegexFallbackError,
+    RipgrepError,
+    RipgrepWrapper,
+    _build_command,
+)
 
 NoteFactory = Callable[..., Note]
 ChunkFactory = Callable[..., Chunk]
@@ -391,6 +397,29 @@ async def test_fallback_honors_glob_limit_score_and_snippet(
     assert limited[0].snippet == "Alpha **intro**"
     assert [result.chunk for result in scoped] == [indexed.chunks["beta"]]
     assert scoped[0].snippet == "Beta **intro**"
+
+
+async def test_pathological_fallback_regex_returns_before_timeout(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _create(*_args: str, **_kwargs: object) -> _FakeProcess:
+        raise FileNotFoundError("missing")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _create)
+    timeout_seconds = 0.5
+    started = time.perf_counter()
+
+    with pytest.raises(RegexFallbackError, match="regex fallback timed out -- install ripgrep"):
+        await RipgrepWrapper().search(
+            "(a+)+$",
+            indexed.vault_root,
+            store=indexed.store,
+            rg_path="missing-rg",
+            fallback_timeout_seconds=timeout_seconds,
+        )
+
+    assert time.perf_counter() - started < timeout_seconds
 
 
 async def test_rg_error_exit_raises_typed_error_and_logs_warning(

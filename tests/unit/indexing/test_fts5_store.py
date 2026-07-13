@@ -323,6 +323,8 @@ async def test_get_note_rel_path_uses_indexed_identity(
 
     assert await store.get_note_rel_path(note.id) == note.rel_path
     assert await store.get_note_rel_path(_OTHER_NOTE_ID) is None
+    assert await store.get_note_id(note.rel_path) == note.id
+    assert await store.get_note_id("missing.md") is None
     await store.close()
 
 

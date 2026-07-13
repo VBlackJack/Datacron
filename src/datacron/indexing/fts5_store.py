@@ -254,6 +254,13 @@ WHERE note_id = ?
 LIMIT 1;
 """
 
+_GET_NOTE_ID_SQL: Final[str] = """
+SELECT note_id
+FROM ulid_paths
+WHERE rel_path = ?
+LIMIT 1;
+"""
+
 _LIST_INDEXED_NOTES_WITH_MTIME_SQL: Final[str] = """
 SELECT rel_path, note_id, content_hash, fs_mtime
 FROM notes
@@ -480,6 +487,13 @@ class SQLiteFTS5Store:
         """Return the indexed vault-relative path for ``note_id``, if present."""
         connection = self._require_connection()
         async with connection.execute(_GET_NOTE_REL_PATH_SQL, (note_id,)) as cursor:
+            row = await cursor.fetchone()
+        return None if row is None else str(row[0])
+
+    async def get_note_id(self, rel_path: str) -> str | None:
+        """Return the indexed note ID for ``rel_path``, if present."""
+        connection = self._require_connection()
+        async with connection.execute(_GET_NOTE_ID_SQL, (rel_path,)) as cursor:
             row = await cursor.fetchone()
         return None if row is None else str(row[0])
 
