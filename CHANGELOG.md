@@ -28,6 +28,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   Windows, macOS, and Linux, smoke-tests each binary, and attaches them to the GitHub Release.
 - `scripts/bump_version.py`: computes the next CalVer (`YYYY.MMDD.XX`, UTC date + same-day
   counter) from `__init__.py`, so cutting a release never requires choosing a version number.
+  `scripts/release.bat` wraps it for a one-click Windows release (bump, commit, tag, push,
+  with a confirmation prompt).
 - Fourteen MCP tools covering vault reads, lexical and regex search, confined writes,
   operational health, note history, operation-audit queries, and a cache-only
   `contradiction_scan` advisory (experimental, non-blocking).
