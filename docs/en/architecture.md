@@ -395,7 +395,7 @@ sequenceDiagram
 - [ ] Intensive dogfooding on Julien's personal vault.
 - [ ] Polish: `--help`, error messages, verified README quickstart.
 - [ ] GitHub Actions CI: ruff + mypy --strict + pytest + shellcheck.
-- [ ] Release `datacron 0.1.0` on PyPI.
+- [ ] Publish the first `datacron` release on PyPI (CalVer versioning, see CHANGELOG).
 
 **Success criterion**: real questions from Claude Desktop beat folder-dump on quality, latency,
 and token cost. Current measurement on golden Julien: recall@5 0.89, recall@10 0.95, recall@20
