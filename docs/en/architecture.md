@@ -32,7 +32,7 @@ The delivered foundation stays deliberately **minimalist**:
 
 **Delivered on `main` after the Phase 0 foundation**:
 - Static FR↔EN query expansion at search time, configured by `VAULT.yaml`.
-- Write tools: `create_note_ai`, `append_journal`, `set_frontmatter`, `patch_note_section`, and `revert_note`, disabled by default without `DATACRON_WRITE_PATHS`, confined, atomic, and versioned.
+- Write tools: `create_note_ai`, `append_journal`, `set_frontmatter`, `patch_note_section`, and `revert_note`, disabled by default without `DATACRON_WRITE_PATHS`, confined, atomic, and journaled.
 - Conservative temporal re-ranking: explicit demotion of superseded notes and a light confidence penalty.
 
 **Still out of scope**:

@@ -68,7 +68,7 @@ trade-off.
 | 6 | Retrieval stack | 🟡 | ⚠️ | 🔄 — **ripgrep + SQLite FTS5 only in v1**, embeddings after eval |
 | 7 | Prompt injection | ❌ classifier | 🟡 | 🔄 — **sandbox delimiters only**, focus on tool-layer security |
 | 8 | Multi-client | 🟡 (Claude+Cursor) | ❌ | 🔄 — **Claude Desktop+Code only v1**, Cursor v1.1 |
-| 9 | Monorepo 5 packages | ✅ | 🟡 | 🔄 — **single Python package** v1, monorepo kept for Tauri stub |
+| 9 | Monorepo 5 packages | ✅ | 🟡 | 🔄 — **single Python package** v1, monorepo left open for Tauri stub |
 | 10 | 4 distribution channels | ⚠️ | ⚠️ | 🔄 — **PyPI/pipx only v1**, brew v1.1 |
 | 11 | 8 phases 20 weeks | ❌ | ❌ | 🔄 — **4-week read-only MVP**, rest unblocked by usage |
 | 12 | Multi-machine sync | hands-off | single-writer | 🔄 — **single-writer rule v1**, other patterns documented "unsupported" |
