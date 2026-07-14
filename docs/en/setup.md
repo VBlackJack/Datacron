@@ -9,6 +9,29 @@ Claude Desktop or Claude Code. It complements the [README](../../README.en.md) a
 > Datacron never modifies your notes unless you explicitly enable writing, and never sends
 > anything to a cloud service. It only adds a `.datacron/` folder next to your notes.
 
+## Guided setup (the easy path)
+
+A single command does everything — initialize the sidecar, build the index, and wire the MCP
+client:
+
+```bash
+datacron setup
+```
+
+It asks questions with sensible defaults (vault location, client, whether to enable writing,
+durability, read-only), then runs `init`, indexes, and writes the client config, before
+printing a summary and how to verify. Useful options:
+
+- `datacron setup --yes` — accept every default, no prompts (unattended install).
+- `datacron setup --vault PATH --client claude-desktop` — target a specific vault.
+- `datacron setup --enable-write --write-path PATH` — enable writing on a subfolder (default: `<vault>/_memory`).
+- `datacron setup --durability strict --read-only` — strict durability and certified read-only mode.
+- `datacron setup --no-index` — skip building the index.
+- `datacron setup --client none` — configure the vault without writing any client config (for Claude Code / manual stdio).
+
+The sections below describe the **same steps manually**, if you prefer full step-by-step
+control.
+
 ## 1. Prerequisites
 
 Before you start, make sure you have:
