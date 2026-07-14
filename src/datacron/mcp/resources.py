@@ -33,6 +33,7 @@ from datacron.core.config import (
     INDEX_DB_FILENAME,
     TOKEN_ESTIMATE_CHARS_PER_TOKEN,
     VAULT_CONFIG_FILENAME,
+    VAULT_VERSION_KEY,
 )
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
@@ -123,7 +124,7 @@ async def _build_vault_info(app: DatacronApp) -> str:
     indexed_notes, indexed_chunks, last_indexed_at, stats_error = await _safe_store_stats(app)
 
     info: dict[str, Any] = {
-        "datacron_version": __version__,
+        VAULT_VERSION_KEY: __version__,
         "vault_root": str(app.vault_root),
         "vault_initialized": vault_config.is_file(),
         "vault_config": str(vault_config) if vault_config.is_file() else None,

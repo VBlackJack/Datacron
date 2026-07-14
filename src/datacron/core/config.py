@@ -56,6 +56,11 @@ DEFAULT_CHUNK_MAX_TOKENS: Final[int] = 1024
 DEFAULT_GET_NOTE_MAX_TOKENS: Final[int] = 25000
 DEFAULT_HISTORY_RETENTION_DAYS: Final[int] = 30
 DEFAULT_HISTORY_MODE: Final[str] = "full"
+# Canonical text encoding and line-ending convention for the sidecar and the
+# ``VAULT.yaml`` ``encoding``/``line_endings`` fields. Single source of truth so
+# the writer (bootstrap) and the model default cannot drift apart.
+DEFAULT_ENCODING: Final[str] = "utf-8"
+DEFAULT_LINE_ENDINGS: Final[str] = "lf"
 DEFAULT_REDACT_SECRETS: Final[str] = "all"
 DEFAULT_DURABILITY_MODE: Final[str] = "best-effort"
 DEFAULT_SCRUB_NOTES_PER_SECOND: Final[float] = 50.0
@@ -89,6 +94,10 @@ HISTORY_DIR_NAME: Final[str] = "history"
 OPLOG_DIR_NAME: Final[str] = "oplog"
 OPLOG_PENDING_DIR_NAME: Final[str] = "pending"
 VAULT_CONFIG_FILENAME: Final[str] = "VAULT.yaml"
+# Key under which the writing Datacron build (package version) is stamped, both
+# in ``VAULT.yaml`` (provenance) and the ``vault/info`` MCP resource. Must match
+# the ``VaultConfig.datacron_version`` field name.
+VAULT_VERSION_KEY: Final[str] = "datacron_version"
 LOG_FILENAME_PATTERN: Final[str] = "datacron_{date}.log"
 LOG_FORMAT: Final[str] = "[%(asctime)s] [%(levelname)s] %(message)s"
 LOG_DATE_FORMAT: Final[str] = "%Y-%m-%d %H:%M:%S"
@@ -114,8 +123,8 @@ class VaultConfig(BaseModel):
     datacron_version: str | None = None
     vault_id: str | None = None
     created: str | None = None
-    encoding: str = "utf-8"
-    line_endings: str = "lf"
+    encoding: str = DEFAULT_ENCODING
+    line_endings: str = DEFAULT_LINE_ENDINGS
     history_retention_days: int = Field(default=DEFAULT_HISTORY_RETENTION_DAYS, ge=1)
     history_mode: str = DEFAULT_HISTORY_MODE
     folders: dict[str, str] = Field(default_factory=dict)
