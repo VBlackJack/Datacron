@@ -134,7 +134,7 @@ flowchart TB
 
 ## 5. MCP v1 catalog
 
-### 5.1 Tools (13)
+### 5.1 Tools (14)
 
 | Group | Tool | Description | Implementation |
 |---|---|---|---|
@@ -151,6 +151,7 @@ flowchart TB
 | Operational | `get_health` | Freshness, integrity, checksum, durability, and invariant evidence. | Read-only health scanner |
 | Operational | `get_note_history` | Committed operation metadata for a note, without reading historical content. | Operation journal |
 | Operational | `audit_query` | Read-only query of the journal by period, tool, or note. | Operation journal |
+| Advisory (experimental) | `contradiction_scan` | Cache-only advisory report over the frozen contradiction pool. Not validated on real content, uncalibrated confidence; must **never** block writes, merges, health, or CI. | Frozen packaged advisory cache |
 
 ### 5.2 Resources (3)
 
@@ -287,9 +288,10 @@ datacron/                              # GitHub: jbombled/datacron
 │   │   └── vault_writer.py            # Confined note transactions
 │   ├── mcp/
 │   │   ├── server.py                  # FastMCP entry (`datacron mcp serve`)
-│   │   ├── tools.py                   # 13 read/write/ops tools
+│   │   ├── tools/                     # 14 tools (read/write/ops/advisory), split by concern
 │   │   ├── resources.py               # 3 resources
 │   │   ├── health.py                  # Operational health payload
+│   │   ├── security_manifest.py      # Closed tool-capability manifest
 │   │   └── sandbox.py                 # Content wrapping + escaping
 │   ├── indexing/
 │   │   ├── chunker.py                 # AST-based Markdown chunker

@@ -190,6 +190,12 @@ vault.
 | `get_note_history` | lists the committed operation metadata of a note without reading historical content or modifying the journal |
 | `audit_query` | queries operation metadata by period, tool, or note without modifying the journal or the vault |
 
+### Advisory (experimental)
+
+| Tool | Description |
+|---|---|
+| `contradiction_scan` | cache-only advisory report over the frozen contradiction pool; not validated on real content, uncalibrated confidence, never blocks writes, merges, health, or CI |
+
 MCP resources:
 
 - `datacron://vault/map`
