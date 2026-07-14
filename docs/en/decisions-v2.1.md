@@ -257,6 +257,10 @@ multiple packages when we have ≥3 genuinely distinct subsystems (Agent, Daemon
 - 📅 Docker → CI/demo only, not distributed (uid/gid hell for file-local)
 - 📅 Tauri binaries → deferred to Studio v2 if demanded
 
+> **Addendum (ADR-017, 2026-07-14):** this decision is revised — a standalone executable
+> (PyInstaller) is added **alongside** PyPI/pipx, for users without Python. PyPI/pipx remains
+> the recommended channel for Python environments. See [architecture.md](architecture.md).
+
 ### 4.11 Roadmap — 4-week read-only MVP
 
 **v2.0**: 8 phases ~20 weeks.
