@@ -74,6 +74,9 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: out/${{ matrix.artifact }}
+          # Binaries are also attached to the GitHub Release; the workflow
+          # artifact is only a hand-off to the release job, so expire it fast.
+          retention-days: 1
 
   release:
     name: Attach binaries to the GitHub Release
