@@ -130,7 +130,7 @@ datacron status --vault /path/to/vault
 Typical output:
 
 ```text
-Datacron 0.1.0.dev0
+Datacron 2026.0714.00
   vault_root: /path/to/vault
   initialized: yes
   vault_id:   01J...
@@ -152,8 +152,9 @@ datacron mcp install --client claude-desktop --vault /path/to/vault
 ```
 
 This writes the server entry into the Claude Desktop configuration and sets the read
-allowlist to the vault. **Restart Claude Desktop** for the change to take effect. Only
-`claude-desktop` is supported by the automatic installer today.
+allowlist to the vault. **Restart Claude Desktop** for the change to take effect. The
+`mcp install` command targets only `claude-desktop`; to register Datacron with **every**
+detected client at once, use `datacron setup` instead (see "Guided setup" above).
 
 To target a specific configuration file (testing, non-standard install):
 

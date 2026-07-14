@@ -25,7 +25,9 @@ ULIDs, history, and the operation journal.
 | Writing | 5 confined, reversible tools, disabled by default without `DATACRON_WRITE_PATHS` |
 | Index | `datacron index` incremental, `datacron reindex` full, automatic repair on read |
 | Evaluation | `datacron eval` with recall@k, precision, latency, and tokens |
-| Tested clients | Claude Desktop via installer, Claude Code via stdio server |
+| Guided setup | `datacron setup`: init + index + MCP registration in one command |
+| Clients | Auto-detect and register via `datacron setup --client all`: Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, VS Code |
+| Distribution | PyPI/pipx, or a standalone executable (PyInstaller) with no Python required |
 
 Current measurement on the Julien golden set, with query expansion and temporal re-rank
 enabled:
@@ -61,6 +63,16 @@ Runtime prerequisites:
 
 ## Quick start
 
+The easy path — one command detects your AI clients, initializes the vault, indexes it, and
+registers Datacron everywhere:
+
+```bash
+datacron setup            # interactive; add --yes for all defaults
+```
+
+See the [installation guide](docs/en/setup.md) for options (`--client`, `--scope`, writing,
+durability). Or step by step:
+
 ```bash
 datacron init /path/to/vault
 datacron index --vault /path/to/vault
@@ -68,7 +80,7 @@ datacron status --vault /path/to/vault
 datacron mcp install --client claude-desktop --vault /path/to/vault
 ```
 
-Restart Claude Desktop after `datacron mcp install`.
+Restart the client (e.g. Claude Desktop) after installation.
 
 To run the server manually:
 
@@ -230,8 +242,9 @@ datacron mcp install --client claude-desktop --vault /path/to/vault
 - No autonomous agent: the MCP client orchestrates.
 - No GUI.
 - No concurrent multi-machine writes.
-- The automatic installer targets only Claude Desktop today. Other MCP clients can use
-  `datacron mcp serve` or `datacron-mcp` over stdio if their configuration allows it.
+- Client detection in `datacron setup` is best-effort (a config directory or a binary on the
+  `PATH`); an install in a non-standard location may be missed and can then be configured by
+  hand.
 
 ## Documentation
 
