@@ -25,7 +25,9 @@ les logs, les ULID internes, l'historique et le journal d'opérations.
 | Écriture | 5 tools confinés et réversibles, désactivés par défaut sans `DATACRON_WRITE_PATHS` |
 | Index | `datacron index` incrémental, `datacron reindex` complet, réparation automatique à la lecture |
 | Évaluation | `datacron eval` avec recall@k, precision, latence et tokens |
-| Clients testés | Claude Desktop via installateur, Claude Code via serveur stdio |
+| Setup guidé | `datacron setup` : init + index + enregistrement MCP en une commande |
+| Clients | Auto-détection et enregistrement via `datacron setup --client all` : Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, VS Code |
+| Distribution | PyPI/pipx, ou exécutable autonome (PyInstaller) sans Python requis |
 
 Mesure actuelle sur le golden set Julien, avec query-expansion et temporal re-rank actifs :
 
@@ -60,6 +62,16 @@ Prérequis runtime :
 
 ## Démarrage rapide
 
+Le plus simple — une commande détecte tes clients IA, initialise le vault, l'indexe et
+enregistre Datacron partout :
+
+```bash
+datacron setup            # interactif ; ajoute --yes pour tout par défaut
+```
+
+Voir le [guide d'installation](docs/fr/setup.md) pour les options (`--client`, `--scope`,
+écriture, durabilité). Ou étape par étape :
+
 ```bash
 datacron init /path/to/vault
 datacron index --vault /path/to/vault
@@ -67,7 +79,7 @@ datacron status --vault /path/to/vault
 datacron mcp install --client claude-desktop --vault /path/to/vault
 ```
 
-Redémarre Claude Desktop après `datacron mcp install`.
+Redémarre le client (ex. Claude Desktop) après l'installation.
 
 Pour lancer le serveur manuellement :
 
@@ -229,8 +241,9 @@ datacron mcp install --client claude-desktop --vault /path/to/vault
 - Pas d'agent autonome : le client MCP orchestre.
 - Pas de GUI.
 - Pas de writes concurrents multi-machines.
-- L'installateur automatique ne cible aujourd'hui que Claude Desktop. Les autres clients MCP
-  peuvent utiliser `datacron mcp serve` ou `datacron-mcp` en stdio si leur configuration le permet.
+- La détection des clients par `datacron setup` est best-effort (présence d'un dossier de config
+  ou d'un binaire sur le `PATH`) ; une installation dans un emplacement non standard peut être
+  manquée et se configure alors à la main.
 
 ## Documentation
 

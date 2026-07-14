@@ -130,7 +130,7 @@ datacron status --vault /chemin/vers/vault
 Sortie type :
 
 ```text
-Datacron 0.1.0.dev0
+Datacron 2026.0714.00
   vault_root: /chemin/vers/vault
   initialized: yes
   vault_id:   01J...
@@ -153,7 +153,9 @@ datacron mcp install --client claude-desktop --vault /chemin/vers/vault
 
 La commande écrit l'entrée serveur dans la configuration de Claude Desktop et fixe
 l'allowlist de lecture sur le vault. **Redémarre Claude Desktop** pour que le changement
-prenne effet. Seul `claude-desktop` est supporté par l'installateur automatique aujourd'hui.
+prenne effet. La commande `mcp install` ne vise que `claude-desktop` ; pour enregistrer
+Datacron dans **tous** les clients détectés d'un coup, utilise plutôt `datacron setup`
+(voir « Parcours guidé » plus haut).
 
 Pour cibler un fichier de configuration précis (test, install non standard) :
 
