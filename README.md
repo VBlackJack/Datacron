@@ -210,6 +210,8 @@ Resources MCP :
 ## Commandes CLI
 
 ```bash
+datacron setup                      # parcours guidé : init + index + config client
+datacron setup --yes                # tout par défaut, sans question
 datacron init /path/to/vault
 datacron status --vault /path/to/vault
 datacron index --vault /path/to/vault

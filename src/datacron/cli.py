@@ -22,24 +22,19 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
-from typing import Final, NoReturn
+from typing import NoReturn
 
+import click
 import typer
-import yaml
-from ulid import ULID
 
 from datacron import __version__
+from datacron.bootstrap import initialize_vault
 from datacron.core.config import (
-    DEFAULT_EXCLUDED_FILES,
-    DEFAULT_EXCLUDED_FOLDERS,
-    DEFAULT_HISTORY_MODE,
-    DEFAULT_HISTORY_RETENTION_DAYS,
-    HISTORY_DIR_NAME,
+    DEFAULT_DURABILITY_MODE,
     LOG_FILENAME_PATTERN,
-    OPLOG_DIR_NAME,
-    OPLOG_PENDING_DIR_NAME,
+    VALID_DURABILITY_MODES,
     Settings,
     VaultConfig,
     get_settings,
@@ -50,22 +45,23 @@ from datacron.core.logger import configure_logging, get_logger
 from datacron.core.paths import (
     sidecar_dir,
     sidecar_index_db,
-    sidecar_index_dir,
     sidecar_vault_config,
 )
-from datacron.core.query_expansion import query_expansion_seed
 from datacron.core.scope import SingleTenantVaultScope
 from datacron.core.vault import build_configured_reader
 from datacron.scrubber import CanaryInitializationError, ScrubState, initialize_canaries
+from datacron.setup_wizard import (
+    CLIENT_CHOICES,
+    CLIENT_CLAUDE_DESKTOP,
+    DEFAULT_WRITE_SUBFOLDER,
+    SetupPlan,
+    SetupResult,
+    run_setup,
+)
 
 __all__ = ["app", "mcp_entry"]
 
 _LOGGER = get_logger(__name__)
-
-DEFAULT_DRAFTS_FOLDER: Final[str] = "_drafts"
-DEFAULT_JOURNAL_FOLDER: Final[str] = "_journal"
-ENCODING_UTF8: Final[str] = "utf-8"
-LINE_ENDINGS_LF: Final[str] = "lf"
 
 app = typer.Typer(
     name="datacron",
@@ -122,26 +118,6 @@ def _settings_for_cli_vault(settings: Settings, vault_root: Path) -> Settings:
     return settings.model_copy(update=updates)
 
 
-def _format_vault_yaml(vault_id: str, created: datetime) -> str:
-    payload = {
-        "datacron_version": __version__,
-        "vault_id": vault_id,
-        "created": created.isoformat(),
-        "encoding": ENCODING_UTF8,
-        "line_endings": LINE_ENDINGS_LF,
-        "history_retention_days": DEFAULT_HISTORY_RETENTION_DAYS,
-        "history_mode": DEFAULT_HISTORY_MODE,
-        "folders": {
-            "drafts": DEFAULT_DRAFTS_FOLDER,
-            "journal": DEFAULT_JOURNAL_FOLDER,
-        },
-        "excluded_folders": list(DEFAULT_EXCLUDED_FOLDERS),
-        "excluded_files": list(DEFAULT_EXCLUDED_FILES),
-        "query_expansion": query_expansion_seed(),
-    }
-    return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
-
-
 def _load_vault_yaml(vault_root: Path) -> VaultConfig | None:
     return load_vault_config(sidecar_vault_config(vault_root))
 
@@ -180,33 +156,20 @@ def init(
     """Initialize the ``.datacron/`` sidecar in a Markdown vault."""
     started = _log_invocation("init", vault_path=str(vault_path), force=force)
 
-    if not vault_path.exists():
-        vault_path.mkdir(parents=True, exist_ok=True)
-        _LOGGER.info("Created vault directory %s", vault_path)
-    elif not vault_path.is_dir():
-        _error(f"{vault_path} exists and is not a directory.")
+    try:
+        result = initialize_vault(vault_path, force=force)
+    except NotADirectoryError as exc:
+        _error(str(exc))
 
-    sidecar = sidecar_dir(vault_path)
-    sidecar.mkdir(parents=True, exist_ok=True)
-    sidecar_index_dir(vault_path).mkdir(parents=True, exist_ok=True)
-    (sidecar / "logs").mkdir(parents=True, exist_ok=True)
-    (sidecar / HISTORY_DIR_NAME).mkdir(parents=True, exist_ok=True)
-    (sidecar / OPLOG_DIR_NAME / OPLOG_PENDING_DIR_NAME).mkdir(parents=True, exist_ok=True)
-
-    config_path = sidecar_vault_config(vault_path)
-    if config_path.exists() and not force:
-        _print(f"VAULT.yaml already present at {config_path}; use --force to overwrite.")
+    if not result.created:
+        _print(f"VAULT.yaml already present at {result.config_path}; use --force to overwrite.")
         _log_completion("init", started)
         return
 
-    vault_id = str(ULID())
-    now = datetime.now(tz=UTC)
-    config_path.write_text(_format_vault_yaml(vault_id, now), encoding=ENCODING_UTF8)
-
-    _print(f"Initialized Datacron vault at {vault_path}")
-    _print(f"  sidecar:    {sidecar}")
-    _print(f"  config:     {config_path}")
-    _print(f"  vault_id:   {vault_id}")
+    _print(f"Initialized Datacron vault at {result.vault_path}")
+    _print(f"  sidecar:    {result.sidecar_path}")
+    _print(f"  config:     {result.config_path}")
+    _print(f"  vault_id:   {result.vault_id}")
     _log_completion("init", started)
 
 
@@ -451,6 +414,177 @@ async def _run_eval(vault_root: Path, questions_path: Path) -> None:
         await LocalEvalHarness().run(questions, store, RipgrepWrapper())
     finally:
         await store.close()
+
+
+@app.command()
+def setup(
+    vault: Path | None = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Vault root to set up. Prompted interactively if omitted.",
+    ),
+    client: str | None = typer.Option(
+        None,
+        "--client",
+        help=f"MCP client to configure ({', '.join(CLIENT_CHOICES)}).",
+    ),
+    enable_write: bool = typer.Option(
+        False,
+        "--enable-write",
+        help="Enable the confined write tools on a subfolder.",
+    ),
+    write_path: Path | None = typer.Option(
+        None,
+        "--write-path",
+        help="Write-allowlisted directory (implies --enable-write).",
+    ),
+    durability: str | None = typer.Option(
+        None,
+        "--durability",
+        help="Durability mode (best-effort or strict).",
+    ),
+    read_only: bool = typer.Option(
+        False,
+        "--read-only",
+        help="Configure the server for certified read-only mode.",
+    ),
+    build_index: bool = typer.Option(
+        True,
+        "--index/--no-index",
+        help="Build the search index during setup.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing .datacron/VAULT.yaml.",
+    ),
+    assume_yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Accept defaults for every unspecified option; no prompts.",
+    ),
+) -> None:
+    """Guided end-to-end setup: initialize, index, and wire an MCP client.
+
+    Runs interactively by default, asking for the vault location and each
+    option not supplied as a flag. Pass ``--yes`` for an unattended run that
+    accepts the defaults, or provide flags to script the whole setup.
+    """
+    started = _log_invocation("setup", assume_yes=assume_yes)
+
+    resolved_vault = _prompt_vault(vault, assume_yes)
+    resolved_client = _prompt_client(client, assume_yes)
+    resolved_durability = _prompt_durability(durability, assume_yes)
+    resolved_enable_write, resolved_write_path = _prompt_write(
+        enable_write, write_path, resolved_vault, assume_yes
+    )
+    resolved_read_only = read_only or (
+        not assume_yes and typer.confirm("Configure certified read-only mode?", default=False)
+    )
+
+    plan = SetupPlan(
+        vault_path=resolved_vault,
+        build_index=build_index,
+        enable_write=resolved_enable_write,
+        write_path=resolved_write_path,
+        client=resolved_client,
+        durability=resolved_durability,
+        read_only=resolved_read_only,
+        force=force,
+    )
+
+    try:
+        result = asyncio.run(run_setup(plan))
+    except (ValueError, NotADirectoryError) as exc:
+        _error(str(exc))
+
+    _render_setup_result(result)
+    _log_completion("setup", started)
+
+
+def _prompt_vault(vault: Path | None, assume_yes: bool) -> Path:
+    if vault is not None:
+        return vault.expanduser().resolve()
+    if assume_yes:
+        return Path.cwd().resolve()
+    answer = typer.prompt("Vault path", default=str(Path.cwd()))
+    return Path(answer).expanduser().resolve()
+
+
+def _prompt_client(client: str | None, assume_yes: bool) -> str:
+    if client is not None:
+        if client not in CLIENT_CHOICES:
+            _error(f"Unknown client {client!r}. Expected one of {list(CLIENT_CHOICES)}.")
+        return client
+    if assume_yes:
+        return CLIENT_CLAUDE_DESKTOP
+    answer: str = typer.prompt(
+        "MCP client",
+        default=CLIENT_CLAUDE_DESKTOP,
+        type=click.Choice(list(CLIENT_CHOICES)),
+    )
+    return answer
+
+
+def _prompt_durability(durability: str | None, assume_yes: bool) -> str:
+    if durability is not None:
+        return durability
+    if assume_yes:
+        return DEFAULT_DURABILITY_MODE
+    answer: str = typer.prompt(
+        "Durability mode",
+        default=DEFAULT_DURABILITY_MODE,
+        type=click.Choice(sorted(VALID_DURABILITY_MODES)),
+    )
+    return answer
+
+
+def _prompt_write(
+    enable_write: bool,
+    write_path: Path | None,
+    vault_root: Path,
+    assume_yes: bool,
+) -> tuple[bool, Path | None]:
+    if write_path is not None:
+        return True, write_path.expanduser().resolve()
+    if enable_write:
+        resolved = _prompt_write_path(vault_root, assume_yes)
+        return True, resolved
+    if assume_yes:
+        return False, None
+    if not typer.confirm("Enable the confined write tools?", default=False):
+        return False, None
+    return True, _prompt_write_path(vault_root, assume_yes)
+
+
+def _prompt_write_path(vault_root: Path, assume_yes: bool) -> Path | None:
+    default_path = vault_root / DEFAULT_WRITE_SUBFOLDER
+    if assume_yes:
+        return default_path
+    answer = typer.prompt("Write-allowlisted directory", default=str(default_path))
+    return Path(answer).expanduser().resolve()
+
+
+def _render_setup_result(result: SetupResult) -> None:
+    _print("")
+    _print("Datacron setup complete.")
+    _print(f"  vault:      {result.bootstrap.vault_path}")
+    if result.indexed_notes is not None:
+        _print(f"  indexed:    {result.indexed_notes} notes")
+    if result.write_path is not None:
+        _print(f"  writing:    enabled -> {result.write_path}")
+    else:
+        _print("  writing:    disabled")
+    _print(f"  durability: {result.durability}")
+    _print(f"  read-only:  {'yes' if result.read_only else 'no'}")
+    if result.client_config_path is not None:
+        _print(f"  client:     {result.client_config_path}")
+        _print("Restart Claude Desktop for the change to take effect.")
+    for warning in result.warnings:
+        typer.secho(f"  warning: {warning}", fg=typer.colors.YELLOW, err=True)
+    _print("Verify from your client with get_health, or run `datacron status`.")
 
 
 # ---------------------------------------------------------------------------

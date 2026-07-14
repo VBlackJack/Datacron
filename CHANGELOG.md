@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datacron setup`, a guided end-to-end wizard that initializes the sidecar, builds the index,
+  and wires an MCP client in one command, with location and option choices (interactive by
+  default, `--yes` for unattended runs). Vault initialization is now shared through
+  `datacron.bootstrap` between `init` and `setup`.
 - Thirteen MCP tools covering vault reads, lexical and regex search, confined writes,
   operational health, note history, and operation-audit queries.
 - Content-addressed note history, durable operation evidence, integrity scrubbing, and
