@@ -12,7 +12,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "datacron"
-version = "0.1.0.dev0"
+dynamic = ["version"]
 description = "Local-first MCP server that exposes a Markdown vault through MCP."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -77,6 +77,9 @@ Homepage = "https://github.com/jbombled/datacron"
 Documentation = "https://github.com/jbombled/datacron/blob/main/README.md"
 Source = "https://github.com/jbombled/datacron"
 Issues = "https://github.com/jbombled/datacron/issues"
+
+[tool.hatch.version]
+path = "src/datacron/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/datacron"]

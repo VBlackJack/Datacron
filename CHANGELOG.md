@@ -2,10 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Releases use **Calendar Versioning**: `YYYY.MMDD.XX` — UTC year, zero-padded month and day,
+and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
+prefixed with `v` (e.g. `v2026.0714.00`).
 
-## [Unreleased]
+## [2026.0714.00] - 2026-07-14
 
 ### Added
 
