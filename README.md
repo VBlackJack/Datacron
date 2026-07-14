@@ -230,7 +230,18 @@ datacron mcp install --client claude-desktop --vault /path/to/vault
 
 ## Documentation
 
+Sommaire complet : [docs/index.md](docs/index.md).
+
+Pour démarrer :
+
+- [Guide d'installation et de configuration](docs/setup.md)
+- [Guide utilisateur](docs/guide-utilisateur.md)
+
+Références techniques :
+
+- [Conventions du vault (SPEC)](SPEC.md)
 - [Architecture et surface publique](docs/ARCHITECTURE.md)
+- [Décisions tranchées v2.1](docs/decisions-tranchees-v2.1.md)
 - [Frontière de sécurité](docs/security-boundary.md)
 - [Scrubber d'intégrité](docs/integrity-scrubber.md)
 - [Santé opérationnelle et durabilité](docs/operational-health.md)
