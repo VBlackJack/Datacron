@@ -58,7 +58,7 @@ mon-vault/
 Exemple de `.datacron/VAULT.yaml` :
 
 ```yaml
-datacron_version: "0.1.0"
+datacron_version: "2026.0714.00"   # estampille de provenance : le build Datacron qui a écrit ceci
 vault_id: 01HQXR7K9YZ8M2N3PQRSTV4WX5
 created: 2026-05-17T14:32:06+02:00
 encoding: utf-8
@@ -215,11 +215,21 @@ lit le journal.
 
 ## 10. Versioning
 
-Les conventions Datacron suivent le versioning sémantique au champ
-`.datacron/VAULT.yaml#datacron_version`. Datacron refuse d'opérer sur un vault déclarant une
-version majeure supérieure à celle qu'il supporte.
+Deux axes indépendants, volontairement séparés :
 
-| Version | Date | Changements |
+- **Ces conventions** (ce document) ont leur propre version — actuellement **v1.1**. Le tableau
+  ci-dessous suit les changements des conventions sur disque, pas une version logicielle.
+- **`.datacron/VAULT.yaml#datacron_version`** enregistre le *build Datacron* qui a écrit le
+  sidecar — une **estampille de provenance** (ex. `2026.0714.00`, la Calendar Version du
+  package). Ce **n'est pas** un contrôle de compatibilité de format.
+
+Datacron lit n'importe quel vault Markdown sans contrôle de version ni migration (voir §1). Il
+n'existe aujourd'hui aucun gate « refus si majeure supérieure ». Si le format sur disque devait
+un jour changer de façon incompatible, un champ de version de format dédié et un contrôle de
+compatibilité explicite seraient introduits à ce moment-là — l'estampille de provenance n'est
+jamais détournée à cette fin.
+
+| Version des conventions | Date | Changements |
 |---|---|---|
 | 1.0 | 2026-05-17 | Brouillon initial (déprécié, trop normatif) |
 | 1.1 | 2026-05-17 | Bascule vers référence de surcouche, filesystem-comme-machine-à-états, aucune migration requise |
