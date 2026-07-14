@@ -242,6 +242,11 @@ Le repo reste prêt à accueillir `crates/datacron-studio/` quand on construira 
 - 📅 Docker → CI/demo seulement, pas distribué (uid/gid hell pour file-local)
 - 📅 Tauri binaries → reportés à Studio v2 si demande
 
+> **Addendum (ADR-017, 2026-07-14)** : cette décision est révisée — un exécutable autonome
+> (PyInstaller) est ajouté **en complément** de PyPI/pipx, pour les utilisateurs sans Python.
+> PyPI/pipx reste le canal recommandé pour les environnements Python. Détails dans
+> [architecture.md](architecture.md).
+
 ### 4.11 Roadmap — MVP 4 semaines read-only
 
 **v2.0** : 8 phases ~20 semaines.
