@@ -18,11 +18,11 @@ configuration references the ``datacron-mcp`` command. Each client stores that
 configuration differently (path, file format, top-level key), so this module
 models one adapter per client:
 
-- Claude Desktop, Claude Code, Cursor, Gemini CLI, Windsurf — JSON with a
+- Claude Desktop, Claude Code, Cursor, Gemini CLI, Windsurf - JSON with a
   top-level ``mcpServers`` object.
-- VS Code — JSON with a top-level ``servers`` object and an explicit
+- VS Code - JSON with a top-level ``servers`` object and an explicit
   ``type: "stdio"`` per server.
-- Codex CLI — TOML with ``[mcp_servers.<name>]`` tables.
+- Codex CLI - TOML with ``[mcp_servers.<name>]`` tables.
 
 Every writer reads the existing file (or starts empty), sets only the Datacron
 entry, preserves all other content, and writes back atomically.

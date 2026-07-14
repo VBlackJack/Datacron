@@ -11,7 +11,7 @@ Claude Desktop or Claude Code. It complements the [README](../../README.en.md) a
 
 ## Guided setup (the easy path)
 
-A single command does everything — initialize the sidecar, build the index, and wire the MCP
+A single command does everything - initialize the sidecar, build the index, and wire the MCP
 client:
 
 ```bash
@@ -25,14 +25,14 @@ client). It asks questions with sensible defaults (vault location, client, scope
 durability, read-only), then runs `init`, indexes, registers the clients, and prints a
 per-client summary. Useful options:
 
-- `datacron setup --yes` — accept every default, no prompts (unattended install).
-- `datacron setup --scope both` — write config at **user** and **project** scope (default); use `user` or `project` to restrict.
-- `datacron setup --vault PATH --client claude-desktop` — target a single specific client.
-- `datacron setup --enable-write --write-path PATH` — enable writing on a subfolder (default: `<vault>/_memory`).
-- `datacron setup --durability strict --read-only` — strict durability and certified read-only mode.
-- `datacron setup --no-index` — skip building the index.
-- `datacron setup --client claude-code` — print a ready-to-paste stdio config snippet for Claude Code.
-- `datacron setup --client none` — configure the vault without writing or printing any client config.
+- `datacron setup --yes` - accept every default, no prompts (unattended install).
+- `datacron setup --scope both` - write config at **user** and **project** scope (default); use `user` or `project` to restrict.
+- `datacron setup --vault PATH --client claude-desktop` - target a single specific client.
+- `datacron setup --enable-write --write-path PATH` - enable writing on a subfolder (default: `<vault>/_memory`).
+- `datacron setup --durability strict --read-only` - strict durability and certified read-only mode.
+- `datacron setup --no-index` - skip building the index.
+- `datacron setup --client claude-code` - print a ready-to-paste stdio config snippet for Claude Code.
+- `datacron setup --client none` - configure the vault without writing or printing any client config.
 
 The sections below describe the **same steps manually**, if you prefer full step-by-step
 control.
@@ -74,8 +74,8 @@ python -m pip install -e .
 
 Installation exposes two commands:
 
-- `datacron` — the CLI (init, index, status, eval, MCP server management).
-- `datacron-mcp` — the direct stdio server entry point, used by the installer.
+- `datacron` - the CLI (init, index, status, eval, MCP server management).
+- `datacron-mcp` - the direct stdio server entry point, used by the installer.
 
 Check that the CLI responds:
 

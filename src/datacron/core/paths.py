@@ -87,7 +87,7 @@ def is_within(path: Path, root: Path) -> bool:
     """Return ``True`` if ``path`` is the same as or a descendant of ``root``.
 
     Both arguments are resolved (symlinks followed). No I/O check is performed
-    on existence — this is a pure path-relationship test.
+    on existence - this is a pure path-relationship test.
     """
     try:
         _resolve(path).relative_to(_resolve(root))

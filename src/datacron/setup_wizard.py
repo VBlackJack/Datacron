@@ -16,7 +16,7 @@
 :func:`run_setup` is the non-interactive orchestration behind the
 ``datacron setup`` command: it initializes the sidecar, builds the search
 index, and (optionally) wires the vault into an MCP client. Keeping the logic
-here — as a pure function over a :class:`SetupPlan` — makes the whole flow unit
+here - as a pure function over a :class:`SetupPlan` - makes the whole flow unit
 testable without simulating terminal prompts; the CLI layer only gathers the
 plan (from flags or interactive questions) and renders the result.
 """

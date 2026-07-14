@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Datacron — local-first MCP server for Markdown vaults.
+"""Datacron - local-first MCP server for Markdown vaults.
 
 Public API surface kept intentionally narrow. Most consumers should import
 from :mod:`datacron.core.models` for the frozen Pydantic types, or use the

@@ -1,8 +1,8 @@
-# Datacron — Architecture & Spec technique
+# Datacron - Architecture & Spec technique
 
 **Français** · [English](../en/architecture.md)
 
-> **Statut** : v2.2 — Spec vivante synchronisée avec `main`
+> **Statut** : v2.2 - Spec vivante synchronisée avec `main`
 > **Auteur** : Julien Bombled
 > **Date** : 2026-07-12
 > **Sources** :
@@ -25,10 +25,10 @@ de tokens par rapport au dump de notes en contexte.
 
 Le socle livré reste volontairement **minimaliste** :
 
-1. **Couche vault** — Tout dossier de fichiers Markdown. Aucune migration requise.
-2. **Couche `.datacron/`** — Sidecar invisible (SQLite FTS5, ULID side-table, logs, historique et journal d'opérations).
-3. **Couche serveur MCP** — FastMCP Python custom, stdio. Read/search tools, write tools approuvés côté client, 3 resources.
-4. **Couche client** — Claude Desktop ou Claude Code via config locale.
+1. **Couche vault** - Tout dossier de fichiers Markdown. Aucune migration requise.
+2. **Couche `.datacron/`** - Sidecar invisible (SQLite FTS5, ULID side-table, logs, historique et journal d'opérations).
+3. **Couche serveur MCP** - FastMCP Python custom, stdio. Read/search tools, write tools approuvés côté client, 3 resources.
+4. **Couche client** - Claude Desktop ou Claude Code via config locale.
 
 **Livré sur `main` après le socle Phase 0** :
 - Query-expansion FR↔EN statique au moment de la recherche, configurée par `VAULT.yaml`.
@@ -47,7 +47,7 @@ Le socle livré reste volontairement **minimaliste** :
 
 ## 2. Manifeste produit
 
-> Un pont MCP local-first qui rend ton vault Markdown interrogeable par Claude — sans
+> Un pont MCP local-first qui rend ton vault Markdown interrogeable par Claude - sans
 > dump et sans cloud.
 
 **Trois promesses, trois lignes rouges** :
@@ -176,50 +176,50 @@ flowchart TB
 
 ---
 
-## 6. Architecture Decision Records (résumés — détails dans decisions-v2.1.md)
+## 6. Architecture Decision Records (résumés - détails dans decisions-v2.1.md)
 
-### ADR-001 — Source de vérité = vault Markdown lu en overlay
+### ADR-001 - Source de vérité = vault Markdown lu en overlay
 Datacron lit n'importe quel vault sans migration. Side-metadata dans `.datacron/`.
 
-### ADR-002 — Serveur MCP custom FastMCP
+### ADR-002 - Serveur MCP custom FastMCP
 Convergence Gemini ✅ + ChatGPT ✅. Direct FS, audit, confinement strict.
 
-### ADR-003 — Pas d'orchestration autonome v1
+### ADR-003 - Pas d'orchestration autonome v1
 LangGraph et Ollama hors MVP. Claude orchestre, c'est suffisant.
 
-### ADR-004 — Recherche lexicale mesurée avant embeddings
+### ADR-004 - Recherche lexicale mesurée avant embeddings
 SQLite FTS5/BM25 + ripgrep restent le socle. Query-expansion FR↔EN statique est appliquée
 au moment de la recherche. Vectors ajoutés *si* eval mesure un gap persistant.
 
-### ADR-005 — Write tools opt-in, confinés, réversibles
+### ADR-005 - Write tools opt-in, confinés, réversibles
 Les écritures sont OFF par défaut. `DATACRON_WRITE_PATHS` active explicitement une allowlist
 d'écriture. `create_note_ai` ne clobber jamais ; `append_journal` est additif et déclenche
 la conservation adressée par contenu de la version précédente avant écriture atomique.
 
-### ADR-006 — Trust model 3 niveaux UX (L0-L5 backend)
+### ADR-006 - Trust model 3 niveaux UX (L0-L5 backend)
 Le backend porte les métadonnées (`origin`, `confidence`, `last_verified`, `supersedes`).
 L'UX fine L0-L5 reste côté client / roadmap, mais `confidence` et `supersedes` influencent
 déjà le retrieval temporel.
 
-### ADR-007 — Git uniquement pour rollback, pas pour sync
+### ADR-007 - Git uniquement pour rollback, pas pour sync
 Single-writer vault rule en v1. Autres patterns documentés non supportés.
 
-### ADR-008 — Sandboxing simple, pas de classifier
+### ADR-008 - Sandboxing simple, pas de classifier
 Wrap + escape + path confinement. Classifier ML = latency theater.
 
-### ADR-009 — Cowork = remote MCP (vérifié empiriquement)
+### ADR-009 - Cowork = remote MCP (vérifié empiriquement)
 v1 = Claude Desktop + Code uniquement. Cowork via tunnel HTTPS en v1.x.
 
-### ADR-010 — 1 seul package Python `datacron`
+### ADR-010 - 1 seul package Python `datacron`
 Monorepo conservé pour futur, mais structure interne minimaliste v1.
 
-### ADR-011 — Distribution PyPI/pipx uniquement
+### ADR-011 - Distribution PyPI/pipx uniquement
 Homebrew v1.1, Docker = CI, Tauri reporté.
 
-### ADR-012 — Eval harness obligatoire avant tout retrieval avancé
+### ADR-012 - Eval harness obligatoire avant tout retrieval avancé
 30 questions réelles, recall@k, citation precision, latency, tokens. Gate explicite.
 
-### ADR-013 — Réconciliation d'index incrémentale, gate `mtime`, `content_hash` autorité
+### ADR-013 - Réconciliation d'index incrémentale, gate `mtime`, `content_hash` autorité
 `datacron index` et la réparation read-path partagent une seule réconciliation : une note
 dont le `st_mtime_ns` stocké est inchangé est sautée (ni lecture ni hash) ; le `content_hash`
 reste l'autorité dès qu'une note est lue, de sorte qu'un `mtime` non fiable ne provoque jamais
@@ -228,18 +228,18 @@ passe suivante la saute. Remplace le full-scan O(n) par un balayage `stat` ; un 
 force la reconstruction complète. Comparaison stricte `==` (jamais `<=`) pour gérer les
 restaurations à `mtime` plus ancien.
 
-### ADR-014 — Query-expansion FR↔EN statique avant vectoriel
+### ADR-014 - Query-expansion FR↔EN statique avant vectoriel
 L'expansion est query-time, configurable par `VAULT.yaml`, et ferme le gap cross-lingue
 mesuré sans embeddings : recall@5 golden Julien 0.74 → 0.89, precision 0.29 → 0.32.
 Les embeddings restent gelés tant que la mesure ne justifie pas leur coût.
 
-### ADR-015 — Temporal re-ranking conservateur
+### ADR-015 - Temporal re-ranking conservateur
 Le retrieval exploite seulement les signaux explicites : `supersedes` démote fortement les
 notes remplacées, `confidence: low/needs_verification` applique une pénalité légère.
 Pas de decay par âge (`last_verified`/`updated`) tant qu'une mesure ne prouve pas le gain.
 Le re-rank agit sur un pool overfetch ×3 avant troncature, et ne supprime jamais les résultats.
 
-### ADR-016 — Lignes sur-longues brute-splittees : resolution a la premiere piece (limite acceptee)
+### ADR-016 - Lignes sur-longues brute-splittees : resolution a la premiere piece (limite acceptee)
 Le modèle `Chunk` adresse les chunks par plage de lignes (`line_start`/`line_end`, 1-indexé)
 pour que ripgrep resolve une correspondance (fichier, ligne) sans table annexe. Une ligne
 source unique dépassant `chunk_max_chars` est brute-splittée en N sous-chunks
@@ -252,7 +252,7 @@ une correspondance dans le débordement d'une ligne monstre pointe vers la pièc
 le modèle `Chunk` (frozen), disproportionné pour un edge rare (lignes > ~`chunk_max_chars` :
 minifié, base64, mono-ligne géant). Clôt l'item backlog P3 chunker.
 
-### ADR-017 — Installeur autonome (.exe) en complément de PyPI/pipx
+### ADR-017 - Installeur autonome (.exe) en complément de PyPI/pipx
 Révise ADR-011. En plus de la distribution PyPI/pipx (canal principal et recommandé pour les
 environnements Python), Datacron fournit un **exécutable autonome** construit avec PyInstaller
 (`--onefile`) pour les utilisateurs sans Python. La commande `datacron setup` (parcours guidé :
@@ -325,7 +325,7 @@ datacron/                              # GitHub: jbombled/datacron
 
 ---
 
-## 8. Pipeline E2E — exemple concret
+## 8. Pipeline E2E - exemple concret
 
 **Scénario** : Julien dans Claude Desktop : *"Datacron, qu'est-ce que j'ai écrit récemment sur LanceDB ?"*
 
@@ -358,7 +358,7 @@ sequenceDiagram
 |---|---|---|
 | Transport | Interception | stdio local only |
 | FS confinement | Read hors vault | `DATACRON_READ_PATHS` enforced |
-| Prompt injection | Note malveillante détourne le client | Sandbox wrap + escape `<system>`, `Ignore previous…` |
+| Prompt injection | Note malveillante détourne le client | Sandbox wrap + escape `<system>`, `Ignore previous...` |
 | Context bloat | Tool renvoie trop | `maxMatchesPerHit=20`, truncation 8k tokens |
 | Exfiltration cross-tool | Datacron + autre tool MCP coordonnent malicieusement | Resource declarations explicites, pas de tool "execute arbitrary" |
 | Audit | Pas de traçabilité | NDJSON append-only sur chaque appel |
@@ -370,13 +370,13 @@ sequenceDiagram
 
 ## 10. Roadmap MVP (4 semaines)
 
-### Phase 0 — Sem 1 : Bootstrap & core
+### Phase 0 - Sem 1 : Bootstrap & core
 - [ ] Repo init, `pyproject.toml`, Apache 2.0 headers, FileLogger Python.
 - [ ] `datacron.core` : config (pydantic-settings), paths confinement, hashing, ULID, frontmatter parser.
 - [ ] `datacron init <path>` : crée `.datacron/`, écrit `VAULT.yaml`.
 - [ ] `datacron status` : print vault state.
 
-### Phase 0 — Sem 2 : MCP server + read tools
+### Phase 0 - Sem 2 : MCP server + read tools
 - [ ] FastMCP server stdio (`datacron mcp serve`).
 - [ ] Tools `list_notes`, `get_note` (avec `format=map`).
 - [ ] Resource `datacron://vault/map`, `vault/info`.
@@ -384,7 +384,7 @@ sequenceDiagram
 - [ ] `datacron mcp install --client claude-desktop` (écrit config JSON).
 - [ ] Test E2E : ajouter à Claude Desktop, demander "liste mes notes".
 
-### Phase 0 — Sem 3 : Indexer + search tools
+### Phase 0 - Sem 3 : Indexer + search tools
 - [ ] AST chunker Markdown.
 - [ ] SQLite FTS5 indexer.
 - [ ] `search_text` tool.
@@ -392,7 +392,7 @@ sequenceDiagram
 - [ ] Wikilinks parser + `get_backlinks` tool.
 - [ ] `datacron index` / `datacron reindex` commands.
 
-### Phase 0 — Sem 4 : Eval + dogfood + release
+### Phase 0 - Sem 4 : Eval + dogfood + release
 - [ ] Eval harness : 30 questions Julien, recall@k, citation precision, latency, tokens.
 - [ ] Dogfooding intensif sur vault personnel Julien.
 - [ ] Polish : `--help`, error messages, README quickstart vérifié.
@@ -426,16 +426,16 @@ recall@10 0.95, recall@20 0.95, precision 0.32.
 
 ## 12. Questions ouvertes pour Phase 0
 
-1. ~~**Modèle de chunker** — un seul splitter AST suffit-il, ou besoin de stratégies dédiées (code blocks, tables) dès v1 ?~~ → **Résolu (Sem 3.5)** : un seul splitter AST, plus un garde-fou de taille (`chunk_max_tokens`) qui redécoupe tout bloc trop gros sur frontières de lignes, avec stratégies dédiées CODE (fence + langue répétées) et TABLE (en-tête + séparateur répétés), et fallback de découpe intra-ligne. Découpe déterministe, sous-chunks à plages de lignes disjointes et sans trou.
-2. **Format de citation** — quel format pour les chunks renvoyés ? `[[note#header]]` Obsidian-style, ou JSON structuré ?
-3. **`get_note(format=map)`** — quel arbre exact renvoyer (juste headings, ou + counts/excerpts) ?
-4. ~~**Eval set Julien** — quelles questions ?~~ → **Résolu partiellement** : golden set
+1. ~~**Modèle de chunker** - un seul splitter AST suffit-il, ou besoin de stratégies dédiées (code blocks, tables) dès v1 ?~~ → **Résolu (Sem 3.5)** : un seul splitter AST, plus un garde-fou de taille (`chunk_max_tokens`) qui redécoupe tout bloc trop gros sur frontières de lignes, avec stratégies dédiées CODE (fence + langue répétées) et TABLE (en-tête + séparateur répétés), et fallback de découpe intra-ligne. Découpe déterministe, sous-chunks à plages de lignes disjointes et sans trou.
+2. **Format de citation** - quel format pour les chunks renvoyés ? `[[note#header]]` Obsidian-style, ou JSON structuré ?
+3. **`get_note(format=map)`** - quel arbre exact renvoyer (juste headings, ou + counts/excerpts) ?
+4. ~~**Eval set Julien** - quelles questions ?~~ → **Résolu partiellement** : golden set
    `local/golden-julien.yaml` utilisé pour QE/TR ; prochaine étape = l'élargir avec cas
    temporels et questions tueuses de deuxième génération.
 
 ---
 
-## 13. Méta — ce qu'on a évité grâce à la cross-review
+## 13. Méta - ce qu'on a évité grâce à la cross-review
 
 | Élément v2.0 supprimé | Coût économisé (estimé) |
 |---|---|

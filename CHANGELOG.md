@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Releases use **Calendar Versioning**: `YYYY.MMDD.XX` — UTC year, zero-padded month and day,
+Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded month and day,
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
@@ -17,8 +17,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   `datacron.bootstrap` between `init` and `setup`. Supports `--client claude-code`, which
   prints a ready-to-paste stdio MCP config snippet.
 - Multi-client auto-detection and registration (`datacron setup --client all`, the default):
-  detects installed AI clients — Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI,
-  Windsurf, VS Code — and merges the Datacron MCP server into each config (JSON `mcpServers`,
+  detects installed AI clients - Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI,
+  Windsurf, VS Code - and merges the Datacron MCP server into each config (JSON `mcpServers`,
   VS Code `servers` with `type`, or Codex TOML `mcp_servers`), at user and/or project scope
   (`--scope`), preserving existing entries. New `datacron.installers.mcp_clients` module.
 - Standalone single-file executable build (PyInstaller) behind the optional `[build]` extra,

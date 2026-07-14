@@ -1,4 +1,4 @@
-# Datacron — Conventions internes du vault
+# Datacron - Conventions internes du vault
 
 **Français** · [English](../en/spec.md)
 
@@ -13,7 +13,7 @@
 
 ---
 
-## 1. Philosophie de lecture — zéro migration
+## 1. Philosophie de lecture - zéro migration
 
 Datacron lit **n'importe quel dossier de fichiers Markdown** sans imposer de structure ni de
 frontmatter. Le vault existant de l'utilisateur reste intact.
@@ -52,7 +52,7 @@ mon-vault/
 │   │   └── canaries/
 │   ├── logs/                        # répertoire de logs vault-local réservé
 │   └── ulids.json                   # IDs stables pour les notes sans ID de frontmatter
-├── … les notes de l'utilisateur, dans n'importe quelle structure …
+├── ... les notes de l'utilisateur, dans n'importe quelle structure ...
 ```
 
 Exemple de `.datacron/VAULT.yaml` :
@@ -89,7 +89,7 @@ cycle de vie :
 hors de `_drafts/`**. Aucune édition de frontmatter requise. Le filesystem est la machine à
 états.
 
-Les noms de dossiers sont configurables via `.datacron/VAULT.yaml` (voir §2) — l'utilisateur
+Les noms de dossiers sont configurables via `.datacron/VAULT.yaml` (voir §2) - l'utilisateur
 peut mapper `_drafts/` vers `00-Inbox/AI-Drafts/` si cela colle à sa disposition PARA /
 Zettelkasten existante.
 
@@ -97,7 +97,7 @@ Zettelkasten existante.
 
 ## 4. Le frontmatter que Datacron écrit (v0.2+, quand les outils d'écriture arrivent)
 
-Quand Datacron crée lui-même une note (post-v0.2 — hors périmètre MVP), il écrit un frontmatter
+Quand Datacron crée lui-même une note (post-v0.2 - hors périmètre MVP), il écrit un frontmatter
 **minimal** :
 
 ```yaml
@@ -110,7 +110,7 @@ audit_run_id: 2026-05-17T15-58-12Z_a3c2
 ---
 ```
 
-C'est tout. Pas de `status`, pas de `trust_level` exposé dans le frontmatter — ceux-ci vivent
+C'est tout. Pas de `status`, pas de `trust_level` exposé dans le frontmatter - ceux-ci vivent
 dans le journal d'audit et le moteur de politique.
 
 **Les notes existantes ne sont jamais normalisées rétroactivement.** Datacron ne livre aucune
@@ -118,7 +118,7 @@ commande de normalisation.
 
 ---
 
-## 5. Modèle de confiance — 3 états visibles par l'utilisateur
+## 5. Modèle de confiance - 3 états visibles par l'utilisateur
 
 En interne, le moteur de politique supporte un treillis à 6 niveaux (L0-L5), mais l'utilisateur
 ne voit que **trois catégories** :
@@ -132,7 +132,7 @@ ne voit que **trois catégories** :
 Une note marquée avec la clé de frontmatter `important: true` est automatiquement escaladée en
 catégorie **dangerous** quand l'IA tente de la modifier.
 
-En MVP (v1, lecture seule), tout ce modèle est dormant — Datacron n'écrit rien.
+En MVP (v1, lecture seule), tout ce modèle est dormant - Datacron n'écrit rien.
 
 ---
 
@@ -206,10 +206,10 @@ lit le journal.
 
 ## 9. Engagements de compatibilité
 
-- **Compatibilité ascendante** — Datacron préserve toutes les clés de frontmatter inconnues ; ne supprime jamais de données utilisateur.
-- **Compatibilité descendante** — Un vault avec zéro frontmatter Datacron est pleinement supporté.
-- **Compatibilité Obsidian** — Tous les formats de vault Obsidian par défaut fonctionnent sans modification (wikilinks, callouts, embeds, tags, blocs).
-- **Logseq / Foam / VSCode** — Pareil. Markdown reste Markdown.
+- **Compatibilité ascendante** - Datacron préserve toutes les clés de frontmatter inconnues ; ne supprime jamais de données utilisateur.
+- **Compatibilité descendante** - Un vault avec zéro frontmatter Datacron est pleinement supporté.
+- **Compatibilité Obsidian** - Tous les formats de vault Obsidian par défaut fonctionnent sans modification (wikilinks, callouts, embeds, tags, blocs).
+- **Logseq / Foam / VSCode** - Pareil. Markdown reste Markdown.
 
 ---
 
@@ -217,16 +217,16 @@ lit le journal.
 
 Deux axes indépendants, volontairement séparés :
 
-- **Ces conventions** (ce document) ont leur propre version — actuellement **v1.1**. Le tableau
+- **Ces conventions** (ce document) ont leur propre version - actuellement **v1.1**. Le tableau
   ci-dessous suit les changements des conventions sur disque, pas une version logicielle.
 - **`.datacron/VAULT.yaml#datacron_version`** enregistre le *build Datacron* qui a écrit le
-  sidecar — une **estampille de provenance** (ex. `2026.0714.00`, la Calendar Version du
+  sidecar - une **estampille de provenance** (ex. `2026.0714.00`, la Calendar Version du
   package). Ce **n'est pas** un contrôle de compatibilité de format.
 
 Datacron lit n'importe quel vault Markdown sans contrôle de version ni migration (voir §1). Il
 n'existe aujourd'hui aucun gate « refus si majeure supérieure ». Si le format sur disque devait
 un jour changer de façon incompatible, un champ de version de format dédié et un contrôle de
-compatibilité explicite seraient introduits à ce moment-là — l'estampille de provenance n'est
+compatibilité explicite seraient introduits à ce moment-là - l'estampille de provenance n'est
 jamais détournée à cette fin.
 
 | Version des conventions | Date | Changements |

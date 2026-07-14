@@ -11,7 +11,7 @@ branché sur Claude Desktop ou Claude Code. Il complète le [README](../../READM
 
 ## Parcours guidé (le plus simple)
 
-Une seule commande fait tout — initialisation du sidecar, construction de l'index et
+Une seule commande fait tout - initialisation du sidecar, construction de l'index et
 branchement du client MCP :
 
 ```bash
@@ -25,14 +25,14 @@ selon le client). Elle pose des questions avec des valeurs par défaut (emplacem
 client, portée, écriture, durabilité, lecture seule), puis exécute `init`, indexe, enregistre
 les clients, et affiche un récapitulatif par client. Options utiles :
 
-- `datacron setup --yes` — accepte tous les défauts, sans question (installation automatique).
-- `datacron setup --scope both` — écrit la config au niveau **utilisateur** et **projet** (défaut) ; `user` ou `project` pour restreindre.
-- `datacron setup --vault CHEMIN --client claude-desktop` — cible un seul client précis.
-- `datacron setup --enable-write --write-path CHEMIN` — active l'écriture sur un sous-dossier (défaut : `<vault>/_memory`).
-- `datacron setup --durability strict --read-only` — mode durabilité strict et lecture seule certifiée.
-- `datacron setup --no-index` — saute la construction de l'index.
-- `datacron setup --client claude-code` — affiche un snippet de config stdio prêt à coller dans Claude Code.
-- `datacron setup --client none` — configure le vault sans écrire ni afficher de config client.
+- `datacron setup --yes` - accepte tous les défauts, sans question (installation automatique).
+- `datacron setup --scope both` - écrit la config au niveau **utilisateur** et **projet** (défaut) ; `user` ou `project` pour restreindre.
+- `datacron setup --vault CHEMIN --client claude-desktop` - cible un seul client précis.
+- `datacron setup --enable-write --write-path CHEMIN` - active l'écriture sur un sous-dossier (défaut : `<vault>/_memory`).
+- `datacron setup --durability strict --read-only` - mode durabilité strict et lecture seule certifiée.
+- `datacron setup --no-index` - saute la construction de l'index.
+- `datacron setup --client claude-code` - affiche un snippet de config stdio prêt à coller dans Claude Code.
+- `datacron setup --client none` - configure le vault sans écrire ni afficher de config client.
 
 Les sections ci-dessous décrivent les **mêmes étapes manuellement**, si tu préfères tout
 contrôler pas à pas.
@@ -74,8 +74,8 @@ python -m pip install -e .
 
 L'installation expose deux commandes :
 
-- `datacron` — la CLI (init, index, statut, éval, gestion du serveur MCP).
-- `datacron-mcp` — l'entrée directe du serveur stdio, utilisée par l'installateur.
+- `datacron` - la CLI (init, index, statut, éval, gestion du serveur MCP).
+- `datacron-mcp` - l'entrée directe du serveur stdio, utilisée par l'installateur.
 
 Vérifie que la CLI répond :
 

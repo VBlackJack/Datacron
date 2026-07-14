@@ -615,7 +615,7 @@ def _render_setup_result(result: SetupResult) -> None:
         _print("MCP clients registered:")
         for outcome in result.client_installs:
             mark = "ok " if outcome.installed else "err"
-            detail = "" if outcome.installed else f" — {outcome.detail}"
+            detail = "" if outcome.installed else f" - {outcome.detail}"
             _print(
                 f"  [{mark}] {outcome.display_name} ({outcome.scope}): "
                 f"{outcome.config_path}{detail}"

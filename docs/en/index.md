@@ -35,7 +35,7 @@ a Markdown vault from Claude, without sending the whole vault into the context.
 | Document | For what |
 |---|---|
 | [Project audit 2026-07-12](../audits/AUDIT-2026-07-12.md) | Full project audit (10 categories). |
-| [Study — enterprise deployment](../etudes/ETUDE-deploiement-datacron-entreprise.md) | Needs note for a multi-tenant deployment. |
+| [Study - enterprise deployment](../etudes/ETUDE-deploiement-datacron-entreprise.md) | Needs note for a multi-tenant deployment. |
 
 > Note: the `docs/archive/` folder holds reliability reviews and lot reports kept **locally
 > only** (gitignored, not versioned).
