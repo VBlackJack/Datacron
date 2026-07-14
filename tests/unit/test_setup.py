@@ -28,7 +28,9 @@ from datacron.bootstrap import initialize_vault
 from datacron.cli import app
 from datacron.core.paths import sidecar_index_db, sidecar_vault_config
 from datacron.installers.claude_desktop import ClaudeDesktopConfigError
+from datacron.installers.mcp_clients import ClientTarget, InstallOutcome
 from datacron.setup_wizard import (
+    CLIENT_ALL,
     CLIENT_CLAUDE_CODE,
     CLIENT_CLAUDE_DESKTOP,
     CLIENT_NONE,
@@ -202,6 +204,51 @@ def test_claude_code_stdio_config_is_valid_json(tmp_path: Path) -> None:
     snippet = claude_code_stdio_config(tmp_path, {"DATACRON_DURABILITY": "best-effort"})
     parsed = json.loads(snippet)
     assert parsed["mcpServers"]["datacron"]["env"]["DATACRON_READ_PATHS"] == str(tmp_path)
+
+
+def test_run_setup_all_installs_detected_clients(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+    target = ClientTarget("cursor", "Cursor", "user", tmp_path / "mcp.json", "json-mcpservers")
+
+    def fake_discover(
+        *, scopes: Any, project_dir: Any, include: Any = None, exclude: Any = ()
+    ) -> Any:
+        captured["scopes"] = scopes
+        captured["project_dir"] = project_dir
+        return [target]
+
+    def fake_install(targets: Any, *, command: str, args: Any, env: dict[str, str]) -> Any:
+        captured["command"] = command
+        captured["env"] = env
+        return [InstallOutcome("cursor", "Cursor", "user", target.config_path, installed=True)]
+
+    monkeypatch.setattr(setup_wizard, "resolve_mcp_command", lambda: "datacron-mcp")
+    monkeypatch.setattr(setup_wizard, "discover_targets", fake_discover)
+    monkeypatch.setattr(setup_wizard, "install_targets", fake_install)
+
+    result = asyncio.run(
+        run_setup(SetupPlan(vault_path=tmp_path, client=CLIENT_ALL, build_index=False))
+    )
+    assert len(result.client_installs) == 1
+    assert result.client_installs[0].installed is True
+    assert captured["command"] == "datacron-mcp"
+    assert captured["env"]["DATACRON_VAULT_ROOT"] == str(tmp_path)
+    assert captured["project_dir"] == tmp_path
+
+
+def test_run_setup_all_warns_when_no_clients(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(setup_wizard, "resolve_mcp_command", lambda: "datacron-mcp")
+    monkeypatch.setattr(setup_wizard, "discover_targets", lambda **_: [])
+
+    result = asyncio.run(
+        run_setup(SetupPlan(vault_path=tmp_path, client=CLIENT_ALL, build_index=False))
+    )
+    assert result.client_installs == []
+    assert any("No MCP clients" in warning for warning in result.warnings)
 
 
 # ---------------------------------------------------------------------------
