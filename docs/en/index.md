@@ -17,18 +17,18 @@ a Markdown vault from Claude, without sending the whole vault into the context.
 
 | Document | For what |
 |---|---|
-| [Vault conventions (SPEC)](../../SPEC.md) | Vault contract: `.datacron/` sidecar, frontmatter, trust model, wikilinks, chunks, audit, versioning. |
+| [Vault conventions (SPEC)](spec.md) | Vault contract: `.datacron/` sidecar, frontmatter, trust model, wikilinks, chunks, audit, versioning. |
 | [Architecture and public surface](../ARCHITECTURE.md) | Technical architecture and exposed surface. |
 | [Settled decisions v2.1](../decisions-tranchees-v2.1.md) | Locked design choices and their rationale. |
-| [Freshness contract v1](../freshness-contract-v1.md) | Index freshness guarantees. |
+| [Freshness contract v1](freshness-contract-v1.md) | Index freshness guarantees. |
 
 ## Security, integrity, operations
 
 | Document | For what |
 |---|---|
-| [Security boundary](../security-boundary.md) | Read/write confinement, guarantees, local threat model. |
-| [Integrity scrubber](../integrity-scrubber.md) | Silent-corruption detection, canaries, scrub passes. |
-| [Operational health and durability](../operational-health.md) | Certified read-only mode, durability policy, `get_health`. |
+| [Security boundary](security-boundary.md) | Read/write confinement, guarantees, local threat model. |
+| [Integrity scrubber](integrity-scrubber.md) | Silent-corruption detection, canaries, scrub passes. |
+| [Operational health and durability](operational-health.md) | Certified read-only mode, durability policy, `get_health`. |
 
 ## History and study
 
@@ -40,5 +40,4 @@ a Markdown vault from Claude, without sending the whole vault into the context.
 > Note: the `docs/archive/` folder holds reliability reviews and lot reports kept **locally
 > only** (gitignored, not versioned).
 
-> The technical documents above will move into `docs/fr/` and `docs/en/` in Phase 2
-> (bilingual work in progress). Some are still French-only for now.
+> Architecture and Decisions move into `docs/fr/` and `docs/en/` in Phase 2b (work in progress).

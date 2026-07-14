@@ -242,13 +242,13 @@ To get started:
 
 Technical references:
 
-- [Vault conventions (SPEC)](SPEC.md)
+- [Vault conventions (SPEC)](docs/en/spec.md)
 - [Architecture and public surface](docs/ARCHITECTURE.md)
 - [Settled decisions v2.1](docs/decisions-tranchees-v2.1.md)
-- [Security boundary](docs/security-boundary.md)
-- [Integrity scrubber](docs/integrity-scrubber.md)
-- [Operational health and durability](docs/operational-health.md)
-- [Freshness contract](docs/freshness-contract-v1.md)
+- [Security boundary](docs/en/security-boundary.md)
+- [Integrity scrubber](docs/en/integrity-scrubber.md)
+- [Operational health and durability](docs/en/operational-health.md)
+- [Freshness contract](docs/en/freshness-contract-v1.md)
 
 ## Development
 

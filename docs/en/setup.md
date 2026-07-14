@@ -182,7 +182,7 @@ Writing stays confined to `DATACRON_WRITE_PATHS`, atomic (temp file + `os.replac
 content-addressed in history before any modification, and audited. Keep a **single-writer**
 rule: concurrent multi-machine writing is not supported.
 
-Details and guarantees: [Security boundary](../security-boundary.md).
+Details and guarantees: [Security boundary](security-boundary.md).
 
 ## 9. Integrity (optional)
 
@@ -195,8 +195,8 @@ datacron scrub --vault /path/to/vault
 ```
 
 `scrub` is resumable and alert-only; it exits with code 2 if anomalies are detected. See
-[Integrity scrubber](../integrity-scrubber.md) and
-[Operational health](../operational-health.md).
+[Integrity scrubber](integrity-scrubber.md) and
+[Operational health](operational-health.md).
 
 ## 10. Final verification
 

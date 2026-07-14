@@ -184,7 +184,7 @@ L'écriture reste confinée à `DATACRON_WRITE_PATHS`, atomique (fichier tempora
 `os.replace`), historisée par contenu avant modification, et auditée. Garde une règle
 **single-writer** : l'écriture concurrente multi-machines n'est pas supportée.
 
-Détails et garanties : [Frontière de sécurité](../security-boundary.md).
+Détails et garanties : [Frontière de sécurité](security-boundary.md).
 
 ## 9. Intégrité (optionnel)
 
@@ -197,8 +197,8 @@ datacron scrub --vault /chemin/vers/vault
 ```
 
 `scrub` est résumable et en mode alerte seule ; il sort en code 2 si des anomalies sont
-détectées. Voir [Scrubber d'intégrité](../integrity-scrubber.md) et
-[Santé opérationnelle](../operational-health.md).
+détectées. Voir [Scrubber d'intégrité](integrity-scrubber.md) et
+[Santé opérationnelle](operational-health.md).
 
 ## 10. Vérification finale
 

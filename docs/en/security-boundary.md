@@ -1,5 +1,7 @@
 # Datacron local security boundary
 
+**English** · [Français](../fr/security-boundary.md)
+
 Datacron currently serves one local Markdown vault over MCP stdio. The server
 security claim is deliberately narrower than prompt-injection resistance for an
 agent or model.

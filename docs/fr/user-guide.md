@@ -124,11 +124,11 @@ Tu formules en langage naturel ; Claude traduit en appels d'outils. Quelques exe
 Datacron ne fait pas de télémétrie et n'appelle aucun LLM cloud. En revanche, le client MCP
 (par exemple Claude Desktop) peut, lui, transmettre à son fournisseur les chunks que
 Datacron lui renvoie — Datacron ne lui envoie jamais le vault complet, seulement les
-fragments pertinents et bornés. Détails : [Frontière de sécurité](../security-boundary.md).
+fragments pertinents et bornés. Détails : [Frontière de sécurité](security-boundary.md).
 
 ## Pour aller plus loin
 
 - [Guide d'installation et de configuration](setup.md)
 - [Architecture et surface publique](../ARCHITECTURE.md)
-- [Conventions du vault (SPEC)](../../SPEC.md)
+- [Conventions du vault (SPEC)](spec.md)
 - [Index de la documentation](index.md)
