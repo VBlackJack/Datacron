@@ -18,8 +18,8 @@ a Markdown vault from Claude, without sending the whole vault into the context.
 | Document | For what |
 |---|---|
 | [Vault conventions (SPEC)](spec.md) | Vault contract: `.datacron/` sidecar, frontmatter, trust model, wikilinks, chunks, audit, versioning. |
-| [Architecture and public surface](../ARCHITECTURE.md) | Technical architecture and exposed surface. |
-| [Settled decisions v2.1](../decisions-tranchees-v2.1.md) | Locked design choices and their rationale. |
+| [Architecture and public surface](architecture.md) | Technical architecture and exposed surface. |
+| [Settled decisions v2.1](decisions-v2.1.md) | Locked design choices and their rationale. |
 | [Freshness contract v1](freshness-contract-v1.md) | Index freshness guarantees. |
 
 ## Security, integrity, operations
@@ -39,5 +39,3 @@ a Markdown vault from Claude, without sending the whole vault into the context.
 
 > Note: the `docs/archive/` folder holds reliability reviews and lot reports kept **locally
 > only** (gitignored, not versioned).
-
-> Architecture and Decisions move into `docs/fr/` and `docs/en/` in Phase 2b (work in progress).

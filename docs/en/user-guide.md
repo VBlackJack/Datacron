@@ -127,6 +127,6 @@ Datacron never sends it the whole vault, only the relevant, bounded fragments. D
 ## Going further
 
 - [Installation and configuration guide](setup.md)
-- [Architecture and public surface](../ARCHITECTURE.md)
+- [Architecture and public surface](architecture.md)
 - [Vault conventions (SPEC)](spec.md)
 - [Documentation index](index.md)

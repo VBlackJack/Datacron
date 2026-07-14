@@ -18,8 +18,8 @@ et maintient un vault Markdown depuis Claude, sans envoyer le vault complet dans
 | Document | Pour quoi |
 |---|---|
 | [Conventions du vault (SPEC)](spec.md) | Contrat vault : sidecar `.datacron/`, frontmatter, modèle de confiance, wikilinks, chunks, audit, versioning. |
-| [Architecture et surface publique](../ARCHITECTURE.md) | Architecture technique et surface exposée. |
-| [Décisions tranchées v2.1](../decisions-tranchees-v2.1.md) | Choix de conception arrêtés et leurs justifications. |
+| [Architecture et surface publique](architecture.md) | Architecture technique et surface exposée. |
+| [Décisions tranchées v2.1](decisions-v2.1.md) | Choix de conception arrêtés et leurs justifications. |
 | [Contrat de fraîcheur v1](freshness-contract-v1.md) | Garanties de fraîcheur de l'index. |
 
 ## Sécurité, intégrité, exploitation
@@ -39,5 +39,3 @@ et maintient un vault Markdown depuis Claude, sans envoyer le vault complet dans
 
 > Note : le dossier `docs/archive/` contient des revues de fiabilité et rapports de lot
 > conservés **en local uniquement** (gitignorés, non versionnés).
-
-> ARCHITECTURE et Décisions migrent vers `docs/fr/` et `docs/en/` en Phase 2b (chantier en cours).

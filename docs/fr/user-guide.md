@@ -129,6 +129,6 @@ fragments pertinents et bornés. Détails : [Frontière de sécurité](security-
 ## Pour aller plus loin
 
 - [Guide d'installation et de configuration](setup.md)
-- [Architecture et surface publique](../ARCHITECTURE.md)
+- [Architecture et surface publique](architecture.md)
 - [Conventions du vault (SPEC)](spec.md)
 - [Index de la documentation](index.md)
