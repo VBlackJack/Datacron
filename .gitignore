@@ -27,6 +27,10 @@ env/
 # Private eval data (vault paths)
 local/
 
+# Personal audits and studies -- kept local, never committed
+docs/audits/
+docs/etudes/
+
 # OS
 .DS_Store
 Thumbs.db
