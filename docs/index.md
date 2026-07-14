@@ -1,0 +1,39 @@
+# Documentation Datacron
+
+Point d'entrée de toute la documentation. Datacron est un serveur MCP local qui interroge
+et maintient un vault Markdown depuis Claude, sans envoyer le vault complet dans le contexte.
+
+## Démarrer
+
+| Document | Pour quoi |
+|---|---|
+| [README](../README.md) | Vue d'ensemble, capacités, mesures actuelles. |
+| [Guide d'installation et de configuration](setup.md) | Installer, initialiser un vault, brancher Claude Desktop / Claude Code, variables d'env, activer l'écriture. |
+| [Guide utilisateur](guide-utilisateur.md) | Usage quotidien depuis Claude : recherche, lecture, écriture, supervision, exemples de demandes. |
+
+## Comprendre le fonctionnement
+
+| Document | Pour quoi |
+|---|---|
+| [Conventions du vault (SPEC)](../SPEC.md) | Contrat vault : sidecar `.datacron/`, frontmatter, modèle de confiance, wikilinks, chunks, audit, versioning. |
+| [Architecture et surface publique](ARCHITECTURE.md) | Architecture technique et surface exposée. |
+| [Décisions tranchées v2.1](decisions-tranchees-v2.1.md) | Choix de conception arrêtés et leurs justifications. |
+| [Contrat de fraîcheur v1](freshness-contract-v1.md) | Garanties de fraîcheur de l'index. |
+
+## Sécurité, intégrité, exploitation
+
+| Document | Pour quoi |
+|---|---|
+| [Frontière de sécurité](security-boundary.md) | Confinement lecture/écriture, garanties, modèle de menace local. |
+| [Scrubber d'intégrité](integrity-scrubber.md) | Détection de corruption silencieuse, sentinelles, passes de scrub. |
+| [Santé opérationnelle et durabilité](operational-health.md) | Mode lecture seule certifié, politique de durabilité, `get_health`. |
+
+## Historique et étude
+
+| Document | Pour quoi |
+|---|---|
+| [Audit projet 2026-07-12](audits/AUDIT-2026-07-12.md) | Audit complet du projet (10 catégories). |
+| [Étude — déploiement en entreprise](etudes/ETUDE-deploiement-datacron-entreprise.md) | Note de besoins pour un déploiement multi-tenant. |
+
+> Note : le dossier `docs/archive/` contient des revues de fiabilité et rapports de lot
+> conservés **en local uniquement** (gitignorés, non versionnés).
