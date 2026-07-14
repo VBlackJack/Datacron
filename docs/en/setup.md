@@ -229,6 +229,27 @@ index freshness, integrity, checksum, durability, and invariants. If everything 
 
 For the next steps, move on to the [user guide](user-guide.md).
 
+## Build the standalone executable (optional)
+
+To ship Datacron to users without Python, a standalone single-file executable (~22 MB) can be
+built with PyInstaller:
+
+```powershell
+# Windows
+pip install -e ".[build]"
+./scripts/build_installer.ps1        # produces dist/datacron.exe
+```
+
+```bash
+# Linux / macOS
+pip install -e ".[build]"
+./scripts/build_installer.sh         # produces dist/datacron
+```
+
+The binary bundles the full CLI (including `datacron setup`) and its packaged data; it needs no
+installed Python. `dist/` and `build/` are not version-controlled. Context: ADR-017 in the
+[architecture](architecture.md).
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

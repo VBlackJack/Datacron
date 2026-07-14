@@ -251,6 +251,17 @@ une correspondance dans le débordement d'une ligne monstre pointe vers la pièc
 le modèle `Chunk` (frozen), disproportionné pour un edge rare (lignes > ~`chunk_max_chars` :
 minifié, base64, mono-ligne géant). Clôt l'item backlog P3 chunker.
 
+### ADR-017 — Installeur autonome (.exe) en complément de PyPI/pipx
+Révise ADR-011. En plus de la distribution PyPI/pipx (canal principal et recommandé pour les
+environnements Python), Datacron fournit un **exécutable autonome** construit avec PyInstaller
+(`--onefile`) pour les utilisateurs sans Python. La commande `datacron setup` (parcours guidé :
+init + index + config client, avec choix d'emplacements) reste le point d'entrée d'installation ;
+le binaire l'embarque. Build reproductible via `scripts/build_installer.ps1` (Windows) et
+`scripts/build_installer.sh` (Unix), derrière la dépendance optionnelle `[build]`. Les données
+packagées (`reliability_evidence.json`, `contradiction_data/*.gz`) sont incluses via
+`--collect-data`. Coût assumé : build multi-OS et taille (~22 Mo). `dist/` et `build/` restent
+hors versionnement.
+
 ---
 
 ## 7. Layout du projet

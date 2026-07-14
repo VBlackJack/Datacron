@@ -231,6 +231,27 @@ est vert et que `list_notes` renvoie tes notes, l'installation est opérationnel
 
 Pour la suite, passe au [guide utilisateur](user-guide.md).
 
+## Construire l'exécutable autonome (optionnel)
+
+Pour distribuer Datacron à des utilisateurs sans Python, un exécutable autonome (un seul
+fichier, ~22 Mo) se construit avec PyInstaller :
+
+```powershell
+# Windows
+pip install -e ".[build]"
+./scripts/build_installer.ps1        # produit dist/datacron.exe
+```
+
+```bash
+# Linux / macOS
+pip install -e ".[build]"
+./scripts/build_installer.sh         # produit dist/datacron
+```
+
+Le binaire embarque la CLI complète (dont `datacron setup`) et ses données packagées ; il ne
+requiert aucun Python installé. `dist/` et `build/` ne sont pas versionnés. Contexte : ADR-017
+dans [l'architecture](architecture.md).
+
 ## Dépannage
 
 | Symptôme | Cause probable | Correctif |
