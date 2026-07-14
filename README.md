@@ -8,6 +8,8 @@
 [![MCP: local stdio](https://img.shields.io/badge/MCP-local_stdio-purple)](#mcp-tools)
 [![CI](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml/badge.svg)](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml)
 
+**Français** · [English](README.en.md)
+
 Datacron indexe un dossier de notes Markdown, expose un serveur MCP local, puis renvoie
 au client les notes ou chunks pertinents au lieu d'un dump complet. Le vault reste un
 dossier Markdown normal : Datacron ajoute seulement un sidecar `.datacron/` pour l'index,
@@ -230,11 +232,22 @@ datacron mcp install --client claude-desktop --vault /path/to/vault
 
 ## Documentation
 
-- [Architecture et surface publique](docs/ARCHITECTURE.md)
-- [Frontière de sécurité](docs/security-boundary.md)
-- [Scrubber d'intégrité](docs/integrity-scrubber.md)
-- [Santé opérationnelle et durabilité](docs/operational-health.md)
-- [Contrat de fraîcheur](docs/freshness-contract-v1.md)
+Sommaire complet : [docs/fr/index.md](docs/fr/index.md) · [English index](docs/en/index.md).
+
+Pour démarrer :
+
+- [Guide d'installation et de configuration](docs/fr/setup.md)
+- [Guide utilisateur](docs/fr/user-guide.md)
+
+Références techniques :
+
+- [Conventions du vault (SPEC)](docs/fr/spec.md)
+- [Architecture et surface publique](docs/fr/architecture.md)
+- [Décisions tranchées v2.1](docs/fr/decisions-v2.1.md)
+- [Frontière de sécurité](docs/fr/security-boundary.md)
+- [Scrubber d'intégrité](docs/fr/integrity-scrubber.md)
+- [Santé opérationnelle et durabilité](docs/fr/operational-health.md)
+- [Contrat de fraîcheur](docs/fr/freshness-contract-v1.md)
 
 ## Développement
 

@@ -1,5 +1,7 @@
 # Contrat de fraicheur v1
 
+**Français** · [English](../en/freshness-contract-v1.md)
+
 ## `freshness-contract-v1`
 
 Ce contrat definit le hash d'une note Markdown. L'entree est la sequence ordonnee
