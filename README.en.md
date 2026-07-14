@@ -63,7 +63,7 @@ Runtime prerequisites:
 
 ## Quick start
 
-The easy path — one command detects your AI clients, initializes the vault, indexes it, and
+The easy path - one command detects your AI clients, initializes the vault, indexes it, and
 registers Datacron everywhere:
 
 ```bash

@@ -47,7 +47,7 @@ class TestWrapVaultContent:
         assert 'weird"name' not in result.split("\n", 1)[0]
 
     def test_layout_is_five_lines(self) -> None:
-        """Opening tag, notice, content, closing tag — content on its own line."""
+        """Opening tag, notice, content, closing tag - content on its own line."""
         result = wrap_vault_content("a.md", "one line of body")
         lines = result.split("\n")
         assert len(lines) == 4
@@ -91,7 +91,7 @@ class TestEscapeSuspicious:
         escaped = _escape_suspicious(payload)
         assert escaped.startswith(ESCAPE_PREFIX)
         assert escaped.endswith("]")
-        # Inner content equals the original match — model still sees what was there
+        # Inner content equals the original match - model still sees what was there
         inner = escaped[len(ESCAPE_PREFIX) : -1]
         assert inner.lower().strip() == payload.lower().strip() or inner == payload
 
@@ -100,7 +100,7 @@ class TestEscapeSuspicious:
         assert _escape_suspicious(text) == text
 
     def test_word_boundaries_not_required_for_html_like_tokens(self) -> None:
-        """`<system>` inside a sentence is still flagged — defense in depth."""
+        """`<system>` inside a sentence is still flagged - defense in depth."""
         text = "Inline <system> tag in the middle."
         escaped = _escape_suspicious(text)
         assert "[escaped: <system>]" in escaped
@@ -199,16 +199,17 @@ class TestEndToEnd:
         # 1. envelope intact
         assert wrapped.startswith('<vault_content path="evil.md">\n')
         assert wrapped.endswith(VAULT_CONTENT_CLOSE)
-        # 2. every <system>/</system> occurrence is wrapped in [escaped: …]
+        # 2. every <system>/</system> occurrence is wrapped in [escaped: ...]
         assert "[escaped: <system>]" in wrapped
         assert "[escaped: </system>]" in wrapped
         # The substring "<system>" remains present (preserved for display)
-        # but only inside escape envelopes — no naked control token survives.
+        # but only inside escape envelopes - no naked control token survives.
         for naked in ("<system>", "</system>"):
             for idx in _all_indices(wrapped, naked):
                 preceding = wrapped[max(idx - len(ESCAPE_PREFIX), 0) : idx]
+                snippet = wrapped[max(0, idx - 12) : idx + 12]
                 assert preceding == ESCAPE_PREFIX, (
-                    f"unescaped {naked!r} at index {idx}: …{wrapped[max(0, idx - 12) : idx + 12]}…"
+                    f"unescaped {naked!r} at index {idx}: ...{snippet}..."
                 )
         # 3. jailbreak phrase neutralized
         assert "[escaped: Ignore previous instructions]" in wrapped

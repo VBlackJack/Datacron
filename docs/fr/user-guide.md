@@ -14,7 +14,7 @@ Datacron indexe ton dossier de notes et, au lieu d'envoyer tout le vault dans le
 il renvoie à Claude uniquement les notes ou fragments (chunks) pertinents. Concrètement :
 
 - Tu poses une question ou demandes une action sur tes notes.
-- Claude choisit le bon outil Datacron (recherche, lecture, écriture…).
+- Claude choisit le bon outil Datacron (recherche, lecture, écriture...).
 - Datacron renvoie un résultat borné (nombre et budget token limités), enveloppé dans
   `<vault_content>...</vault_content>`.
 - Tes notes restent des fichiers Markdown normaux, modifiables à la main à tout moment.
@@ -80,9 +80,9 @@ pour « où ai-je écrit exactement cette chaîne ».
 Le frontmatter des notes porte des signaux que Datacron respecte au classement. Les plus
 utiles au quotidien :
 
-- `confidence: low` / `confidence: needs_verification` — la note est prise en compte mais
+- `confidence: low` / `confidence: needs_verification` - la note est prise en compte mais
   légèrement démotée ; utile pour marquer un brouillon ou une info à vérifier.
-- `supersedes: <ULID>` — désigne la note remplacée, qui sera fortement démotée dans les
+- `supersedes: <ULID>` - désigne la note remplacée, qui sera fortement démotée dans les
   recherches courantes.
 
 Résultat : tu peux garder l'historique dans le vault sans polluer les réponses, tout en
@@ -100,7 +100,7 @@ Tu formules en langage naturel ; Claude traduit en appels d'outils. Quelques exe
   → `search_regex`.
 - « Quelles notes renvoient vers celle sur la frontière de sécurité ? »
   → `get_backlinks`.
-- « Ajoute une entrée de journal d'aujourd'hui sous “Suivi” dans la note projet Datacron. »
+- « Ajoute une entrée de journal d'aujourd'hui sous "Suivi" dans la note projet Datacron. »
   → `append_journal` (nécessite l'écriture activée).
 - « Passe cette note en confidence: low. »
   → `set_frontmatter`.
@@ -123,7 +123,7 @@ Tu formules en langage naturel ; Claude traduit en appels d'outils. Quelques exe
 
 Datacron ne fait pas de télémétrie et n'appelle aucun LLM cloud. En revanche, le client MCP
 (par exemple Claude Desktop) peut, lui, transmettre à son fournisseur les chunks que
-Datacron lui renvoie — Datacron ne lui envoie jamais le vault complet, seulement les
+Datacron lui renvoie - Datacron ne lui envoie jamais le vault complet, seulement les
 fragments pertinents et bornés. Détails : [Frontière de sécurité](security-boundary.md).
 
 ## Pour aller plus loin

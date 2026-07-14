@@ -13,7 +13,7 @@ Datacron indexes your notes folder and, instead of sending the whole vault into 
 returns only the relevant notes or fragments (chunks) to Claude. Concretely:
 
 - You ask a question or request an action on your notes.
-- Claude picks the right Datacron tool (search, read, write…).
+- Claude picks the right Datacron tool (search, read, write...).
 - Datacron returns a bounded result (limited count and token budget), wrapped in
   `<vault_content>...</vault_content>`.
 - Your notes stay ordinary Markdown files, editable by hand at any time.
@@ -78,9 +78,9 @@ write exactly this string".
 The notes' frontmatter carries signals that Datacron honors at ranking time. The most useful
 day to day:
 
-- `confidence: low` / `confidence: needs_verification` — the note is still considered but
+- `confidence: low` / `confidence: needs_verification` - the note is still considered but
   slightly demoted; handy to flag a draft or an item to verify.
-- `supersedes: <ULID>` — designates the replaced note, which will be strongly demoted in
+- `supersedes: <ULID>` - designates the replaced note, which will be strongly demoted in
   everyday searches.
 
 The result: you can keep history in the vault without polluting answers, while still being
@@ -120,7 +120,7 @@ examples:
 ## Privacy
 
 Datacron does no telemetry and calls no cloud LLM. However, the MCP client (for example
-Claude Desktop) may itself forward to its provider the chunks that Datacron returns —
+Claude Desktop) may itself forward to its provider the chunks that Datacron returns -
 Datacron never sends it the whole vault, only the relevant, bounded fragments. Details:
 [Security boundary](security-boundary.md).
 

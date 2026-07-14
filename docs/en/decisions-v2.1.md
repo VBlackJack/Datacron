@@ -1,4 +1,4 @@
-# Datacron — Settled decisions v2.1
+# Datacron - Settled decisions v2.1
 
 **English** · [Français](../fr/decisions-v2.1.md)
 
@@ -30,7 +30,7 @@ Both models produced independent verdicts. This v2.1 is the **arbitration result
 ## 2. The decisive factor: Cowork = remote MCP only
 
 **ChatGPT raised a risk Claude had not seen**: *Cowork and claude.ai only support **remote**
-MCP connectors brokered by Anthropic infrastructure — not **local** stdio MCP servers.*
+MCP connectors brokered by Anthropic infrastructure - not **local** stdio MCP servers.*
 
 **Empirical verification done** (Anthropic Help Center, 2026-05-17):
 
@@ -60,24 +60,24 @@ trade-off.
 
 | # | v2.0 decision | Gemini | ChatGPT | **v2.1 arbitration** |
 |---|---|---|---|---|
-| 1 | MCP server hero | ✅ | 🟡 | ✅ — **"local context router read-only" for MVP** |
-| 2 | DVS spec | ⚠️ | 🟡 | 🔄 — **DVS as overlay**, not marketed as open spec |
-| 3 | L0-L5 trust model | 🟡 (3) | 🟡 (3 UX) | 🔄 — **3 visible UX levels**, L0-L5 in backend for extensibility |
-| 4 | Custom FastMCP | ✅ | ✅ | ✅ — confirmed |
-| 5 | LangGraph optional | ❌ | ⚠️ | 🔄 — **dropped entirely** from MVP, post-v2 |
-| 6 | Retrieval stack | 🟡 | ⚠️ | 🔄 — **ripgrep + SQLite FTS5 only in v1**, embeddings after eval |
-| 7 | Prompt injection | ❌ classifier | 🟡 | 🔄 — **sandbox delimiters only**, focus on tool-layer security |
-| 8 | Multi-client | 🟡 (Claude+Cursor) | ❌ | 🔄 — **Claude Desktop+Code only v1**, Cursor v1.1 |
-| 9 | Monorepo 5 packages | ✅ | 🟡 | 🔄 — **single Python package** v1, monorepo left open for Tauri stub |
-| 10 | 4 distribution channels | ⚠️ | ⚠️ | 🔄 — **PyPI/pipx only v1**, brew v1.1 |
-| 11 | 8 phases 20 weeks | ❌ | ❌ | 🔄 — **4-week read-only MVP**, rest unblocked by usage |
-| 12 | Multi-machine sync | hands-off | single-writer | 🔄 — **single-writer rule v1**, other patterns documented "unsupported" |
+| 1 | MCP server hero | ✅ | 🟡 | ✅ - **"local context router read-only" for MVP** |
+| 2 | DVS spec | ⚠️ | 🟡 | 🔄 - **DVS as overlay**, not marketed as open spec |
+| 3 | L0-L5 trust model | 🟡 (3) | 🟡 (3 UX) | 🔄 - **3 visible UX levels**, L0-L5 in backend for extensibility |
+| 4 | Custom FastMCP | ✅ | ✅ | ✅ - confirmed |
+| 5 | LangGraph optional | ❌ | ⚠️ | 🔄 - **dropped entirely** from MVP, post-v2 |
+| 6 | Retrieval stack | 🟡 | ⚠️ | 🔄 - **ripgrep + SQLite FTS5 only in v1**, embeddings after eval |
+| 7 | Prompt injection | ❌ classifier | 🟡 | 🔄 - **sandbox delimiters only**, focus on tool-layer security |
+| 8 | Multi-client | 🟡 (Claude+Cursor) | ❌ | 🔄 - **Claude Desktop+Code only v1**, Cursor v1.1 |
+| 9 | Monorepo 5 packages | ✅ | 🟡 | 🔄 - **single Python package** v1, monorepo left open for Tauri stub |
+| 10 | 4 distribution channels | ⚠️ | ⚠️ | 🔄 - **PyPI/pipx only v1**, brew v1.1 |
+| 11 | 8 phases 20 weeks | ❌ | ❌ | 🔄 - **4-week read-only MVP**, rest unblocked by usage |
+| 12 | Multi-machine sync | hands-off | single-writer | 🔄 - **single-writer rule v1**, other patterns documented "unsupported" |
 
 **Score**: 11 pivots out of 12 decisions. v2.0 was too ambitious. v2.1 is executable.
 
 ---
 
-## 4. Arbitrated decisions — motivated detail
+## 4. Arbitrated decisions - motivated detail
 
 ### 4.1 MCP server = local context router read-only
 
@@ -103,7 +103,7 @@ after real use of the read-only version.
 - The `id` ULID, `content_hash`, and Datacron metadata are stored as **side-metadata in `.datacron/`**, not in existing notes' frontmatter.
 - DVS frontmatter is written **only on notes Datacron creates**.
 - No normalization command is delivered; the existing vault stays unchanged.
-- "Reserved folders" become **configurable** in `.datacron/VAULT.yaml` — the user can map `_inbox/` onto their own `00-Inbox/` PARA if they wish.
+- "Reserved folders" become **configurable** in `.datacron/VAULT.yaml` - the user can map `_inbox/` onto their own `00-Inbox/` PARA if they wish.
 - **DVS is not marketed as an "open spec"** (ChatGPT contrarian take, retained). The `SPEC.md` file remains internal reference documentation. If community demand emerges, we will extract it into `jbombled/datacron-spec` later.
 
 **Impact**:
@@ -111,7 +111,7 @@ after real use of the read-only version.
 - SPEC.md becomes `docs/dvs-reference.md` (internal).
 - Datacron adoption on an existing vault = **zero friction**.
 
-### 4.3 Trust model — 3 visible UX levels, L0-L5 backend
+### 4.3 Trust model - 3 visible UX levels, L0-L5 backend
 
 **v2.0**: 6 levels L0-L5 exposed to the user.
 
@@ -129,7 +129,7 @@ fine-grained levels. Forward-compat preserved.
 **Note**: As long as v1 is read-only, these levels are not exposed at all. They arrive with the
 write tools post-v1.
 
-### 4.4 Custom FastMCP — confirmed
+### 4.4 Custom FastMCP - confirmed
 
 Absolute Gemini ✅ + ChatGPT ✅ convergence. No debate. Custom is necessary for:
 - Direct filesystem access (vs Obsidian REST API which requires the app)
@@ -149,13 +149,13 @@ Absolute Gemini ✅ + ChatGPT ✅ convergence. No debate. Custom is necessary fo
 - Offline mode is a different product with different needs (Gemini)
 - Deterministic CLI cron jobs are enough for a weekly synthesis (ChatGPT)
 
-**If** one day we need offline agentic orchestration, we will evaluate at that point — LangGraph,
+**If** one day we need offline agentic orchestration, we will evaluate at that point - LangGraph,
 PydanticAI, or nothing.
 
 **Impact**: Phase 4 removed. `datacron-agent/` will not be created in v1. MVP complexity divided
 by 3.
 
-### 4.6 Retrieval stack — ripgrep + SQLite FTS5 only in v1
+### 4.6 Retrieval stack - ripgrep + SQLite FTS5 only in v1
 
 **v2.0**: hybrid LanceDB + Contextual Retrieval + Wikigraph + ripgrep (4 systems in Phase 0-2).
 
@@ -166,7 +166,7 @@ by 3.
 - `vault_map` MCP resource (Gemini insight #3, retained)
 
 Vectors (LanceDB + embeddings) are added **only if** an eval harness measures insufficient
-recall@k on the real corpus. Contextual Retrieval (Anthropic) waits the same way — no
+recall@k on the real corpus. Contextual Retrieval (Anthropic) waits the same way - no
 pre-optimization.
 
 **Gate criterion** (ChatGPT risk #3): mandatory eval harness with:
@@ -178,7 +178,7 @@ pre-optimization.
 
 If lexical alone gives >80% recall@10 on Julien's corpus → no need for vectors.
 
-### 4.7 Prompt injection — lightweight sandbox, no classifier
+### 4.7 Prompt injection - lightweight sandbox, no classifier
 
 **v2.0**: Sandboxing wrap + escape + dedicated Ollama classifier.
 
@@ -189,9 +189,9 @@ If lexical alone gives >80% recall@10 on Julien's corpus → no need for vectors
 - ✅ Strict path confinement (`DATACRON_READ_PATHS`)
 - ✅ Bounded result sizes (top-k limits)
 - ❌ ML classifier removed (latency theater, single-user threat model)
-- ➕ ChatGPT adds: focus on **tool layer security** (descriptor integrity, write authorization, cross-tool exfiltration) — that is where the recent MCP literature identifies the real weak point
+- ➕ ChatGPT adds: focus on **tool layer security** (descriptor integrity, write authorization, cross-tool exfiltration) - that is where the recent MCP literature identifies the real weak point
 
-### 4.8 Multi-client v1 — Claude Desktop + Claude Code only
+### 4.8 Multi-client v1 - Claude Desktop + Claude Code only
 
 **v2.0**: multi-client promise (Claude family, Cursor, ChatGPT Desktop, Gemini).
 
@@ -199,16 +199,16 @@ If lexical alone gives >80% recall@10 on Julien's corpus → no need for vectors
 
 | Client | v1 status | Roadmap status |
 |---|---|---|
-| Claude Desktop | ✅ **E2E tested** | — |
-| Claude Code | ✅ **E2E tested** | — |
+| Claude Desktop | ✅ **E2E tested** | - |
+| Claude Code | ✅ **E2E tested** | - |
 | Cowork | ⏳ v1.x via HTTPS tunnel | honest "What leaves your machine" section |
-| Cursor | 🟡 v1.1 (to validate) | — |
-| ChatGPT Desktop (Apps SDK) | 🔵 v2 | — |
-| Gemini | 🔵 v2 (when official MCP GA) | — |
+| Cursor | 🟡 v1.1 (to validate) | - |
+| ChatGPT Desktop (Apps SDK) | 🔵 v2 | - |
+| Gemini | 🔵 v2 (when official MCP GA) | - |
 
 The code stays MCP-compatible by design. Only the **marketing promise** narrows.
 
-### 4.9 Monorepo — 1 Python package in v1
+### 4.9 Monorepo - 1 Python package in v1
 
 **v2.0**: 5 Python workspace packages + a Tauri Rust crate.
 
@@ -220,7 +220,7 @@ datacron/
 ├── pyproject.toml                # single Python package
 ├── src/datacron/
 │   ├── __init__.py
-│   ├── cli.py                    # `datacron …` entry point (Typer)
+│   ├── cli.py                    # `datacron ...` entry point (Typer)
 │   ├── mcp/                      # FastMCP server (submodule)
 │   ├── core/                     # parser, hashing, paths, config
 │   ├── indexing/                 # SQLite FTS5, ripgrep wrapper
@@ -232,7 +232,7 @@ datacron/
 │   ├── dvs-reference.md          # ex-SPEC.md (internal)
 │   ├── Gemini_v2-review.md
 │   ├── ChatGPT_v2-review.md
-│   └── …
+│   └── ...
 ├── examples/
 │   └── demo-vault/
 ├── scripts/                       # Bash conforming to bash-standards
@@ -246,29 +246,29 @@ datacron/
 The repo stays ready to host `crates/datacron-studio/` when we build Studio, and a split into
 multiple packages when we have ≥3 genuinely distinct subsystems (Agent, Daemon, etc.).
 
-### 4.10 Distribution — PyPI/pipx only in v1
+### 4.10 Distribution - PyPI/pipx only in v1
 
 **v2.0**: PyPI + Homebrew + Docker + Tauri binaries.
 
 **v2.1**: **PyPI/pipx only** for v1.
 
-- ✅ `pipx install datacron` — a single official channel
+- ✅ `pipx install datacron` - a single official channel
 - 📅 Homebrew tap → v1.1 if macOS feedback asks for it
 - 📅 Docker → CI/demo only, not distributed (uid/gid hell for file-local)
 - 📅 Tauri binaries → deferred to Studio v2 if demanded
 
-> **Addendum (ADR-017, 2026-07-14):** this decision is revised — a standalone executable
+> **Addendum (ADR-017, 2026-07-14):** this decision is revised - a standalone executable
 > (PyInstaller) is added **alongside** PyPI/pipx, for users without Python. PyPI/pipx remains
 > the recommended channel for Python environments. See [architecture.md](architecture.md).
 
-### 4.11 Roadmap — 4-week read-only MVP
+### 4.11 Roadmap - 4-week read-only MVP
 
 **v2.0**: 8 phases ~20 weeks.
 
 **v2.1**: **Phase 0 only** = a 4-week MVP. Everything else becomes post-MVP, unblocked by real
 usage.
 
-**Phase 0 (4 weeks)** — *"Local context router read-only"*:
+**Phase 0 (4 weeks)** - *"Local context router read-only"*:
 
 | Week | Deliverable |
 |---|---|
@@ -289,7 +289,7 @@ cost."*
 - v1.0: stabilization + MkDocs docs + Homebrew tap
 - v2.0+: Tauri Studio, LangGraph offline, multi-client Cursor/ChatGPT/Gemini
 
-### 4.12 Sync — single-writer vault rule in v1
+### 4.12 Sync - single-writer vault rule in v1
 
 **v2.0**: "Hands-off, the user manages Git/Syncthing/iCloud".
 
@@ -328,7 +328,7 @@ cost."*
 
 ---
 
-## 7. The 4-week MVP — executable spec
+## 7. The 4-week MVP - executable spec
 
 ### Exposed technical surface
 
@@ -397,14 +397,14 @@ Unchanged v2.0 → v2.1:
 
 ---
 
-## 10. Methodology — what we keep for the future
+## 10. Methodology - what we keep for the future
 
 This **design → cross-review → arbitration → executable spec** loop produced, in 24h, a spec
 more solid than a month of siloed design. Repeat at every major pivot:
 
 1. Produce a defensible, structured v0 design.
 2. Submit it to **two independent models** with a strict shared prompt and an identical output format.
-3. Read both returns **with humility** — actively seek the points where they are right, do not defend against them.
+3. Read both returns **with humility** - actively seek the points where they are right, do not defend against them.
 4. Identify **strong convergences** (= clear signals) and **unique insights** (= added value).
 5. **Empirically verify** critical claims (here: Cowork = remote, via Anthropic docs web search).
 6. Arbitrate each point with a motivated justification.

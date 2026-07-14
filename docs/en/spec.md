@@ -1,4 +1,4 @@
-# Datacron — Internal Vault Conventions
+# Datacron - Internal Vault Conventions
 
 **English** · [Français](../fr/spec.md)
 
@@ -13,7 +13,7 @@
 
 ---
 
-## 1. Reading philosophy — zero migration
+## 1. Reading philosophy - zero migration
 
 Datacron reads **any folder of Markdown files** without imposing structure or
 frontmatter. The user's existing vault is untouched.
@@ -52,7 +52,7 @@ my-vault/
 │   │   └── canaries/
 │   ├── logs/                        # reserved vault-local log directory
 │   └── ulids.json                   # stable IDs for notes without frontmatter IDs
-├── … the user's notes, in any structure …
+├── ... the user's notes, in any structure ...
 ```
 
 Example `.datacron/VAULT.yaml`:
@@ -87,14 +87,14 @@ Rather than a YAML state field, Datacron uses **folder location** to track lifec
 **To promote a draft to canonical**: the user simply **moves the file out of `_drafts/`**.
 No frontmatter edit required. The filesystem is the state machine.
 
-Folder names are configurable via `.datacron/VAULT.yaml` (see §2) — the user can map
+Folder names are configurable via `.datacron/VAULT.yaml` (see §2) - the user can map
 `_drafts/` to `00-Inbox/AI-Drafts/` if that fits their existing PARA/Zettelkasten layout.
 
 ---
 
 ## 4. Frontmatter Datacron writes (v0.2+, when write tools arrive)
 
-When Datacron itself creates a note (post-v0.2 — out of MVP scope), it writes a
+When Datacron itself creates a note (post-v0.2 - out of MVP scope), it writes a
 **minimal** frontmatter:
 
 ```yaml
@@ -107,14 +107,14 @@ audit_run_id: 2026-05-17T15-58-12Z_a3c2
 ---
 ```
 
-That's it. No `status`, no `trust_level` exposed in the frontmatter — those live in
+That's it. No `status`, no `trust_level` exposed in the frontmatter - those live in
 the audit log and policy engine.
 
 **Existing notes are never retroactively normalized.** Datacron ships no normalization command.
 
 ---
 
-## 5. Trust model — 3 user-facing states
+## 5. Trust model - 3 user-facing states
 
 Internally the policy engine supports a 6-level lattice (L0-L5), but the user only sees
 **three categories**:
@@ -128,7 +128,7 @@ Internally the policy engine supports a 6-level lattice (L0-L5), but the user on
 A note marked with frontmatter key `important: true` is automatically escalated to
 **dangerous** category when AI tries to modify it.
 
-In MVP (v1, read-only), this entire model is dormant — Datacron writes nothing.
+In MVP (v1, read-only), this entire model is dormant - Datacron writes nothing.
 
 ---
 
@@ -202,10 +202,10 @@ journal.
 
 ## 9. Compatibility commitments
 
-- **Forward compatibility** — Datacron preserves all unknown frontmatter keys; never deletes user data.
-- **Backward compatibility** — A vault with zero Datacron frontmatter is fully supported.
-- **Obsidian compatibility** — All Obsidian default vault formats work without modification (wikilinks, callouts, embeds, tags, blocks).
-- **Logseq / Foam / VSCode** — Same. Markdown is Markdown.
+- **Forward compatibility** - Datacron preserves all unknown frontmatter keys; never deletes user data.
+- **Backward compatibility** - A vault with zero Datacron frontmatter is fully supported.
+- **Obsidian compatibility** - All Obsidian default vault formats work without modification (wikilinks, callouts, embeds, tags, blocks).
+- **Logseq / Foam / VSCode** - Same. Markdown is Markdown.
 
 ---
 
@@ -213,16 +213,16 @@ journal.
 
 Two independent axes, kept deliberately separate:
 
-- **These conventions** (this document) are versioned on their own — currently **v1.1**. The
+- **These conventions** (this document) are versioned on their own - currently **v1.1**. The
   table below tracks changes to the on-disk conventions, not any software release.
 - **`.datacron/VAULT.yaml#datacron_version`** records the *Datacron build* that wrote the
-  sidecar — a provenance stamp (e.g. `2026.0714.00`, the package's Calendar Version). It is
+  sidecar - a provenance stamp (e.g. `2026.0714.00`, the package's Calendar Version). It is
   **not** a format-compatibility gate.
 
 Datacron reads any Markdown vault without a version check or migration (see §1). There is no
 "refuse on higher major" gate today. If the on-disk format ever changes incompatibly, a
 dedicated format-version field and an explicit compatibility check would be introduced at that
-point — the provenance stamp is never overloaded for that purpose.
+point - the provenance stamp is never overloaded for that purpose.
 
 | Conventions version | Date | Changes |
 |---|---|---|

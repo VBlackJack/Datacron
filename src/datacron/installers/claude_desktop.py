@@ -62,9 +62,9 @@ def _resolve_mcp_command() -> str:
     ``"datacron-mcp"`` command in the config produces a silent
     "executable not found" at startup. Resolution order:
 
-    1. ``shutil.which("datacron-mcp")`` — picks up a system-wide or pipx install.
+    1. ``shutil.which("datacron-mcp")`` - picks up a system-wide or pipx install.
     2. The same ``Scripts/`` (Windows) or ``bin/`` (POSIX) directory as the
-       currently-running interpreter — picks up the venv that invoked this
+       currently-running interpreter - picks up the venv that invoked this
        installer (typical dev workflow).
     3. Raise :class:`ClaudeDesktopConfigError` with an actionable message.
     """
@@ -160,7 +160,7 @@ def install_claude_desktop_config(
             Defaults to :func:`config_path_for_platform`.
         command: The executable Claude Desktop will spawn. ``None``
             (default) triggers :func:`_resolve_mcp_command` to produce an
-            absolute path — required because Claude Desktop does not
+            absolute path - required because Claude Desktop does not
             inherit the caller's PATH. Pass an explicit string to bypass
             resolution.
         extra_env: Optional additional env vars to merge into the
@@ -229,7 +229,7 @@ def _load_existing_config(path: Path) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise ClaudeDesktopConfigError(
             f"Existing config at {path} is not valid JSON: {exc}. "
-            "Refusing to overwrite — please fix or remove the file."
+            "Refusing to overwrite - please fix or remove the file."
         ) from exc
     if not isinstance(loaded, dict):
         raise ClaudeDesktopConfigError(

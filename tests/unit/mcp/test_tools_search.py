@@ -552,7 +552,7 @@ class TestGetBacklinks:
 
     @pytest.mark.asyncio
     async def test_backlinks_resolve_through_aliases(self, indexed_app: DatacronApp) -> None:
-        # welcome.md has alias "Welcome" — passing the alias must resolve and
+        # welcome.md has alias "Welcome" - passing the alias must resolve and
         # surface incoming wikilinks (including those written as [[Welcome]]).
         result = await _get_backlinks_impl(indexed_app, target="Welcome", limit=20)
         assert "error" not in result

@@ -62,7 +62,7 @@ Prérequis runtime :
 
 ## Démarrage rapide
 
-Le plus simple — une commande détecte tes clients IA, initialise le vault, l'indexe et
+Le plus simple - une commande détecte tes clients IA, initialise le vault, l'indexe et
 enregistre Datacron partout :
 
 ```bash
