@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `datacron setup`, a guided end-to-end wizard that initializes the sidecar, builds the index,
   and wires an MCP client in one command, with location and option choices (interactive by
   default, `--yes` for unattended runs). Vault initialization is now shared through
-  `datacron.bootstrap` between `init` and `setup`.
+  `datacron.bootstrap` between `init` and `setup`. Supports `--client claude-code`, which
+  prints a ready-to-paste stdio MCP config snippet.
 - Standalone single-file executable build (PyInstaller) behind the optional `[build]` extra,
   with `scripts/build_installer.ps1` and `scripts/build_installer.sh`. Ships Datacron to users
   without Python (ADR-017, revising the PyPI/pipx-only distribution decision).

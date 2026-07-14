@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -28,9 +29,11 @@ from datacron.cli import app
 from datacron.core.paths import sidecar_index_db, sidecar_vault_config
 from datacron.installers.claude_desktop import ClaudeDesktopConfigError
 from datacron.setup_wizard import (
+    CLIENT_CLAUDE_CODE,
     CLIENT_CLAUDE_DESKTOP,
     CLIENT_NONE,
     SetupPlan,
+    claude_code_stdio_config,
     run_setup,
 )
 
@@ -169,6 +172,36 @@ def test_run_setup_client_failure_becomes_warning(
     assert result.client_config_path is None
     assert result.warnings
     assert "no config here" in result.warnings[0]
+
+
+def test_run_setup_claude_code_returns_snippet(tmp_path: Path) -> None:
+    result = asyncio.run(
+        run_setup(
+            SetupPlan(
+                vault_path=tmp_path,
+                client=CLIENT_CLAUDE_CODE,
+                enable_write=True,
+                read_only=True,
+                durability="strict",
+                build_index=False,
+            )
+        )
+    )
+    assert result.client_config_path is None
+    assert result.stdio_config is not None
+    parsed = json.loads(result.stdio_config)
+    server = parsed["mcpServers"]["datacron"]
+    assert server["command"] == "datacron-mcp"
+    assert server["env"]["DATACRON_VAULT_ROOT"] == str(tmp_path)
+    assert server["env"]["DATACRON_READ_ONLY"] == "true"
+    assert server["env"]["DATACRON_DURABILITY"] == "strict"
+    assert "DATACRON_WRITE_PATHS" in server["env"]
+
+
+def test_claude_code_stdio_config_is_valid_json(tmp_path: Path) -> None:
+    snippet = claude_code_stdio_config(tmp_path, {"DATACRON_DURABILITY": "best-effort"})
+    parsed = json.loads(snippet)
+    assert parsed["mcpServers"]["datacron"]["env"]["DATACRON_READ_PATHS"] == str(tmp_path)
 
 
 # ---------------------------------------------------------------------------

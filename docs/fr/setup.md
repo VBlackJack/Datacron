@@ -27,7 +27,8 @@ client, avant d'afficher un récapitulatif et comment vérifier. Options utiles 
 - `datacron setup --enable-write --write-path CHEMIN` — active l'écriture sur un sous-dossier (défaut : `<vault>/_memory`).
 - `datacron setup --durability strict --read-only` — mode durabilité strict et lecture seule certifiée.
 - `datacron setup --no-index` — saute la construction de l'index.
-- `datacron setup --client none` — configure le vault sans écrire de config client (pour Claude Code / stdio manuel).
+- `datacron setup --client claude-code` — affiche un snippet de config stdio prêt à coller dans Claude Code.
+- `datacron setup --client none` — configure le vault sans écrire ni afficher de config client.
 
 Les sections ci-dessous décrivent les **mêmes étapes manuellement**, si tu préfères tout
 contrôler pas à pas.

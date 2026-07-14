@@ -27,7 +27,8 @@ printing a summary and how to verify. Useful options:
 - `datacron setup --enable-write --write-path PATH` — enable writing on a subfolder (default: `<vault>/_memory`).
 - `datacron setup --durability strict --read-only` — strict durability and certified read-only mode.
 - `datacron setup --no-index` — skip building the index.
-- `datacron setup --client none` — configure the vault without writing any client config (for Claude Code / manual stdio).
+- `datacron setup --client claude-code` — print a ready-to-paste stdio config snippet for Claude Code.
+- `datacron setup --client none` — configure the vault without writing or printing any client config.
 
 The sections below describe the **same steps manually**, if you prefer full step-by-step
 control.
