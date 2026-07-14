@@ -1,5 +1,7 @@
 # Datacron — Décisions tranchées v2.1
 
+**Français** · [English](../en/decisions-v2.1.md)
+
 > **Statut** : Arbitrage final post cross-review
 > **Auteur** : Julien Bombled (synthèse arbitrée par Claude)
 > **Date** : 2026-05-17

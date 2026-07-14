@@ -243,8 +243,8 @@ To get started:
 Technical references:
 
 - [Vault conventions (SPEC)](docs/en/spec.md)
-- [Architecture and public surface](docs/ARCHITECTURE.md)
-- [Settled decisions v2.1](docs/decisions-tranchees-v2.1.md)
+- [Architecture and public surface](docs/en/architecture.md)
+- [Settled decisions v2.1](docs/en/decisions-v2.1.md)
 - [Security boundary](docs/en/security-boundary.md)
 - [Integrity scrubber](docs/en/integrity-scrubber.md)
 - [Operational health and durability](docs/en/operational-health.md)

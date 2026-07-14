@@ -1,17 +1,19 @@
 # Datacron — Architecture & Spec technique
 
+**Français** · [English](../en/architecture.md)
+
 > **Statut** : v2.2 — Spec vivante synchronisée avec `main`
 > **Auteur** : Julien Bombled
 > **Date** : 2026-07-12
 > **Sources** :
 > - Deep-research initiaux et cross-review v2.0 : archives locales non versionnées sous `local/docs-ai/`
-> - Arbitrage v2.1 : [`decisions-tranchees-v2.1.md`](decisions-tranchees-v2.1.md)
+> - Arbitrage v2.1 : [`decisions-v2.1.md`](decisions-v2.1.md)
 > - Vérification empirique : Anthropic Help Center (Cowork = remote MCP only)
 > **Licence du code** : Apache 2.0 · **Code/comments/docstrings** : English · **Guides et vues d'ensemble** : Français · **Contrats techniques** : English
 
 > 🔄 **Cette v2.1 remplace v2.0** après cross-review qui a pivoté 11 décisions sur 12.
 > Le scope du MVP a été divisé par 5 (4 semaines vs 20). Les détails de l'arbitrage sont
-> dans [`decisions-tranchees-v2.1.md`](decisions-tranchees-v2.1.md).
+> dans [`decisions-v2.1.md`](decisions-v2.1.md).
 
 ---
 
