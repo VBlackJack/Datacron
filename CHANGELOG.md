@@ -26,8 +26,9 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   without Python (ADR-017, revising the PyPI/pipx-only distribution decision).
 - `release` GitHub Actions workflow: on a `v*` tag it builds the standalone executable on
   Windows, macOS, and Linux, smoke-tests each binary, and attaches them to the GitHub Release.
-- Thirteen MCP tools covering vault reads, lexical and regex search, confined writes,
-  operational health, note history, and operation-audit queries.
+- Fourteen MCP tools covering vault reads, lexical and regex search, confined writes,
+  operational health, note history, operation-audit queries, and a cache-only
+  `contradiction_scan` advisory (experimental, non-blocking).
 - Content-addressed note history, durable operation evidence, integrity scrubbing, and
   byte-exact freshness contracts.
 - A locked uv environment for the complete runtime and development dependency set.
@@ -36,6 +37,9 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 ### Changed
 
 - CI installs frozen dependencies and validates Python 3.11 and 3.12 on Ubuntu and Windows.
+- CI adds a `dependency-audit` job that scans locked dependencies for known CVEs (`pip-audit`).
+- Vault encoding/line-ending defaults and the `datacron_version` stamp key are centralized in
+  `core.config` (single source of truth shared by the writer and the `vault/info` resource).
 - Durable-write primitives live in `datacron.core.durability`, removing the former
   `vault_writer` and `operation_log` import cycle.
 - Logging configuration is explicit at CLI and MCP server entrypoints; importing Datacron

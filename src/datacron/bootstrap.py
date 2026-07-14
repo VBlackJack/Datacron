@@ -32,13 +32,16 @@ from ulid import ULID
 
 from datacron import __version__
 from datacron.core.config import (
+    DEFAULT_ENCODING,
     DEFAULT_EXCLUDED_FILES,
     DEFAULT_EXCLUDED_FOLDERS,
     DEFAULT_HISTORY_MODE,
     DEFAULT_HISTORY_RETENTION_DAYS,
+    DEFAULT_LINE_ENDINGS,
     HISTORY_DIR_NAME,
     OPLOG_DIR_NAME,
     OPLOG_PENDING_DIR_NAME,
+    VAULT_VERSION_KEY,
 )
 from datacron.core.logger import get_logger
 from datacron.core.paths import (
@@ -54,8 +57,6 @@ _LOGGER = get_logger(__name__)
 
 DEFAULT_DRAFTS_FOLDER: Final[str] = "_drafts"
 DEFAULT_JOURNAL_FOLDER: Final[str] = "_journal"
-_ENCODING_UTF8: Final[str] = "utf-8"
-_LINE_ENDINGS_LF: Final[str] = "lf"
 _LOGS_DIR_NAME: Final[str] = "logs"
 
 
@@ -83,11 +84,11 @@ class BootstrapResult:
 def _format_vault_yaml(vault_id: str, created: datetime) -> str:
     """Serialize a fresh ``VAULT.yaml`` payload with seeded defaults."""
     payload = {
-        "datacron_version": __version__,
+        VAULT_VERSION_KEY: __version__,
         "vault_id": vault_id,
         "created": created.isoformat(),
-        "encoding": _ENCODING_UTF8,
-        "line_endings": _LINE_ENDINGS_LF,
+        "encoding": DEFAULT_ENCODING,
+        "line_endings": DEFAULT_LINE_ENDINGS,
         "history_retention_days": DEFAULT_HISTORY_RETENTION_DAYS,
         "history_mode": DEFAULT_HISTORY_MODE,
         "folders": {
@@ -148,7 +149,7 @@ def initialize_vault(vault_path: Path, *, force: bool = False) -> BootstrapResul
 
     vault_id = str(ULID())
     now = datetime.now(tz=UTC)
-    config_path.write_text(_format_vault_yaml(vault_id, now), encoding=_ENCODING_UTF8)
+    config_path.write_text(_format_vault_yaml(vault_id, now), encoding=DEFAULT_ENCODING)
     _LOGGER.info("Initialized Datacron vault at %s (vault_id=%s)", resolved, vault_id)
 
     return BootstrapResult(
