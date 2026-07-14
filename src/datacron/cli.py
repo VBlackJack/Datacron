@@ -51,9 +51,11 @@ from datacron.core.scope import SingleTenantVaultScope
 from datacron.core.vault import build_configured_reader
 from datacron.scrubber import CanaryInitializationError, ScrubState, initialize_canaries
 from datacron.setup_wizard import (
+    CLIENT_ALL,
     CLIENT_CHOICES,
-    CLIENT_CLAUDE_DESKTOP,
     DEFAULT_WRITE_SUBFOLDER,
+    INSTALL_SCOPE_BOTH,
+    INSTALL_SCOPE_CHOICES,
     SetupPlan,
     SetupResult,
     run_setup,
@@ -427,7 +429,12 @@ def setup(
     client: str | None = typer.Option(
         None,
         "--client",
-        help=f"MCP client to configure ({', '.join(CLIENT_CHOICES)}).",
+        help=f"MCP client to configure ({', '.join(CLIENT_CHOICES)}). 'all' auto-detects.",
+    ),
+    scope: str | None = typer.Option(
+        None,
+        "--scope",
+        help=f"For --client all, config scope ({', '.join(INSTALL_SCOPE_CHOICES)}).",
     ),
     enable_write: bool = typer.Option(
         False,
@@ -476,6 +483,7 @@ def setup(
 
     resolved_vault = _prompt_vault(vault, assume_yes)
     resolved_client = _prompt_client(client, assume_yes)
+    resolved_scope = _prompt_scope(scope, resolved_client, assume_yes)
     resolved_durability = _prompt_durability(durability, assume_yes)
     resolved_enable_write, resolved_write_path = _prompt_write(
         enable_write, write_path, resolved_vault, assume_yes
@@ -490,6 +498,7 @@ def setup(
         enable_write=resolved_enable_write,
         write_path=resolved_write_path,
         client=resolved_client,
+        install_scope=resolved_scope,
         durability=resolved_durability,
         read_only=resolved_read_only,
         force=force,
@@ -519,11 +528,26 @@ def _prompt_client(client: str | None, assume_yes: bool) -> str:
             _error(f"Unknown client {client!r}. Expected one of {list(CLIENT_CHOICES)}.")
         return client
     if assume_yes:
-        return CLIENT_CLAUDE_DESKTOP
+        return CLIENT_ALL
     answer: str = typer.prompt(
         "MCP client",
-        default=CLIENT_CLAUDE_DESKTOP,
+        default=CLIENT_ALL,
         type=click.Choice(list(CLIENT_CHOICES)),
+    )
+    return answer
+
+
+def _prompt_scope(scope: str | None, client: str, assume_yes: bool) -> str:
+    if scope is not None:
+        if scope not in INSTALL_SCOPE_CHOICES:
+            _error(f"Unknown scope {scope!r}. Expected one of {list(INSTALL_SCOPE_CHOICES)}.")
+        return scope
+    if client != CLIENT_ALL or assume_yes:
+        return INSTALL_SCOPE_BOTH
+    answer: str = typer.prompt(
+        "Install scope",
+        default=INSTALL_SCOPE_BOTH,
+        type=click.Choice(list(INSTALL_SCOPE_CHOICES)),
     )
     return answer
 
@@ -586,6 +610,16 @@ def _render_setup_result(result: SetupResult) -> None:
         _print("")
         _print("Add this server to your Claude Code (stdio) MCP config:")
         _print(result.stdio_config)
+    if result.client_installs:
+        _print("")
+        _print("MCP clients registered:")
+        for outcome in result.client_installs:
+            mark = "ok " if outcome.installed else "err"
+            detail = "" if outcome.installed else f" — {outcome.detail}"
+            _print(
+                f"  [{mark}] {outcome.display_name} ({outcome.scope}): "
+                f"{outcome.config_path}{detail}"
+            )
     for warning in result.warnings:
         typer.secho(f"  warning: {warning}", fg=typer.colors.YELLOW, err=True)
     _print("Verify from your client with get_health, or run `datacron status`.")

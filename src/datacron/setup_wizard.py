@@ -45,14 +45,24 @@ from datacron.indexing.reconcile import reconcile
 from datacron.installers.claude_desktop import (
     ClaudeDesktopConfigError,
     install_claude_desktop_config,
+    resolve_mcp_command,
+)
+from datacron.installers.mcp_clients import (
+    SCOPE_PROJECT,
+    SCOPE_USER,
+    InstallOutcome,
+    discover_targets,
+    install_targets,
 )
 
 __all__ = [
+    "CLIENT_ALL",
     "CLIENT_CHOICES",
     "CLIENT_CLAUDE_CODE",
     "CLIENT_CLAUDE_DESKTOP",
     "CLIENT_NONE",
     "DEFAULT_WRITE_SUBFOLDER",
+    "INSTALL_SCOPE_CHOICES",
     "SetupPlan",
     "SetupResult",
     "claude_code_stdio_config",
@@ -61,13 +71,24 @@ __all__ = [
 
 _LOGGER = get_logger(__name__)
 
+CLIENT_ALL: Final[str] = "all"
 CLIENT_CLAUDE_DESKTOP: Final[str] = "claude-desktop"
 CLIENT_CLAUDE_CODE: Final[str] = "claude-code"
 CLIENT_NONE: Final[str] = "none"
 CLIENT_CHOICES: Final[tuple[str, ...]] = (
+    CLIENT_ALL,
     CLIENT_CLAUDE_DESKTOP,
     CLIENT_CLAUDE_CODE,
     CLIENT_NONE,
+)
+
+INSTALL_SCOPE_USER: Final[str] = "user"
+INSTALL_SCOPE_PROJECT: Final[str] = "project"
+INSTALL_SCOPE_BOTH: Final[str] = "both"
+INSTALL_SCOPE_CHOICES: Final[tuple[str, ...]] = (
+    INSTALL_SCOPE_BOTH,
+    INSTALL_SCOPE_USER,
+    INSTALL_SCOPE_PROJECT,
 )
 
 # Default write-enabled subfolder, matching the ``_memory`` convention that the
@@ -104,7 +125,10 @@ class SetupPlan:
         enable_write: Whether to enable the confined write tools.
         write_path: Write-allowlisted directory when ``enable_write`` is set.
             ``None`` falls back to ``<vault>/_memory``.
-        client: Target MCP client (:data:`CLIENT_CHOICES`).
+        client: Target MCP client (:data:`CLIENT_CHOICES`). ``all`` auto-detects
+            every installed client and registers Datacron with each.
+        install_scope: For ``client=all``, which config scopes to write
+            (:data:`INSTALL_SCOPE_CHOICES`).
         durability: Durability mode (:data:`VALID_DURABILITY_MODES`).
         read_only: Whether to run the server in certified read-only mode.
         force: Overwrite an existing ``VAULT.yaml``.
@@ -114,7 +138,8 @@ class SetupPlan:
     build_index: bool = True
     enable_write: bool = False
     write_path: Path | None = None
-    client: str = CLIENT_CLAUDE_DESKTOP
+    client: str = CLIENT_ALL
+    install_scope: str = INSTALL_SCOPE_BOTH
     durability: str = "best-effort"
     read_only: bool = False
     force: bool = False
@@ -135,6 +160,7 @@ class SetupResult:
             stays disabled.
         read_only: Whether certified read-only mode was selected.
         durability: The selected durability mode.
+        client_installs: Per-client registration outcomes for ``client=all``.
         warnings: Non-fatal messages surfaced to the operator.
     """
 
@@ -145,6 +171,7 @@ class SetupResult:
     read_only: bool
     durability: str
     stdio_config: str | None = None
+    client_installs: list[InstallOutcome] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -152,11 +179,25 @@ def _validate_plan(plan: SetupPlan) -> None:
     """Reject a plan with out-of-range enumerated values before any I/O."""
     if plan.client not in CLIENT_CHOICES:
         raise ValueError(f"Unknown client {plan.client!r}. Expected one of {list(CLIENT_CHOICES)}.")
+    if plan.install_scope not in INSTALL_SCOPE_CHOICES:
+        raise ValueError(
+            f"Unknown install scope {plan.install_scope!r}. "
+            f"Expected one of {list(INSTALL_SCOPE_CHOICES)}."
+        )
     if plan.durability not in VALID_DURABILITY_MODES:
         raise ValueError(
             f"Unknown durability {plan.durability!r}. "
             f"Expected one of {sorted(VALID_DURABILITY_MODES)}."
         )
+
+
+def _scopes_for(install_scope: str) -> tuple[str, ...]:
+    """Map an install-scope selection to concrete client config scopes."""
+    if install_scope == INSTALL_SCOPE_USER:
+        return (SCOPE_USER,)
+    if install_scope == INSTALL_SCOPE_PROJECT:
+        return (SCOPE_PROJECT,)
+    return (SCOPE_USER, SCOPE_PROJECT)
 
 
 async def _build_index(vault_root: Path, settings: Settings) -> int:
@@ -223,7 +264,10 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
     extra_env = _build_extra_env(plan, write_path)
     client_config_path: Path | None = None
     stdio_config: str | None = None
-    if plan.client == CLIENT_CLAUDE_DESKTOP:
+    client_installs: list[InstallOutcome] = []
+    if plan.client == CLIENT_ALL:
+        client_installs = _install_all_clients(plan, vault_root, extra_env, warnings)
+    elif plan.client == CLIENT_CLAUDE_DESKTOP:
         try:
             client_config_path = install_claude_desktop_config(vault_root, extra_env=extra_env)
         except ClaudeDesktopConfigError as exc:
@@ -241,8 +285,39 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
         read_only=plan.read_only,
         durability=plan.durability,
         stdio_config=stdio_config,
+        client_installs=client_installs,
         warnings=warnings,
     )
+
+
+def _install_all_clients(
+    plan: SetupPlan,
+    vault_root: Path,
+    extra_env: dict[str, str],
+    warnings: list[str],
+) -> list[InstallOutcome]:
+    """Detect every installed MCP client and register Datacron with each.
+
+    The vault root doubles as the project directory for project-scope config, so
+    opening the vault as a project in an editor picks up Datacron automatically.
+    """
+    try:
+        command = resolve_mcp_command()
+    except ClaudeDesktopConfigError as exc:
+        warnings.append(f"Client auto-install skipped: {exc}")
+        _LOGGER.warning("cli.setup could not resolve MCP command: %s", exc)
+        return []
+
+    env: dict[str, str] = {
+        _ENV_VAULT_ROOT: str(vault_root),
+        _ENV_READ_PATHS: str(vault_root),
+        **extra_env,
+    }
+    targets = discover_targets(scopes=_scopes_for(plan.install_scope), project_dir=vault_root)
+    if not targets:
+        warnings.append("No MCP clients detected; nothing to auto-install.")
+        return []
+    return install_targets(targets, command=command, args=[], env=env)
 
 
 def claude_code_stdio_config(vault_root: Path, extra_env: dict[str, str]) -> str:

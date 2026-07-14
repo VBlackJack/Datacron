@@ -18,12 +18,16 @@ branchement du client MCP :
 datacron setup
 ```
 
-Elle pose des questions avec des valeurs par défaut (emplacement du vault, client, activation
-de l'écriture, durabilité, lecture seule), puis exécute `init`, indexe et écrit la config du
-client, avant d'afficher un récapitulatif et comment vérifier. Options utiles :
+Par défaut (`--client all`), elle **détecte tous les clients IA installés et enregistre
+Datacron dans chacun** : Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf
+et VS Code. Chaque config est fusionnée sans écraser les serveurs déjà présents (JSON ou TOML
+selon le client). Elle pose des questions avec des valeurs par défaut (emplacement du vault,
+client, portée, écriture, durabilité, lecture seule), puis exécute `init`, indexe, enregistre
+les clients, et affiche un récapitulatif par client. Options utiles :
 
 - `datacron setup --yes` — accepte tous les défauts, sans question (installation automatique).
-- `datacron setup --vault CHEMIN --client claude-desktop` — cible un vault précis.
+- `datacron setup --scope both` — écrit la config au niveau **utilisateur** et **projet** (défaut) ; `user` ou `project` pour restreindre.
+- `datacron setup --vault CHEMIN --client claude-desktop` — cible un seul client précis.
 - `datacron setup --enable-write --write-path CHEMIN` — active l'écriture sur un sous-dossier (défaut : `<vault>/_memory`).
 - `datacron setup --durability strict --read-only` — mode durabilité strict et lecture seule certifiée.
 - `datacron setup --no-index` — saute la construction de l'index.

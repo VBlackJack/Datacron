@@ -18,12 +18,16 @@ client:
 datacron setup
 ```
 
-It asks questions with sensible defaults (vault location, client, whether to enable writing,
-durability, read-only), then runs `init`, indexes, and writes the client config, before
-printing a summary and how to verify. Useful options:
+By default (`--client all`), it **detects every installed AI client and registers Datacron
+with each**: Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, and VS Code.
+Each config is merged without clobbering existing servers (JSON or TOML depending on the
+client). It asks questions with sensible defaults (vault location, client, scope, writing,
+durability, read-only), then runs `init`, indexes, registers the clients, and prints a
+per-client summary. Useful options:
 
 - `datacron setup --yes` — accept every default, no prompts (unattended install).
-- `datacron setup --vault PATH --client claude-desktop` — target a specific vault.
+- `datacron setup --scope both` — write config at **user** and **project** scope (default); use `user` or `project` to restrict.
+- `datacron setup --vault PATH --client claude-desktop` — target a single specific client.
 - `datacron setup --enable-write --write-path PATH` — enable writing on a subfolder (default: `<vault>/_memory`).
 - `datacron setup --durability strict --read-only` — strict durability and certified read-only mode.
 - `datacron setup --no-index` — skip building the index.

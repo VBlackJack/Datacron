@@ -43,6 +43,7 @@ __all__ = [
     "ClaudeDesktopConfigError",
     "config_path_for_platform",
     "install_claude_desktop_config",
+    "resolve_mcp_command",
 ]
 
 _LOGGER = get_logger(__name__)
@@ -82,6 +83,19 @@ def _resolve_mcp_command() -> str:
         "`pip install -e .` inside an activated venv, or pass `command` "
         "explicitly with an absolute path."
     )
+
+
+def resolve_mcp_command() -> str:
+    """Return an absolute path to the ``datacron-mcp`` executable.
+
+    Public wrapper around the resolution used for the Claude Desktop config, so
+    every MCP client installer embeds the same absolute command (clients do not
+    inherit the caller's PATH).
+
+    Raises:
+        ClaudeDesktopConfigError: If the executable cannot be located.
+    """
+    return _resolve_mcp_command()
 
 
 class ClaudeDesktopConfigError(RuntimeError):
