@@ -1,5 +1,7 @@
 # Guide utilisateur
 
+**Français** · [English](../en/user-guide.md)
+
 Ce guide explique comment se servir de Datacron au quotidien depuis Claude, une fois
 l'installation faite (voir [Guide d'installation](setup.md)). Datacron n'est pas une
 application avec une interface : c'est un serveur MCP que ton client (Claude Desktop ou
@@ -122,11 +124,11 @@ Tu formules en langage naturel ; Claude traduit en appels d'outils. Quelques exe
 Datacron ne fait pas de télémétrie et n'appelle aucun LLM cloud. En revanche, le client MCP
 (par exemple Claude Desktop) peut, lui, transmettre à son fournisseur les chunks que
 Datacron lui renvoie — Datacron ne lui envoie jamais le vault complet, seulement les
-fragments pertinents et bornés. Détails : [Frontière de sécurité](security-boundary.md).
+fragments pertinents et bornés. Détails : [Frontière de sécurité](../security-boundary.md).
 
 ## Pour aller plus loin
 
 - [Guide d'installation et de configuration](setup.md)
-- [Architecture et surface publique](ARCHITECTURE.md)
-- [Conventions du vault (SPEC)](../SPEC.md)
+- [Architecture et surface publique](../ARCHITECTURE.md)
+- [Conventions du vault (SPEC)](../../SPEC.md)
 - [Index de la documentation](index.md)
