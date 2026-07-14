@@ -175,7 +175,7 @@ flowchart TB
 
 ---
 
-## 6. Architecture Decision Records (résumés — détails dans decisions-tranchees-v2.1.md)
+## 6. Architecture Decision Records (résumés — détails dans decisions-v2.1.md)
 
 ### ADR-001 — Source de vérité = vault Markdown lu en overlay
 Datacron lit n'importe quel vault sans migration. Side-metadata dans `.datacron/`.
@@ -297,13 +297,9 @@ datacron/                              # GitHub: jbombled/datacron
 │   └── scrubber.py                    # Resumable integrity scrubber
 ├── tests/
 ├── docs/
-│   ├── ARCHITECTURE.md                # Ce document
-│   ├── decisions-tranchees-v2.1.md
-│   ├── freshness-contract-v1.md
-│   ├── integrity-scrubber.md
-│   ├── operational-health.md
-│   ├── security-boundary.md
-│   └── architecture-overview.svg
+│   ├── fr/ en/                        # Documentation bilingue (ce document : fr/architecture.md)
+│   ├── audits/ etudes/ archive/
+│   └── assets/architecture-overview.svg
 ├── examples/
 │   └── eval-questions.example.yaml
 ├── scripts/
