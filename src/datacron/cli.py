@@ -582,6 +582,10 @@ def _render_setup_result(result: SetupResult) -> None:
     if result.client_config_path is not None:
         _print(f"  client:     {result.client_config_path}")
         _print("Restart Claude Desktop for the change to take effect.")
+    if result.stdio_config is not None:
+        _print("")
+        _print("Add this server to your Claude Code (stdio) MCP config:")
+        _print(result.stdio_config)
     for warning in result.warnings:
         typer.secho(f"  warning: {warning}", fg=typer.colors.YELLOW, err=True)
     _print("Verify from your client with get_health, or run `datacron status`.")

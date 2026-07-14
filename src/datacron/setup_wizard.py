@@ -23,6 +23,7 @@ plan (from flags or interactive questions) and renders the result.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
@@ -48,19 +49,26 @@ from datacron.installers.claude_desktop import (
 
 __all__ = [
     "CLIENT_CHOICES",
+    "CLIENT_CLAUDE_CODE",
     "CLIENT_CLAUDE_DESKTOP",
     "CLIENT_NONE",
     "DEFAULT_WRITE_SUBFOLDER",
     "SetupPlan",
     "SetupResult",
+    "claude_code_stdio_config",
     "run_setup",
 ]
 
 _LOGGER = get_logger(__name__)
 
 CLIENT_CLAUDE_DESKTOP: Final[str] = "claude-desktop"
+CLIENT_CLAUDE_CODE: Final[str] = "claude-code"
 CLIENT_NONE: Final[str] = "none"
-CLIENT_CHOICES: Final[tuple[str, ...]] = (CLIENT_CLAUDE_DESKTOP, CLIENT_NONE)
+CLIENT_CHOICES: Final[tuple[str, ...]] = (
+    CLIENT_CLAUDE_DESKTOP,
+    CLIENT_CLAUDE_CODE,
+    CLIENT_NONE,
+)
 
 # Default write-enabled subfolder, matching the ``_memory`` convention that the
 # write tools (create_note_ai) target. Only used when the operator opts in to
@@ -70,10 +78,17 @@ DEFAULT_WRITE_SUBFOLDER: Final[str] = "_memory"
 # Runtime environment keys embedded into the MCP client config. Datacron's
 # Settings derive these from the ``DATACRON_`` prefix; they are named
 # explicitly here because the client config is plain JSON, not a Settings load.
+_ENV_VAULT_ROOT: Final[str] = "DATACRON_VAULT_ROOT"
+_ENV_READ_PATHS: Final[str] = "DATACRON_READ_PATHS"
 _ENV_WRITE_PATHS: Final[str] = "DATACRON_WRITE_PATHS"
 _ENV_DURABILITY: Final[str] = "DATACRON_DURABILITY"
 _ENV_READ_ONLY: Final[str] = "DATACRON_READ_ONLY"
 _ENV_TRUE: Final[str] = "true"
+
+# Command Claude Code (and other stdio clients) spawn as the MCP server. The
+# ``datacron-mcp`` console script reads the vault from ``DATACRON_VAULT_ROOT``.
+_MCP_COMMAND: Final[str] = "datacron-mcp"
+_MCP_SERVER_KEY: Final[str] = "datacron"
 
 
 @dataclass(frozen=True)
@@ -113,7 +128,9 @@ class SetupResult:
         bootstrap: The vault initialization result.
         indexed_notes: Notes indexed during setup, or ``None`` if skipped.
         client_config_path: Written MCP client config, or ``None`` when no
-            client was configured.
+            file was written (``claude-code`` and ``none``).
+        stdio_config: A ready-to-paste stdio MCP config snippet for clients that
+            Datacron does not write directly (``claude-code``), else ``None``.
         write_path: The write-allowlisted directory, or ``None`` when writing
             stays disabled.
         read_only: Whether certified read-only mode was selected.
@@ -127,6 +144,7 @@ class SetupResult:
     write_path: Path | None
     read_only: bool
     durability: str
+    stdio_config: str | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -202,14 +220,17 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
         write_path = _resolve_write_path(plan, vault_root)
         write_path.mkdir(parents=True, exist_ok=True)
 
+    extra_env = _build_extra_env(plan, write_path)
     client_config_path: Path | None = None
+    stdio_config: str | None = None
     if plan.client == CLIENT_CLAUDE_DESKTOP:
-        extra_env = _build_extra_env(plan, write_path)
         try:
             client_config_path = install_claude_desktop_config(vault_root, extra_env=extra_env)
         except ClaudeDesktopConfigError as exc:
             warnings.append(f"Claude Desktop config not written: {exc}")
             _LOGGER.warning("cli.setup client config failed: %s", exc)
+    elif plan.client == CLIENT_CLAUDE_CODE:
+        stdio_config = claude_code_stdio_config(vault_root, extra_env)
 
     _LOGGER.info("cli.setup completed for %s", vault_root)
     return SetupResult(
@@ -219,8 +240,40 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
         write_path=write_path,
         read_only=plan.read_only,
         durability=plan.durability,
+        stdio_config=stdio_config,
         warnings=warnings,
     )
+
+
+def claude_code_stdio_config(vault_root: Path, extra_env: dict[str, str]) -> str:
+    """Return a ready-to-paste stdio MCP config snippet for Claude Code.
+
+    Datacron does not write Claude Code's configuration directly; instead the
+    operator pastes this JSON into their MCP client settings. The snippet points
+    at the ``datacron-mcp`` console script and embeds the vault root, the read
+    allowlist, and any write/durability/read-only options selected during setup.
+
+    Args:
+        vault_root: The resolved vault root to serve.
+        extra_env: Additional environment produced by :func:`_build_extra_env`.
+
+    Returns:
+        A pretty-printed JSON string.
+    """
+    env: dict[str, str] = {
+        _ENV_VAULT_ROOT: str(vault_root),
+        _ENV_READ_PATHS: str(vault_root),
+        **extra_env,
+    }
+    snippet = {
+        "mcpServers": {
+            _MCP_SERVER_KEY: {
+                "command": _MCP_COMMAND,
+                "env": env,
+            }
+        }
+    }
+    return json.dumps(snippet, indent=2, sort_keys=True, ensure_ascii=False)
 
 
 def _build_extra_env(plan: SetupPlan, write_path: Path | None) -> dict[str, str]:
