@@ -107,6 +107,10 @@ class VaultConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore", frozen=True)
 
+    # Provenance stamp: the Datacron build (package Calendar Version) that wrote
+    # the sidecar. NOT a format-compatibility gate -- Datacron reads any vault
+    # without a version check (see SPEC section 10). A future incompatible
+    # on-disk format change must introduce a dedicated field, never overload this.
     datacron_version: str | None = None
     vault_id: str | None = None
     created: str | None = None

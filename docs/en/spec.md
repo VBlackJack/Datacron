@@ -58,7 +58,7 @@ my-vault/
 Example `.datacron/VAULT.yaml`:
 
 ```yaml
-datacron_version: "0.1.0"
+datacron_version: "2026.0714.00"   # provenance stamp: the Datacron build that wrote this
 vault_id: 01HQXR7K9YZ8M2N3PQRSTV4WX5
 created: 2026-05-17T14:32:06+02:00
 encoding: utf-8
@@ -211,10 +211,20 @@ journal.
 
 ## 10. Versioning
 
-Datacron conventions follow semantic versioning at the `.datacron/VAULT.yaml#datacron_version`
-field. Datacron refuses to operate on a vault declaring a higher major version than it supports.
+Two independent axes, kept deliberately separate:
 
-| Version | Date | Changes |
+- **These conventions** (this document) are versioned on their own — currently **v1.1**. The
+  table below tracks changes to the on-disk conventions, not any software release.
+- **`.datacron/VAULT.yaml#datacron_version`** records the *Datacron build* that wrote the
+  sidecar — a provenance stamp (e.g. `2026.0714.00`, the package's Calendar Version). It is
+  **not** a format-compatibility gate.
+
+Datacron reads any Markdown vault without a version check or migration (see §1). There is no
+"refuse on higher major" gate today. If the on-disk format ever changes incompatibly, a
+dedicated format-version field and an explicit compatibility check would be introduced at that
+point — the provenance stamp is never overloaded for that purpose.
+
+| Conventions version | Date | Changes |
 |---|---|---|
 | 1.0 | 2026-05-17 | Initial draft (deprecated, was overly normative) |
 | 1.1 | 2026-05-17 | Pivot to overlay reference, filesystem-as-state-machine, no migration required |
