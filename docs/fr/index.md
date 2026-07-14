@@ -17,18 +17,18 @@ et maintient un vault Markdown depuis Claude, sans envoyer le vault complet dans
 
 | Document | Pour quoi |
 |---|---|
-| [Conventions du vault (SPEC)](../../SPEC.md) | Contrat vault : sidecar `.datacron/`, frontmatter, modèle de confiance, wikilinks, chunks, audit, versioning. |
+| [Conventions du vault (SPEC)](spec.md) | Contrat vault : sidecar `.datacron/`, frontmatter, modèle de confiance, wikilinks, chunks, audit, versioning. |
 | [Architecture et surface publique](../ARCHITECTURE.md) | Architecture technique et surface exposée. |
 | [Décisions tranchées v2.1](../decisions-tranchees-v2.1.md) | Choix de conception arrêtés et leurs justifications. |
-| [Contrat de fraîcheur v1](../freshness-contract-v1.md) | Garanties de fraîcheur de l'index. |
+| [Contrat de fraîcheur v1](freshness-contract-v1.md) | Garanties de fraîcheur de l'index. |
 
 ## Sécurité, intégrité, exploitation
 
 | Document | Pour quoi |
 |---|---|
-| [Frontière de sécurité](../security-boundary.md) | Confinement lecture/écriture, garanties, modèle de menace local. |
-| [Scrubber d'intégrité](../integrity-scrubber.md) | Détection de corruption silencieuse, sentinelles, passes de scrub. |
-| [Santé opérationnelle et durabilité](../operational-health.md) | Mode lecture seule certifié, politique de durabilité, `get_health`. |
+| [Frontière de sécurité](security-boundary.md) | Confinement lecture/écriture, garanties, modèle de menace local. |
+| [Scrubber d'intégrité](integrity-scrubber.md) | Détection de corruption silencieuse, sentinelles, passes de scrub. |
+| [Santé opérationnelle et durabilité](operational-health.md) | Mode lecture seule certifié, politique de durabilité, `get_health`. |
 
 ## Historique et étude
 
@@ -40,5 +40,4 @@ et maintient un vault Markdown depuis Claude, sans envoyer le vault complet dans
 > Note : le dossier `docs/archive/` contient des revues de fiabilité et rapports de lot
 > conservés **en local uniquement** (gitignorés, non versionnés).
 
-> Les documents techniques ci-dessus migreront vers `docs/fr/` et `docs/en/` en Phase 2
-> (chantier bilingue en cours).
+> ARCHITECTURE et Décisions migrent vers `docs/fr/` et `docs/en/` en Phase 2b (chantier en cours).

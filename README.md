@@ -241,13 +241,13 @@ Pour démarrer :
 
 Références techniques :
 
-- [Conventions du vault (SPEC)](SPEC.md)
+- [Conventions du vault (SPEC)](docs/fr/spec.md)
 - [Architecture et surface publique](docs/ARCHITECTURE.md)
 - [Décisions tranchées v2.1](docs/decisions-tranchees-v2.1.md)
-- [Frontière de sécurité](docs/security-boundary.md)
-- [Scrubber d'intégrité](docs/integrity-scrubber.md)
-- [Santé opérationnelle et durabilité](docs/operational-health.md)
-- [Contrat de fraîcheur](docs/freshness-contract-v1.md)
+- [Frontière de sécurité](docs/fr/security-boundary.md)
+- [Scrubber d'intégrité](docs/fr/integrity-scrubber.md)
+- [Santé opérationnelle et durabilité](docs/fr/operational-health.md)
+- [Contrat de fraîcheur](docs/fr/freshness-contract-v1.md)
 
 ## Développement
 

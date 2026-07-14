@@ -122,11 +122,11 @@ examples:
 Datacron does no telemetry and calls no cloud LLM. However, the MCP client (for example
 Claude Desktop) may itself forward to its provider the chunks that Datacron returns —
 Datacron never sends it the whole vault, only the relevant, bounded fragments. Details:
-[Security boundary](../security-boundary.md).
+[Security boundary](security-boundary.md).
 
 ## Going further
 
 - [Installation and configuration guide](setup.md)
 - [Architecture and public surface](../ARCHITECTURE.md)
-- [Vault conventions (SPEC)](../../SPEC.md)
+- [Vault conventions (SPEC)](spec.md)
 - [Documentation index](index.md)

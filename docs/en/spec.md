@@ -1,9 +1,11 @@
 # Datacron — Internal Vault Conventions
 
+**English** · [Français](../fr/spec.md)
+
 > **Status**: v1.1 (overlay reference, not a marketed open standard)
 > **Author**: Julien Bombled
 > **Last updated**: 2026-05-17
-> **License**: [Apache 2.0](LICENSE)
+> **License**: [Apache 2.0](../../LICENSE)
 > **Scope**: This document describes the internal conventions Datacron uses when it
 > reads metadata from a vault and when it writes new notes. It is **not a normative
 > spec that other vaults must follow**. Datacron reads any Markdown folder without
@@ -233,4 +235,4 @@ proven itself in production would be premature.
 This document is released under the **Apache License, Version 2.0**. Anyone may
 implement, distribute, or extend Datacron-compatible tooling without restriction.
 
-The reference implementation is [Datacron](README.md) (also Apache 2.0).
+The reference implementation is [Datacron](../../README.en.md) (also Apache 2.0).

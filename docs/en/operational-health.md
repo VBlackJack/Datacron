@@ -1,5 +1,7 @@
 # Operational health, certified read-only mode, and durability policy
 
+**English** · [Français](../fr/operational-health.md)
+
 ## `get_health`
 
 `get_health` is a read-only MCP tool intended for operator and buyer evidence. It
@@ -47,8 +49,8 @@ parse errors. This separates index freshness from known content-cleanup backlog.
 A scrubber anomaly is different: top-level health becomes `critical`. Scrubber
 alerts come only from a direct primary-filesystem byte comparison or a configured
 canary check. `get_health` never starts a scrub or repairs an anomaly; it only
-reads the durable checkpoint. See `docs/integrity-scrubber.md` for the execution,
-budget, resume, and canary contract.
+reads the durable checkpoint. See [Integrity scrubber](integrity-scrubber.md) for the
+execution, budget, resume, and canary contract.
 
 ### Checksum boundary
 
