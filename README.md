@@ -189,6 +189,12 @@ single-writer sur le vault.
 | `get_note_history` | liste les métadonnées d'opérations validées d'une note sans lire le contenu historique ni modifier le journal |
 | `audit_query` | interroge les métadonnées d'opérations par période, tool ou note sans modifier le journal ni le vault |
 
+### Advisory (expérimental)
+
+| Tool | Description |
+|---|---|
+| `contradiction_scan` | rapport advisory cache-only sur le pool de contradictions gelé ; non validé sur contenu réel, confiance non calibrée, ne bloque jamais writes, merges, health ni CI |
+
 Resources MCP :
 
 - `datacron://vault/map`
