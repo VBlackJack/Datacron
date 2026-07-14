@@ -20,6 +20,9 @@ from :mod:`datacron.core.models` for the frozen Pydantic types, or use the
 
 from __future__ import annotations
 
-__version__ = "0.1.0.dev0"
+# Calendar Versioning: YYYY.MMDD.XX (UTC year, zero-padded month+day, same-day
+# build counter starting at 00). Single source of truth; pyproject reads it via
+# hatch's dynamic version.
+__version__ = "2026.0714.00"
 
 __all__ = ["__version__"]
