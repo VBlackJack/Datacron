@@ -1,0 +1,96 @@
+# Copyright 2026 Julien Bombled
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build executable (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: datacron-windows-x64.exe
+            binary: dist/datacron.exe
+          - os: macos-latest
+            artifact: datacron-macos-arm64
+            binary: dist/datacron
+          - os: ubuntu-latest
+            artifact: datacron-linux-x64
+            binary: dist/datacron
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project and build tooling
+        run: |
+          python -m pip install uv==0.11.3
+          uv sync --frozen --extra build --python 3.12
+
+      - name: Build standalone executable
+        shell: bash
+        run: |
+          uv run --frozen --extra build python -m PyInstaller \
+            --noconfirm --onefile --name datacron \
+            --collect-data datacron \
+            --collect-submodules datacron \
+            --collect-submodules pydantic \
+            --hidden-import pydantic_settings \
+            packaging/datacron_launcher.py
+
+      - name: Smoke-test the executable
+        shell: bash
+        run: |
+          "${{ matrix.binary }}" --help
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          mkdir -p out
+          cp "${{ matrix.binary }}" "out/${{ matrix.artifact }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: out/${{ matrix.artifact }}
+
+  release:
+    name: Attach binaries to the GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+          merge-multiple: true
+
+      - name: Publish release with binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-artifacts/**/*
+          generate_release_notes: true

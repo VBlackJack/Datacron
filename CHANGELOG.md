@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Standalone single-file executable build (PyInstaller) behind the optional `[build]` extra,
   with `scripts/build_installer.ps1` and `scripts/build_installer.sh`. Ships Datacron to users
   without Python (ADR-017, revising the PyPI/pipx-only distribution decision).
+- `release` GitHub Actions workflow: on a `v*` tag it builds the standalone executable on
+  Windows, macOS, and Linux, smoke-tests each binary, and attaches them to the GitHub Release.
 - Thirteen MCP tools covering vault reads, lexical and regex search, confined writes,
   operational health, note history, and operation-audit queries.
 - Content-addressed note history, durable operation evidence, integrity scrubbing, and
