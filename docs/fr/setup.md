@@ -1,8 +1,10 @@
 # Guide d'installation et de configuration
 
+**Français** · [English](../en/setup.md)
+
 Ce guide t'amène d'un dossier de notes Markdown à un serveur Datacron opérationnel,
-branché sur Claude Desktop ou Claude Code. Il complète le [README](../README.md) et le
-[guide utilisateur](guide-utilisateur.md).
+branché sur Claude Desktop ou Claude Code. Il complète le [README](../../README.md) et le
+[guide utilisateur](user-guide.md).
 
 > Datacron ne modifie jamais tes notes sans que tu l'actives explicitement, et n'envoie
 > rien vers un service cloud. Il ajoute seulement un dossier `.datacron/` à côté de tes notes.
@@ -182,7 +184,7 @@ L'écriture reste confinée à `DATACRON_WRITE_PATHS`, atomique (fichier tempora
 `os.replace`), historisée par contenu avant modification, et auditée. Garde une règle
 **single-writer** : l'écriture concurrente multi-machines n'est pas supportée.
 
-Détails et garanties : [Frontière de sécurité](security-boundary.md).
+Détails et garanties : [Frontière de sécurité](../security-boundary.md).
 
 ## 9. Intégrité (optionnel)
 
@@ -195,8 +197,8 @@ datacron scrub --vault /chemin/vers/vault
 ```
 
 `scrub` est résumable et en mode alerte seule ; il sort en code 2 si des anomalies sont
-détectées. Voir [Scrubber d'intégrité](integrity-scrubber.md) et
-[Santé opérationnelle](operational-health.md).
+détectées. Voir [Scrubber d'intégrité](../integrity-scrubber.md) et
+[Santé opérationnelle](../operational-health.md).
 
 ## 10. Vérification finale
 
@@ -204,7 +206,7 @@ Depuis ton client MCP (Claude), demande un appel à `get_health` : il renvoie l'
 de fraîcheur de l'index, d'intégrité, de checksum, de durabilité et des invariants. Si tout
 est vert et que `list_notes` renvoie tes notes, l'installation est opérationnelle.
 
-Pour la suite, passe au [guide utilisateur](guide-utilisateur.md).
+Pour la suite, passe au [guide utilisateur](user-guide.md).
 
 ## Dépannage
 
