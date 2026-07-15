@@ -11,6 +11,7 @@ a Markdown vault from Claude, without sending the whole vault into the context.
 |---|---|
 | [README](../../README.en.md) | Overview, capabilities, current measurements. |
 | [Installation and configuration guide](setup.md) | Install, initialize a vault, wire up Claude Desktop / Claude Code, environment variables, enable writing. |
+| [Windows installation (installer)](installation-windows.md) | The `Datacron-Setup.exe` installer: double-click, no Python, automatic client registration, reinstall, silent mode, uninstall. |
 | [User guide](user-guide.md) | Day-to-day use from Claude: search, read, write, supervise, example requests. |
 
 ## Understand how it works
