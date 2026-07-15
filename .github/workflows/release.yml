@@ -104,7 +104,7 @@ jobs:
         shell: pwsh
         run: choco install innosetup --no-progress -y
 
-      - name: Prepare fail-closed Windows signing
+      - name: Prepare optional Windows signing
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
@@ -117,11 +117,17 @@ jobs:
           $hasPassword = -not [string]::IsNullOrWhiteSpace(
             $env:WINDOWS_CERT_PASSWORD
           )
-          if (-not $hasCertificate -or -not $hasPassword) {
+          if ($hasCertificate -xor $hasPassword) {
             throw (
-              "Signed tag builds require both WINDOWS_CERT_PFX_BASE64 and " +
-              "WINDOWS_CERT_PASSWORD."
+              "Windows signing requires both WINDOWS_CERT_PFX_BASE64 and " +
+              "WINDOWS_CERT_PASSWORD, or neither."
             )
+          }
+          if (-not $hasCertificate) {
+            "DATACRON_SIGNING_AVAILABLE=false" | Out-File `
+              -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "Windows signing secrets are absent; building unsigned."
+            exit 0
           }
           if ($env:WINDOWS_CERT_PASSWORD.Contains('"')) {
             throw "WINDOWS_CERT_PASSWORD cannot contain a double quote."
@@ -149,6 +155,8 @@ jobs:
             -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "DATACRON_SIGNTOOL_PATH=$($signTool.FullName)" | Out-File `
             -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "DATACRON_SIGNING_AVAILABLE=true" | Out-File `
+            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build Windows installer
         if: runner.os == 'Windows'
@@ -164,7 +172,7 @@ jobs:
           $arguments = @(
             "/DAppVersion=$env:DATACRON_INSTALLER_VERSION"
           )
-          if ($env:GITHUB_REF -like "refs/tags/*") {
+          if ($env:DATACRON_SIGNING_AVAILABLE -eq "true") {
             if (-not (Test-Path -LiteralPath $env:DATACRON_CERT_PATH)) {
               throw "The signing certificate was not prepared for this tag build."
             }
@@ -193,7 +201,10 @@ jobs:
           }
 
       - name: Verify Windows installer signature
-        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
+        if: >-
+          runner.os == 'Windows' &&
+          startsWith(github.ref, 'refs/tags/') &&
+          env.DATACRON_SIGNING_AVAILABLE == 'true'
         shell: pwsh
         run: |
           & $env:DATACRON_SIGNTOOL_PATH verify /pa /v `
