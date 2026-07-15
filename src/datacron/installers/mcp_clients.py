@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Detect installed AI MCP clients and register the Datacron server with them.
+"""Register and unregister the Datacron server in AI MCP client configs.
 
 Datacron speaks MCP over stdio, so any MCP-capable client can use it once its
 configuration references the ``datacron-mcp`` command. Each client stores that
@@ -24,8 +24,8 @@ models one adapter per client:
   ``type: "stdio"`` per server.
 - Codex CLI - TOML with ``[mcp_servers.<name>]`` tables.
 
-Every writer reads the existing file (or starts empty), sets only the Datacron
-entry, preserves all other content, and writes back atomically.
+Every writer reads the existing file, changes only the Datacron entry, preserves
+all other content, and writes back atomically.
 """
 
 from __future__ import annotations
@@ -51,8 +51,11 @@ __all__ = [
     "SCOPE_USER",
     "ClientTarget",
     "InstallOutcome",
+    "UnregisterOutcome",
     "discover_targets",
+    "discover_unregistration_targets",
     "install_targets",
+    "unregister_targets",
 ]
 
 _LOGGER = get_logger(__name__)
@@ -138,6 +141,19 @@ class InstallOutcome:
     scope: str
     config_path: Path
     installed: bool
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class UnregisterOutcome:
+    """Result of removing Datacron from one :class:`ClientTarget`."""
+
+    client_id: str
+    display_name: str
+    scope: str
+    config_path: Path
+    successful: bool
+    changed: bool
     detail: str = ""
 
 
@@ -265,6 +281,40 @@ def discover_targets(
     return targets
 
 
+def discover_unregistration_targets(
+    *,
+    scopes: tuple[str, ...],
+    project_dir: Path | None = None,
+    include: tuple[str, ...] | None = None,
+    exclude: tuple[str, ...] = (),
+) -> list[ClientTarget]:
+    """Return existing client configs that may contain a Datacron entry.
+
+    Unlike :func:`discover_targets`, this discovery does not require the client
+    application to still be installed. Missing config files are ignored and
+    project targets are skipped when no project directory is available.
+    """
+    targets: list[ClientTarget] = []
+    for client_id in ALL_CLIENT_IDS:
+        if include is not None and client_id not in include:
+            continue
+        if client_id in exclude:
+            continue
+        fmt = _client_format(client_id)
+        display = _DISPLAY_NAMES[client_id]
+        for scope in scopes:
+            if scope == SCOPE_USER:
+                path = _user_config_path(client_id)
+            elif scope == SCOPE_PROJECT and project_dir is not None:
+                path = _project_config_path(client_id, project_dir)
+            else:
+                continue
+            if path is None or not path.exists():
+                continue
+            targets.append(ClientTarget(client_id, display, scope, path, fmt))
+    return targets
+
+
 # ---------------------------------------------------------------------------
 # Installation
 # ---------------------------------------------------------------------------
@@ -311,6 +361,50 @@ def install_targets(
     return outcomes
 
 
+def unregister_targets(targets: list[ClientTarget]) -> list[UnregisterOutcome]:
+    """Remove Datacron from each target while collecting every outcome."""
+    outcomes: list[UnregisterOutcome] = []
+    for target in targets:
+        try:
+            changed = _unregister_one(target)
+            detail = "" if changed else "already unregistered"
+            outcomes.append(
+                UnregisterOutcome(
+                    target.client_id,
+                    target.display_name,
+                    target.scope,
+                    target.config_path,
+                    successful=True,
+                    changed=changed,
+                    detail=detail,
+                )
+            )
+            if changed:
+                _LOGGER.info(
+                    "Unregistered Datacron from %s (%s)", target.display_name, target.scope
+                )
+            else:
+                _LOGGER.info(
+                    "Datacron already unregistered from %s (%s)",
+                    target.display_name,
+                    target.scope,
+                )
+        except (OSError, MCPClientError, ValueError) as exc:
+            outcomes.append(
+                UnregisterOutcome(
+                    target.client_id,
+                    target.display_name,
+                    target.scope,
+                    target.config_path,
+                    successful=False,
+                    changed=False,
+                    detail=str(exc),
+                )
+            )
+            _LOGGER.warning("Failed to unregister from %s: %s", target.display_name, exc)
+    return outcomes
+
+
 def _install_one(
     target: ClientTarget,
     *,
@@ -326,6 +420,16 @@ def _install_one(
         _merge_toml(target.config_path, command=command, args=args, env=env)
     else:  # pragma: no cover - guarded by _client_format
         raise MCPClientError(f"Unknown config format: {target.fmt!r}")
+
+
+def _unregister_one(target: ClientTarget) -> bool:
+    if target.fmt == _FMT_JSON_MCPSERVERS:
+        return _remove_json_entry(target.config_path, "mcpServers")
+    if target.fmt == _FMT_JSON_SERVERS:
+        return _remove_json_entry(target.config_path, "servers")
+    if target.fmt == _FMT_TOML:
+        return _remove_toml_entry(target.config_path)
+    raise MCPClientError(f"Unknown config format: {target.fmt!r}")
 
 
 def _stdio_entry(
@@ -363,6 +467,37 @@ def _merge_toml(path: Path, *, command: str, args: list[str], env: dict[str, str
         entry["env"] = dict(env)
     servers[_SERVER_NAME] = entry
     _atomic_write(path, tomli_w.dumps(config).encode("utf-8"))
+
+
+def _remove_json_entry(path: Path, servers_key: str) -> bool:
+    config = _load_json(path)
+    if servers_key not in config:
+        return False
+    servers = config[servers_key]
+    if not isinstance(servers, dict):
+        raise MCPClientError(
+            f"{path}: existing {servers_key!r} is not an object; refusing to edit."
+        )
+    if _SERVER_NAME not in servers:
+        return False
+    del servers[_SERVER_NAME]
+    serialized = json.dumps(config, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    _atomic_write(path, serialized.encode("utf-8"))
+    return True
+
+
+def _remove_toml_entry(path: Path) -> bool:
+    config = _load_toml(path)
+    if "mcp_servers" not in config:
+        return False
+    servers = config["mcp_servers"]
+    if not isinstance(servers, dict):
+        raise MCPClientError(f"{path}: existing 'mcp_servers' is not a table; refusing to edit.")
+    if _SERVER_NAME not in servers:
+        return False
+    del servers[_SERVER_NAME]
+    _atomic_write(path, tomli_w.dumps(config).encode("utf-8"))
+    return True
 
 
 def _load_json(path: Path) -> dict[str, Any]:

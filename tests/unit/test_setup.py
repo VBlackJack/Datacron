@@ -24,12 +24,13 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
+import datacron.cli as cli_module
 from datacron import setup_wizard
 from datacron.bootstrap import initialize_vault
 from datacron.cli import app
 from datacron.core.paths import sidecar_index_db, sidecar_vault_config
 from datacron.installers.claude_desktop import ClaudeDesktopConfigError, MCPServerInvocation
-from datacron.installers.mcp_clients import ClientTarget, InstallOutcome
+from datacron.installers.mcp_clients import ClientTarget, InstallOutcome, UnregisterOutcome
 from datacron.setup_wizard import (
     CLIENT_ALL,
     CLIENT_CLAUDE_CODE,
@@ -360,3 +361,174 @@ def test_cli_setup_yes_client_none(tmp_path: Path) -> None:
 def test_cli_setup_rejects_unknown_client(tmp_path: Path) -> None:
     result = _runner.invoke(app, ["setup", "--vault", str(tmp_path), "--client", "bogus", "--yes"])
     assert result.exit_code != 0
+
+
+def test_cli_unregister_user_scope_removes_without_resolving_vault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text('{"mcpServers":{"datacron":{}}}', encoding="utf-8")
+    target = ClientTarget("cursor", "Cursor", "user", config_path, "json-mcpservers")
+    captured: dict[str, Any] = {}
+
+    def fake_discover(**kwargs: Any) -> list[ClientTarget]:
+        captured.update(kwargs)
+        return [target]
+
+    def forbidden_vault(*_args: Any, **_kwargs: Any) -> Path:
+        raise AssertionError("user scope must not resolve a vault")
+
+    monkeypatch.setattr(cli_module, "discover_unregistration_targets", fake_discover)
+    monkeypatch.setattr(cli_module, "_resolve_vault_root", forbidden_vault)
+
+    result = _runner.invoke(
+        app,
+        ["unregister", "--scope", "user", "--client", "cursor", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "removed" in result.output
+    assert json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"] == {}
+    assert captured["project_dir"] is None
+    assert captured["include"] == ("cursor",)
+
+
+def test_cli_unregister_no_config_is_successful_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_discover(**kwargs: Any) -> list[ClientTarget]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(cli_module, "discover_unregistration_targets", fake_discover)
+
+    result = _runner.invoke(app, ["unregister", "--scope", "user", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "No client config found; nothing to unregister." in result.output
+    assert captured["include"] is None
+
+
+def test_cli_unregister_already_absent_is_successful_without_rewrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = tmp_path / "mcp.json"
+    config_path.write_bytes(b'{"mcpServers":{}}')
+    before_bytes = config_path.read_bytes()
+    before_mtime = config_path.stat().st_mtime_ns
+    target = ClientTarget("cursor", "Cursor", "user", config_path, "json-mcpservers")
+    monkeypatch.setattr(
+        cli_module,
+        "discover_unregistration_targets",
+        lambda **_: [target],
+    )
+
+    result = _runner.invoke(app, ["unregister", "--scope", "user", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "already unregistered" in result.output
+    assert config_path.read_bytes() == before_bytes
+    assert config_path.stat().st_mtime_ns == before_mtime
+
+
+def test_cli_unregister_refusal_leaves_config_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = tmp_path / "mcp.json"
+    config_path.write_bytes(b'{"mcpServers":{"datacron":{}}}')
+    before_bytes = config_path.read_bytes()
+    target = ClientTarget("cursor", "Cursor", "user", config_path, "json-mcpservers")
+    monkeypatch.setattr(
+        cli_module,
+        "discover_unregistration_targets",
+        lambda **_: [target],
+    )
+
+    result = _runner.invoke(app, ["unregister", "--scope", "user"], input="n\n")
+
+    assert result.exit_code == 0, result.output
+    assert "Aborted; nothing changed." in result.output
+    assert config_path.read_bytes() == before_bytes
+
+
+@pytest.mark.parametrize("scope", ["project", "both", None])
+def test_cli_unregister_project_scope_requires_vault_before_discovery(
+    tmp_path: Path, scope: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = tmp_path / "mcp.json"
+    config_path.write_bytes(b'{"mcpServers":{"datacron":{}}}')
+    before_bytes = config_path.read_bytes()
+
+    def missing_vault(*_args: Any, **_kwargs: Any) -> Path:
+        cli_module._error("No vault root provided for project configs.")
+
+    def forbidden_discovery(**_kwargs: Any) -> list[ClientTarget]:
+        raise AssertionError("discovery must not run before vault validation")
+
+    monkeypatch.setattr(cli_module, "_resolve_vault_root", missing_vault)
+    monkeypatch.setattr(cli_module, "discover_unregistration_targets", forbidden_discovery)
+
+    args = ["unregister", "--yes"]
+    if scope is not None:
+        args.extend(("--scope", scope))
+    result = _runner.invoke(app, args)
+
+    assert result.exit_code == 1
+    assert "No vault root provided for project configs." in result.output
+    assert config_path.read_bytes() == before_bytes
+
+
+def test_cli_unregister_renders_all_outcomes_then_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broken_target = ClientTarget(
+        "cursor", "Cursor", "user", tmp_path / "broken.json", "json-mcpservers"
+    )
+    good_target = ClientTarget("vscode", "VS Code", "user", tmp_path / "good.json", "json-servers")
+    outcomes = [
+        UnregisterOutcome(
+            "cursor",
+            "Cursor",
+            "user",
+            broken_target.config_path,
+            successful=False,
+            changed=False,
+            detail="invalid JSON",
+        ),
+        UnregisterOutcome(
+            "vscode",
+            "VS Code",
+            "user",
+            good_target.config_path,
+            successful=True,
+            changed=True,
+        ),
+    ]
+    monkeypatch.setattr(
+        cli_module,
+        "discover_unregistration_targets",
+        lambda **_: [broken_target, good_target],
+    )
+    monkeypatch.setattr(cli_module, "unregister_targets", lambda _targets: outcomes)
+
+    result = _runner.invoke(app, ["unregister", "--scope", "user", "--yes"])
+    rendered = result.stdout + result.stderr
+
+    assert result.exit_code == 1
+    assert "Cursor (user)" in rendered
+    assert "invalid JSON" in rendered
+    assert "VS Code (user)" in rendered
+    assert "removed" in rendered
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "expected"),
+    [
+        ("--client", "bogus", "Unknown client"),
+        ("--scope", "bogus", "Unknown scope"),
+    ],
+)
+def test_cli_unregister_rejects_unknown_selection(option: str, value: str, expected: str) -> None:
+    result = _runner.invoke(app, ["unregister", option, value, "--yes"])
+    assert result.exit_code == 1
+    assert expected in result.output
