@@ -37,6 +37,9 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 SetupLogging=yes
+CloseApplications=force
+CloseApplicationsFilter=datacron.exe
+RestartApplications=no
 #ifdef InstallerSignTool
 SignTool={#InstallerSignTool}
 SignedUninstaller=yes
