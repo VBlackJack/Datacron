@@ -119,6 +119,10 @@ _ENV_TRUE: Final[str] = "true"
 
 _MCP_SERVER_KEY: Final[str] = "datacron"
 
+# Win32 FILE_ATTRIBUTE_REPARSE_POINT. The stdlib exposes the stat constant only
+# on Windows, so cross-platform type checking uses the portable numeric value.
+_FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = 0x0400
+
 
 class ResetGuardError(RuntimeError):
     """Raised when a reset target fails validation before any deletion."""
@@ -247,7 +251,7 @@ def _is_linked_path(path: Path) -> bool:
         attributes = getattr(path_stat, "st_file_attributes", None)
         if attributes is None:
             raise ResetGuardError(f"Cannot read file attributes for '{path}' on Windows.")
-        return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+        return bool(attributes & _FILE_ATTRIBUTE_REPARSE_POINT)
     return False
 
 

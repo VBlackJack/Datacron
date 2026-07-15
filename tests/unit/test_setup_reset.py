@@ -146,7 +146,7 @@ def test_is_linked_path_detects_windows_reparse_point(
 ) -> None:
     fake_stat = SimpleNamespace(
         st_mode=stat.S_IFDIR,
-        st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT,
+        st_file_attributes=setup_wizard._FILE_ATTRIBUTE_REPARSE_POINT,
     )
     monkeypatch.setattr(os, "lstat", lambda _path: fake_stat)
     monkeypatch.setattr(sys, "platform", "win32")
