@@ -33,6 +33,7 @@ import os
 import shutil
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
@@ -41,9 +42,11 @@ from datacron.core.logger import get_logger
 __all__ = [
     "DATACRON_SERVER_KEY",
     "ClaudeDesktopConfigError",
+    "MCPServerInvocation",
     "config_path_for_platform",
     "install_claude_desktop_config",
     "resolve_mcp_command",
+    "resolve_mcp_invocation",
 ]
 
 _LOGGER = get_logger(__name__)
@@ -51,7 +54,14 @@ _LOGGER = get_logger(__name__)
 DATACRON_SERVER_KEY: Final[str] = "datacron"
 _MCP_SERVERS_KEY: Final[str] = "mcpServers"
 _DATACRON_MCP_COMMAND: Final[str] = "datacron-mcp"
-_DATACRON_MCP_ARGS: Final[tuple[str, ...]] = ()  # script entry runs the stdio loop
+
+
+@dataclass(frozen=True)
+class MCPServerInvocation:
+    """Executable and arguments used to launch Datacron's MCP server."""
+
+    command: str
+    args: tuple[str, ...]
 
 
 def _resolve_mcp_command() -> str:
@@ -96,6 +106,16 @@ def resolve_mcp_command() -> str:
         ClaudeDesktopConfigError: If the executable cannot be located.
     """
     return _resolve_mcp_command()
+
+
+def resolve_mcp_invocation() -> MCPServerInvocation:
+    """Return the MCP launch form for a frozen or Python installation."""
+    if getattr(sys, "frozen", False):
+        return MCPServerInvocation(
+            command=str(Path(sys.executable).resolve()),
+            args=("mcp", "serve"),
+        )
+    return MCPServerInvocation(command=_resolve_mcp_command(), args=())
 
 
 class ClaudeDesktopConfigError(RuntimeError):
@@ -159,10 +179,9 @@ def install_claude_desktop_config(
         config_path: Override for the config file location (testing).
             Defaults to :func:`config_path_for_platform`.
         command: The executable Claude Desktop will spawn. ``None``
-            (default) triggers :func:`_resolve_mcp_command` to produce an
-            absolute path - required because Claude Desktop does not
-            inherit the caller's PATH. Pass an explicit string to bypass
-            resolution.
+            (default) triggers :func:`resolve_mcp_invocation` to produce the
+            command and arguments for the current installation. Pass an explicit
+            string to bypass resolution; its arguments default to empty.
         extra_env: Optional additional env vars to merge into the
             subprocess environment.
 
@@ -176,12 +195,16 @@ def install_claude_desktop_config(
     """
     resolved_vault = vault_root.expanduser().resolve()
     target = (config_path or config_path_for_platform()).expanduser()
-    resolved_command = command if command is not None else _resolve_mcp_command()
+    invocation = (
+        MCPServerInvocation(command=command, args=())
+        if command is not None
+        else resolve_mcp_invocation()
+    )
     _LOGGER.info(
         "Installing Datacron entry into %s (vault=%s, command=%s)",
         target,
         resolved_vault,
-        resolved_command,
+        invocation.command,
     )
 
     config = _load_existing_config(target)
@@ -200,8 +223,8 @@ def install_claude_desktop_config(
         env.update(extra_env)
 
     servers[DATACRON_SERVER_KEY] = {
-        "command": resolved_command,
-        "args": list(_DATACRON_MCP_ARGS),
+        "command": invocation.command,
+        "args": list(invocation.args),
         "env": env,
     }
 
