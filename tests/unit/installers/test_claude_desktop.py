@@ -20,6 +20,7 @@ from datacron.installers.claude_desktop import (
     ClaudeDesktopConfigError,
     config_path_for_platform,
     install_claude_desktop_config,
+    resolve_mcp_invocation,
 )
 
 _INSTALLER_MODULE = "datacron.installers.claude_desktop"
@@ -213,6 +214,75 @@ class TestInstall:
         data = json.loads(custom_config_path.read_text(encoding="utf-8"))
         assert DATACRON_SERVER_KEY in data["mcpServers"]
 
+    def test_frozen_install_writes_executable_invocation(
+        self,
+        tmp_path: Path,
+        custom_config_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executable = tmp_path / "dist" / "datacron.exe"
+        executable.parent.mkdir()
+        executable.write_bytes(b"fixture")
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "executable", str(executable))
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        install_claude_desktop_config(vault, config_path=custom_config_path)
+
+        entry = json.loads(custom_config_path.read_text(encoding="utf-8"))["mcpServers"][
+            DATACRON_SERVER_KEY
+        ]
+        assert entry["command"] == str(executable.resolve())
+        assert entry["args"] == ["mcp", "serve"]
+        assert entry["env"] == {
+            "DATACRON_READ_PATHS": str(vault.resolve()),
+            "DATACRON_VAULT_ROOT": str(vault.resolve()),
+        }
+
+
+class TestResolveInvocation:
+    def test_frozen_form(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        executable = tmp_path / "datacron.exe"
+        executable.write_bytes(b"fixture")
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "executable", str(executable))
+
+        invocation = resolve_mcp_invocation()
+
+        assert invocation.command == str(executable.resolve())
+        assert invocation.args == ("mcp", "serve")
+
+    def test_python_form(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        command = tmp_path / "bin" / "datacron-mcp"
+        command.parent.mkdir()
+        command.write_bytes(b"fixture")
+        monkeypatch.delattr(sys, "frozen", raising=False)
+        monkeypatch.setattr(f"{_INSTALLER_MODULE}.shutil.which", lambda _name: str(command))
+
+        invocation = resolve_mcp_invocation()
+
+        assert invocation.command == str(command.resolve())
+        assert invocation.args == ()
+
+    def test_frozen_form_does_not_consult_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        executable = tmp_path / "datacron.exe"
+        executable.write_bytes(b"fixture")
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "executable", str(executable))
+
+        def forbidden_which(_name: str) -> None:
+            raise AssertionError("frozen invocation must not consult PATH")
+
+        monkeypatch.setattr(f"{_INSTALLER_MODULE}.shutil.which", forbidden_which)
+
+        invocation = resolve_mcp_invocation()
+
+        assert invocation.command == str(executable.resolve())
+        assert invocation.args == ("mcp", "serve")
+
 
 class TestResolveCommand:
     """Default command resolution: PATH → interpreter dir → error."""
@@ -235,6 +305,11 @@ class TestResolveCommand:
             DATACRON_SERVER_KEY
         ]
         assert entry["command"] == str(resolved_target.resolve())
+        assert entry["args"] == []
+        assert entry["env"] == {
+            "DATACRON_READ_PATHS": str(vault.resolve()),
+            "DATACRON_VAULT_ROOT": str(vault.resolve()),
+        }
 
     def test_falls_back_to_interpreter_dir(
         self,

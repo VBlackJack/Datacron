@@ -45,7 +45,7 @@ from datacron.indexing.reconcile import reconcile
 from datacron.installers.claude_desktop import (
     ClaudeDesktopConfigError,
     install_claude_desktop_config,
-    resolve_mcp_command,
+    resolve_mcp_invocation,
 )
 from datacron.installers.mcp_clients import (
     SCOPE_PROJECT,
@@ -106,9 +106,6 @@ _ENV_DURABILITY: Final[str] = "DATACRON_DURABILITY"
 _ENV_READ_ONLY: Final[str] = "DATACRON_READ_ONLY"
 _ENV_TRUE: Final[str] = "true"
 
-# Command Claude Code (and other stdio clients) spawn as the MCP server. The
-# ``datacron-mcp`` console script reads the vault from ``DATACRON_VAULT_ROOT``.
-_MCP_COMMAND: Final[str] = "datacron-mcp"
 _MCP_SERVER_KEY: Final[str] = "datacron"
 
 
@@ -302,7 +299,7 @@ def _install_all_clients(
     opening the vault as a project in an editor picks up Datacron automatically.
     """
     try:
-        command = resolve_mcp_command()
+        invocation = resolve_mcp_invocation()
     except ClaudeDesktopConfigError as exc:
         warnings.append(f"Client auto-install skipped: {exc}")
         _LOGGER.warning("cli.setup could not resolve MCP command: %s", exc)
@@ -317,16 +314,21 @@ def _install_all_clients(
     if not targets:
         warnings.append("No MCP clients detected; nothing to auto-install.")
         return []
-    return install_targets(targets, command=command, args=[], env=env)
+    return install_targets(
+        targets,
+        command=invocation.command,
+        args=list(invocation.args),
+        env=env,
+    )
 
 
 def claude_code_stdio_config(vault_root: Path, extra_env: dict[str, str]) -> str:
     """Return a ready-to-paste stdio MCP config snippet for Claude Code.
 
     Datacron does not write Claude Code's configuration directly; instead the
-    operator pastes this JSON into their MCP client settings. The snippet points
-    at the ``datacron-mcp`` console script and embeds the vault root, the read
-    allowlist, and any write/durability/read-only options selected during setup.
+    operator pastes this JSON into their MCP client settings. The snippet uses
+    the launch form for the current installation and embeds the vault root, the
+    read allowlist, and any write/durability/read-only options selected during setup.
 
     Args:
         vault_root: The resolved vault root to serve.
@@ -340,10 +342,12 @@ def claude_code_stdio_config(vault_root: Path, extra_env: dict[str, str]) -> str
         _ENV_READ_PATHS: str(vault_root),
         **extra_env,
     }
+    invocation = resolve_mcp_invocation()
     snippet = {
         "mcpServers": {
             _MCP_SERVER_KEY: {
-                "command": _MCP_COMMAND,
+                "command": invocation.command,
+                "args": list(invocation.args),
                 "env": env,
             }
         }

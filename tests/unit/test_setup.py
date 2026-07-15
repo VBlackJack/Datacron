@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,7 @@ from datacron import setup_wizard
 from datacron.bootstrap import initialize_vault
 from datacron.cli import app
 from datacron.core.paths import sidecar_index_db, sidecar_vault_config
-from datacron.installers.claude_desktop import ClaudeDesktopConfigError
+from datacron.installers.claude_desktop import ClaudeDesktopConfigError, MCPServerInvocation
 from datacron.installers.mcp_clients import ClientTarget, InstallOutcome
 from datacron.setup_wizard import (
     CLIENT_ALL,
@@ -176,7 +177,15 @@ def test_run_setup_client_failure_becomes_warning(
     assert "no config here" in result.warnings[0]
 
 
-def test_run_setup_claude_code_returns_snippet(tmp_path: Path) -> None:
+def test_run_setup_claude_code_returns_snippet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = str((tmp_path / "bin" / "datacron-mcp").resolve())
+    monkeypatch.setattr(
+        setup_wizard,
+        "resolve_mcp_invocation",
+        lambda: MCPServerInvocation(command=command, args=()),
+    )
     result = asyncio.run(
         run_setup(
             SetupPlan(
@@ -193,17 +202,53 @@ def test_run_setup_claude_code_returns_snippet(tmp_path: Path) -> None:
     assert result.stdio_config is not None
     parsed = json.loads(result.stdio_config)
     server = parsed["mcpServers"]["datacron"]
-    assert server["command"] == "datacron-mcp"
+    assert server["command"] == command
+    assert server["args"] == []
     assert server["env"]["DATACRON_VAULT_ROOT"] == str(tmp_path)
     assert server["env"]["DATACRON_READ_ONLY"] == "true"
     assert server["env"]["DATACRON_DURABILITY"] == "strict"
     assert "DATACRON_WRITE_PATHS" in server["env"]
 
 
-def test_claude_code_stdio_config_is_valid_json(tmp_path: Path) -> None:
+def test_claude_code_stdio_config_is_valid_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = str((tmp_path / "bin" / "datacron-mcp").resolve())
+    monkeypatch.setattr(
+        setup_wizard,
+        "resolve_mcp_invocation",
+        lambda: MCPServerInvocation(command=command, args=()),
+    )
     snippet = claude_code_stdio_config(tmp_path, {"DATACRON_DURABILITY": "best-effort"})
     parsed = json.loads(snippet)
-    assert parsed["mcpServers"]["datacron"]["env"]["DATACRON_READ_PATHS"] == str(tmp_path)
+    server = parsed["mcpServers"]["datacron"]
+    assert server["command"] == command
+    assert server["args"] == []
+    assert server["env"] == {
+        "DATACRON_DURABILITY": "best-effort",
+        "DATACRON_READ_PATHS": str(tmp_path),
+        "DATACRON_VAULT_ROOT": str(tmp_path),
+    }
+
+
+def test_claude_code_stdio_config_uses_frozen_invocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "dist" / "datacron.exe"
+    executable.parent.mkdir()
+    executable.write_bytes(b"fixture")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(executable))
+
+    snippet = claude_code_stdio_config(tmp_path, {})
+    server = json.loads(snippet)["mcpServers"]["datacron"]
+
+    assert server["command"] == str(executable.resolve())
+    assert server["args"] == ["mcp", "serve"]
+    assert server["env"] == {
+        "DATACRON_READ_PATHS": str(tmp_path),
+        "DATACRON_VAULT_ROOT": str(tmp_path),
+    }
 
 
 def test_run_setup_all_installs_detected_clients(
@@ -221,10 +266,16 @@ def test_run_setup_all_installs_detected_clients(
 
     def fake_install(targets: Any, *, command: str, args: Any, env: dict[str, str]) -> Any:
         captured["command"] = command
+        captured["args"] = args
         captured["env"] = env
         return [InstallOutcome("cursor", "Cursor", "user", target.config_path, installed=True)]
 
-    monkeypatch.setattr(setup_wizard, "resolve_mcp_command", lambda: "datacron-mcp")
+    command = str((tmp_path / "bin" / "datacron-mcp").resolve())
+    monkeypatch.setattr(
+        setup_wizard,
+        "resolve_mcp_invocation",
+        lambda: MCPServerInvocation(command=command, args=()),
+    )
     monkeypatch.setattr(setup_wizard, "discover_targets", fake_discover)
     monkeypatch.setattr(setup_wizard, "install_targets", fake_install)
 
@@ -233,15 +284,57 @@ def test_run_setup_all_installs_detected_clients(
     )
     assert len(result.client_installs) == 1
     assert result.client_installs[0].installed is True
-    assert captured["command"] == "datacron-mcp"
+    assert captured["command"] == command
+    assert captured["args"] == []
     assert captured["env"]["DATACRON_VAULT_ROOT"] == str(tmp_path)
+    assert captured["env"]["DATACRON_READ_PATHS"] == str(tmp_path)
     assert captured["project_dir"] == tmp_path
+
+
+def test_run_setup_all_writes_frozen_invocation_to_client_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "dist" / "datacron.exe"
+    executable.parent.mkdir()
+    executable.write_bytes(b"fixture")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(executable))
+
+    project_config = tmp_path / ".mcp.json"
+    user_config = tmp_path / "user" / ".cursor" / "mcp.json"
+    targets = [
+        ClientTarget(
+            "claude-code",
+            "Claude Code",
+            "project",
+            project_config,
+            "json-mcpservers",
+        ),
+        ClientTarget("cursor", "Cursor", "user", user_config, "json-mcpservers"),
+    ]
+    monkeypatch.setattr(setup_wizard, "discover_targets", lambda **_: targets)
+
+    result = asyncio.run(
+        run_setup(SetupPlan(vault_path=tmp_path, client=CLIENT_ALL, build_index=False))
+    )
+
+    assert all(outcome.installed for outcome in result.client_installs)
+    for config_path in (project_config, user_config):
+        server = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["datacron"]
+        assert server["command"] == str(executable.resolve())
+        assert server["args"] == ["mcp", "serve"]
+        assert server["env"]["DATACRON_VAULT_ROOT"] == str(tmp_path)
+        assert server["env"]["DATACRON_READ_PATHS"] == str(tmp_path)
 
 
 def test_run_setup_all_warns_when_no_clients(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(setup_wizard, "resolve_mcp_command", lambda: "datacron-mcp")
+    monkeypatch.setattr(
+        setup_wizard,
+        "resolve_mcp_invocation",
+        lambda: MCPServerInvocation(command="datacron-mcp", args=()),
+    )
     monkeypatch.setattr(setup_wizard, "discover_targets", lambda **_: [])
 
     result = asyncio.run(
