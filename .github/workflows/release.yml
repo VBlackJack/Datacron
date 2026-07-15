@@ -20,6 +20,8 @@ jobs:
   build:
     name: Build executable (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -63,6 +65,154 @@ jobs:
         run: |
           "${{ matrix.binary }}" --help
 
+      - name: Resolve Windows installer version
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          $packageVersion = (
+            & uv run --frozen --extra build python -c `
+              "from datacron import __version__; print(__version__)"
+          ).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($packageVersion)) {
+            throw "Could not read datacron.__version__."
+          }
+
+          if ($env:REF_TYPE -eq "tag") {
+            if (-not $env:REF_NAME.StartsWith("v")) {
+              throw "Release tag must start with v."
+            }
+            $installerVersion = $env:REF_NAME.Substring(1)
+            if ($installerVersion -ne $packageVersion) {
+              throw (
+                "Release tag version '$installerVersion' does not match " +
+                "datacron.__version__ '$packageVersion'."
+              )
+            }
+          }
+          else {
+            $installerVersion = $packageVersion
+          }
+
+          "DATACRON_INSTALLER_VERSION=$installerVersion" | Out-File `
+            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Prepare fail-closed Windows signing
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace(
+            $env:WINDOWS_CERT_PFX_BASE64
+          )
+          $hasPassword = -not [string]::IsNullOrWhiteSpace(
+            $env:WINDOWS_CERT_PASSWORD
+          )
+          if (-not $hasCertificate -or -not $hasPassword) {
+            throw (
+              "Signed tag builds require both WINDOWS_CERT_PFX_BASE64 and " +
+              "WINDOWS_CERT_PASSWORD."
+            )
+          }
+          if ($env:WINDOWS_CERT_PASSWORD.Contains('"')) {
+            throw "WINDOWS_CERT_PASSWORD cannot contain a double quote."
+          }
+
+          $certificatePath = Join-Path $env:RUNNER_TEMP "datacron-signing.pfx"
+          try {
+            [IO.File]::WriteAllBytes(
+              $certificatePath,
+              [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64)
+            )
+          }
+          catch {
+            throw "WINDOWS_CERT_PFX_BASE64 is not valid base64: $_"
+          }
+
+          $signTool = Get-ChildItem (
+            "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe"
+          ) | Sort-Object FullName -Descending | Select-Object -First 1
+          if ($null -eq $signTool) {
+            throw "signtool.exe was not found on the Windows runner."
+          }
+
+          "DATACRON_CERT_PATH=$certificatePath" | Out-File `
+            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "DATACRON_SIGNTOOL_PATH=$($signTool.FullName)" | Out-File `
+            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            throw "ISCC.exe was not installed at the expected path."
+          }
+
+          $arguments = @(
+            "/DAppVersion=$env:DATACRON_INSTALLER_VERSION"
+          )
+          if ($env:GITHUB_REF -like "refs/tags/*") {
+            if (-not (Test-Path -LiteralPath $env:DATACRON_CERT_PATH)) {
+              throw "The signing certificate was not prepared for this tag build."
+            }
+            if (-not (Test-Path -LiteralPath $env:DATACRON_SIGNTOOL_PATH)) {
+              throw "signtool.exe was not prepared for this tag build."
+            }
+            $signCommand = (
+              '"{0}" sign /fd SHA256 /tr http://timestamp.digicert.com ' +
+              '/td SHA256 /f "{1}" /p "{2}" $f'
+            ) -f (
+              $env:DATACRON_SIGNTOOL_PATH,
+              $env:DATACRON_CERT_PATH,
+              $env:WINDOWS_CERT_PASSWORD
+            )
+            $arguments += "/DInstallerSignTool=datacron-sign"
+            $arguments += "/Sdatacron-sign=$signCommand"
+          }
+          $arguments += "packaging\windows\datacron-installer.iss"
+
+          & $iscc @arguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup compilation failed with exit code $LASTEXITCODE."
+          }
+          if (-not (Test-Path -LiteralPath "dist-installer\Datacron-Setup.exe")) {
+            throw "Inno Setup reported success but Datacron-Setup.exe is missing."
+          }
+
+      - name: Verify Windows installer signature
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          & $env:DATACRON_SIGNTOOL_PATH verify /pa /v `
+            "dist-installer\Datacron-Setup.exe"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Datacron-Setup.exe signature verification failed."
+          }
+
+      - name: Remove temporary signing certificate
+        if: always() && runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $certificatePath = $env:DATACRON_CERT_PATH
+          if ([string]::IsNullOrWhiteSpace($certificatePath)) {
+            $certificatePath = Join-Path $env:RUNNER_TEMP "datacron-signing.pfx"
+          }
+          Remove-Item -LiteralPath $certificatePath `
+            -Force -ErrorAction SilentlyContinue
+
       - name: Stage artifact
         shell: bash
         run: |
@@ -77,6 +227,13 @@ jobs:
           # Binaries are also attached to the GitHub Release; the workflow
           # artifact is only a hand-off to the release job, so expire it fast.
           retention-days: 1
+
+      - name: Attach Windows installer directly to the GitHub Release
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-installer/Datacron-Setup.exe
+          generate_release_notes: true
 
   release:
     name: Attach binaries to the GitHub Release
