@@ -49,6 +49,12 @@ from datacron.core.paths import (
 )
 from datacron.core.scope import SingleTenantVaultScope
 from datacron.core.vault import build_configured_reader
+from datacron.installers.mcp_clients import (
+    ALL_CLIENT_IDS,
+    SCOPE_PROJECT,
+    discover_unregistration_targets,
+    unregister_targets,
+)
 from datacron.scrubber import CanaryInitializationError, ScrubState, initialize_canaries
 from datacron.setup_wizard import (
     CLIENT_ALL,
@@ -58,6 +64,7 @@ from datacron.setup_wizard import (
     INSTALL_SCOPE_CHOICES,
     SetupPlan,
     SetupResult,
+    _scopes_for,
     run_setup,
 )
 
@@ -623,6 +630,101 @@ def _render_setup_result(result: SetupResult) -> None:
     for warning in result.warnings:
         typer.secho(f"  warning: {warning}", fg=typer.colors.YELLOW, err=True)
     _print("Verify from your client with get_health, or run `datacron status`.")
+
+
+@app.command()
+def unregister(
+    client: str | None = typer.Option(
+        CLIENT_ALL,
+        "--client",
+        help="Client identifier to clean, or all (default).",
+    ),
+    scope: str | None = typer.Option(
+        INSTALL_SCOPE_BOTH,
+        "--scope",
+        help=f"Config scope ({', '.join(INSTALL_SCOPE_CHOICES)}); defaults to both.",
+    ),
+    vault: Path | None = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Vault root, required when the scope includes project configs.",
+    ),
+    assume_yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Remove entries without confirmation.",
+    ),
+) -> None:
+    """Remove Datacron's MCP entry from existing client configs."""
+    resolved_client = client or CLIENT_ALL
+    resolved_scope = scope or INSTALL_SCOPE_BOTH
+    started = _log_invocation(
+        "unregister",
+        client=resolved_client,
+        scope=resolved_scope,
+        assume_yes=assume_yes,
+    )
+
+    if resolved_client != CLIENT_ALL and resolved_client not in ALL_CLIENT_IDS:
+        _error(
+            f"Unknown client {resolved_client!r}. Expected 'all' or one of {list(ALL_CLIENT_IDS)}."
+        )
+    if resolved_scope not in INSTALL_SCOPE_CHOICES:
+        _error(f"Unknown scope {resolved_scope!r}. Expected one of {list(INSTALL_SCOPE_CHOICES)}.")
+
+    scopes = _scopes_for(resolved_scope)
+    project_dir: Path | None = None
+    if SCOPE_PROJECT in scopes:
+        project_dir = _resolve_vault_root(vault, get_settings())
+
+    include = None if resolved_client == CLIENT_ALL else (resolved_client,)
+    targets = discover_unregistration_targets(
+        scopes=scopes,
+        project_dir=project_dir,
+        include=include,
+    )
+    if not targets:
+        _print("No client config found; nothing to unregister.")
+        _log_completion("unregister", started)
+        return
+
+    if not assume_yes and not typer.confirm(
+        f"Remove Datacron from {len(targets)} client config(s)?",
+        default=True,
+    ):
+        _print("Aborted; nothing changed.")
+        _log_completion("unregister", started)
+        return
+
+    outcomes = unregister_targets(targets)
+    _print("MCP client configs:")
+    for outcome in outcomes:
+        mark = "ok " if outcome.successful else "err"
+        state = (
+            "removed"
+            if outcome.changed
+            else "already unregistered"
+            if outcome.successful
+            else outcome.detail
+        )
+        message = (
+            f"  [{mark}] {outcome.display_name} ({outcome.scope}): {outcome.config_path} - {state}"
+        )
+        if outcome.successful:
+            _print(message)
+        else:
+            typer.secho(message, fg=typer.colors.YELLOW, err=True)
+
+    failed = any(not outcome.successful for outcome in outcomes)
+    _log_completion("unregister", started)
+    if failed:
+        raise typer.Exit(code=1)
+
+
+# The Windows uninstaller will invoke this before deleting datacron.exe:
+# datacron.exe unregister --yes --client all --scope both --vault "<vault>"
 
 
 # ---------------------------------------------------------------------------
