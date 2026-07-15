@@ -62,6 +62,8 @@ from datacron.setup_wizard import (
     DEFAULT_WRITE_SUBFOLDER,
     INSTALL_SCOPE_BOTH,
     INSTALL_SCOPE_CHOICES,
+    ResetExecutionError,
+    ResetGuardError,
     SetupPlan,
     SetupResult,
     _scopes_for,
@@ -468,6 +470,14 @@ def setup(
         "--index/--no-index",
         help="Build the search index during setup.",
     ),
+    reset: bool = typer.Option(
+        False,
+        "--reset",
+        help=(
+            "Reset all VAULT.yaml settings and the generated index before setup; "
+            "notes, identities, and audit data are preserved."
+        ),
+    ),
     force: bool = typer.Option(
         False,
         "--force",
@@ -483,12 +493,27 @@ def setup(
     """Guided end-to-end setup: initialize, index, and wire an MCP client.
 
     Runs interactively by default, asking for the vault location and each
-    option not supplied as a flag. Pass ``--yes`` for an unattended run that
-    accepts the defaults, or provide flags to script the whole setup.
+    option not supplied as a flag. With ``--reset``, the generated index and
+    all custom ``VAULT.yaml`` settings are removed, then setup recreates them.
+    The index is rebuilt unless ``--no-index`` leaves its recreated directory
+    empty. Note identities, audit data, sidecar logs, and Markdown files remain
+    unchanged. Pass ``--yes`` for an unattended run that accepts the defaults,
+    or provide flags to script the whole setup.
     """
     started = _log_invocation("setup", assume_yes=assume_yes)
 
     resolved_vault = _prompt_vault(vault, assume_yes)
+    if (
+        reset
+        and not assume_yes
+        and not typer.confirm(
+            "Reset Datacron configuration and generated index for this vault?",
+            default=False,
+        )
+    ):
+        _print("Reset cancelled; nothing changed.")
+        _log_completion("setup", started)
+        return
     resolved_client = _prompt_client(client, assume_yes)
     resolved_scope = _prompt_scope(scope, resolved_client, assume_yes)
     resolved_durability = _prompt_durability(durability, assume_yes)
@@ -509,15 +534,22 @@ def setup(
         durability=resolved_durability,
         read_only=resolved_read_only,
         force=force,
+        reset=reset,
     )
 
     try:
         result = asyncio.run(run_setup(plan))
+    except (ResetGuardError, ResetExecutionError) as exc:
+        _error(str(exc))
     except (ValueError, NotADirectoryError) as exc:
         _error(str(exc))
 
     _render_setup_result(result)
     _log_completion("setup", started)
+
+
+# Installer reset invocation:
+# datacron.exe setup --reset --yes --client all --scope both --vault "<vault>"
 
 
 def _prompt_vault(vault: Path | None, assume_yes: bool) -> Path:
@@ -602,6 +634,10 @@ def _render_setup_result(result: SetupResult) -> None:
     _print("")
     _print("Datacron setup complete.")
     _print(f"  vault:      {result.bootstrap.vault_path}")
+    if result.reset_result is not None:
+        config_status = "removed" if result.reset_result.config_removed else "not present"
+        index_status = "removed" if result.reset_result.index_removed else "not present"
+        _print(f"  reset:      config {config_status} / index {index_status}")
     if result.indexed_notes is not None:
         _print(f"  indexed:    {result.indexed_notes} notes")
     if result.write_path is not None:

@@ -24,20 +24,27 @@ plan (from flags or interactive questions) and renders the result.
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import stat
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
 from datacron.bootstrap import BootstrapResult, initialize_vault
 from datacron.core.config import (
+    INDEX_DIR_NAME,
+    SIDECAR_DIR_NAME,
     VALID_DURABILITY_MODES,
+    VAULT_CONFIG_FILENAME,
     Settings,
     VaultConfig,
     get_settings,
     load_vault_config,
 )
 from datacron.core.logger import get_logger
-from datacron.core.paths import sidecar_index_db, sidecar_vault_config
+from datacron.core.paths import sidecar_index_db, sidecar_index_dir, sidecar_vault_config
 from datacron.core.vault import build_configured_reader
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
@@ -63,9 +70,13 @@ __all__ = [
     "CLIENT_NONE",
     "DEFAULT_WRITE_SUBFOLDER",
     "INSTALL_SCOPE_CHOICES",
+    "ResetExecutionError",
+    "ResetGuardError",
+    "ResetResult",
     "SetupPlan",
     "SetupResult",
     "claude_code_stdio_config",
+    "reset_user_state",
     "run_setup",
 ]
 
@@ -109,6 +120,22 @@ _ENV_TRUE: Final[str] = "true"
 _MCP_SERVER_KEY: Final[str] = "datacron"
 
 
+class ResetGuardError(RuntimeError):
+    """Raised when a reset target fails validation before any deletion."""
+
+
+class ResetExecutionError(RuntimeError):
+    """Raised when deletion of a validated reset target fails."""
+
+
+@dataclass(frozen=True)
+class ResetResult:
+    """Files removed by one surgical reset."""
+
+    config_removed: bool
+    index_removed: bool
+
+
 @dataclass(frozen=True)
 class SetupPlan:
     """Fully-resolved choices for a setup run.
@@ -129,6 +156,7 @@ class SetupPlan:
         durability: Durability mode (:data:`VALID_DURABILITY_MODES`).
         read_only: Whether to run the server in certified read-only mode.
         force: Overwrite an existing ``VAULT.yaml``.
+        reset: Remove the generated config and index before setup.
     """
 
     vault_path: Path
@@ -140,6 +168,7 @@ class SetupPlan:
     durability: str = "best-effort"
     read_only: bool = False
     force: bool = False
+    reset: bool = False
 
 
 @dataclass(frozen=True)
@@ -158,6 +187,7 @@ class SetupResult:
         read_only: Whether certified read-only mode was selected.
         durability: The selected durability mode.
         client_installs: Per-client registration outcomes for ``client=all``.
+        reset_result: Surgical reset outcome, when reset was requested.
         warnings: Non-fatal messages surfaced to the operator.
     """
 
@@ -169,6 +199,7 @@ class SetupResult:
     durability: str
     stdio_config: str | None = None
     client_installs: list[InstallOutcome] = field(default_factory=list)
+    reset_result: ResetResult | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -195,6 +226,113 @@ def _scopes_for(install_scope: str) -> tuple[str, ...]:
     if install_scope == INSTALL_SCOPE_PROJECT:
         return (SCOPE_PROJECT,)
     return (SCOPE_USER, SCOPE_PROJECT)
+
+
+def _is_linked_path(path: Path) -> bool:
+    """Return whether ``path`` is a symlink or Windows reparse point.
+
+    Inspection is deliberately fail-closed: only a missing path is considered
+    safe. Any other inspection failure prevents the reset.
+    """
+    try:
+        path_stat = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise ResetGuardError(f"Cannot inspect reset target '{path}': {exc}") from exc
+
+    if stat.S_ISLNK(path_stat.st_mode):
+        return True
+    if sys.platform.casefold() == "win32":
+        attributes = getattr(path_stat, "st_file_attributes", None)
+        if attributes is None:
+            raise ResetGuardError(f"Cannot read file attributes for '{path}' on Windows.")
+        return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    return False
+
+
+def _guard_reset_paths(
+    vault_root: Path,
+    config_path: Path,
+    index_dir: Path,
+) -> tuple[Path, Path]:
+    """Validate the two allowlisted reset targets without following links."""
+    vault = Path(os.path.abspath(vault_root))
+    sidecar = Path(os.path.abspath(vault / SIDECAR_DIR_NAME))
+    config = Path(os.path.abspath(config_path))
+    index = Path(os.path.abspath(index_dir))
+
+    if sidecar.name != SIDECAR_DIR_NAME or sidecar.parent != vault:
+        raise ResetGuardError(f"Invalid Datacron sidecar path for reset: '{sidecar}'.")
+    if config.name != VAULT_CONFIG_FILENAME or config.parent != sidecar:
+        raise ResetGuardError(f"Invalid Datacron config path for reset: '{config}'.")
+    if index.name != INDEX_DIR_NAME or index.parent != sidecar or index == index.parent:
+        raise ResetGuardError(f"Invalid Datacron index path for reset: '{index}'.")
+
+    inspected_paths = (
+        ("vault", vault),
+        ("sidecar", sidecar),
+        ("config", config),
+        ("index", index),
+    )
+    for label, path in inspected_paths:
+        if _is_linked_path(path):
+            raise ResetGuardError(
+                f"Datacron reset refused: {label} path is a symlink or reparse point: '{path}'."
+            )
+
+    directory_paths = (("vault", vault), ("sidecar", sidecar), ("index", index))
+    for label, path in directory_paths:
+        if path.exists() and not path.is_dir():
+            raise ResetGuardError(
+                f"Datacron reset refused: {label} path must be a directory: '{path}'."
+            )
+    if config.exists() and not config.is_file():
+        raise ResetGuardError(f"Datacron reset refused: config path must be a file: '{config}'.")
+
+    return config, index
+
+
+def reset_user_state(
+    vault_root: Path,
+    *,
+    config_path: Path | None = None,
+    index_dir: Path | None = None,
+) -> ResetResult:
+    """Remove only the allowlisted Datacron config and generated index."""
+    config_candidate = sidecar_vault_config(vault_root) if config_path is None else config_path
+    index_candidate = sidecar_index_dir(vault_root) if index_dir is None else index_dir
+    config, index = _guard_reset_paths(vault_root, config_candidate, index_candidate)
+
+    index_removed = False
+    if index.exists():
+        try:
+            shutil.rmtree(index)
+        except OSError as exc:
+            raise ResetExecutionError(
+                "Could not reset Datacron config and index. Close all AI clients using "
+                f"Datacron, then retry. Failed path: '{index}'."
+            ) from exc
+        index_removed = True
+
+    config_removed = False
+    if config.exists() or config.is_symlink():
+        try:
+            config.unlink()
+        except OSError as exc:
+            raise ResetExecutionError(
+                "Could not reset Datacron config and index. Close all AI clients using "
+                f"Datacron, then retry. Failed path: '{config}'."
+            ) from exc
+        config_removed = True
+
+    _LOGGER.info(
+        "cli.setup reset completed (vault=%s, config_removed=%s, index_removed=%s)",
+        vault_root,
+        config_removed,
+        index_removed,
+    )
+    return ResetResult(config_removed=config_removed, index_removed=index_removed)
 
 
 async def _build_index(vault_root: Path, settings: Settings) -> int:
@@ -225,8 +363,9 @@ def _resolve_write_path(plan: SetupPlan, vault_root: Path) -> Path:
 async def run_setup(plan: SetupPlan) -> SetupResult:
     """Run the full setup sequence for ``plan`` and return a summary.
 
-    Steps: initialize the sidecar, build the index (optional), and configure the
-    selected MCP client with the chosen write/durability/read-only options.
+    Steps: reset the generated config and index (optional), initialize the
+    sidecar, build the index (optional), and configure the selected MCP client
+    with the chosen write/durability/read-only options.
     Client configuration failures are captured as warnings rather than aborting
     an otherwise-successful vault initialization.
 
@@ -239,12 +378,17 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
     Raises:
         ValueError: If the plan carries an invalid enumerated value.
         NotADirectoryError: If the vault path exists but is not a directory.
+        ResetGuardError: If a reset target fails safety validation.
+        ResetExecutionError: If a validated reset target cannot be removed.
     """
     _validate_plan(plan)
     warnings: list[str] = []
     settings = get_settings()
 
     _LOGGER.info("cli.setup started (vault=%s, client=%s)", plan.vault_path, plan.client)
+    reset_result: ResetResult | None = None
+    if plan.reset:
+        reset_result = reset_user_state(plan.vault_path)
     bootstrap = initialize_vault(plan.vault_path, force=plan.force)
     vault_root = bootstrap.vault_path
 
@@ -283,6 +427,7 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
         durability=plan.durability,
         stdio_config=stdio_config,
         client_installs=client_installs,
+        reset_result=reset_result,
         warnings=warnings,
     )
 
