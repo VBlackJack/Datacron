@@ -25,6 +25,13 @@ set "VER="
 for /f "delims=" %%v in ('"%PY%" scripts\bump_version.py --dry-run') do set "VER=%%v"
 if "%VER%"=="" (echo Could not compute the next version. & exit /b 1)
 
+REM Require release notes before changing, committing, or tagging the version.
+findstr /L /C:"## [%VER%]" CHANGELOG.md >nul
+if errorlevel 1 (
+    echo CHANGELOG.md has no entry for %VER%. Add release notes before tagging.
+    exit /b 1
+)
+
 echo.
 echo   Next Datacron release: %VER%
 echo.

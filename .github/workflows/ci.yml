@@ -50,10 +50,10 @@ jobs:
           uv sync --frozen --extra dev --python "${{ matrix.python-version }}"
 
       - name: Blocking invariant gate
-        run: uv run --frozen --extra dev python scripts/check_invariants.py
+        run: uv run --python "${{ matrix.python-version }}" --frozen --extra dev python scripts/check_invariants.py
 
       - name: Full regression suite with coverage
-        run: uv run --frozen --extra dev pytest --cov=datacron --cov-report=term-missing
+        run: uv run --python "${{ matrix.python-version }}" --frozen --extra dev pytest --cov=datacron --cov-report=term-missing
 
   shellcheck:
     name: ShellCheck
@@ -90,4 +90,4 @@ jobs:
         run: uv sync --frozen --extra dev --extra build --python 3.12
 
       - name: Audit dependencies for known CVEs
-        run: uv run --with pip-audit pip-audit
+        run: uv run --python 3.12 --with pip-audit pip-audit

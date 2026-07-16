@@ -266,7 +266,7 @@ control.
 ## 7. Project layout
 
 ```
-datacron/                              # GitHub: jbombled/datacron
+datacron/                              # GitHub: VBlackJack/Datacron
 ├── README.md                          # Product manifesto
 ├── SPEC.md                            # Internal vault conventions reference
 ├── CHANGELOG.md                       # Unreleased changes

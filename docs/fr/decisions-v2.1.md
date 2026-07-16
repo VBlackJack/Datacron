@@ -96,7 +96,7 @@ Les deux modèles ont produit des verdicts indépendants. Cette v2.1 est le **r�
 - DVS frontmatter n'est écrit **que sur les notes que Datacron crée**.
 - Aucune commande de normalisation n'est livrée ; le vault existant reste inchangé.
 - Les "dossiers réservés" deviennent **configurables** dans `.datacron/VAULT.yaml` - l'utilisateur peut mapper `_inbox/` sur son propre `00-Inbox/` PARA s'il le souhaite.
-- **DVS n'est pas marketé comme une "open spec"** (contrarian take ChatGPT, retenu). Le fichier `SPEC.md` reste documentation interne de référence. Si la demande communautaire émerge, on l'extraira en `jbombled/datacron-spec` plus tard.
+- **DVS n'est pas marketé comme une "open spec"** (contrarian take ChatGPT, retenu). Le fichier `SPEC.md` reste documentation interne de référence. Si la demande communautaire émerge, on l'extraira dans un dépôt dédié plus tard.
 
 **Impact** : 
 - README.md retire la section "Le contrat ouvert : Datacron Vault Specification" et la remplace par une mention sobre.

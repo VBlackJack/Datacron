@@ -59,7 +59,7 @@ dependencies = [
 dev = [
     "ruff>=0.13.2",
     "mypy>=1.11",
-    "pytest>=8.3",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
     "hypothesis>=6.112",
@@ -74,10 +74,10 @@ datacron = "datacron.cli:app"
 datacron-mcp = "datacron.cli:mcp_entry"
 
 [project.urls]
-Homepage = "https://github.com/jbombled/datacron"
-Documentation = "https://github.com/jbombled/datacron/blob/main/README.md"
-Source = "https://github.com/jbombled/datacron"
-Issues = "https://github.com/jbombled/datacron/issues"
+Homepage = "https://github.com/VBlackJack/Datacron"
+Documentation = "https://github.com/VBlackJack/Datacron/blob/main/README.md"
+Source = "https://github.com/VBlackJack/Datacron"
+Issues = "https://github.com/VBlackJack/Datacron/issues"
 
 [tool.hatch.version]
 path = "src/datacron/__init__.py"
@@ -90,7 +90,7 @@ include = [
     "src/datacron",
     "README.md",
     "LICENSE",
-    "SPEC.md",
+    "docs/fr/spec.md",
     "pyproject.toml",
 ]
 
