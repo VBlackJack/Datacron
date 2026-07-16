@@ -46,9 +46,10 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         name="list_notes",
         title="List notes",
         description=(
-            "Return an offset/limit paginated list of notes in the vault, optionally "
-            "scoped to a subfolder and/or filtered by tags. Each entry includes the "
-            "stable ULID, title, tags, aliases, and timestamps."
+            "Use this to discover vault structure before deeper reads. Return an "
+            "offset/limit paginated list of notes in the vault, optionally scoped to "
+            "a subfolder and/or filtered by tags. Each entry includes the stable ULID, "
+            "title, tags, aliases, and timestamps."
         ),
     )
     async def list_notes(
@@ -63,10 +64,11 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         name="get_note",
         title="Get a note",
         description=(
-            "Fetch a single note by its ULID, indexed chunk_id, or vault-relative path. "
-            "chunk_id inputs return format='chunk' with the sandbox-wrapped chunk body; "
-            "a parent-hash mismatch returns an explicit stale-chunk error. Chunk reads "
-            "ignore offset/limit. For note inputs, format='full' returns the "
+            "Fetch the full context behind a search hit before answering from a snippet "
+            "alone. Fetch a single note by its ULID, indexed chunk_id, or vault-relative "
+            "path. chunk_id inputs return format='chunk' with the sandbox-wrapped chunk "
+            "body; a parent-hash mismatch returns an explicit stale-chunk error. Chunk "
+            "reads ignore offset/limit. For note inputs, format='full' returns the "
             "sandbox-wrapped body and offset/limit page large notes by character range; "
             "format='map' returns the heading outline only (cheap to scan before "
             "requesting full content)."
@@ -90,10 +92,12 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         name="search_text",
         title="Search text (BM25)",
         description=(
-            "Full-text BM25 search over the FTS5 index. Returns ranked sandbox-"
-            "wrapped snippets with **term** highlighting. Requires `datacron index` "
-            "to have been run first. By default, explicitly superseded notes are "
-            "demoted; set include_superseded=true to inspect historical notes."
+            "First stop for any question about the user's notes, projects, decisions, "
+            "or past work - search before saying you do not know. Full-text BM25 search "
+            "over the FTS5 index. Returns ranked sandbox-wrapped snippets with **term** "
+            "highlighting. Requires `datacron index` to have been run first. By default, "
+            "explicitly superseded notes are demoted; set include_superseded=true to "
+            "inspect historical notes."
         ),
     )
     async def search_text(
@@ -129,9 +133,10 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         name="get_backlinks",
         title="Get backlinks",
         description=(
-            "Return chunks whose wikilinks point at the given target. Target may be "
-            "a note ULID or a wikilink alias (resolved via title -> filename -> "
-            "aliases). Empty list if unresolved or no incoming links."
+            "Use this to find related context the user did not mention. Return chunks "
+            "whose wikilinks point at the given target. Target may be a note ULID or a "
+            "wikilink alias (resolved via title -> filename -> aliases). Empty list if "
+            "unresolved or no incoming links."
         ),
     )
     async def get_backlinks(target: str, limit: int = 20) -> dict[str, Any]:
@@ -164,10 +169,12 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         name="create_note_ai",
         title="Create memory note",
         description=(
-            "Write a new typed _memory Markdown note. This is a write operation: "
-            "it is confined to DATACRON_WRITE_PATHS, never overwrites existing "
-            "files, writes a durable operation record, and "
-            "relies on the MCP client's tool approval for human-in-the-loop review."
+            "Call this proactively when a durable fact, confirmed decision, or user "
+            "preference emerges in conversation - do not wait to be asked. Skip "
+            "speculation and one-off chatter. Write a new typed _memory Markdown note. "
+            "This is a write operation: it is confined to DATACRON_WRITE_PATHS, never "
+            "overwrites existing files, writes a durable operation record, and relies "
+            "on the MCP client's tool approval for human-in-the-loop review."
         ),
     )
     async def create_note_ai(
@@ -200,10 +207,11 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         name="append_journal",
         title="Append to memory note",
         description=(
-            "Append a Markdown entry under a heading in an existing memory note. "
-            "This is a write operation: it is confined to DATACRON_WRITE_PATHS, "
-            "stores content-addressed history, writes atomically, and "
-            "relies on the MCP client's tool approval for human-in-the-loop review."
+            "Use this when new information extends a topic that already has a note, "
+            "instead of creating a duplicate. Append a Markdown entry under a heading "
+            "in an existing memory note. This is a write operation: it is confined to "
+            "DATACRON_WRITE_PATHS, stores content-addressed history, writes atomically, "
+            "and relies on the MCP client's tool approval for human-in-the-loop review."
         ),
     )
     async def append_journal(
@@ -226,10 +234,11 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         name="set_frontmatter",
         title="Set lifecycle frontmatter",
         description=(
-            "Update lifecycle frontmatter fields on an existing memory note. "
-            "This write operation only changes origin, confidence, "
-            "last_verified, supersedes, and the automatic updated timestamp; "
-            "the Markdown body is preserved."
+            "Use this when a fact's lifecycle changes: verified today, superseded by a "
+            "newer note, or confidence raised or lowered. Update lifecycle frontmatter "
+            "fields on an existing memory note. This write operation only changes "
+            "origin, confidence, last_verified, supersedes, and the automatic updated "
+            "timestamp; the Markdown body is preserved."
         ),
     )
     async def set_frontmatter(
@@ -256,10 +265,11 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         name="patch_note_section",
         title="Patch note section",
         description=(
-            "Replace the content under one existing Markdown heading. "
-            "Pass the note's current content_hash as expected_hash for CAS. "
-            "The operation preserves the heading line "
-            "and non-target sections, stores exact prior history, and writes atomically."
+            "Use this to rewrite an outdated section in place when the topic already has "
+            "a note. Replace the content under one existing Markdown heading. Pass the "
+            "note's current content_hash as expected_hash for CAS. The operation "
+            "preserves the heading line and non-target sections, stores exact prior "
+            "history, and writes atomically."
         ),
     )
     async def patch_note_section(
@@ -284,9 +294,10 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         name="revert_note",
         title="Revert note to exact history",
         description=(
-            "Restore a note to exact content-addressed history bytes. Pass the current "
-            "content_hash as expected_hash for CAS. The revert is itself durable, "
-            "reversible, indexed, and operation-logged."
+            "Use this to undo a bad write by restoring exact prior bytes. Restore a note "
+            "to exact content-addressed history bytes. Pass the current content_hash as "
+            "expected_hash for CAS. The revert is itself durable, reversible, indexed, "
+            "and operation-logged."
         ),
     )
     async def revert_note(
