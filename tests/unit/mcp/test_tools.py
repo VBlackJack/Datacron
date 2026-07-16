@@ -1042,7 +1042,10 @@ class TestCreateNoteAi:
         )
 
         assert result["error"]["type"] == "FileExistsError"
-        assert "already exists" in result["error"]["message"]
+        assert result["error"]["message"] == (
+            f"note already exists at {rel_path}; use patch_note_section or "
+            "append_journal to modify it"
+        )
         assert target.read_text(encoding="utf-8") == "original\n"
 
     @pytest.mark.asyncio

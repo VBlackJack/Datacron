@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final
 
@@ -60,6 +61,40 @@ if TYPE_CHECKING:
 _ULID_CREATE_ATTEMPTS: Final[int] = 5
 
 
+async def _execute_write_tool(
+    tool: str,
+    started: float,
+    action: Callable[[], Awaitable[dict[str, Any]]],
+    *,
+    app: DatacronApp,
+    audit_fields: dict[str, Any],
+    expected: tuple[type[BaseException], ...],
+    remap: Callable[[BaseException], BaseException] | None = None,
+    expected_audit_fields: Callable[[BaseException], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Execute one write action and map its failures to stable tool payloads."""
+    try:
+        return await action()
+    except PathConfinementError as exc:
+        mapped = _map_write_path_error(
+            exc,
+            writes_configured=bool(app.settings.write_paths),
+        )
+        return _error_response(tool, mapped, started, **audit_fields)
+    except expected as exc:
+        final = remap(exc) if remap is not None else exc
+        fields = expected_audit_fields(exc) if expected_audit_fields is not None else audit_fields
+        return _error_response(tool, final, started, **fields)
+    except Exception:
+        _LOGGER.exception("%s failed (%s)", tool, audit_fields)
+        return _error_response(
+            tool,
+            RuntimeError("internal error"),
+            started,
+            **audit_fields,
+        )
+
+
 async def _create_note_ai_impl(
     app: DatacronApp,
     *,
@@ -75,7 +110,9 @@ async def _create_note_ai_impl(
     actor: str = "direct-call",
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    try:
+    audit_fields = {"rel_path": rel_path, "title": title}
+
+    async def action() -> dict[str, Any]:
         app.write_policy.ensure_writable()
         cleaned = _validate_memory_frontmatter(
             rel_path=rel_path,
@@ -130,63 +167,48 @@ async def _create_note_ai_impl(
                     raise
         index_stats = await _reconcile_serialized(app)
         await _invalidate_alias_cache_if_index_changed(app, index_stats)
-    except (DurabilityUnavailableError, ReadOnlyModeError) as exc:
-        return _error_response("create_note_ai", exc, started, rel_path=rel_path)
-    except PathConfinementError as exc:
-        return _error_response(
+        payload: dict[str, Any] = {
+            "created": {
+                "id": note_id,
+                "rel_path": cleaned["rel_path"],
+                "title": cleaned["title"],
+            },
+            "content_hash": content_hash,
+            "indexed": True,
+        }
+        _audit(
             "create_note_ai",
-            _map_write_path_error(exc, writes_configured=bool(app.settings.write_paths)),
             started,
-            rel_path=rel_path,
-            title=title,
+            note_id=note_id,
+            rel_path=cleaned["rel_path"],
+            title=cleaned["title"],
+            reindexed_notes=index_stats["reindexed_notes"],
+            deleted_notes=index_stats["deleted_notes"],
         )
-    except FileExistsError:
-        return _error_response(
-            "create_note_ai",
-            FileExistsError(
-                f"note already exists at {rel_path}; use patch_note_section (v0.2 phase 2)"
-            ),
-            started,
-            rel_path=rel_path,
-            title=title,
-        )
-    except ValueError as exc:
-        return _error_response(
-            "create_note_ai",
-            exc,
-            started,
-            rel_path=rel_path,
-            title=title,
-        )
-    except Exception:
-        _LOGGER.exception("create_note_ai failed (rel_path=%r title=%r)", rel_path, title)
-        return _error_response(
-            "create_note_ai",
-            RuntimeError("internal error"),
-            started,
-            rel_path=rel_path,
-            title=title,
-        )
+        return payload
 
-    payload: dict[str, Any] = {
-        "created": {
-            "id": note_id,
-            "rel_path": cleaned["rel_path"],
-            "title": cleaned["title"],
-        },
-        "content_hash": content_hash,
-        "indexed": True,
-    }
-    _audit(
+    def remap(exc: BaseException) -> BaseException:
+        if isinstance(exc, FileExistsError):
+            return FileExistsError(
+                f"note already exists at {rel_path}; use patch_note_section or "
+                "append_journal to modify it"
+            )
+        return exc
+
+    return await _execute_write_tool(
         "create_note_ai",
         started,
-        note_id=note_id,
-        rel_path=cleaned["rel_path"],
-        title=cleaned["title"],
-        reindexed_notes=index_stats["reindexed_notes"],
-        deleted_notes=index_stats["deleted_notes"],
+        action,
+        app=app,
+        audit_fields=audit_fields,
+        expected=(
+            DurabilityUnavailableError,
+            ReadOnlyModeError,
+            FileExistsError,
+            ValueError,
+        ),
+        remap=remap,
     )
-    return payload
 
 
 async def _append_journal_impl(
@@ -199,7 +221,9 @@ async def _append_journal_impl(
     actor: str = "direct-call",
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    try:
+    audit_fields = {"rel_path": rel_path, "heading": heading}
+
+    async def action() -> dict[str, Any]:
         app.write_policy.ensure_writable()
         cleaned_rel_path, cleaned_heading, cleaned_entry = _validate_append_journal_request(
             rel_path=rel_path,
@@ -234,56 +258,41 @@ async def _append_journal_impl(
         )
         index_stats = await _reconcile_serialized(app)
         await _invalidate_alias_cache_if_index_changed(app, index_stats)
-    except (DurabilityUnavailableError, ReadOnlyModeError) as exc:
-        return _error_response("append_journal", exc, started, rel_path=rel_path)
-    except PathConfinementError as exc:
-        return _error_response(
+        payload: dict[str, Any] = {
+            "appended": {"rel_path": cleaned_rel_path, "heading": cleaned_heading},
+            "content_hash": content_hash,
+            "indexed": True,
+        }
+        _audit(
             "append_journal",
-            _map_write_path_error(exc, writes_configured=bool(app.settings.write_paths)),
             started,
-            rel_path=rel_path,
-            heading=heading,
+            rel_path=cleaned_rel_path,
+            heading=cleaned_heading,
+            reindexed_notes=index_stats["reindexed_notes"],
+            deleted_notes=index_stats["deleted_notes"],
         )
-    except FileNotFoundError as exc:
-        return _error_response(
-            "append_journal",
-            exc,
-            started,
-            rel_path=rel_path,
-            heading=heading,
-        )
-    except (FrontmatterError, ValueError) as exc:
-        return _error_response(
-            "append_journal",
-            exc,
-            started,
-            rel_path=rel_path,
-            heading=heading,
-        )
-    except Exception:
-        _LOGGER.exception("append_journal failed (rel_path=%r heading=%r)", rel_path, heading)
-        return _error_response(
-            "append_journal",
-            RuntimeError("internal error"),
-            started,
-            rel_path=rel_path,
-            heading=heading,
-        )
+        return payload
 
-    payload: dict[str, Any] = {
-        "appended": {"rel_path": cleaned_rel_path, "heading": cleaned_heading},
-        "content_hash": content_hash,
-        "indexed": True,
-    }
-    _audit(
+    def expected_audit_fields(exc: BaseException) -> dict[str, Any]:
+        if isinstance(exc, (DurabilityUnavailableError, ReadOnlyModeError)):
+            return {"rel_path": rel_path}
+        return audit_fields
+
+    return await _execute_write_tool(
         "append_journal",
         started,
-        rel_path=cleaned_rel_path,
-        heading=cleaned_heading,
-        reindexed_notes=index_stats["reindexed_notes"],
-        deleted_notes=index_stats["deleted_notes"],
+        action,
+        app=app,
+        audit_fields=audit_fields,
+        expected=(
+            DurabilityUnavailableError,
+            ReadOnlyModeError,
+            FileNotFoundError,
+            FrontmatterError,
+            ValueError,
+        ),
+        expected_audit_fields=expected_audit_fields,
     )
-    return payload
 
 
 async def _set_frontmatter_impl(
@@ -298,7 +307,9 @@ async def _set_frontmatter_impl(
     actor: str = "direct-call",
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    try:
+    audit_fields = {"rel_path": rel_path}
+
+    async def action() -> dict[str, Any]:
         app.write_policy.ensure_writable()
         (
             cleaned_rel_path,
@@ -374,52 +385,35 @@ async def _set_frontmatter_impl(
         )
         index_stats = await _reconcile_serialized(app)
         await _invalidate_alias_cache_if_index_changed(app, index_stats)
-    except (DurabilityUnavailableError, ReadOnlyModeError) as exc:
-        return _error_response("set_frontmatter", exc, started, rel_path=rel_path)
-    except PathConfinementError as exc:
-        return _error_response(
+        payload: dict[str, Any] = {
+            "updated": {"rel_path": cleaned_rel_path, "fields": changed_fields},
+            "content_hash": content_hash,
+            "indexed": True,
+        }
+        _audit(
             "set_frontmatter",
-            _map_write_path_error(exc, writes_configured=bool(app.settings.write_paths)),
             started,
-            rel_path=rel_path,
+            rel_path=cleaned_rel_path,
+            fields=changed_fields,
+            reindexed_notes=index_stats["reindexed_notes"],
+            deleted_notes=index_stats["deleted_notes"],
         )
-    except FileNotFoundError as exc:
-        return _error_response(
-            "set_frontmatter",
-            exc,
-            started,
-            rel_path=rel_path,
-        )
-    except (FrontmatterError, ValueError) as exc:
-        return _error_response(
-            "set_frontmatter",
-            exc,
-            started,
-            rel_path=rel_path,
-        )
-    except Exception:
-        _LOGGER.exception("set_frontmatter failed (rel_path=%r)", rel_path)
-        return _error_response(
-            "set_frontmatter",
-            RuntimeError("internal error"),
-            started,
-            rel_path=rel_path,
-        )
+        return payload
 
-    payload: dict[str, Any] = {
-        "updated": {"rel_path": cleaned_rel_path, "fields": changed_fields},
-        "content_hash": content_hash,
-        "indexed": True,
-    }
-    _audit(
+    return await _execute_write_tool(
         "set_frontmatter",
         started,
-        rel_path=cleaned_rel_path,
-        fields=changed_fields,
-        reindexed_notes=index_stats["reindexed_notes"],
-        deleted_notes=index_stats["deleted_notes"],
+        action,
+        app=app,
+        audit_fields=audit_fields,
+        expected=(
+            DurabilityUnavailableError,
+            ReadOnlyModeError,
+            FileNotFoundError,
+            FrontmatterError,
+            ValueError,
+        ),
     )
-    return payload
 
 
 def _set_changed_frontmatter_field(
@@ -444,7 +438,9 @@ async def _patch_note_section_impl(
     actor: str = "direct-call",
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    try:
+    audit_fields = {"rel_path": rel_path, "heading": heading}
+
+    async def action() -> dict[str, Any]:
         app.write_policy.ensure_writable()
         (
             cleaned_rel_path,
@@ -502,61 +498,46 @@ async def _patch_note_section_impl(
         )
         index_stats = await _reconcile_serialized(app)
         await _invalidate_alias_cache_if_index_changed(app, index_stats)
-    except (DurabilityUnavailableError, ReadOnlyModeError) as exc:
-        return _error_response("patch_note_section", exc, started, rel_path=rel_path)
-    except PathConfinementError as exc:
-        return _error_response(
+        payload: dict[str, Any] = {
+            "patched": {
+                "rel_path": cleaned_rel_path,
+                "heading": matched_text,
+                "level": matched_level,
+            },
+            "content_hash": content_hash,
+            "indexed": True,
+        }
+        _audit(
             "patch_note_section",
-            _map_write_path_error(exc, writes_configured=bool(app.settings.write_paths)),
             started,
-            rel_path=rel_path,
-            heading=heading,
+            rel_path=cleaned_rel_path,
+            heading=cleaned_heading,
+            heading_level=matched_level,
+            reindexed_notes=index_stats["reindexed_notes"],
+            deleted_notes=index_stats["deleted_notes"],
         )
-    except FileNotFoundError as exc:
-        return _error_response(
-            "patch_note_section",
-            exc,
-            started,
-            rel_path=rel_path,
-            heading=heading,
-        )
-    except (FrontmatterError, ValueError) as exc:
-        return _error_response(
-            "patch_note_section",
-            exc,
-            started,
-            rel_path=rel_path,
-            heading=heading,
-        )
-    except Exception:
-        _LOGGER.exception("patch_note_section failed (rel_path=%r heading=%r)", rel_path, heading)
-        return _error_response(
-            "patch_note_section",
-            RuntimeError("internal error"),
-            started,
-            rel_path=rel_path,
-            heading=heading,
-        )
+        return payload
 
-    payload: dict[str, Any] = {
-        "patched": {
-            "rel_path": cleaned_rel_path,
-            "heading": matched_text,
-            "level": matched_level,
-        },
-        "content_hash": content_hash,
-        "indexed": True,
-    }
-    _audit(
+    def expected_audit_fields(exc: BaseException) -> dict[str, Any]:
+        if isinstance(exc, (DurabilityUnavailableError, ReadOnlyModeError)):
+            return {"rel_path": rel_path}
+        return audit_fields
+
+    return await _execute_write_tool(
         "patch_note_section",
         started,
-        rel_path=cleaned_rel_path,
-        heading=cleaned_heading,
-        heading_level=matched_level,
-        reindexed_notes=index_stats["reindexed_notes"],
-        deleted_notes=index_stats["deleted_notes"],
+        action,
+        app=app,
+        audit_fields=audit_fields,
+        expected=(
+            DurabilityUnavailableError,
+            ReadOnlyModeError,
+            FileNotFoundError,
+            FrontmatterError,
+            ValueError,
+        ),
+        expected_audit_fields=expected_audit_fields,
     )
-    return payload
 
 
 async def _revert_note_impl(
@@ -568,7 +549,9 @@ async def _revert_note_impl(
     actor: str = "direct-call",
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    try:
+    audit_fields = {"note": note, "to_hash": to_hash}
+
+    async def action() -> dict[str, Any]:
         app.write_policy.ensure_writable()
         cleaned_to_hash = _validate_expected_hash(to_hash)
         if cleaned_to_hash is None:
@@ -590,55 +573,38 @@ async def _revert_note_impl(
         )
         index_stats = await _reconcile_serialized(app)
         await _invalidate_alias_cache_if_index_changed(app, index_stats)
-    except PathConfinementError as exc:
-        return _error_response(
+        payload: dict[str, Any] = {
+            "reverted": {
+                "id": resolved.id,
+                "rel_path": resolved.rel_path,
+                "to_hash": cleaned_to_hash,
+            },
+            "content_hash": content_hash,
+            "indexed": True,
+        }
+        _audit(
             "revert_note",
-            _map_write_path_error(exc, writes_configured=bool(app.settings.write_paths)),
             started,
-            note=note,
-            to_hash=to_hash,
+            note_id=resolved.id,
+            rel_path=resolved.rel_path,
+            to_hash=cleaned_to_hash,
+            reindexed_notes=index_stats["reindexed_notes"],
+            deleted_notes=index_stats["deleted_notes"],
         )
-    except (
-        FileNotFoundError,
-        HistoryUnavailableError,
-        OperationLogError,
-        DurabilityUnavailableError,
-        ReadOnlyModeError,
-        ValueError,
-    ) as exc:
-        return _error_response(
-            "revert_note",
-            exc,
-            started,
-            note=note,
-            to_hash=to_hash,
-        )
-    except Exception:
-        _LOGGER.exception("revert_note failed (note=%r to_hash=%r)", note, to_hash)
-        return _error_response(
-            "revert_note",
-            RuntimeError("internal error"),
-            started,
-            note=note,
-            to_hash=to_hash,
-        )
+        return payload
 
-    payload: dict[str, Any] = {
-        "reverted": {
-            "id": resolved.id,
-            "rel_path": resolved.rel_path,
-            "to_hash": cleaned_to_hash,
-        },
-        "content_hash": content_hash,
-        "indexed": True,
-    }
-    _audit(
+    return await _execute_write_tool(
         "revert_note",
         started,
-        note_id=resolved.id,
-        rel_path=resolved.rel_path,
-        to_hash=cleaned_to_hash,
-        reindexed_notes=index_stats["reindexed_notes"],
-        deleted_notes=index_stats["deleted_notes"],
+        action,
+        app=app,
+        audit_fields=audit_fields,
+        expected=(
+            FileNotFoundError,
+            HistoryUnavailableError,
+            OperationLogError,
+            DurabilityUnavailableError,
+            ReadOnlyModeError,
+            ValueError,
+        ),
     )
-    return payload
