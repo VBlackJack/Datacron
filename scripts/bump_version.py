@@ -66,7 +66,7 @@ def write_version(init_path: Path, new_version: str) -> None:
     updated, replaced = _VERSION_RE.subn(rf"\g<prefix>{new_version}\g<suffix>", text)
     if replaced != 1:
         raise ValueError(f"Expected exactly one __version__ in {init_path}, found {replaced}")
-    init_path.write_text(updated, encoding="utf-8")
+    init_path.write_text(updated, encoding="utf-8", newline="\n")
 
 
 def main(argv: list[str] | None = None) -> int:

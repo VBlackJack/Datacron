@@ -27,9 +27,10 @@ les logs, les ULID internes, l'historique et le journal d'opérations.
 | Évaluation | `datacron eval` avec recall@k, precision, latence et tokens |
 | Setup guidé | `datacron setup` : init + index + enregistrement MCP en une commande |
 | Clients | Auto-détection et enregistrement via `datacron setup --client all` : Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, VS Code |
-| Distribution | Installeur Windows (`Datacron-Setup.exe`), PyPI/pipx, ou exécutable autonome (PyInstaller) sans Python requis |
+| Distribution | Installeur Windows (`Datacron-Setup.exe`), exécutable autonome (PyInstaller) sans Python requis, ou installation depuis les sources |
 
-Mesure actuelle sur le golden set Julien, avec query-expansion et temporal re-rank actifs :
+Mesure store-level sur le golden set Julien (FTS5 + query-expansion), hors re-rank temporel
+et couche MCP ; une évaluation end-to-end est prévue :
 
 ```text
 recall@5  0.89

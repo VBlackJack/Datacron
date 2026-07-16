@@ -7,6 +7,30 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [2026.0716.00] - 2026-07-16
+
+### Added
+
+- A per-user Windows installer (`Datacron-Setup.exe`) with optional release signing and
+  automatic shutdown of a running Datacron process before replacement.
+- `datacron unregister` for removing Datacron from supported MCP client configurations.
+- `datacron setup --reset` for a guarded, targeted reset of Datacron-managed state.
+
+### Changed
+
+- Frozen executables are registered directly in MCP client configurations instead of relying
+  on a Python launcher.
+- Guided setup registers MCP clients before indexing and reports an indexing failure without
+  discarding a successful client registration.
+- Frozen packaging uses the operating system certificate store through `truststore`.
+- Installer guidance is available in English and French and linked from the main READMEs.
+
+### Fixed
+
+- Windows setup uses a portable reparse-point constant while retaining cross-platform mypy
+  compatibility.
+- Repository hygiene excludes local installer output from version control.
+
 ## [2026.0714.00] - 2026-07-14
 
 ### Added

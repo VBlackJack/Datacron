@@ -104,7 +104,7 @@ after real use of the read-only version.
 - DVS frontmatter is written **only on notes Datacron creates**.
 - No normalization command is delivered; the existing vault stays unchanged.
 - "Reserved folders" become **configurable** in `.datacron/VAULT.yaml` - the user can map `_inbox/` onto their own `00-Inbox/` PARA if they wish.
-- **DVS is not marketed as an "open spec"** (ChatGPT contrarian take, retained). The `SPEC.md` file remains internal reference documentation. If community demand emerges, we will extract it into `jbombled/datacron-spec` later.
+- **DVS is not marketed as an "open spec"** (ChatGPT contrarian take, retained). The `SPEC.md` file remains internal reference documentation. If community demand emerges, we will extract it into a dedicated repository later.
 
 **Impact**:
 - README.md removes the "The open contract: Datacron Vault Specification" section and replaces it with a sober mention.

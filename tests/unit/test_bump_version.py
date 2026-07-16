@@ -18,6 +18,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from shutil import copyfile
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "bump_version.py"
 
@@ -50,3 +51,23 @@ def test_non_calver_current_starts_at_zero() -> None:
 
 def test_single_digit_month_and_day_are_padded() -> None:
     assert _next("2025.1231.00", "2026-01-05") == "2026.0105.00"
+
+
+def test_bump_writes_lf_line_endings(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    script = repo / "scripts" / "bump_version.py"
+    init_file = repo / "src" / "datacron" / "__init__.py"
+    script.parent.mkdir(parents=True)
+    init_file.parent.mkdir(parents=True)
+    copyfile(_SCRIPT, script)
+    init_file.write_bytes(b'"""Test package."""\r\n\r\n__version__ = "2026.0715.00"\r\n')
+
+    subprocess.run(
+        [sys.executable, str(script), "--date", "2026-07-16"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert b"\r" not in init_file.read_bytes()
+    assert b'__version__ = "2026.0716.00"' in init_file.read_bytes()
