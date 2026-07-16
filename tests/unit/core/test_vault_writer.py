@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import errno
+import json
 import os
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -20,7 +22,7 @@ import pytest
 import datacron.core.vault_writer as vault_writer_module
 from datacron.core.config import Settings, VaultConfig
 from datacron.core.hashing import sha256_bytes
-from datacron.core.paths import PathConfinementError
+from datacron.core.paths import PathConfinementError, sidecar_dir, sidecar_index_db
 from datacron.core.vault_writer import (
     FilesystemVaultWriter,
     UlidCollisionError,
@@ -70,6 +72,34 @@ def _patch_lock_primitive(monkeypatch: pytest.MonkeyPatch, *, busy: bool) -> Non
 
 def _writer(vault: Path) -> FilesystemVaultWriter:
     return FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
+
+
+def _create_ulid_index(vault: Path, note_id: str | None = None) -> None:
+    db_path = sidecar_index_db(vault)
+    db_path.parent.mkdir(parents=True)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE ulid_paths (rel_path TEXT PRIMARY KEY, note_id TEXT UNIQUE NOT NULL)"
+        )
+        if note_id is not None:
+            connection.execute(
+                "INSERT INTO ulid_paths(rel_path, note_id) VALUES (?, ?)",
+                ("existing.md", note_id),
+            )
+
+
+async def _write_note_with_id(
+    writer: FilesystemVaultWriter,
+    note_id: str,
+    *,
+    rel_path: str = "new.md",
+) -> str:
+    return await writer.write_note_atomic(
+        rel_path,
+        f"---\nid: {note_id}\n---\nnew\n",
+        overwrite=False,
+        note_id=note_id,
+    )
 
 
 async def test_write_outside_write_paths_is_rejected_without_creating_file(
@@ -213,7 +243,59 @@ async def test_new_note_uses_configured_crlf_policy(tmp_path: Path) -> None:
     assert returned_hash == sha256_bytes(b"one\r\ntwo\r\n")
 
 
-async def test_create_rejects_frontmatter_ulid_collision(tmp_path: Path) -> None:
+async def test_create_rejects_ulid_collision_from_index_only(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note_id = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+    _create_ulid_index(vault, note_id)
+    writer = _writer(vault)
+
+    with pytest.raises(UlidCollisionError, match=note_id):
+        await _write_note_with_id(writer, note_id)
+
+    assert not (sidecar_dir(vault) / "ulids.json").exists()
+    assert not (vault / "new.md").exists()
+
+
+async def test_create_rejects_ulid_collision_from_sidecar_only(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note_id = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+    identities = sidecar_dir(vault) / "ulids.json"
+    identities.parent.mkdir(parents=True)
+    identities.write_text(json.dumps({"existing.md": note_id}), encoding="utf-8")
+    writer = _writer(vault)
+
+    with pytest.raises(UlidCollisionError, match=note_id):
+        await _write_note_with_id(writer, note_id)
+
+    assert not sidecar_index_db(vault).exists()
+    assert not (vault / "new.md").exists()
+
+
+async def test_create_does_not_scan_vault_when_index_authority_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note_id = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+    _create_ulid_index(vault)
+    writer = _writer(vault)
+
+    def fail_scan(candidate: str) -> bool:
+        pytest.fail(f"full vault scan must not run when an authority exists: {candidate}")
+
+    monkeypatch.setattr(writer, "_ulid_exists_in_frontmatter", fail_scan)
+
+    await _write_note_with_id(writer, note_id)
+
+    assert (vault / "new.md").is_file()
+
+
+async def test_create_rejects_frontmatter_ulid_collision_without_authority(
+    tmp_path: Path,
+) -> None:
     vault = tmp_path / "vault"
     vault.mkdir()
     note_id = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
@@ -221,14 +303,26 @@ async def test_create_rejects_frontmatter_ulid_collision(tmp_path: Path) -> None
     writer = _writer(vault)
 
     with pytest.raises(UlidCollisionError, match=note_id):
-        await writer.write_note_atomic(
-            "new.md",
-            f"---\nid: {note_id}\n---\nnew\n",
-            overwrite=False,
-            note_id=note_id,
-        )
+        await _write_note_with_id(writer, note_id)
 
     assert not (vault / "new.md").exists()
+
+
+async def test_fallback_ulid_scan_skips_non_utf8_markdown(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "unreadable.md").write_bytes(b"\xff\xfe\xfa")
+    note_id = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+    writer = _writer(vault)
+
+    await _write_note_with_id(writer, note_id)
+
+    assert (vault / "new.md").is_file()
+    assert "Skipping unreadable note during fallback ULID scan" in caplog.text
+    assert "unreadable.md" in caplog.text
 
 
 def test_atomic_durable_write_orders_file_replace_and_directory_fsync(
