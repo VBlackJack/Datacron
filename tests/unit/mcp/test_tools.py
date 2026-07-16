@@ -1092,6 +1092,7 @@ class TestCreateNoteAi:
         tmp_vault: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from datacron.indexing.reconcile import reconcile
         from datacron.mcp.tools import write as tools
 
         colliding_id = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
@@ -1101,6 +1102,12 @@ class TestCreateNoteAi:
             "_memory/facts/existing-identity.md",
             "# Existing identity\n",
             metadata_overrides={"id": colliding_id},
+        )
+        await reconcile(
+            writable_app.store,
+            writable_app.vault_reader,
+            writable_app.chunker,
+            mtime_gate=True,
         )
         generated = iter((colliding_id, replacement_id))
         monkeypatch.setattr(tools, "ULID", lambda: next(generated))

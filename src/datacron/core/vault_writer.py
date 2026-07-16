@@ -532,11 +532,28 @@ class FilesystemVaultWriter:
         return os.path.normcase(str(target))
 
     def _ulid_exists(self, note_id: str) -> bool:
-        return (
-            self._ulid_exists_in_index(note_id)
-            or self._ulid_exists_in_sidecar(note_id)
-            or self._ulid_exists_in_frontmatter(note_id)
-        )
+        """Return whether an authoritative identity source contains ``note_id``.
+
+        Reconciliation updates the index after each write, while the writer-owned
+        sidecar persists assigned identities. If either authority is present, its
+        absence answer is final; a full frontmatter walk is reserved for a vault with
+        neither source yet. This avoids paying an O(vault) scan for the approximately
+        2^-80 collision risk of every freshly generated ULID.
+        """
+        authority_consulted = False
+        db_path = sidecar_index_db(self._vault_root)
+        if db_path.is_file():
+            authority_consulted = True
+            if self._ulid_exists_in_index(note_id):
+                return True
+        sidecar_path = sidecar_dir(self._vault_root) / "ulids.json"
+        if sidecar_path.is_file():
+            authority_consulted = True
+            if self._ulid_exists_in_sidecar(note_id):
+                return True
+        if authority_consulted:
+            return False
+        return self._ulid_exists_in_frontmatter(note_id)
 
     def _ulid_exists_in_index(self, note_id: str) -> bool:
         db_path = sidecar_index_db(self._vault_root)
@@ -584,9 +601,12 @@ class FilesystemVaultWriter:
                 try:
                     raw = path.read_bytes().decode("utf-8", errors="strict")
                 except (OSError, UnicodeDecodeError) as exc:
-                    raise UlidVerificationError(
-                        f"could not verify ULID uniqueness in note {path}"
-                    ) from exc
+                    _LOGGER.warning(
+                        "Skipping unreadable note during fallback ULID scan path=%s error=%s",
+                        path,
+                        exc,
+                    )
+                    continue
                 frontmatter_block = _frontmatter_block(raw)
                 if frontmatter_block is None:
                     continue
