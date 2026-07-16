@@ -49,8 +49,10 @@ async def _search_text_impl(
     query: str,
     limit: int,
     include_superseded: bool = False,
+    include_timings: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
+    timings_ms: dict[str, float] = {}
     cleaned = query.strip()
     if not cleaned:
         return _error_response(
@@ -61,29 +63,44 @@ async def _search_text_impl(
         )
     bounded_limit = _bounded_count(limit, app.settings.max_result_count)
     try:
+        stage_started = time.perf_counter()
         repair = await _repair_index_on_read(app)
+        timings_ms["repair"] = _elapsed_ms(stage_started)
+
+        stage_started = time.perf_counter()
         raw_results = await app.store.search(
             cleaned,
             limit=bounded_limit * TEMPORAL_OVERFETCH_FACTOR,
         )
+        timings_ms["fts"] = _elapsed_ms(stage_started)
+
+        stage_started = time.perf_counter()
+        temporal_meta = await app.store.list_temporal_metadata()
+        timings_ms["temporal_metadata"] = _elapsed_ms(stage_started)
+
+        stage_started = time.perf_counter()
         raw_results = [
             result
             for result in raw_results
             if app.scope.allows_rel_path(result.chunk.note_rel_path, "read")
         ]
-        temporal_meta = await app.store.list_temporal_metadata()
         raw_results = rerank_temporal(
             raw_results,
             temporal_meta,
             include_superseded=include_superseded,
         )[:bounded_limit]
+        timings_ms["rerank"] = _elapsed_ms(stage_started)
     except Exception:
         _LOGGER.exception("search_text failed (query=%r)", query)
         return _error_response("search_text", RuntimeError("internal error"), started, query=query)
 
+    stage_started = time.perf_counter()
     results, truncated_for_tokens = _apply_token_budget(
         raw_results, max_tokens=app.settings.max_result_tokens
     )
+    timings_ms["budget"] = _elapsed_ms(stage_started)
+
+    stage_started = time.perf_counter()
     payload: dict[str, Any] = {
         "query": _redact_retrieval_text(app, cleaned),
         "results": [_search_result_summary(app, result) for result in results],
@@ -93,6 +110,19 @@ async def _search_text_impl(
     }
     if repair["reindexed_notes"] or repair["deleted_notes"]:
         payload["index_repair"] = repair
+    timings_ms["serialization"] = _elapsed_ms(stage_started)
+    if include_timings:
+        payload["timings_ms"] = timings_ms
+    _LOGGER.debug(
+        "search_text stage timings repair_ms=%.3f fts_ms=%.3f temporal_metadata_ms=%.3f "
+        "rerank_ms=%.3f budget_ms=%.3f serialization_ms=%.3f",
+        timings_ms["repair"],
+        timings_ms["fts"],
+        timings_ms["temporal_metadata"],
+        timings_ms["rerank"],
+        timings_ms["budget"],
+        timings_ms["serialization"],
+    )
     _audit(
         "search_text",
         started,
@@ -106,6 +136,11 @@ async def _search_text_impl(
         truncated_for_tokens=truncated_for_tokens,
     )
     return payload
+
+
+def _elapsed_ms(started: float) -> float:
+    """Return elapsed monotonic time in milliseconds."""
+    return (time.perf_counter() - started) * 1000.0
 
 
 async def _search_regex_impl(

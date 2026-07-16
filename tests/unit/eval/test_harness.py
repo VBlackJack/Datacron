@@ -55,8 +55,9 @@ def _silent_harness(**kwargs: Any) -> LocalEvalHarness:
     return LocalEvalHarness(console=Console(file=StringIO(), width=120), **kwargs)
 
 
-def _app(store: object) -> DatacronApp:
-    return cast("DatacronApp", SimpleNamespace(store=store))
+def _app(store: object, *, max_result_count: int = 20) -> DatacronApp:
+    settings = SimpleNamespace(max_result_count=max_result_count)
+    return cast("DatacronApp", SimpleNamespace(store=store, settings=settings))
 
 
 def _result(chunk: Chunk, score: float = 1.0) -> SearchResult:
@@ -89,6 +90,14 @@ async def test_tool_mode_calls_impl_and_never_direct_store_branch(
         "returned": 3,
         "limit_applied": 20,
         "truncated_for_tokens": False,
+        "timings_ms": {
+            "repair": 10.0,
+            "fts": 2.0,
+            "temporal_metadata": 4.0,
+            "rerank": 1.0,
+            "budget": 0.5,
+            "serialization": 0.25,
+        },
     }
     calls: list[dict[str, Any]] = []
 
@@ -98,9 +107,17 @@ async def test_tool_mode_calls_impl_and_never_direct_store_branch(
         query: str,
         limit: int,
         include_superseded: bool = False,
+        include_timings: bool = False,
     ) -> dict[str, Any]:
         _ = app
-        calls.append({"query": query, "limit": limit, "include_superseded": include_superseded})
+        calls.append(
+            {
+                "query": query,
+                "limit": limit,
+                "include_superseded": include_superseded,
+                "include_timings": include_timings,
+            }
+        )
         return payload
 
     monkeypatch.setattr("datacron.eval.harness._search_text_impl", fake_search_impl)
@@ -117,7 +134,14 @@ async def test_tool_mode_calls_impl_and_never_direct_store_branch(
         _app(_FailingStore()),
     )
 
-    assert calls == [{"query": "Where is current?", "limit": 20, "include_superseded": False}]
+    assert calls == [
+        {
+            "query": "Where is current?",
+            "limit": 20,
+            "include_superseded": False,
+            "include_timings": True,
+        }
+    ]
     result = report.results[0]
     assert result.retrieved_paths == ["current.md", "old.md"]
     assert result.recall_at_k[5] == 1.0
@@ -128,7 +152,10 @@ async def test_tool_mode_calls_impl_and_never_direct_store_branch(
     assert result.citation_precision == 0.5
     assert result.forbidden_violation is True
     assert result.tokens_returned == payload_token_estimate(payload)
+    assert result.stage_timings_ms["repair"] == 10.0
     assert report.summary.forbidden_violation_rate == 1.0
+    assert report.summary.stage_latency_ms["repair"].p50_ms == 10.0
+    assert report.summary.stage_latency_ms["repair"].p95_ms == 10.0
 
 
 @pytest.mark.asyncio
@@ -177,10 +204,27 @@ async def test_e2e_callback_is_used_for_tool_transport() -> None:
         transport=EvalTransport.E2E,
     )
 
-    assert calls == [("No hits", 10)]
+    assert calls == [("No hits", 20)]
     assert report.results[0].recall_at_k == {5: 0.0, 10: 0.0}
     assert report.results[0].citation_precision == 1.0
     assert report.summary.transport is EvalTransport.E2E
+
+
+@pytest.mark.asyncio
+async def test_tool_eval_requests_configured_result_ceiling() -> None:
+    calls: list[tuple[str, int]] = []
+
+    async def search(query: str, limit: int) -> dict[str, Any]:
+        calls.append((query, limit))
+        return {"query": query, "results": [], "returned": 0, "limit_applied": limit}
+
+    await _silent_harness(tool_search=search).run(
+        [EvalQuestion(id="q-limit", question="ceiling")],
+        _app(_FailingStore(), max_result_count=40),
+        render=False,
+    )
+
+    assert calls == [("ceiling", 40)]
 
 
 def test_load_eval_questions_validates_extended_yaml(tmp_path: Path) -> None:

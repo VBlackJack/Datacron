@@ -123,6 +123,26 @@ class TestSearchText:
         assert sample["score"] > 0
         assert sample["line_start"] >= 1
         assert sample["line_end"] >= sample["line_start"]
+        assert "timings_ms" not in result
+
+    @pytest.mark.asyncio
+    async def test_eval_timings_cover_every_search_stage(self, indexed_app: DatacronApp) -> None:
+        result = await _search_text_impl(
+            indexed_app,
+            query="Welcome",
+            limit=5,
+            include_timings=True,
+        )
+
+        assert set(result["timings_ms"]) == {
+            "repair",
+            "fts",
+            "temporal_metadata",
+            "rerank",
+            "budget",
+            "serialization",
+        }
+        assert all(value >= 0 for value in result["timings_ms"].values())
 
     @pytest.mark.asyncio
     async def test_empty_query_returns_error(self, indexed_app: DatacronApp) -> None:
