@@ -1,6 +1,6 @@
 # Contrat de fraicheur v1
 
-**Français** · [English](../en/freshness-contract-v1.md)
+**Français** | [English](../en/freshness-contract-v1.md)
 
 ## `freshness-contract-v1`
 

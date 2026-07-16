@@ -1,6 +1,6 @@
 # Operational health, certified read-only mode, and durability policy
 
-**English** · [Français](../fr/operational-health.md)
+**English** | [Français](../fr/operational-health.md)
 
 ## `get_health`
 

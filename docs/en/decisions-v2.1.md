@@ -1,6 +1,6 @@
 # Datacron - Settled decisions v2.1
 
-**English** · [Français](../fr/decisions-v2.1.md)
+**English** | [Français](../fr/decisions-v2.1.md)
 
 > **Status**: Final arbitration after cross-review
 > **Author**: Julien Bombled (synthesis arbitrated by Claude)

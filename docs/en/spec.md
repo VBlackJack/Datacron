@@ -1,6 +1,6 @@
 # Datacron - Internal Vault Conventions
 
-**English** · [Français](../fr/spec.md)
+**English** | [Français](../fr/spec.md)
 
 > **Status**: v1.1 (overlay reference, not a marketed open standard)
 > **Author**: Julien Bombled

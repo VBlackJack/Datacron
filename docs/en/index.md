@@ -1,6 +1,6 @@
 # Datacron documentation
 
-**English** · [Français](../fr/index.md)
+**English** | [Français](../fr/index.md)
 
 Entry point for all documentation. Datacron is a local MCP server that queries and maintains
 a Markdown vault from Claude, without sending the whole vault into the context.

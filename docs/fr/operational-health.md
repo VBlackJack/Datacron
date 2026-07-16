@@ -1,6 +1,6 @@
 # Santé opérationnelle, mode lecture seule certifié et politique de durabilité
 
-**Français** · [English](../en/operational-health.md)
+**Français** | [English](../en/operational-health.md)
 
 ## `get_health`
 
