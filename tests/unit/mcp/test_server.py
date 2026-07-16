@@ -22,7 +22,40 @@ import pytest
 from datacron.core.config import Settings
 from datacron.core.paths import PathConfinementError, sidecar_index_db, sidecar_vault_config
 from datacron.core.vault_writer import OperationRecoveryError, VaultLockBusyError
-from datacron.mcp.server import _startup_recover_operations, build_app
+from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
+from datacron.mcp.server import (
+    SERVER_INSTRUCTIONS,
+    _startup_recover_operations,
+    build_app,
+    create_server,
+)
+
+
+def test_server_instructions_include_memory_protocol() -> None:
+    assert "create_note_ai" in SERVER_INSTRUCTIONS
+    assert "INIT.md" in SERVER_INSTRUCTIONS
+    assert "sandbox-wrapped" in SERVER_INSTRUCTIONS
+
+
+@pytest.mark.asyncio
+async def test_write_tool_descriptions_lead_with_usage_trigger(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    app = build_app(
+        settings=Settings(read_paths=[vault], write_paths=[vault], vault_root=vault),
+        vault_root=vault,
+    )
+
+    descriptions = {
+        tool.name: tool.description
+        for tool in await create_server(app).list_tools()
+        if tool.name in MUTATING_TOOL_NAMES
+    }
+
+    assert descriptions.keys() == MUTATING_TOOL_NAMES
+    for description in descriptions.values():
+        assert description is not None
+        assert description.startswith(("Call this", "Use this"))
 
 
 class TestBuildAppReadPaths:
