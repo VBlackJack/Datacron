@@ -216,6 +216,7 @@ class EvalQuestion(BaseModel):
     question: str
     expected_chunk_ids: list[str] = Field(default_factory=list)
     expected_paths: list[str] = Field(default_factory=list)
+    forbidden_paths: list[str] = Field(default_factory=list)
 
 
 class EvalResult(BaseModel):
@@ -225,12 +226,20 @@ class EvalResult(BaseModel):
         question_id: The question's stable ID.
         retrieved_chunk_ids: Chunk IDs returned by the system under test, in
             ranked order.
-        recall_at_k: Keys are k values (5, 10, 20); values are recall in
-            ``[0, 1]``.
-        citation_precision: Fraction of retrieved chunks that are in the
-            expected set.
+        retrieved_paths: Note paths returned by the system under test, in
+            deduplicated ranked order.
+        recall_at_k: Note-level recall after path deduplication. Keys are k
+            values (5, 10, 20); values are recall in ``[0, 1]``.
+        chunk_recall_at_k: Chunk-level recall when the question declares
+            ``expected_chunk_ids``; otherwise ``None``.
+        reciprocal_rank: Reciprocal rank of the first expected note.
+        ndcg_at_10: Binary-relevance normalized discounted cumulative gain.
+        citation_precision: Fraction of distinct retrieved notes that are in
+            the expected set.
+        forbidden_violation: Whether a forbidden path appears in the top 5.
         latency_ms: End-to-end retrieval latency in milliseconds.
-        tokens_returned: Approximate sum of ``chunk.token_count`` returned.
+        tokens_returned: Approximate token count of the serialized response
+            payload.
         trust_label: Optional human-assigned label (``"high"``, ``"medium"``,
             ``"low"``).
     """
@@ -239,8 +248,13 @@ class EvalResult(BaseModel):
 
     question_id: str
     retrieved_chunk_ids: list[str]
+    retrieved_paths: list[str] = Field(default_factory=list)
     recall_at_k: dict[int, float] = Field(default_factory=dict)
+    chunk_recall_at_k: dict[int, float] | None = None
+    reciprocal_rank: float = Field(default=0.0, ge=0.0, le=1.0)
+    ndcg_at_10: float = Field(default=0.0, ge=0.0, le=1.0)
     citation_precision: float = Field(ge=0.0, le=1.0)
+    forbidden_violation: bool = False
     latency_ms: float = Field(ge=0.0)
     tokens_returned: int = Field(ge=0)
     trust_label: str | None = None
