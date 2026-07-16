@@ -29,6 +29,7 @@ from datacron.core.models import (
     EvalQuestion,
     EvalReport,
     EvalResult,
+    EvalStageLatency,
     EvalSummary,
     EvalTransport,
     SearchResult,
@@ -95,6 +96,8 @@ class LocalEvalHarness:
             raise ValueError("The e2e transport requires an MCP search callback.")
 
         limit = max(k_values) if k_values else 0
+        if pipeline is EvalPipeline.TOOL:
+            limit = max(limit, app.settings.max_result_count)
         results: list[EvalResult] = []
         for question in eval_questions:
             started = perf_counter()
@@ -129,7 +132,7 @@ class LocalEvalHarness:
             return _store_payload(query, search_results, limit)
         if self._tool_search is not None:
             return await self._tool_search(query, limit)
-        return await _search_text_impl(app, query=query, limit=limit)
+        return await _search_text_impl(app, query=query, limit=limit, include_timings=True)
 
     def _print_summary(self, report: EvalReport) -> None:
         """Render a compact Rich summary for an eval run."""
@@ -254,6 +257,7 @@ def _evaluate_payload(
         ),
         forbidden_evaluated=bool(question.forbidden_paths),
         latency_ms=latency_ms,
+        stage_timings_ms=_stage_timings(payload, question.id),
         tokens_returned=payload_token_estimate(payload),
         trust_label=None,
     )
@@ -281,6 +285,7 @@ def _summarize(
             for k in k_values
         }
     freshness_results = [result for result in results if result.forbidden_evaluated]
+    stage_names = sorted({stage for result in results for stage in result.stage_timings_ms})
     return EvalSummary(
         pipeline=pipeline,
         transport=transport,
@@ -299,9 +304,45 @@ def _summarize(
         ),
         latency_p50_ms=_percentile([result.latency_ms for result in results], 0.50),
         latency_p95_ms=_percentile([result.latency_ms for result in results], 0.95),
+        stage_latency_ms={
+            stage: EvalStageLatency(
+                p50_ms=_percentile(
+                    [
+                        result.stage_timings_ms[stage]
+                        for result in results
+                        if stage in result.stage_timings_ms
+                    ],
+                    0.50,
+                ),
+                p95_ms=_percentile(
+                    [
+                        result.stage_timings_ms[stage]
+                        for result in results
+                        if stage in result.stage_timings_ms
+                    ],
+                    0.95,
+                ),
+            )
+            for stage in stage_names
+        },
         total_tokens_returned=sum(result.tokens_returned for result in results),
         avg_tokens_returned=_average([float(result.tokens_returned) for result in results]),
     )
+
+
+def _stage_timings(payload: dict[str, Any], question_id: str) -> dict[str, float]:
+    """Validate optional per-stage timing values from a tool response."""
+    raw = payload.get("timings_ms")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise TypeError(f"search response for {question_id} has invalid timings_ms")
+    timings: dict[str, float] = {}
+    for stage, value in raw.items():
+        if not isinstance(stage, str) or not isinstance(value, int | float) or value < 0:
+            raise TypeError(f"search response for {question_id} has invalid stage timing")
+        timings[stage] = float(value)
+    return timings
 
 
 def _average(values: Sequence[float]) -> float:

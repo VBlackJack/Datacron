@@ -34,6 +34,7 @@ __all__ = [
     "EvalQuestion",
     "EvalReport",
     "EvalResult",
+    "EvalStageLatency",
     "EvalSummary",
     "EvalTransport",
     "IndexStats",
@@ -257,6 +258,7 @@ class EvalResult(BaseModel):
         forbidden_violation: Whether a forbidden path appears in the top 5.
         forbidden_evaluated: Whether the question declares forbidden paths.
         latency_ms: End-to-end retrieval latency in milliseconds.
+        stage_timings_ms: Optional tool-layer timings keyed by stage name.
         tokens_returned: Approximate token count of the serialized response
             payload.
         trust_label: Optional human-assigned label (``"high"``, ``"medium"``,
@@ -276,8 +278,18 @@ class EvalResult(BaseModel):
     forbidden_violation: bool = False
     forbidden_evaluated: bool = False
     latency_ms: float = Field(ge=0.0)
+    stage_timings_ms: dict[str, float] = Field(default_factory=dict)
     tokens_returned: int = Field(ge=0)
     trust_label: str | None = None
+
+
+class EvalStageLatency(BaseModel):
+    """p50/p95 latency for one instrumented retrieval stage."""
+
+    model_config = ConfigDict(frozen=True)
+
+    p50_ms: float = Field(ge=0.0)
+    p95_ms: float = Field(ge=0.0)
 
 
 class EvalSummary(BaseModel):
@@ -296,6 +308,7 @@ class EvalSummary(BaseModel):
     forbidden_violation_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     latency_p50_ms: float = Field(ge=0.0)
     latency_p95_ms: float = Field(ge=0.0)
+    stage_latency_ms: dict[str, EvalStageLatency] = Field(default_factory=dict)
     total_tokens_returned: int = Field(ge=0)
     avg_tokens_returned: float = Field(ge=0.0)
 
