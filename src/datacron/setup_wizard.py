@@ -182,6 +182,7 @@ class SetupResult:
     Attributes:
         bootstrap: The vault initialization result.
         indexed_notes: Notes indexed during setup, or ``None`` if skipped.
+        index_error: Index failure details, or ``None`` when built or intentionally skipped.
         client_config_path: Written MCP client config, or ``None`` when no
             file was written (``claude-code`` and ``none``).
         stdio_config: A ready-to-paste stdio MCP config snippet for clients that
@@ -197,6 +198,7 @@ class SetupResult:
 
     bootstrap: BootstrapResult
     indexed_notes: int | None
+    index_error: str | None
     client_config_path: Path | None
     write_path: Path | None
     read_only: bool
@@ -368,10 +370,10 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
     """Run the full setup sequence for ``plan`` and return a summary.
 
     Steps: reset the generated config and index (optional), initialize the
-    sidecar, build the index (optional), and configure the selected MCP client
-    with the chosen write/durability/read-only options.
-    Client configuration failures are captured as warnings rather than aborting
-    an otherwise-successful vault initialization.
+    sidecar, resolve write settings, configure the selected MCP client, then build
+    the index (optional). Index failures are deferred so they never roll back a
+    successful client configuration. Client configuration failures are captured as
+    warnings rather than aborting an otherwise-successful vault initialization.
 
     Args:
         plan: The resolved setup choices.
@@ -396,11 +398,6 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
     bootstrap = initialize_vault(plan.vault_path, force=plan.force)
     vault_root = bootstrap.vault_path
 
-    indexed_notes: int | None = None
-    if plan.build_index:
-        indexed_notes = await _build_index(vault_root, settings)
-        _LOGGER.info("cli.setup indexed %d notes for %s", indexed_notes, vault_root)
-
     write_path: Path | None = None
     if plan.enable_write:
         write_path = _resolve_write_path(plan, vault_root)
@@ -421,10 +418,20 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
     elif plan.client == CLIENT_CLAUDE_CODE:
         stdio_config = claude_code_stdio_config(vault_root, extra_env)
 
+    indexed_notes: int | None = None
+    index_error: str | None = None
+    if plan.build_index:
+        try:
+            indexed_notes = await _build_index(vault_root, settings)
+            _LOGGER.info("cli.setup indexed %d notes for %s", indexed_notes, vault_root)
+        except Exception as exc:
+            index_error = f"{type(exc).__name__}: {exc}"
+
     _LOGGER.info("cli.setup completed for %s", vault_root)
     return SetupResult(
         bootstrap=bootstrap,
         indexed_notes=indexed_notes,
+        index_error=index_error,
         client_config_path=client_config_path,
         write_path=write_path,
         read_only=plan.read_only,

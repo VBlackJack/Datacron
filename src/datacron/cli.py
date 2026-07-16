@@ -490,7 +490,7 @@ def setup(
         help="Accept defaults for every unspecified option; no prompts.",
     ),
 ) -> None:
-    """Guided end-to-end setup: initialize, index, and wire an MCP client.
+    """Guided end-to-end setup: initialize, wire an MCP client, and index.
 
     Runs interactively by default, asking for the vault location and each
     option not supplied as a flag. With ``--reset``, the generated index and
@@ -640,6 +640,11 @@ def _render_setup_result(result: SetupResult) -> None:
         _print(f"  reset:      config {config_status} / index {index_status}")
     if result.indexed_notes is not None:
         _print(f"  indexed:    {result.indexed_notes} notes")
+    elif result.index_error is not None:
+        _print(f"  index:      deferred - {result.index_error}")
+        _print("  action:     run `datacron index` when indexing is available")
+    else:
+        _print("  index:      skipped (--no-index)")
     if result.write_path is not None:
         _print(f"  writing:    enabled -> {result.write_path}")
     else:

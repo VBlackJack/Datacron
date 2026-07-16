@@ -96,6 +96,7 @@ def test_run_setup_indexes_without_client(tmp_path: Path) -> None:
     result = asyncio.run(run_setup(SetupPlan(vault_path=tmp_path, client=CLIENT_NONE)))
     assert result.bootstrap.created is True
     assert result.indexed_notes == 1
+    assert result.index_error is None
     assert result.client_config_path is None
     assert result.write_path is None
     assert sidecar_index_db(tmp_path).is_file()
@@ -106,6 +107,66 @@ def test_run_setup_can_skip_index(tmp_path: Path) -> None:
         run_setup(SetupPlan(vault_path=tmp_path, client=CLIENT_NONE, build_index=False))
     )
     assert result.indexed_notes is None
+    assert result.index_error is None
+
+
+def test_run_setup_registers_before_index_and_defers_index_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    real_initialize = initialize_vault
+
+    def fake_reset(vault_root: Path) -> setup_wizard.ResetResult:
+        calls.append("reset")
+        return setup_wizard.ResetResult(config_removed=False, index_removed=False)
+
+    def fake_initialize(vault_path: Path, *, force: bool) -> Any:
+        calls.append("init")
+        return real_initialize(vault_path, force=force)
+
+    def fake_resolve_write_path(plan: SetupPlan, vault_root: Path) -> Path:
+        calls.append("write_path")
+        return vault_root / "_memory"
+
+    def fake_extra_env(plan: SetupPlan, write_path: Path | None) -> dict[str, str]:
+        calls.append("extra_env")
+        assert write_path == tmp_path / "_memory"
+        return {"DATACRON_WRITE_PATHS": str(write_path)}
+
+    def fake_install(
+        vault_root: Path, *, extra_env: dict[str, str] | None = None, **_: Any
+    ) -> Path:
+        calls.append("register")
+        assert (vault_root / "_memory").is_dir()
+        assert extra_env == {"DATACRON_WRITE_PATHS": str(tmp_path / "_memory")}
+        return tmp_path / "client.json"
+
+    async def fail_index(vault_root: Path, settings: Any) -> int:
+        calls.append("index")
+        raise RuntimeError("index unavailable")
+
+    monkeypatch.setattr(setup_wizard, "reset_user_state", fake_reset)
+    monkeypatch.setattr(setup_wizard, "initialize_vault", fake_initialize)
+    monkeypatch.setattr(setup_wizard, "_resolve_write_path", fake_resolve_write_path)
+    monkeypatch.setattr(setup_wizard, "_build_extra_env", fake_extra_env)
+    monkeypatch.setattr(setup_wizard, "install_claude_desktop_config", fake_install)
+    monkeypatch.setattr(setup_wizard, "_build_index", fail_index)
+
+    result = asyncio.run(
+        run_setup(
+            SetupPlan(
+                vault_path=tmp_path,
+                client=CLIENT_CLAUDE_DESKTOP,
+                enable_write=True,
+                reset=True,
+            )
+        )
+    )
+
+    assert calls == ["reset", "init", "write_path", "extra_env", "register", "index"]
+    assert result.client_config_path == tmp_path / "client.json"
+    assert result.indexed_notes is None
+    assert result.index_error == "RuntimeError: index unavailable"
 
 
 def test_run_setup_enables_write_default_memory(tmp_path: Path) -> None:
@@ -356,6 +417,24 @@ def test_cli_setup_yes_client_none(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "Datacron setup complete." in result.output
     assert sidecar_vault_config(tmp_path).is_file()
+
+
+def test_cli_setup_reports_deferred_index_and_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail_index(vault_root: Path, settings: Any) -> int:
+        raise RuntimeError("index unavailable")
+
+    monkeypatch.setattr(setup_wizard, "_build_index", fail_index)
+
+    result = _runner.invoke(
+        app,
+        ["setup", "--vault", str(tmp_path), "--client", "none", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "index:      deferred - RuntimeError: index unavailable" in result.output
+    assert "run `datacron index` when indexing is available" in result.output
 
 
 def test_cli_setup_rejects_unknown_client(tmp_path: Path) -> None:

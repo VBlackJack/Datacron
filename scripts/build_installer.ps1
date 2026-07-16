@@ -89,6 +89,7 @@ try {
         "--collect-submodules", "datacron",
         "--collect-submodules", "pydantic",
         "--hidden-import", "pydantic_settings",
+        "--hidden-import", "truststore",
         "--distpath", $DistPath,
         "--workpath", $WorkPath,
         "--specpath", $WorkPath,
