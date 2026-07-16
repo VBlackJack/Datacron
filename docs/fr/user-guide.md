@@ -75,6 +75,33 @@ quand tu cherches une chaîne exacte (un identifiant, un chemin, un bout de code
 Règle pratique : `search_text` pour « de quoi je parlais à propos de X », `search_regex`
 pour « où ai-je écrit exactement cette chaîne ».
 
+### Évaluer une mise à jour de connaissance
+
+`datacron eval` mesure par défaut le vrai pipeline `search_text` (re-rank, confinement,
+budget et snippets sérialisés). Pour tester qu'une ancienne information ne pollue plus les
+réponses, crée une paire : la note active déclare l'ULID de l'ancienne dans `supersedes`,
+puis ajoute une question au golden set privé :
+
+```yaml
+- id: rotation-certificats-active
+  question: Quelle politique de rotation des certificats est active ?
+  expected_paths:
+    - securite/rotation-certificats-2026.md
+  forbidden_paths:
+    - securite/rotation-certificats-2025.md
+```
+
+Les chemins sont relatifs au vault et utilisent `/`. La question échoue en fraîcheur si la
+note remplacée apparaît dans les cinq premières notes distinctes. Rejoue ensuite :
+
+```bash
+datacron eval --vault /chemin/vault --questions local/golden.yaml --save-baseline
+datacron eval --vault /chemin/vault --questions local/golden.yaml --compare
+```
+
+Le second appel renvoie le code 1 si recall@5 ou nDCG@10 baisse de plus de 0,02. Ce seuil
+se règle avec `DATACRON_EVAL_REGRESSION_TOLERANCE`.
+
 ## États de confiance des notes
 
 Le frontmatter des notes porte des signaux que Datacron respecte au classement. Les plus

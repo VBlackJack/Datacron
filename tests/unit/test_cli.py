@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -298,6 +299,97 @@ class TestEval:
 
         assert result.exit_code == 1
         assert "No index found" in result.stdout
+
+    def test_eval_json_saves_versioned_baseline(
+        self, runner: CliRunner, tmp_vault: Path, tmp_path: Path
+    ) -> None:
+        indexed = runner.invoke(app, ["index", "--vault", str(tmp_vault)])
+        assert indexed.exit_code == 0, indexed.stdout + indexed.stderr
+        questions = tmp_path / "eval-questions.yaml"
+        questions.write_text(
+            """
+- id: q-welcome
+  question: welcome
+  expected_paths:
+    - welcome.md
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "eval",
+                "--vault",
+                str(tmp_vault),
+                "--questions",
+                str(questions),
+                "--json",
+                "--save-baseline",
+            ],
+        )
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["summary"]["pipeline"] == "tool"
+        assert payload["summary"]["transport"] == "impl"
+        baseline = tmp_vault / ".datacron" / "eval" / "baseline.json"
+        assert payload["baseline_saved_to"] == str(baseline.resolve())
+        assert json.loads(baseline.read_text(encoding="utf-8"))["datacron_version"]
+
+    def test_eval_compare_exits_one_on_regression(
+        self, runner: CliRunner, tmp_vault: Path, tmp_path: Path
+    ) -> None:
+        indexed = runner.invoke(app, ["index", "--vault", str(tmp_vault)])
+        assert indexed.exit_code == 0, indexed.stdout + indexed.stderr
+        questions = tmp_path / "eval-questions.yaml"
+        questions.write_text(
+            """
+- id: q-welcome
+  question: welcome
+  expected_paths:
+    - welcome.md
+""".lstrip(),
+            encoding="utf-8",
+        )
+        saved = runner.invoke(
+            app,
+            [
+                "eval",
+                "--vault",
+                str(tmp_vault),
+                "--questions",
+                str(questions),
+                "--save-baseline",
+            ],
+        )
+        assert saved.exit_code == 0, saved.stdout + saved.stderr
+        questions.write_text(
+            """
+- id: q-regressed
+  question: welcome
+  expected_paths:
+    - absent.md
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        compared = runner.invoke(
+            app,
+            [
+                "eval",
+                "--vault",
+                str(tmp_vault),
+                "--questions",
+                str(questions),
+                "--compare",
+            ],
+        )
+
+        assert compared.exit_code == 1
+        assert "Regression check: FAIL" in compared.stdout
+        assert "note_recall_at_5" in compared.stdout
+        assert "ndcg_at_10" in compared.stdout
 
 
 class TestMcpInstall:

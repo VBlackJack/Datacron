@@ -21,10 +21,11 @@ and MCP server management commands.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 import click
 import typer
@@ -70,6 +71,9 @@ from datacron.setup_wizard import (
     _scopes_for,
     run_setup,
 )
+
+if TYPE_CHECKING:
+    from datacron.eval.baseline import BaselineComparison
 
 __all__ = ["app", "mcp_entry"]
 
@@ -411,24 +415,65 @@ def eval_(
         help="Tool invocation transport: impl or e2e.",
         case_sensitive=False,
     ),
+    save_baseline: bool = typer.Option(
+        False,
+        "--save-baseline",
+        help="Save aggregate metrics as this vault's local baseline.",
+    ),
+    compare: bool = typer.Option(
+        False,
+        "--compare",
+        help="Compare against the vault-local baseline and enforce regression gates.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit a machine-readable JSON report instead of the Rich table.",
+    ),
 ) -> None:
     """Evaluate retrieval quality against the real MCP search pipeline."""
     if pipeline is EvalPipeline.STORE and transport is EvalTransport.E2E:
         raise typer.BadParameter("--transport e2e requires --pipeline tool")
+    if save_baseline and compare:
+        raise typer.BadParameter("--save-baseline and --compare are mutually exclusive")
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
-    asyncio.run(_run_eval(vault_root, questions, settings, pipeline, transport))
+    exit_code = asyncio.run(
+        _run_eval(
+            vault_root,
+            questions,
+            settings,
+            pipeline,
+            transport,
+            save_baseline_requested=save_baseline,
+            compare=compare,
+            json_output=json_output,
+        )
+    )
+    if exit_code:
+        raise typer.Exit(code=exit_code)
 
 
-async def _run_eval(
+async def _run_eval(  # noqa: PLR0912 -- command orchestration covers optional output modes
     vault_root: Path,
     questions_path: Path,
     settings: Settings,
     pipeline: EvalPipeline,
     transport: EvalTransport,
-) -> None:
+    *,
+    save_baseline_requested: bool,
+    compare: bool,
+    json_output: bool,
+) -> int:
     """Open the existing index and run the local eval harness."""
     from datacron.core.paths import sidecar_index_db  # noqa: PLC0415
+    from datacron.eval.baseline import (  # noqa: PLC0415
+        baseline_path,
+        compare_with_baseline,
+        eval_config_hash,
+        load_baseline,
+        save_baseline,
+    )
     from datacron.eval.harness import LocalEvalHarness, load_eval_questions  # noqa: PLC0415
     from datacron.eval.transport import e2e_search_transport  # noqa: PLC0415
     from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
@@ -438,10 +483,18 @@ async def _run_eval(
     db_path = sidecar_index_db(vault_root)
     if not db_path.exists():
         _print("No index found. Run `datacron index` first.")
-        raise typer.Exit(code=1)
+        return 1
 
     questions = load_eval_questions(questions_path)
     config = _load_vault_yaml(vault_root) or VaultConfig()
+    baseline = None
+    if compare:
+        try:
+            baseline = load_baseline(vault_root)
+        except FileNotFoundError:
+            message = f"No eval baseline found at {baseline_path(vault_root)}."
+            _print(json.dumps({"error": message}) if json_output else message)
+            return 1
     store = SQLiteFTS5Store(term_map=config.query_expansion)
     ripgrep = RipgrepWrapper()
     datacron_app = build_app(
@@ -453,24 +506,71 @@ async def _run_eval(
 
     if transport is EvalTransport.E2E:
         async with e2e_search_transport(vault_root, settings) as search:
-            await LocalEvalHarness(tool_search=search).run(
+            report = await LocalEvalHarness(tool_search=search).run(
                 questions,
                 datacron_app,
                 pipeline=pipeline,
                 transport=transport,
+                render=not json_output,
             )
-        return
+    else:
+        await store.open(db_path, read_only=not datacron_app.write_policy.writes_allowed)
+        try:
+            report = await LocalEvalHarness().run(
+                questions,
+                datacron_app,
+                pipeline=pipeline,
+                transport=transport,
+                render=not json_output,
+            )
+        finally:
+            await store.close()
 
-    await store.open(db_path, read_only=not datacron_app.write_policy.writes_allowed)
-    try:
-        await LocalEvalHarness().run(
-            questions,
-            datacron_app,
-            pipeline=pipeline,
-            transport=transport,
+    comparison = None
+    if baseline is not None:
+        comparison = compare_with_baseline(
+            report,
+            baseline,
+            tolerance=settings.eval_regression_tolerance,
+            config_hash=eval_config_hash(settings, config),
         )
-    finally:
-        await store.close()
+    saved_path = None
+    if save_baseline_requested:
+        save_baseline(report, vault_root, settings, config)
+        saved_path = baseline_path(vault_root)
+
+    if json_output:
+        output = report.model_dump(mode="json")
+        if comparison is not None:
+            output["baseline_comparison"] = comparison.model_dump(mode="json")
+        if saved_path is not None:
+            output["baseline_saved_to"] = str(saved_path)
+        _print(json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        if comparison is not None:
+            _print_baseline_comparison(comparison)
+        if saved_path is not None:
+            _print(f"Baseline saved to {saved_path}")
+    return 1 if comparison is not None and not comparison.passed else 0
+
+
+def _print_baseline_comparison(comparison: BaselineComparison) -> None:
+    """Print baseline deltas without importing eval models at CLI startup."""
+    _print("Baseline deltas (current - baseline):")
+    for metric, delta in comparison.deltas.items():
+        _print(f"  {metric}: {delta:+.4f}")
+    if not comparison.config_hash_matches:
+        _print("Warning: baseline and current retrieval config hashes differ.")
+    if not comparison.mode_matches:
+        _print("Warning: baseline and current pipeline/transport modes differ.")
+    if comparison.passed:
+        _print(f"Regression check: PASS (tolerance {comparison.tolerance:.3f})")
+    else:
+        _print(
+            "Regression check: FAIL — "
+            f"{', '.join(comparison.regressions)} exceeded tolerance "
+            f"{comparison.tolerance:.3f}"
+        )
 
 
 @app.command()
