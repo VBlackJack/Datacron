@@ -42,6 +42,7 @@ from datacron.core.config import (
 )
 from datacron.core.durability import WritePolicy, probe_directory_durability
 from datacron.core.logger import configure_logging, get_logger
+from datacron.core.models import EvalPipeline, EvalTransport
 from datacron.core.paths import (
     sidecar_dir,
     sidecar_index_db,
@@ -398,19 +399,41 @@ def eval_(
         help="Path to an eval-questions YAML file.",
     ),
     vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
+    pipeline: EvalPipeline = typer.Option(
+        EvalPipeline.TOOL,
+        "--pipeline",
+        help="Retrieval layer to evaluate: tool or store.",
+        case_sensitive=False,
+    ),
+    transport: EvalTransport = typer.Option(
+        EvalTransport.IMPL,
+        "--transport",
+        help="Tool invocation transport: impl or e2e.",
+        case_sensitive=False,
+    ),
 ) -> None:
-    """Run the eval harness against the configured vault (Phase 0 Sem 4)."""
+    """Evaluate retrieval quality against the real MCP search pipeline."""
+    if pipeline is EvalPipeline.STORE and transport is EvalTransport.E2E:
+        raise typer.BadParameter("--transport e2e requires --pipeline tool")
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
-    asyncio.run(_run_eval(vault_root, questions))
+    asyncio.run(_run_eval(vault_root, questions, settings, pipeline, transport))
 
 
-async def _run_eval(vault_root: Path, questions_path: Path) -> None:
+async def _run_eval(
+    vault_root: Path,
+    questions_path: Path,
+    settings: Settings,
+    pipeline: EvalPipeline,
+    transport: EvalTransport,
+) -> None:
     """Open the existing index and run the local eval harness."""
     from datacron.core.paths import sidecar_index_db  # noqa: PLC0415
     from datacron.eval.harness import LocalEvalHarness, load_eval_questions  # noqa: PLC0415
+    from datacron.eval.transport import e2e_search_transport  # noqa: PLC0415
     from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
     from datacron.indexing.ripgrep import RipgrepWrapper  # noqa: PLC0415
+    from datacron.mcp.server import build_app  # noqa: PLC0415
 
     db_path = sidecar_index_db(vault_root)
     if not db_path.exists():
@@ -420,9 +443,32 @@ async def _run_eval(vault_root: Path, questions_path: Path) -> None:
     questions = load_eval_questions(questions_path)
     config = _load_vault_yaml(vault_root) or VaultConfig()
     store = SQLiteFTS5Store(term_map=config.query_expansion)
-    await store.open(db_path)
+    ripgrep = RipgrepWrapper()
+    datacron_app = build_app(
+        settings=settings,
+        vault_root=vault_root,
+        store=store,
+        ripgrep=ripgrep,
+    )
+
+    if transport is EvalTransport.E2E:
+        async with e2e_search_transport(vault_root, settings) as search:
+            await LocalEvalHarness(tool_search=search).run(
+                questions,
+                datacron_app,
+                pipeline=pipeline,
+                transport=transport,
+            )
+        return
+
+    await store.open(db_path, read_only=not datacron_app.write_policy.writes_allowed)
     try:
-        await LocalEvalHarness().run(questions, store, RipgrepWrapper())
+        await LocalEvalHarness().run(
+            questions,
+            datacron_app,
+            pipeline=pipeline,
+            transport=transport,
+        )
     finally:
         await store.close()
 

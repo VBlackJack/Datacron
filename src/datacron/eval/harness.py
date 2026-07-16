@@ -11,27 +11,49 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Local retrieval evaluation harness for Phase 0."""
+"""Local retrieval evaluation harness for the store and real MCP tool layers."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from time import perf_counter
-from typing import Final
+from typing import Any, Final
 
 import yaml
 from rich.console import Console
 from rich.table import Table
 
-from datacron.core.models import EvalQuestion, EvalResult
-from datacron.core.protocols import EvalHarness, FTS5Store, RipgrepWrapper
-from datacron.eval.metrics import citation_precision, recall_at_k
+from datacron.core.models import (
+    EvalPipeline,
+    EvalQuestion,
+    EvalReport,
+    EvalResult,
+    EvalSummary,
+    EvalTransport,
+    SearchResult,
+)
+from datacron.core.protocols import EvalHarness
+from datacron.eval.metrics import (
+    citation_precision,
+    deduplicate_ranked,
+    forbidden_violation,
+    ndcg_at_k,
+    payload_token_estimate,
+    recall_at_k,
+    reciprocal_rank,
+)
+from datacron.mcp.server import DatacronApp
+from datacron.mcp.tools import _search_text_impl
 
 __all__ = ["DEFAULT_K_VALUES", "LocalEvalHarness", "load_eval_questions"]
 
 DEFAULT_K_VALUES: Final[tuple[int, int, int]] = (5, 10, 20)
 _ENCODING_UTF8: Final[str] = "utf-8"
+_NDCG_K: Final[int] = 10
+_FORBIDDEN_K: Final[int] = 5
+
+ToolSearch = Callable[[str, int], Awaitable[dict[str, Any]]]
 
 
 def load_eval_questions(path: Path) -> list[EvalQuestion]:
@@ -45,92 +67,258 @@ def load_eval_questions(path: Path) -> list[EvalQuestion]:
 
 
 class LocalEvalHarness:
-    """Run BM25-only retrieval evals directly against the local FTS5 store."""
+    """Evaluate either the complete search tool or its underlying FTS5 store."""
 
-    def __init__(self, console: Console | None = None) -> None:
+    def __init__(
+        self,
+        console: Console | None = None,
+        *,
+        tool_search: ToolSearch | None = None,
+    ) -> None:
         self._console = console or Console()
+        self._tool_search = tool_search
 
     async def run(
         self,
         eval_questions: list[EvalQuestion],
-        store: FTS5Store,
-        ripgrep: RipgrepWrapper,
+        app: DatacronApp,
         k_values: Sequence[int] = DEFAULT_K_VALUES,
-    ) -> list[EvalResult]:
-        """Execute the eval and return one :class:`EvalResult` per question."""
-        _ = ripgrep
+        *,
+        pipeline: EvalPipeline = EvalPipeline.TOOL,
+        transport: EvalTransport = EvalTransport.IMPL,
+        render: bool = True,
+    ) -> EvalReport:
+        """Execute the eval and return per-question plus aggregate metrics."""
+        if pipeline is EvalPipeline.STORE and transport is EvalTransport.E2E:
+            raise ValueError("The e2e transport is only available with the tool pipeline.")
+        if transport is EvalTransport.E2E and self._tool_search is None:
+            raise ValueError("The e2e transport requires an MCP search callback.")
+
         limit = max(k_values) if k_values else 0
         results: list[EvalResult] = []
-
         for question in eval_questions:
             started = perf_counter()
-            search_results = await store.search(question.question, limit=limit)
+            payload = await self._search(app, question.question, limit, pipeline)
             latency_ms = (perf_counter() - started) * 1000.0
-
-            retrieved_chunk_ids = [result.chunk.chunk_id for result in search_results]
-            retrieved_paths = [result.chunk.note_rel_path for result in search_results]
-            recall = {k: recall_at_k(question.expected_paths, retrieved_paths, k) for k in k_values}
-            precision = citation_precision(question.expected_paths, retrieved_paths)
-            tokens_returned = sum(result.chunk.token_count for result in search_results)
-
             results.append(
-                EvalResult(
-                    question_id=question.id,
-                    retrieved_chunk_ids=retrieved_chunk_ids,
-                    recall_at_k=recall,
-                    citation_precision=precision,
+                _evaluate_payload(
+                    question,
+                    payload,
                     latency_ms=latency_ms,
-                    tokens_returned=tokens_returned,
-                    trust_label=None,
+                    k_values=k_values,
                 )
             )
 
-        self._print_summary(results, k_values)
-        return results
+        report = EvalReport(
+            summary=_summarize(results, k_values, pipeline=pipeline, transport=transport),
+            results=results,
+        )
+        if render:
+            self._print_summary(report)
+        return report
 
-    def _print_summary(self, results: list[EvalResult], k_values: Sequence[int]) -> None:
-        """Render a compact rich summary for an eval run."""
+    async def _search(
+        self,
+        app: DatacronApp,
+        query: str,
+        limit: int,
+        pipeline: EvalPipeline,
+    ) -> dict[str, Any]:
+        if pipeline is EvalPipeline.STORE:
+            search_results = await app.store.search(query, limit=limit)
+            return _store_payload(query, search_results, limit)
+        if self._tool_search is not None:
+            return await self._tool_search(query, limit)
+        return await _search_text_impl(app, query=query, limit=limit)
+
+    def _print_summary(self, report: EvalReport) -> None:
+        """Render a compact Rich summary for an eval run."""
+        results = report.results
+        summary = report.summary
         if not results:
             self._console.print("[yellow]No eval questions supplied.[/yellow]")
             return
 
-        table = Table(title="Datacron Eval Summary")
+        table = Table(
+            title=f"Datacron Eval Summary ({summary.pipeline.value}/{summary.transport.value})"
+        )
         table.add_column("ID", no_wrap=True)
-        table.add_column("N", justify="right")
-        for k in k_values:
+        table.add_column("Notes", justify="right")
+        for k in summary.note_recall_at_k:
             table.add_column(f"R{k}", justify="right")
+        table.add_column("MRR", justify="right")
+        table.add_column("nDCG10", justify="right")
         table.add_column("P", justify="right")
+        table.add_column("Fresh", justify="right")
         table.add_column("ms", justify="right")
         table.add_column("Tok", justify="right")
 
         for result in results:
+            freshness = "FAIL" if result.forbidden_violation else "ok"
+            if not result.forbidden_evaluated:
+                freshness = "-"
             table.add_row(
                 result.question_id,
-                str(len(result.retrieved_chunk_ids)),
-                *[f"{result.recall_at_k.get(k, 0.0):.2f}" for k in k_values],
+                str(len(result.retrieved_paths)),
+                *[f"{result.recall_at_k.get(k, 0.0):.2f}" for k in summary.note_recall_at_k],
+                f"{result.reciprocal_rank:.2f}",
+                f"{result.ndcg_at_10:.2f}",
                 f"{result.citation_precision:.2f}",
+                freshness,
                 f"{result.latency_ms:.0f}",
                 str(result.tokens_returned),
             )
 
-        avg_precision = _average([result.citation_precision for result in results])
-        avg_latency = _average([result.latency_ms for result in results])
-        total_tokens = sum(result.tokens_returned for result in results)
-
         self._console.print(table)
-        for k in k_values:
-            avg_recall = _average([result.recall_at_k.get(k, 0.0) for result in results])
-            self._console.print(f"Avg recall@{k}: {avg_recall:.2f}")
-        self._console.print(
-            f"Avg precision: {avg_precision:.2f}  "
-            f"Avg latency: {avg_latency:.0f}ms  "
-            f"Total tokens: {total_tokens}"
+        recalls = "  ".join(f"R@{k}: {value:.2f}" for k, value in summary.note_recall_at_k.items())
+        freshness = (
+            "n/a"
+            if summary.forbidden_violation_rate is None
+            else f"{summary.forbidden_violation_rate:.2%}"
         )
+        self._console.print(
+            f"{recalls}  MRR: {summary.mrr:.2f}  nDCG@10: {summary.ndcg_at_10:.2f}  "
+            f"Precision: {summary.citation_precision:.2f}"
+        )
+        self._console.print(
+            f"Forbidden@5: {freshness}  latency p50/p95: "
+            f"{summary.latency_p50_ms:.0f}/{summary.latency_p95_ms:.0f}ms  "
+            f"Payload tokens: {summary.total_tokens_returned}"
+        )
+
+
+def _store_payload(query: str, results: list[SearchResult], limit: int) -> dict[str, Any]:
+    """Normalize raw store hits to the same shape consumed from the MCP tool."""
+    return {
+        "query": query,
+        "results": [
+            {
+                "chunk_id": result.chunk.chunk_id,
+                "note_rel_path": result.chunk.note_rel_path,
+                "score": result.score,
+                "snippet": result.snippet,
+                "token_count": result.chunk.token_count,
+            }
+            for result in results
+        ],
+        "returned": len(results),
+        "limit_applied": limit,
+    }
+
+
+def _evaluate_payload(
+    question: EvalQuestion,
+    payload: dict[str, Any],
+    *,
+    latency_ms: float,
+    k_values: Sequence[int],
+) -> EvalResult:
+    """Compute all metrics for one normalized response payload."""
+    if "error" in payload:
+        raise RuntimeError(f"search failed for {question.id}: {payload['error']}")
+    raw_results = payload.get("results", [])
+    if not isinstance(raw_results, list):
+        raise TypeError(f"search response for {question.id} has a non-list results field")
+
+    retrieved_chunk_ids: list[str] = []
+    retrieved_paths_raw: list[str] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            raise TypeError(f"search response for {question.id} contains a non-object result")
+        chunk_id = item.get("chunk_id")
+        note_rel_path = item.get("note_rel_path")
+        if isinstance(chunk_id, str):
+            retrieved_chunk_ids.append(chunk_id)
+        if isinstance(note_rel_path, str):
+            retrieved_paths_raw.append(note_rel_path)
+
+    retrieved_paths = deduplicate_ranked(retrieved_paths_raw)
+    chunk_recall = None
+    if question.expected_chunk_ids:
+        chunk_recall = {
+            k: recall_at_k(question.expected_chunk_ids, retrieved_chunk_ids, k) for k in k_values
+        }
+    return EvalResult(
+        question_id=question.id,
+        retrieved_chunk_ids=retrieved_chunk_ids,
+        retrieved_paths=retrieved_paths,
+        recall_at_k={k: recall_at_k(question.expected_paths, retrieved_paths, k) for k in k_values},
+        chunk_recall_at_k=chunk_recall,
+        reciprocal_rank=reciprocal_rank(question.expected_paths, retrieved_paths),
+        ndcg_at_10=ndcg_at_k(question.expected_paths, retrieved_paths, _NDCG_K),
+        citation_precision=citation_precision(question.expected_paths, retrieved_paths),
+        forbidden_violation=forbidden_violation(
+            question.forbidden_paths,
+            retrieved_paths,
+            _FORBIDDEN_K,
+        ),
+        forbidden_evaluated=bool(question.forbidden_paths),
+        latency_ms=latency_ms,
+        tokens_returned=payload_token_estimate(payload),
+        trust_label=None,
+    )
+
+
+def _summarize(
+    results: list[EvalResult],
+    k_values: Sequence[int],
+    *,
+    pipeline: EvalPipeline,
+    transport: EvalTransport,
+) -> EvalSummary:
+    """Aggregate an eval run without losing optional chunk/freshness semantics."""
+    chunk_results = [result for result in results if result.chunk_recall_at_k is not None]
+    chunk_recall = None
+    if chunk_results:
+        chunk_recall = {
+            k: _average(
+                [
+                    result.chunk_recall_at_k.get(k, 0.0)
+                    for result in chunk_results
+                    if result.chunk_recall_at_k is not None
+                ]
+            )
+            for k in k_values
+        }
+    freshness_results = [result for result in results if result.forbidden_evaluated]
+    return EvalSummary(
+        pipeline=pipeline,
+        transport=transport,
+        question_count=len(results),
+        note_recall_at_k={
+            k: _average([result.recall_at_k.get(k, 0.0) for result in results]) for k in k_values
+        },
+        chunk_recall_at_k=chunk_recall,
+        mrr=_average([result.reciprocal_rank for result in results]),
+        ndcg_at_10=_average([result.ndcg_at_10 for result in results]),
+        citation_precision=_average([result.citation_precision for result in results]),
+        forbidden_violation_rate=(
+            _average([float(result.forbidden_violation) for result in freshness_results])
+            if freshness_results
+            else None
+        ),
+        latency_p50_ms=_percentile([result.latency_ms for result in results], 0.50),
+        latency_p95_ms=_percentile([result.latency_ms for result in results], 0.95),
+        total_tokens_returned=sum(result.tokens_returned for result in results),
+        avg_tokens_returned=_average([float(result.tokens_returned) for result in results]),
+    )
 
 
 def _average(values: Sequence[float]) -> float:
     """Return the arithmetic mean, or 0.0 for an empty sequence."""
     return sum(values) / len(values) if values else 0.0
+
+
+def _percentile(values: Sequence[float], quantile: float) -> float:
+    """Return a linearly interpolated percentile, or zero for no observations."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * quantile
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
 
 
 def _conformance_check(_: EvalHarness) -> None:

@@ -30,14 +30,16 @@ Silent drift between this module and the contract breaks consumers.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from datacron.core.models import (
     Chunk,
+    EvalPipeline,
     EvalQuestion,
-    EvalResult,
+    EvalReport,
+    EvalTransport,
     IndexStats,
     Note,
     SearchResult,
@@ -45,6 +47,9 @@ from datacron.core.models import (
 )
 from datacron.core.operation_log import OperationContext, OperationRecord
 from datacron.core.temporal import TemporalMeta
+
+if TYPE_CHECKING:
+    from datacron.mcp.server import DatacronApp
 
 __all__ = [
     "ASTChunker",
@@ -230,23 +235,19 @@ class RipgrepWrapper(Protocol):
 
 @runtime_checkable
 class EvalHarness(Protocol):
-    """Runs an evaluation suite against the live indexes.
-
-    Implementation: ``src/datacron/eval/harness.py``. Reads
-    :class:`EvalQuestion` records, hits FTS5 + ripgrep directly (not
-    via MCP), and produces :class:`EvalResult` metrics for
-    ``recall@k``, ``citation_precision``, ``latency_ms``,
-    ``tokens_returned``. See contracts section 2.5.
-    """
+    """Runs an evaluation suite against the live retrieval pipeline."""
 
     async def run(
         self,
         eval_questions: list[EvalQuestion],
-        store: FTS5Store,
-        ripgrep: RipgrepWrapper,
-        k_values: list[int] = [5, 10, 20],  # noqa: B006 -- documented Protocol default
-    ) -> list[EvalResult]:
-        """Execute the eval; return one :class:`EvalResult` per question."""
+        app: DatacronApp,
+        k_values: Sequence[int] = (5, 10, 20),
+        *,
+        pipeline: EvalPipeline = EvalPipeline.TOOL,
+        transport: EvalTransport = EvalTransport.IMPL,
+        render: bool = True,
+    ) -> EvalReport:
+        """Execute the eval and return its complete report."""
         ...
 
 
