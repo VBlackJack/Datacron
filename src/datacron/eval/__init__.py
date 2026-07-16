@@ -15,6 +15,13 @@
 
 from __future__ import annotations
 
+from datacron.eval.baseline import (
+    BaselineComparison,
+    EvalBaseline,
+    compare_with_baseline,
+    load_baseline,
+    save_baseline,
+)
 from datacron.eval.harness import LocalEvalHarness, load_eval_questions
 from datacron.eval.metrics import (
     citation_precision,
@@ -27,13 +34,18 @@ from datacron.eval.metrics import (
 )
 
 __all__ = [
+    "BaselineComparison",
+    "EvalBaseline",
     "LocalEvalHarness",
     "citation_precision",
+    "compare_with_baseline",
     "deduplicate_ranked",
     "forbidden_violation",
+    "load_baseline",
     "load_eval_questions",
     "ndcg_at_k",
     "payload_token_estimate",
     "recall_at_k",
     "reciprocal_rank",
+    "save_baseline",
 ]

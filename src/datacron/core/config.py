@@ -37,6 +37,7 @@ DEFAULT_LOG_LEVEL: Final[str] = "INFO"
 DEFAULT_LOG_DIR: Final[Path] = Path.home() / ".datacron" / "logs"
 DEFAULT_MAX_RESULT_TOKENS: Final[int] = 8000
 DEFAULT_MAX_RESULT_COUNT: Final[int] = 20
+DEFAULT_EVAL_REGRESSION_TOLERANCE: Final[float] = 0.02
 TOKEN_ESTIMATE_CHARS_PER_TOKEN: Final[int] = 4
 TEMPORAL_OVERFETCH_FACTOR: Final[int] = 3
 SUPERSEDED_DEMOTION_FACTOR: Final[float] = 0.1
@@ -235,6 +236,10 @@ class Settings(BaseSettings):
     vault_root: Path | None = Field(default=None)
     max_result_tokens: int = Field(default=DEFAULT_MAX_RESULT_TOKENS, ge=1)
     max_result_count: int = Field(default=DEFAULT_MAX_RESULT_COUNT, ge=1)
+    eval_regression_tolerance: float = Field(
+        default=DEFAULT_EVAL_REGRESSION_TOLERANCE,
+        ge=0.0,
+    )
     ripgrep_path: str = Field(default=DEFAULT_RIPGREP_PATH)
     regex_fallback_max_pattern_length: int = Field(
         default=DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH,

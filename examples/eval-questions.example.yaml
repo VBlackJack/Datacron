@@ -1,15 +1,24 @@
-# Replace these fictitious vault-relative paths with notes from your own eval vault.
-- id: sem4-example-index-freshness
+# Replace these fictitious vault-relative paths and chunk IDs with your own eval truth.
+- id: v2-example-index-freshness
   question: How does Datacron decide whether the index is stale?
   expected_paths:
     - notes/index-freshness.md
+  expected_chunk_ids:
+    - "01J00000000000000000000000::Index freshness::0000"
 
-- id: sem4-example-read-only-scope
+- id: v2-example-read-only-scope
   question: How are write operations scoped and disabled by default?
   expected_paths:
     - notes/security/read-only-scope.md
 
-- id: sem4-example-ripgrep-fallback
+- id: v2-example-knowledge-update
+  question: Which certificate rotation policy is currently active?
+  expected_paths:
+    - notes/security/certificate-rotation-current.md
+  forbidden_paths:
+    - notes/security/certificate-rotation-2025.md
+
+- id: v2-example-ripgrep-fallback
   question: What happens when the ripgrep binary is missing?
   expected_paths:
     - notes/search/ripgrep-fallback.md

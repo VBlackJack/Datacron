@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from datacron.core.config import (
     DEFAULT_CHUNK_MAX_TOKENS,
     DEFAULT_DURABILITY_MODE,
+    DEFAULT_EVAL_REGRESSION_TOLERANCE,
     DEFAULT_EXCLUDED_FILES,
     DEFAULT_EXCLUDED_FOLDERS,
     DEFAULT_GET_NOTE_MAX_TOKENS,
@@ -48,6 +49,7 @@ class TestDefaults:
         assert settings.log_level == DEFAULT_LOG_LEVEL
         assert settings.max_result_tokens == DEFAULT_MAX_RESULT_TOKENS
         assert settings.max_result_count == DEFAULT_MAX_RESULT_COUNT
+        assert settings.eval_regression_tolerance == DEFAULT_EVAL_REGRESSION_TOLERANCE
         assert settings.ripgrep_path == DEFAULT_RIPGREP_PATH
         assert settings.chunk_max_tokens == DEFAULT_CHUNK_MAX_TOKENS
         assert settings.get_note_max_tokens == DEFAULT_GET_NOTE_MAX_TOKENS
@@ -91,6 +93,11 @@ class TestEnvLoading:
         monkeypatch.setenv("DATACRON_GET_NOTE_MAX_TOKENS", "12345")
         settings = Settings()
         assert settings.get_note_max_tokens == 12345
+
+    def test_env_eval_regression_tolerance(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATACRON_EVAL_REGRESSION_TOLERANCE", "0.05")
+
+        assert Settings().eval_regression_tolerance == 0.05
 
     def test_read_paths_split_by_os_sep(
         self,

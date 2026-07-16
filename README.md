@@ -24,21 +24,29 @@ les logs, les ULID internes, l'historique et le journal d'opérations.
 | Graphe local | Wikilinks et backlinks via `get_backlinks` |
 | Écriture | 5 tools confinés et réversibles, désactivés par défaut sans `DATACRON_WRITE_PATHS` |
 | Index | `datacron index` incrémental, `datacron reindex` complet, réparation automatique à la lecture |
-| Évaluation | `datacron eval` avec recall@k, precision, latence et tokens |
+| Évaluation | `datacron eval` sur le pipeline MCP réel : recall@k, MRR, nDCG, fraîcheur, latence et payload tokens |
 | Setup guidé | `datacron setup` : init + index + enregistrement MCP en une commande |
 | Clients | Auto-détection et enregistrement via `datacron setup --client all` : Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, VS Code |
 | Distribution | Installeur Windows (`Datacron-Setup.exe`), exécutable autonome (PyInstaller) sans Python requis, ou installation depuis les sources |
 
-Mesure store-level sur le golden set Julien (FTS5 + query-expansion), hors re-rank temporel
-et couche MCP ; une évaluation end-to-end est prévue :
+Mesure locale du pipeline `tool/impl` réellement reçu par l'agent, Datacron
+`2026.0716.00`, 19 questions :
 
 ```text
-recall@5  0.89
-recall@10 0.95
-recall@20 0.95
-precision 0.32
-tokens    39984
+recall@5       0.79
+recall@10      0.84
+recall@20      0.89
+MRR            0.71
+nDCG@10        0.74
+latence p50    1751 ms
+latence p95    1855 ms
+payload tokens 89705
 ```
+
+Sur le même run, le store brut obtient 0,89 à recall@5 contre 0,79 pour le tool
+(-0,11). Le golden ne contient pas encore de cas `forbidden_paths` et le vault n'a pas de
+relation `supersedes` indexée : ce delta expose surtout l'effet du budget de réponse, pas un
+gain de re-rank temporel.
 
 ## Installation
 
@@ -248,13 +256,16 @@ datacron reindex --vault /path/to/vault
 datacron scrub-init --vault /path/to/vault
 datacron scrub --vault /path/to/vault
 datacron eval --questions examples/eval-questions.example.yaml --vault /path/to/vault
+datacron eval --questions local/golden.yaml --vault /path/to/vault --save-baseline
+datacron eval --questions local/golden.yaml --vault /path/to/vault --compare --json
 datacron mcp serve --vault /path/to/vault
 datacron mcp install --client claude-desktop --vault /path/to/vault
 ```
 
 ## Limites actuelles
 
-- Pas de vector search / embeddings : la mesure actuelle ne le justifie pas.
+- Pas encore de vector search / embeddings : le recall@5 tool-level à 0,79 déclenche un
+  spike hybride BM25 + embeddings + RRF derrière un flag, mesuré avec la même évaluation.
 - Pas d'agent autonome : le client MCP orchestre.
 - Pas de GUI.
 - Pas de writes concurrents multi-machines.
