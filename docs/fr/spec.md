@@ -1,6 +1,6 @@
 # Datacron - Conventions internes du vault
 
-**Français** · [English](../en/spec.md)
+**Français** | [English](../en/spec.md)
 
 > **Statut** : v1.1 (référence de surcouche, pas un standard ouvert commercialisé)
 > **Auteur** : Julien Bombled

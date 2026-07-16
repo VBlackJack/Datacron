@@ -1,6 +1,6 @@
 # Guide d'installation et de configuration
 
-**Français** · [English](../en/setup.md)
+**Français** | [English](../en/setup.md)
 
 Ce guide t'amène d'un dossier de notes Markdown à un serveur Datacron opérationnel,
 branché sur Claude Desktop ou Claude Code. Il complète le [README](../../README.md) et le

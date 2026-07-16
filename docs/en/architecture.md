@@ -1,6 +1,6 @@
 # Datacron - Architecture & technical spec
 
-**English** · [Français](../fr/architecture.md)
+**English** | [Français](../fr/architecture.md)
 
 > **Status**: v2.2 - Living spec synced with `main`
 > **Author**: Julien Bombled
@@ -9,7 +9,7 @@
 > - Initial deep-research and v2.0 cross-review: unversioned local archives under `local/docs-ai/`
 > - v2.1 arbitration: [`decisions-v2.1.md`](decisions-v2.1.md)
 > - Empirical verification: Anthropic Help Center (Cowork = remote MCP only)
-> **Code license**: Apache 2.0 · **Code/comments/docstrings**: English · **Guides and overviews**: French · **Technical contracts**: English
+> **Code license**: Apache 2.0 | **Code/comments/docstrings**: English | **Guides and overviews**: French | **Technical contracts**: English
 
 > 🔄 **This v2.1 replaces v2.0** after a cross-review that pivoted 11 decisions out of 12.
 > The MVP scope was divided by 5 (4 weeks vs 20). Arbitration details are in

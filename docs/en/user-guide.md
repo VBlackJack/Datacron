@@ -1,6 +1,6 @@
 # User guide
 
-**English** · [Français](../fr/user-guide.md)
+**English** | [Français](../fr/user-guide.md)
 
 This guide explains how to use Datacron day to day from Claude, once installation is done
 (see the [Installation guide](setup.md)). Datacron is not an app with a UI: it is an MCP

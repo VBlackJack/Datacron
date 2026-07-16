@@ -1,6 +1,6 @@
 # Scrubber d'intégrité
 
-**Français** · [English](../en/integrity-scrubber.md)
+**Français** | [English](../en/integrity-scrubber.md)
 
 Le scrubber de Datacron compare les octets du filesystem primaire avec le SHA-256 exact aux
 octets stocké dans la génération d'index terminée. Il détecte les notes manquantes, les

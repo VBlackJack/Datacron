@@ -1,6 +1,6 @@
 # Integrity scrubber
 
-**English** · [Français](../fr/integrity-scrubber.md)
+**English** | [Français](../fr/integrity-scrubber.md)
 
 The Datacron scrubber compares primary filesystem bytes with the exact-byte
 SHA-256 stored in the completed index generation. It detects missing notes,

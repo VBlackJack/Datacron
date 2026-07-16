@@ -8,7 +8,7 @@
 [![MCP: local stdio](https://img.shields.io/badge/MCP-local_stdio-purple)](#mcp-tools)
 [![CI](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml/badge.svg)](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml)
 
-[Français](README.md) · **English**
+[Français](README.md) | **English**
 
 Datacron indexes a folder of Markdown notes, exposes a local MCP server, then returns the
 relevant notes or chunks to the client instead of a full dump. The vault stays an ordinary
@@ -27,7 +27,7 @@ ULIDs, history, and the operation journal.
 | Evaluation | `datacron eval` with recall@k, precision, latency, and tokens |
 | Guided setup | `datacron setup`: init + index + MCP registration in one command |
 | Clients | Auto-detect and register via `datacron setup --client all`: Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, VS Code |
-| Distribution | PyPI/pipx, or a standalone executable (PyInstaller) with no Python required |
+| Distribution | Windows installer (`Datacron-Setup.exe`), PyPI/pipx, or a standalone executable (PyInstaller) with no Python required |
 
 Current measurement on the Julien golden set, with query expansion and temporal re-rank
 enabled:
@@ -41,6 +41,16 @@ tokens    39984
 ```
 
 ## Installation
+
+### Windows: one double-click installer
+
+The easiest way on Windows: download `Datacron-Setup.exe` from the
+[latest Release](https://github.com/VBlackJack/datacron/releases/latest), double-click it,
+and pick your vault. No Python, no terminal, no administrator rights; Datacron registers
+itself with your AI clients automatically. Full guide:
+[Windows installation](docs/en/installation-windows.md).
+
+### From source
 
 From a clone of the repository:
 
@@ -254,7 +264,7 @@ datacron mcp install --client claude-desktop --vault /path/to/vault
 
 ## Documentation
 
-Full index: [docs/en/index.md](docs/en/index.md) · [Index français](docs/fr/index.md).
+Full index: [docs/en/index.md](docs/en/index.md) | [Index français](docs/fr/index.md).
 
 To get started:
 

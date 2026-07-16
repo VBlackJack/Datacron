@@ -1,6 +1,6 @@
 # Guide utilisateur
 
-**Français** · [English](../en/user-guide.md)
+**Français** | [English](../en/user-guide.md)
 
 Ce guide explique comment se servir de Datacron au quotidien depuis Claude, une fois
 l'installation faite (voir [Guide d'installation](setup.md)). Datacron n'est pas une

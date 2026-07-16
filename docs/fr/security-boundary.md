@@ -1,6 +1,6 @@
 # Frontière de sécurité locale de Datacron
 
-**Français** · [English](../en/security-boundary.md)
+**Français** | [English](../en/security-boundary.md)
 
 Datacron sert aujourd'hui un seul vault Markdown local via MCP stdio. La garantie de sécurité
 du serveur est délibérément plus étroite qu'une résistance à l'injection de prompt pour un

@@ -8,7 +8,7 @@
 [![MCP: local stdio](https://img.shields.io/badge/MCP-local_stdio-purple)](#mcp-tools)
 [![CI](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml/badge.svg)](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml)
 
-**Français** · [English](README.en.md)
+**Français** | [English](README.en.md)
 
 Datacron indexe un dossier de notes Markdown, expose un serveur MCP local, puis renvoie
 au client les notes ou chunks pertinents au lieu d'un dump complet. Le vault reste un
@@ -27,7 +27,7 @@ les logs, les ULID internes, l'historique et le journal d'opérations.
 | Évaluation | `datacron eval` avec recall@k, precision, latence et tokens |
 | Setup guidé | `datacron setup` : init + index + enregistrement MCP en une commande |
 | Clients | Auto-détection et enregistrement via `datacron setup --client all` : Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, VS Code |
-| Distribution | PyPI/pipx, ou exécutable autonome (PyInstaller) sans Python requis |
+| Distribution | Installeur Windows (`Datacron-Setup.exe`), PyPI/pipx, ou exécutable autonome (PyInstaller) sans Python requis |
 
 Mesure actuelle sur le golden set Julien, avec query-expansion et temporal re-rank actifs :
 
@@ -40,6 +40,16 @@ tokens    39984
 ```
 
 ## Installation
+
+### Windows : installeur en un double-clic
+
+Le plus simple sous Windows : telecharge `Datacron-Setup.exe` depuis la
+[derniere Release](https://github.com/VBlackJack/datacron/releases/latest), double-clique,
+et choisis ton vault. Aucun Python, aucun terminal, aucun droit administrateur ; Datacron
+s'enregistre automatiquement dans tes clients IA. Guide detaille :
+[Installation sous Windows](docs/fr/installation-windows.md).
+
+### Depuis les sources
 
 Depuis un clone du repo :
 
@@ -253,7 +263,7 @@ datacron mcp install --client claude-desktop --vault /path/to/vault
 
 ## Documentation
 
-Sommaire complet : [docs/fr/index.md](docs/fr/index.md) · [English index](docs/en/index.md).
+Sommaire complet : [docs/fr/index.md](docs/fr/index.md) | [English index](docs/en/index.md).
 
 Pour démarrer :
 
