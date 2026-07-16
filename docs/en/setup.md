@@ -11,8 +11,8 @@ Claude Desktop or Claude Code. It complements the [README](../../README.en.md) a
 
 ## Guided setup (the easy path)
 
-A single command does everything - initialize the sidecar, build the index, and wire the MCP
-client:
+A single command does everything - initialize the sidecar, wire the MCP client, and build
+the index:
 
 ```bash
 datacron setup
@@ -22,8 +22,9 @@ By default (`--client all`), it **detects every installed AI client and register
 with each**: Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, and VS Code.
 Each config is merged without clobbering existing servers (JSON or TOML depending on the
 client). It asks questions with sensible defaults (vault location, client, scope, writing,
-durability, read-only), then runs `init`, indexes, registers the clients, and prints a
-per-client summary. Useful options:
+durability, read-only), then runs `init`, registers the clients, indexes, and prints a
+per-client summary. An indexing failure is deferred and never undoes client registration.
+Useful options:
 
 - `datacron setup --yes` - accept every default, no prompts (unattended install).
 - `datacron setup --scope both` - write config at **user** and **project** scope (default); use `user` or `project` to restrict.
