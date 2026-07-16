@@ -197,6 +197,7 @@ class TestEvalModels:
         q = EvalQuestion(id="q1", question="What is x?")
         assert q.expected_chunk_ids == []
         assert q.expected_paths == []
+        assert q.forbidden_paths == []
 
     def test_result_clamped_precision(self) -> None:
         with pytest.raises(ValidationError):

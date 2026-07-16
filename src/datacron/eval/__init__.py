@@ -16,6 +16,24 @@
 from __future__ import annotations
 
 from datacron.eval.harness import LocalEvalHarness, load_eval_questions
-from datacron.eval.metrics import citation_precision, recall_at_k
+from datacron.eval.metrics import (
+    citation_precision,
+    deduplicate_ranked,
+    forbidden_violation,
+    ndcg_at_k,
+    payload_token_estimate,
+    recall_at_k,
+    reciprocal_rank,
+)
 
-__all__ = ["LocalEvalHarness", "citation_precision", "load_eval_questions", "recall_at_k"]
+__all__ = [
+    "LocalEvalHarness",
+    "citation_precision",
+    "deduplicate_ranked",
+    "forbidden_violation",
+    "load_eval_questions",
+    "ndcg_at_k",
+    "payload_token_estimate",
+    "recall_at_k",
+    "reciprocal_rank",
+]
