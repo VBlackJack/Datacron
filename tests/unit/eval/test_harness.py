@@ -17,19 +17,25 @@ from __future__ import annotations
 
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from rich.console import Console
 
-from datacron.core.models import Chunk, EvalQuestion, SearchResult
-from datacron.core.protocols import FTS5Store, RipgrepWrapper
+from datacron.core.models import (
+    Chunk,
+    EvalPipeline,
+    EvalQuestion,
+    EvalTransport,
+    SearchResult,
+)
 from datacron.eval.harness import LocalEvalHarness, load_eval_questions
+from datacron.eval.metrics import payload_token_estimate
+from datacron.mcp.server import DatacronApp
 
 
 class _FakeStore:
-    """Search-only fake for the BM25 path exercised by LocalEvalHarness."""
-
     def __init__(self, results: list[SearchResult]) -> None:
         self._results = results
         self.calls: list[dict[str, Any]] = []
@@ -39,15 +45,18 @@ class _FakeStore:
         return self._results[:limit]
 
 
-class _UnusedRipgrep:
-    """Stub that fails if the Phase 0 harness tries to use regex mode."""
+class _FailingStore:
+    async def search(self, query: str, limit: int = 20) -> list[SearchResult]:
+        _ = query, limit
+        raise AssertionError("tool mode must not call the store branch directly")
 
-    async def search(self, **_kwargs: Any) -> list[SearchResult]:
-        raise AssertionError("LocalEvalHarness should not call ripgrep in Phase 0.")
+
+def _silent_harness(**kwargs: Any) -> LocalEvalHarness:
+    return LocalEvalHarness(console=Console(file=StringIO(), width=120), **kwargs)
 
 
-def _silent_harness() -> LocalEvalHarness:
-    return LocalEvalHarness(console=Console(file=StringIO(), width=120))
+def _app(store: object) -> DatacronApp:
+    return cast("DatacronApp", SimpleNamespace(store=store))
 
 
 def _result(chunk: Chunk, score: float = 1.0) -> SearchResult:
@@ -55,92 +64,146 @@ def _result(chunk: Chunk, score: float = 1.0) -> SearchResult:
 
 
 @pytest.mark.asyncio
-async def test_run_computes_metrics_from_path_order(
-    chunk_factory: Any,
+async def test_tool_mode_calls_impl_and_never_direct_store_branch(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    first = chunk_factory(note_rel_path="first.md", chunk_id="note::first::0000", token_count=7)
-    second = chunk_factory(note_rel_path="second.md", chunk_id="note::second::0000", token_count=11)
-    third = chunk_factory(note_rel_path="miss.md", chunk_id="note::miss::0000", token_count=13)
-    store = _FakeStore([_result(first), _result(second), _result(third)])
+    payload = {
+        "query": "Where is current?",
+        "results": [
+            {
+                "chunk_id": "current::0000",
+                "note_rel_path": "current.md",
+                "snippet": '<vault_content path="current.md">current</vault_content>',
+            },
+            {
+                "chunk_id": "current::0001",
+                "note_rel_path": "current.md",
+                "snippet": '<vault_content path="current.md">more</vault_content>',
+            },
+            {
+                "chunk_id": "old::0000",
+                "note_rel_path": "old.md",
+                "snippet": '<vault_content path="old.md">old</vault_content>',
+            },
+        ],
+        "returned": 3,
+        "limit_applied": 20,
+        "truncated_for_tokens": False,
+    }
+    calls: list[dict[str, Any]] = []
 
-    results = await _silent_harness().run(
+    async def fake_search_impl(
+        app: DatacronApp,
+        *,
+        query: str,
+        limit: int,
+        include_superseded: bool = False,
+    ) -> dict[str, Any]:
+        _ = app
+        calls.append({"query": query, "limit": limit, "include_superseded": include_superseded})
+        return payload
+
+    monkeypatch.setattr("datacron.eval.harness._search_text_impl", fake_search_impl)
+    report = await _silent_harness().run(
         [
             EvalQuestion(
                 id="q1",
+                question="Where is current?",
+                expected_paths=["current.md"],
+                expected_chunk_ids=["current::0001"],
+                forbidden_paths=["old.md"],
+            )
+        ],
+        _app(_FailingStore()),
+    )
+
+    assert calls == [{"query": "Where is current?", "limit": 20, "include_superseded": False}]
+    result = report.results[0]
+    assert result.retrieved_paths == ["current.md", "old.md"]
+    assert result.recall_at_k[5] == 1.0
+    assert result.chunk_recall_at_k is not None
+    assert result.chunk_recall_at_k[5] == 1.0
+    assert result.reciprocal_rank == 1.0
+    assert result.ndcg_at_10 == 1.0
+    assert result.citation_precision == 0.5
+    assert result.forbidden_violation is True
+    assert result.tokens_returned == payload_token_estimate(payload)
+    assert report.summary.forbidden_violation_rate == 1.0
+
+
+@pytest.mark.asyncio
+async def test_store_mode_computes_metrics_from_path_order(chunk_factory: Any) -> None:
+    first = chunk_factory(note_rel_path="first.md", chunk_id="note::first::0000")
+    second = chunk_factory(note_rel_path="second.md", chunk_id="note::second::0000")
+    third = chunk_factory(note_rel_path="miss.md", chunk_id="note::miss::0000")
+    store = _FakeStore([_result(first), _result(second), _result(third)])
+
+    report = await _silent_harness().run(
+        [
+            EvalQuestion(
+                id="q-store",
                 question="Where is second?",
                 expected_paths=["second.md"],
             )
         ],
-        cast("FTS5Store", store),
-        cast("RipgrepWrapper", _UnusedRipgrep()),
+        _app(store),
         k_values=(1, 2, 3),
+        pipeline=EvalPipeline.STORE,
     )
 
     assert store.calls == [{"query": "Where is second?", "limit": 3}]
-    assert len(results) == 1
-    result = results[0]
-    assert result.retrieved_chunk_ids == [
-        "note::first::0000",
-        "note::second::0000",
-        "note::miss::0000",
-    ]
-    assert set(result.recall_at_k) == {1, 2, 3}
-    assert result.recall_at_k[1] == 0.0
-    assert result.recall_at_k[2] == 1.0
-    assert result.recall_at_k[3] == 1.0
+    result = report.results[0]
+    assert result.recall_at_k == {1: 0.0, 2: 1.0, 3: 1.0}
+    assert result.reciprocal_rank == 0.5
     assert result.citation_precision == pytest.approx(1 / 3)
-    assert result.tokens_returned == 31
-    assert result.latency_ms >= 0.0
-    assert result.trust_label is None
+    assert result.tokens_returned > 0
+    assert report.summary.note_recall_at_k == {1: 0.0, 2: 1.0, 3: 1.0}
+    assert report.summary.latency_p50_ms >= 0.0
+    assert report.summary.latency_p95_ms >= 0.0
 
 
 @pytest.mark.asyncio
-async def test_run_handles_empty_results(chunk_factory: Any) -> None:
-    store = _FakeStore([])
+async def test_e2e_callback_is_used_for_tool_transport() -> None:
+    calls: list[tuple[str, int]] = []
 
-    results = await _silent_harness().run(
-        [
-            EvalQuestion(
-                id="q-empty",
-                question="No hits",
-                expected_paths=["expected.md"],
-            )
-        ],
-        cast("FTS5Store", store),
-        cast("RipgrepWrapper", _UnusedRipgrep()),
+    async def search(query: str, limit: int) -> dict[str, Any]:
+        calls.append((query, limit))
+        return {"query": query, "results": [], "returned": 0, "limit_applied": limit}
+
+    report = await _silent_harness(tool_search=search).run(
+        [EvalQuestion(id="q-empty", question="No hits", expected_paths=["expected.md"])],
+        _app(_FailingStore()),
         k_values=(5, 10),
+        transport=EvalTransport.E2E,
     )
 
-    assert len(results) == 1
-    result = results[0]
-    assert result.retrieved_chunk_ids == []
-    assert result.recall_at_k == {5: 0.0, 10: 0.0}
-    assert result.citation_precision == 1.0
-    assert result.tokens_returned == 0
-    assert result.latency_ms >= 0.0
-    assert store.calls == [{"query": "No hits", "limit": 10}]
+    assert calls == [("No hits", 10)]
+    assert report.results[0].recall_at_k == {5: 0.0, 10: 0.0}
+    assert report.results[0].citation_precision == 1.0
+    assert report.summary.transport is EvalTransport.E2E
 
 
-def test_load_eval_questions_validates_yaml_list(tmp_path: Path) -> None:
+def test_load_eval_questions_validates_extended_yaml(tmp_path: Path) -> None:
     path = tmp_path / "questions.yaml"
     path.write_text(
         """
 - id: q1
   question: What mentions Datacron?
+  expected_chunk_ids:
+    - note::chunk::0000
   expected_paths:
     - docs/ARCHITECTURE.md
-- id: q2
-  question: What covers contracts?
-  expected_paths:
-    - docs/agent-briefs/01-contracts.md
+  forbidden_paths:
+    - docs/ARCHITECTURE-old.md
 """.lstrip(),
         encoding="utf-8",
     )
 
     questions = load_eval_questions(path)
 
-    assert [question.id for question in questions] == ["q1", "q2"]
+    assert questions[0].expected_chunk_ids == ["note::chunk::0000"]
     assert questions[0].expected_paths == ["docs/ARCHITECTURE.md"]
+    assert questions[0].forbidden_paths == ["docs/ARCHITECTURE-old.md"]
 
 
 def test_load_eval_questions_rejects_non_list_yaml(tmp_path: Path) -> None:

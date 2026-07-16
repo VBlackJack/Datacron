@@ -77,9 +77,7 @@ def ndcg_at_k(expected_paths: Sequence[str], retrieved_paths: Sequence[str], k: 
 
     ranked = deduplicate_ranked(retrieved_paths)[:k]
     dcg = sum(
-        1.0 / math.log2(rank + 1)
-        for rank, path in enumerate(ranked, start=1)
-        if path in expected
+        1.0 / math.log2(rank + 1) for rank, path in enumerate(ranked, start=1) if path in expected
     )
     ideal_hits = min(len(expected), k)
     ideal_dcg = sum(1.0 / math.log2(rank + 1) for rank in range(1, ideal_hits + 1))

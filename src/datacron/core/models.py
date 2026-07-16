@@ -30,8 +30,12 @@ from pydantic import BaseModel, ConfigDict, Field
 __all__ = [
     "Chunk",
     "ChunkType",
+    "EvalPipeline",
     "EvalQuestion",
+    "EvalReport",
     "EvalResult",
+    "EvalSummary",
+    "EvalTransport",
     "IndexStats",
     "Note",
     "SearchResult",
@@ -207,6 +211,20 @@ class IndexStats(BaseModel):
     db_path: Path
 
 
+class EvalPipeline(StrEnum):
+    """Retrieval layer exercised by an evaluation run."""
+
+    TOOL = "tool"
+    STORE = "store"
+
+
+class EvalTransport(StrEnum):
+    """Transport used to invoke the tool pipeline."""
+
+    IMPL = "impl"
+    E2E = "e2e"
+
+
 class EvalQuestion(BaseModel):
     """A single eval input."""
 
@@ -237,6 +255,7 @@ class EvalResult(BaseModel):
         citation_precision: Fraction of distinct retrieved notes that are in
             the expected set.
         forbidden_violation: Whether a forbidden path appears in the top 5.
+        forbidden_evaluated: Whether the question declares forbidden paths.
         latency_ms: End-to-end retrieval latency in milliseconds.
         tokens_returned: Approximate token count of the serialized response
             payload.
@@ -255,6 +274,36 @@ class EvalResult(BaseModel):
     ndcg_at_10: float = Field(default=0.0, ge=0.0, le=1.0)
     citation_precision: float = Field(ge=0.0, le=1.0)
     forbidden_violation: bool = False
+    forbidden_evaluated: bool = False
     latency_ms: float = Field(ge=0.0)
     tokens_returned: int = Field(ge=0)
     trust_label: str | None = None
+
+
+class EvalSummary(BaseModel):
+    """Aggregate metrics and execution mode for one evaluation run."""
+
+    model_config = ConfigDict(frozen=True)
+
+    pipeline: EvalPipeline
+    transport: EvalTransport
+    question_count: int = Field(ge=0)
+    note_recall_at_k: dict[int, float] = Field(default_factory=dict)
+    chunk_recall_at_k: dict[int, float] | None = None
+    mrr: float = Field(ge=0.0, le=1.0)
+    ndcg_at_10: float = Field(ge=0.0, le=1.0)
+    citation_precision: float = Field(ge=0.0, le=1.0)
+    forbidden_violation_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    latency_p50_ms: float = Field(ge=0.0)
+    latency_p95_ms: float = Field(ge=0.0)
+    total_tokens_returned: int = Field(ge=0)
+    avg_tokens_returned: float = Field(ge=0.0)
+
+
+class EvalReport(BaseModel):
+    """Complete machine-readable output of an evaluation run."""
+
+    model_config = ConfigDict(frozen=True)
+
+    summary: EvalSummary
+    results: list[EvalResult]
