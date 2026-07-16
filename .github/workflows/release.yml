@@ -58,6 +58,7 @@ jobs:
             --collect-submodules datacron \
             --collect-submodules pydantic \
             --hidden-import pydantic_settings \
+            --hidden-import truststore \
             packaging/datacron_launcher.py
 
       - name: Smoke-test the executable

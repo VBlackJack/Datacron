@@ -21,6 +21,15 @@ script, keeping a single command surface between the wheel and the executable.
 
 from __future__ import annotations
 
+try:
+    import truststore
+
+    truststore.inject_into_ssl()
+except Exception as exc:  # pragma: no cover
+    import sys
+
+    print(f"[datacron] truststore injection failed: {exc}", file=sys.stderr)
+
 from datacron.cli import app
 
 

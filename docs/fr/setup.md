@@ -11,8 +11,8 @@ branché sur Claude Desktop ou Claude Code. Il complète le [README](../../READM
 
 ## Parcours guidé (le plus simple)
 
-Une seule commande fait tout - initialisation du sidecar, construction de l'index et
-branchement du client MCP :
+Une seule commande fait tout - initialisation du sidecar, branchement du client MCP et
+construction de l'index :
 
 ```bash
 datacron setup
@@ -22,8 +22,9 @@ Par défaut (`--client all`), elle **détecte tous les clients IA installés et 
 Datacron dans chacun** : Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf
 et VS Code. Chaque config est fusionnée sans écraser les serveurs déjà présents (JSON ou TOML
 selon le client). Elle pose des questions avec des valeurs par défaut (emplacement du vault,
-client, portée, écriture, durabilité, lecture seule), puis exécute `init`, indexe, enregistre
-les clients, et affiche un récapitulatif par client. Options utiles :
+client, portée, écriture, durabilité, lecture seule), puis exécute `init`, enregistre les
+clients, indexe, et affiche un récapitulatif par client. Un échec d'indexation est différé et
+n'annule jamais l'enregistrement des clients. Options utiles :
 
 - `datacron setup --yes` - accepte tous les défauts, sans question (installation automatique).
 - `datacron setup --scope both` - écrit la config au niveau **utilisateur** et **projet** (défaut) ; `user` ou `project` pour restreindre.

@@ -77,6 +77,7 @@ log "Running PyInstaller."
   --collect-submodules datacron \
   --collect-submodules pydantic \
   --hidden-import pydantic_settings \
+  --hidden-import truststore \
   --distpath "${DIST_PATH}" \
   --workpath "${WORK_PATH}" \
   --specpath "${WORK_PATH}" \
