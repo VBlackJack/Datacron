@@ -205,38 +205,51 @@ async def test_previously_corrected_reference_cases_are_suppressed(
         _OLD_ID,
         (
             "# CPDC Windows\n\n## Entite / conventions 2026-07-10\n\n"
-            "The Windows engineering employer is Magellan for the platform team.\n\n"
-            "> CORRECTION 2026-07-15 : The employer is Worldline. "
-            "Voir _memory/facts/worldline-source.md.\n"
+            "Julien works for Worldline in the SYS Windows platform team.\n\n"
+            "> CORRECTION 2026-07-15 : The employer is now Magellan after the entity "
+            "split; platform names remain Worldline. Voir _memory/preferences/julien.md.\n"
         ),
     )
     _write_note(
         vault,
-        "_memory/facts/worldline-source.md",
+        "_memory/preferences/julien.md",
         _NEW_ID,
         (
-            "# Worldline source\n\n## Employer 2026-07-15\n\n"
-            "The Windows engineering employer is Worldline for the platform team.\n"
+            "# Julien\n\n## Employer 2026-07-15\n\n"
+            "Julien works for Magellan after the entity split while Windows platform "
+            "names remain Worldline.\n"
         ),
     )
     _write_note(
         vault,
-        "_memory/projects/onecert-direction.md",
+        "_memory/projects/onecert-windows-direction-juillet-2026.md",
         _ONECERT_OLD_ID,
         (
-            "# OneCert direction\n\n## Product direction 2026-07-08\n\n"
-            "OneCert certificate renewal uses the legacy desktop enrollment route.\n\n"
-            "> MISE A JOUR 2026-07-13 : OneCert certificate renewal now uses the "
-            "managed enrollment route. Voir _memory/projects/onecert-source.md.\n"
+            "# OneCert direction\n\n"
+            "## Decision produit 2026-07-08\n\n"
+            "Hide Settings and Assignment by default and add Server Deck observability.\n\n"
+            "> MISE A JOUR 2026-07-13 : The meeting confirmed two-level tabs, "
+            "admin_mode and plugins as consumers. Voir "
+            "_memory/facts/onecert-windows-reunion-2026-07-13.md.\n\n"
+            "## Arbitrage Server Deck vs WAC 2026-07-08\n\n"
+            "Keep Server Deck read-first for certificate fleet observability; whether "
+            "OneCert or Charon owns the dashboard remains open.\n\n"
+            "> MISE A JOUR 2026-07-13 : Prefer the OneCert view for managed "
+            "certificates and Charon for discovery; Eric's answer remains open. Voir "
+            "_memory/facts/onecert-windows-reunion-2026-07-13.md.\n"
         ),
     )
     _write_note(
         vault,
-        "_memory/projects/onecert-source.md",
+        "_memory/facts/onecert-windows-reunion-2026-07-13.md",
         _ONECERT_NEW_ID,
         (
-            "# OneCert source\n\n## Certificate renewal 2026-07-13\n\n"
-            "OneCert certificate renewal uses the managed enrollment route.\n"
+            "# OneCert meeting\n\n"
+            "## Product decisions 2026-07-13\n\n"
+            "OneCert uses two-level tabs, admin_mode and plugins as consumers.\n\n"
+            "## Dashboard direction 2026-07-13\n\n"
+            "The OneCert view handles managed certificates while Charon discovers "
+            "unmanaged certificates; Eric's dashboard answer remains open.\n"
         ),
     )
 
