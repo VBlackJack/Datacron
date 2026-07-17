@@ -7,6 +7,36 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [2026.0717.01] - 2026-07-17
+
+### Added
+
+- A live contradiction scan (`contradiction_scan`, `schema_version: 2`): deterministic,
+  bounded, index-driven detection of potentially conflicting sections across notes, with
+  per-candidate classification (contradiction, refinement, or open question), evidence
+  excerpts from both sides, and conservative defaults. The scan is strictly read-only.
+- Stateless, content-addressed mutation proposals with idempotent confirmation:
+  confirming a proposal returns the exact write-tool call to execute (expected hash
+  included). The client performs the mutation through the existing write tools, and a
+  replayed write is rejected by the compare-and-swap check.
+- Typed elicitation for classification and scope on clients that support it, with a
+  token-based confirmation fallback on clients that do not.
+
+### Changed
+
+- Ambiguous or duplicate section headings are refused as mutation targets: the candidate
+  is reported as non-addressable instead of guessing which section to change.
+
+### Removed
+
+- The frozen cache-only contradiction advisory and its packaged replay artifacts. The
+  `contradiction_scan` tool name is unchanged; its output now reports `schema_version: 2`.
+
+### Fixed
+
+- Logging shutdown restores log propagation, so test runs no longer depend on execution
+  order.
+
 ## [2026.0717.00] - 2026-07-17
 
 ### Added
