@@ -92,25 +92,34 @@ Folder names are configurable via `.datacron/VAULT.yaml` (see §2) - the user ca
 
 ---
 
-## 4. Frontmatter Datacron writes (v0.2+, when write tools arrive)
+## 4. Memory-note frontmatter
 
-When Datacron itself creates a note (post-v0.2 - out of MVP scope), it writes a
-**minimal** frontmatter:
+When Datacron creates an `_memory` note, it writes minimal frontmatter. Bi-temporal lifecycle
+fields are optional and are materialized only when they carry information:
 
 ```yaml
 ---
 id: 01HQXR7K9YZ8M2N3PQRSTV4WX5
 title: "Synthesis: Kafka adoption risks"
 created: 2026-05-17T16:00:00+02:00
-origin: ai                      # ai | human | imported
-audit_run_id: 2026-05-17T15-58-12Z_a3c2
+updated: 2026-05-17T16:00:00+02:00
+origin: ai                      # ai | human | merged
+confidence: high
+last_verified: 2026-05-17
+supersedes: []                  # ULIDs of fully replaced notes
+valid_from: 2026-05-17          # optional; implicit default = created
+invalid_at: 2026-07-17T08:30:00+00:00  # optional; UTC datetime
+invalidated_by: 01HQXR7K9YZ8M2N3PQRSTV4WX6  # optional; replacement ULID
+tags: [memory/fact]
 ---
 ```
 
-That's it. No `status`, no `trust_level` exposed in the frontmatter - those live in
-the audit log and policy engine.
+`created` is also the learned-at timestamp; no redundant `learned_at` field is added. A note
+without `valid_from`, `invalid_at`, or `invalidated_by` stays active and behaves exactly as it did
+before. `invalid_at` keeps the fact in history while demoting it exactly like a superseded note;
+`include_superseded=true` recalls both forms of history.
 
-**Existing notes are never retroactively normalized.** Datacron ships no normalization command.
+**Existing notes are never retroactively normalized.** No vault migration is required.
 
 ---
 

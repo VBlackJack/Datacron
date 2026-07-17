@@ -16,8 +16,10 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final
+
+from ulid import ULID
 
 from datacron.core.frontmatter import parse, serialize
 from datacron.core.hashing import HASH_HEX_LENGTH
@@ -113,9 +115,32 @@ def _validate_set_frontmatter_request(
     last_verified: str | None,
     supersedes: list[str] | None,
     origin: str | None,
-) -> tuple[str, str | None, str | None, list[str] | None, str | None]:
+    valid_from: str | None,
+    invalid_at: str | None,
+    invalidated_by: str | None,
+) -> tuple[
+    str,
+    str | None,
+    str | None,
+    list[str] | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+]:
     cleaned_rel_path = rel_path.strip()
-    if confidence is None and last_verified is None and supersedes is None and origin is None:
+    if all(
+        value is None
+        for value in (
+            confidence,
+            last_verified,
+            supersedes,
+            origin,
+            valid_from,
+            invalid_at,
+            invalidated_by,
+        )
+    ):
         raise ValueError("nothing to update")
     if not cleaned_rel_path.endswith(".md"):
         raise ValueError("rel_path must end with .md")
@@ -126,6 +151,15 @@ def _validate_set_frontmatter_request(
     )
     cleaned_supersedes = _clean_string_list(supersedes) if supersedes is not None else None
     cleaned_origin = _validate_memory_origin(origin) if origin is not None else None
+    cleaned_valid_from = _validate_valid_from_date(valid_from) if valid_from is not None else None
+    cleaned_invalid_at = (
+        _validate_invalid_at_datetime(invalid_at) if invalid_at is not None else None
+    )
+    cleaned_invalidated_by = (
+        _validate_canonical_ulid(invalidated_by, field="invalidated_by")
+        if invalidated_by is not None
+        else None
+    )
 
     return (
         cleaned_rel_path,
@@ -133,6 +167,9 @@ def _validate_set_frontmatter_request(
         cleaned_last_verified,
         cleaned_supersedes,
         cleaned_origin,
+        cleaned_valid_from,
+        cleaned_invalid_at,
+        cleaned_invalidated_by,
     )
 
 
@@ -144,6 +181,40 @@ def _validate_last_verified_date(value: str) -> str:
         raise ValueError("last_verified must be a YYYY-MM-DD date") from exc
     if parsed.isoformat() != cleaned:
         raise ValueError("last_verified must be a YYYY-MM-DD date")
+    return cleaned
+
+
+def _validate_valid_from_date(value: str) -> str:
+    cleaned = value.strip()
+    try:
+        parsed = date.fromisoformat(cleaned)
+    except ValueError as exc:
+        raise ValueError("valid_from must be a YYYY-MM-DD date") from exc
+    if parsed.isoformat() != cleaned:
+        raise ValueError("valid_from must be a YYYY-MM-DD date")
+    return cleaned
+
+
+def _validate_invalid_at_datetime(value: str) -> str:
+    cleaned = value.strip()
+    parseable = f"{cleaned[:-1]}+00:00" if cleaned.endswith(("Z", "z")) else cleaned
+    try:
+        parsed = datetime.fromisoformat(parseable)
+    except ValueError as exc:
+        raise ValueError("invalid_at must be an ISO 8601 UTC datetime") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        raise ValueError("invalid_at must be an ISO 8601 UTC datetime")
+    return parsed.astimezone(UTC).isoformat()
+
+
+def _validate_canonical_ulid(value: str, *, field: str) -> str:
+    cleaned = value.strip()
+    try:
+        parsed = ULID.from_str(cleaned)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be a canonical 26-character ULID") from exc
+    if str(parsed) != cleaned:
+        raise ValueError(f"{field} must be a canonical 26-character ULID")
     return cleaned
 
 
