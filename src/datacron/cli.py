@@ -1056,6 +1056,9 @@ def _render_protocol_outcomes(
     for outcome in outcomes:
         if outcome.skipped:
             _print(f"  [skip] {outcome.display_name}: {outcome.detail}")
+            if outcome.manual_instructions:
+                for line in outcome.manual_instructions.splitlines():
+                    _print(f"         {line}" if line else "")
             continue
         mark = "ok " if outcome.successful else "err"
         path = outcome.instruction_path or "n/a"
