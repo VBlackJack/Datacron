@@ -7,6 +7,15 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [2026.0717.02] - 2026-07-17
+
+### Fixed
+
+- `contradiction_scan` results no longer fail structured-output validation: optional
+  output keys are nullable, matching how absent keys are serialized before the
+  protocol-level schema check. Scan calls now return their payload on every client.
+  An end-to-end regression test exercises the tool through the full validation layer.
+
 ## [2026.0717.01] - 2026-07-17
 
 ### Added
