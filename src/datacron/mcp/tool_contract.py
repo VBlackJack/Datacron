@@ -22,6 +22,13 @@ from typing_extensions import TypedDict
 GetNoteFormat: TypeAlias = Literal["full", "map", "chunk"]
 MemoryOrigin: TypeAlias = Literal["ai", "human", "merged"]
 MemoryConfidence: TypeAlias = Literal["high", "medium", "low", "needs_verification"]
+ContradictionScanMode: TypeAlias = Literal["scan", "confirm"]
+ContradictionClassName: TypeAlias = Literal[
+    "CONTRADICTION",
+    "RAFFINEMENT",
+    "QUESTION_OUVERTE",
+]
+ContradictionMutationScope: TypeAlias = Literal["section", "whole_note"]
 
 
 class ReconcileStatsOutput(TypedDict):
@@ -130,6 +137,121 @@ class SearchTextOutput(TypedDict, total=False):
     truncated_for_tokens: Required[bool]
     index_repair: ReconcileStatsOutput | None
     timings_ms: dict[str, float] | None
+
+
+class ContradictionSectionReferenceOutput(TypedDict):
+    """One section-level assertion reference."""
+
+    note_id: str
+    note_rel_path: str
+    header_path: str
+    chunk_id: str
+    line_start: int
+    line_end: int
+
+
+class ContradictionEvidenceOutput(TypedDict):
+    """Bounded excerpts supporting one candidate."""
+
+    target: str
+    source: str
+
+
+class ContradictionMutationSummaryOutput(TypedDict):
+    """Read-only summary of one content-addressed mutation proposal."""
+
+    proposal_token: str
+    classification: ContradictionClassName
+    scope: ContradictionMutationScope
+    tool: Literal["patch_note_section", "set_frontmatter"]
+    block: str | None
+
+
+ContradictionCandidateOutput = TypedDict(
+    "ContradictionCandidateOutput",
+    {
+        "candidate_id": str,
+        "score": float,
+        "class": ContradictionClassName,
+        "classification_options": list[ContradictionClassName],
+        "rationale": str,
+        "evidence": ContradictionEvidenceOutput,
+        "target": ContradictionSectionReferenceOutput,
+        "source": ContradictionSectionReferenceOutput,
+        "addressable": bool,
+        "manual_action": str | None,
+        "suggested_mutation": ContradictionMutationSummaryOutput | None,
+        "alternative_mutations": list[ContradictionMutationSummaryOutput],
+    },
+)
+
+
+class ContradictionLimitsOutput(TypedDict):
+    """Configured hard scan bounds."""
+
+    max_pairs: int
+    max_candidates: int
+
+
+class PatchSectionCallArgumentsOutput(TypedDict):
+    """Exact arguments for the section-level write path."""
+
+    rel_path: str
+    heading: str
+    new_content: str
+    expected_hash: str
+    heading_level: int
+
+
+class InvalidateNoteCallArgumentsOutput(TypedDict):
+    """Exact arguments for whole-note temporal invalidation."""
+
+    rel_path: str
+    invalid_at: str
+    invalidated_by: str
+    expected_hash: str
+
+
+class ContradictionWriteCallOutput(TypedDict):
+    """One existing write tool and its complete arguments."""
+
+    tool: Literal["patch_note_section", "set_frontmatter"]
+    arguments: PatchSectionCallArgumentsOutput | InvalidateNoteCallArgumentsOutput
+
+
+class ContradictionWorkflowOutput(TypedDict):
+    """Client-owned execution and retrieval verification instructions."""
+
+    execute: str
+    verify: str
+    verification_tool: Literal["search_text"]
+    verification_query: str
+
+
+class ContradictionConfirmationOutput(TypedDict):
+    """Accepted read-only proposal ready for an explicit client write."""
+
+    proposal_token: str
+    classification: ContradictionClassName
+    scope: ContradictionMutationScope
+    write_call: ContradictionWriteCallOutput
+    workflow: ContradictionWorkflowOutput
+
+
+class ContradictionScanOutput(TypedDict, total=False):
+    """Successful scan or confirmation response."""
+
+    schema_version: Required[int]
+    mode: Required[ContradictionScanMode]
+    candidates: list[ContradictionCandidateOutput]
+    candidate_count: int
+    examined_pairs: int
+    section_count: int
+    limits: ContradictionLimitsOutput
+    deterministic_order: str
+    index_repair: ReconcileStatsOutput
+    elicitation_action: Literal["accept", "decline", "cancel"]
+    confirmation: ContradictionConfirmationOutput
 
 
 class HealthIndexOutput(TypedDict):

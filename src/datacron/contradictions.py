@@ -11,340 +11,865 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Deterministic, cache-only contradiction advisory over a frozen pool."""
+"""Deterministic live contradiction candidates and read-only proposals."""
 
 from __future__ import annotations
 
-import gzip
 import hashlib
 import json
-from importlib import resources
-from typing import Any, Final, cast
+import re
+import unicodedata
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, Final
+
+from datacron.core.markdown_sections import find_section_span, parse_heading_line
+from datacron.core.models import Chunk, ChunkType, Note
+
+if TYPE_CHECKING:
+    from datacron.mcp.server import DatacronApp
 
 __all__ = [
-    "ADVISORY_WARNING",
-    "FrozenContradictionError",
-    "build_advisory_report",
-    "unavailable_advisory_report",
+    "CONTRADICTION_SCHEMA_VERSION",
+    "CandidateClass",
+    "MutationScope",
+    "build_proposal",
+    "build_scan_report",
+    "confirm_proposal",
+    "format_update_block",
 ]
 
-ADVISORY_WARNING: Final[str] = (
-    "ADVISORY ONLY - NOT VALIDATED ON REAL CONTENT (0/4). JUDGE CONFIDENCE IS "
-    "UNCALIBRATED. DO NOT BLOCK WRITES, MERGES, HEALTH, OR CI BASED ON THIS REPORT."
+CONTRADICTION_SCHEMA_VERSION: Final[int] = 2
+_PROPOSAL_PREFIX: Final[str] = "cs2"
+_TOKEN_PATTERN: Final[re.Pattern[str]] = re.compile(
+    rf"^{_PROPOSAL_PREFIX}:(\d{{4}}-\d{{2}}-\d{{2}}):([0-9a-f]{{64}})$"
+)
+_ISO_DATE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_UPDATE_BLOCK_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^>\s*(?:CORRECTION|MISE A JOUR|QUESTION OUVERTE)\s+"
+    r"(?P<date>\d{4}-\d{2}-\d{2})\s*:",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
+_MARKDOWN_PREFIX_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)"
+)
+_WORD_PATTERN: Final[re.Pattern[str]] = re.compile(r"[a-z0-9][a-z0-9_-]{2,}")
+_WHITESPACE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\s+")
+_SEARCH_NEIGHBOR_LIMIT: Final[int] = 8
+_QUERY_TERM_LIMIT: Final[int] = 6
+_EVIDENCE_CHAR_LIMIT: Final[int] = 280
+_STATEMENT_CHAR_LIMIT: Final[int] = 240
+_MIN_LEXICAL_SCORE: Final[float] = 0.25
+_MIN_MARKED_SCORE: Final[float] = 0.15
+_HEADING_SEPARATOR: Final[str] = " / "
+
+_STOPWORDS: Final[frozenset[str]] = frozenset(
+    {
+        "about",
+        "after",
+        "avec",
+        "avant",
+        "cette",
+        "comme",
+        "dans",
+        "depuis",
+        "des",
+        "elle",
+        "elles",
+        "entre",
+        "est",
+        "for",
+        "from",
+        "have",
+        "into",
+        "mais",
+        "notre",
+        "nous",
+        "pour",
+        "plus",
+        "que",
+        "qui",
+        "sans",
+        "sur",
+        "the",
+        "their",
+        "this",
+        "une",
+        "with",
+    }
+)
+_OPEN_MARKERS: Final[tuple[str, ...]] = (
+    "a confirmer",
+    "awaiting",
+    "en attente",
+    "pending",
+    "question ouverte",
+    "reste a trancher",
+    "tbd",
+)
+_CONTRADICTION_MARKERS: Final[tuple[str, ...]] = (
+    "ancienne version",
+    "contrairement",
+    "correction",
+    "ne plus",
+    "obsolete",
+    "perime",
+    "remplace",
+    "replaces",
+    "superseded",
+)
+_REFINEMENT_MARKERS: Final[tuple[str, ...]] = (
+    "clarifie",
+    "complete",
+    "confirme",
+    "mise a jour",
+    "precision",
+    "raffinement",
 )
 
-_DATA_DIRECTORY: Final[str] = "contradiction_data"
-_EVIDENCE_RESOURCE: Final[str] = "frozen-evidence.json.gz"
-_CACHE_RESOURCE: Final[str] = "judge-cache.json.gz"
-_ASSERTIONS_RESOURCE: Final[str] = "source-assertions.json.gz"
-_EVIDENCE_SHA256: Final[str] = "eb421b383c460440cc4749ef649f3f7e23280b8d91d282d079b411f19c80012a"
-_RANKING_SHA256: Final[str] = "f6e1c1d31a40da7134b285dce1f0690bd033680b22d1fcac8cbc2aa9c619681b"
-_CACHE_SHA256: Final[str] = "4f67b276b55d01e36c82479032d938d73324f01c6fad7fbd5990243e79d5e0e5"
-_ASSERTIONS_SHA256: Final[str] = "1421d79fc6c4abe0f54f99d0c2a0e230d114cb5bd527864fe98719e4cc8712c0"
-_RETAINED_RANKING_SHA256: Final[str] = (
-    "f1db36e3e428677e0daf185360d2e729daa4e12d31624e2fb5cc089f74f5cb7c"
-)
-_POOL_PAIRS: Final[int] = 393
-_UNJUDGED_PAIRS: Final[int] = 254
-_CONFIDENCE_THRESHOLD: Final[float] = 0.7
+
+class CandidateClass(StrEnum):
+    """Conservative classification attached to every candidate."""
+
+    CONTRADICTION = "CONTRADICTION"
+    REFINEMENT = "RAFFINEMENT"
+    OPEN_QUESTION = "QUESTION_OUVERTE"
 
 
-class FrozenContradictionError(RuntimeError):
-    """Raised when a packaged advisory artifact violates its frozen contract."""
+class MutationScope(StrEnum):
+    """Scope of the proposed lifecycle mutation."""
+
+    SECTION = "section"
+    WHOLE_NOTE = "whole_note"
 
 
-def _sha256(raw: bytes) -> str:
-    return hashlib.sha256(raw).hexdigest()
+@dataclass(frozen=True)
+class SectionAssertion:
+    """One section-level unit reconstructed from indexed chunks."""
+
+    note_id: str
+    note_rel_path: str
+    header_path: str
+    section_title: str | None
+    chunk_id: str
+    line_start: int
+    line_end: int
+    content: str
+
+    @property
+    def stable_key(self) -> tuple[str, str]:
+        return self.note_id, self.chunk_id
 
 
-def _canonical_json(value: Any) -> bytes:
+@dataclass(frozen=True)
+class Candidate:
+    """Internal candidate with enough authority to derive a CAS proposal."""
+
+    target: SectionAssertion
+    source: SectionAssertion
+    score: float
+    classification: CandidateClass
+    rationale: str
+    addressable: bool = False
+    heading_level: int | None = None
+    expected_hash: str | None = None
+    manual_action: str | None = None
+
+
+@dataclass(frozen=True)
+class Proposal:
+    """One immutable, content-addressed write-tool proposal."""
+
+    token: str
+    candidate: Candidate
+    classification: CandidateClass
+    scope: MutationScope
+    tool: str
+    block: str | None
+    proposal_date: date
+
+
+@dataclass
+class _SectionBuilder:
+    chunks: list[Chunk]
+
+
+def format_update_block(
+    classification: CandidateClass,
+    statement: str,
+    source_rel_path: str,
+    *,
+    today: date,
+) -> str:
+    """Return the one canonical dated section-level provenance block."""
+    labels = {
+        CandidateClass.CONTRADICTION: "CORRECTION",
+        CandidateClass.REFINEMENT: "MISE A JOUR",
+        CandidateClass.OPEN_QUESTION: "QUESTION OUVERTE",
+    }
+    cleaned_statement = _clean_statement(statement, classification)
+    sentence = (
+        cleaned_statement
+        if cleaned_statement.endswith((".", "?", "!"))
+        else f"{cleaned_statement}."
+    )
+    return f"> {labels[classification]} {today.isoformat()} : {sentence} Voir {source_rel_path}."
+
+
+async def build_scan_report(
+    app: DatacronApp,
+    *,
+    today: date | None = None,
+) -> tuple[dict[str, Any], list[Candidate]]:
+    """Scan the live index within configured bounds and return stable candidates."""
+    proposal_date = today or datetime.now(tz=UTC).date()
+    candidates, examined_pairs, section_count = await _scan_candidate_models(app)
+    payload_candidates = [
+        _candidate_payload(app, candidate, proposal_date=proposal_date) for candidate in candidates
+    ]
+    payload = {
+        "schema_version": CONTRADICTION_SCHEMA_VERSION,
+        "mode": "scan",
+        "candidates": payload_candidates,
+        "candidate_count": len(payload_candidates),
+        "examined_pairs": examined_pairs,
+        "section_count": section_count,
+        "limits": {
+            "max_pairs": app.settings.contradiction_max_pairs,
+            "max_candidates": app.settings.contradiction_max_candidates,
+        },
+        "deterministic_order": (
+            "score_desc,target_note_id,target_chunk_id,source_note_id,source_chunk_id"
+        ),
+    }
+    return payload, candidates
+
+
+async def confirm_proposal(
+    app: DatacronApp,
+    proposal_token: str,
+) -> dict[str, Any]:
+    """Recompute and confirm one proposal without mutating server or vault state."""
+    proposal_date = _proposal_date_from_token(proposal_token)
+    candidates, _examined_pairs, _section_count = await _scan_candidate_models(app)
+    proposal = _find_proposal(
+        candidates,
+        proposal_token=proposal_token,
+        proposal_date=proposal_date,
+    )
+    if proposal is None:
+        raise ValueError("proposal token is unknown or stale; rerun contradiction_scan")
+
+    target_note = await _read_note(app, proposal.candidate.target.note_rel_path)
+    if target_note.content_hash != proposal.candidate.expected_hash:
+        raise ValueError("proposal token is stale because the target note changed; rerun scan")
+
+    write_call = _write_call(target_note, proposal)
+    verification_query = _verification_query(proposal.candidate.source.content)
+    return {
+        "schema_version": CONTRADICTION_SCHEMA_VERSION,
+        "mode": "confirm",
+        "confirmation": {
+            "proposal_token": proposal.token,
+            "classification": proposal.classification.value,
+            "scope": proposal.scope.value,
+            "write_call": write_call,
+            "workflow": {
+                "execute": f"Execute the returned {proposal.tool} call explicitly.",
+                "verify": "Then call search_text and inspect the mutated section.",
+                "verification_tool": "search_text",
+                "verification_query": verification_query,
+            },
+        },
+    }
+
+
+def build_proposal(
+    candidate: Candidate,
+    *,
+    classification: CandidateClass,
+    scope: MutationScope,
+    today: date,
+) -> Proposal:
+    """Derive one safe proposal; invalid class/scope combinations cannot be built."""
+    if not candidate.addressable or candidate.expected_hash is None:
+        raise ValueError("candidate target is not addressable")
+    if scope is MutationScope.WHOLE_NOTE and classification is not CandidateClass.CONTRADICTION:
+        raise ValueError("whole-note invalidation requires CONTRADICTION classification")
+
+    statement = _statement(candidate.source.content, classification)
+    if scope is MutationScope.SECTION:
+        if candidate.heading_level is None or candidate.target.section_title is None:
+            raise ValueError("section proposal requires an addressable heading")
+        tool = "patch_note_section"
+        block = format_update_block(
+            classification,
+            statement,
+            candidate.source.note_rel_path,
+            today=today,
+        )
+        mutation_fingerprint: dict[str, object] = {
+            "tool": tool,
+            "heading": candidate.target.section_title,
+            "heading_level": candidate.heading_level,
+            "block": block,
+        }
+    else:
+        tool = "set_frontmatter"
+        block = None
+        mutation_fingerprint = {
+            "tool": tool,
+            "invalid_at": f"{today.isoformat()}T00:00:00+00:00",
+            "invalidated_by": candidate.source.note_id,
+        }
+
+    canonical = {
+        "schema_version": CONTRADICTION_SCHEMA_VERSION,
+        "target_note_id": candidate.target.note_id,
+        "target_chunk_id": candidate.target.chunk_id,
+        "source_note_id": candidate.source.note_id,
+        "source_chunk_id": candidate.source.chunk_id,
+        "classification": classification.value,
+        "scope": scope.value,
+        "expected_hash": candidate.expected_hash,
+        "mutation": mutation_fingerprint,
+    }
+    digest = hashlib.sha256(_canonical_json(canonical)).hexdigest()
+    token = f"{_PROPOSAL_PREFIX}:{today.isoformat()}:{digest}"
+    return Proposal(
+        token=token,
+        candidate=candidate,
+        classification=classification,
+        scope=scope,
+        tool=tool,
+        block=block,
+        proposal_date=today,
+    )
+
+
+async def _scan_candidate_models(
+    app: DatacronApp,
+) -> tuple[list[Candidate], int, int]:
+    sections = await _collect_sections(app, limit=app.settings.contradiction_max_pairs)
+    section_by_key = {(item.note_id, item.header_path): item for item in sections}
+    seen_pairs: set[tuple[tuple[str, str], tuple[str, str]]] = set()
+    raw_candidates: list[Candidate] = []
+
+    for section in sections:
+        if len(seen_pairs) >= app.settings.contradiction_max_pairs:
+            break
+        query = _query(section)
+        if not query:
+            continue
+        results = await app.store.search(query, limit=_SEARCH_NEIGHBOR_LIMIT)
+        for result in results:
+            other = section_by_key.get((result.chunk.note_id, result.chunk.header_path))
+            if other is None or other.note_id == section.note_id:
+                continue
+            ordered_pair = sorted((section.stable_key, other.stable_key))
+            pair_key = (ordered_pair[0], ordered_pair[1])
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+            candidate = _classify_pair(section, other)
+            if candidate is not None:
+                raw_candidates.append(candidate)
+            if len(seen_pairs) >= app.settings.contradiction_max_pairs:
+                break
+
+    raw_candidates.sort(
+        key=lambda item: (
+            -item.score,
+            item.target.note_id,
+            item.target.chunk_id,
+            item.source.note_id,
+            item.source.chunk_id,
+        )
+    )
+    limited = raw_candidates[: app.settings.contradiction_max_candidates]
+    indexed_notes = await app.store.list_indexed_notes()
+    note_cache: dict[str, Note] = {}
+    resolved = [
+        await _resolve_addressability(app, candidate, indexed_notes, note_cache)
+        for candidate in limited
+    ]
+    return resolved, len(seen_pairs), len(sections)
+
+
+async def _collect_sections(app: DatacronApp, *, limit: int) -> list[SectionAssertion]:
+    builders: dict[tuple[str, str], _SectionBuilder] = {}
+    async for chunk in app.store.iter_all_chunks():
+        if chunk.chunk_type in {ChunkType.FRONTMATTER, ChunkType.HEADING, ChunkType.CODE}:
+            continue
+        key = (chunk.note_id, chunk.header_path)
+        if key not in builders and len(builders) >= limit:
+            break
+        builders.setdefault(key, _SectionBuilder(chunks=[])).chunks.append(chunk)
+
+    sections: list[SectionAssertion] = []
+    for builder in builders.values():
+        chunks = sorted(builder.chunks, key=lambda item: (item.line_start, item.chunk_id))
+        if not chunks:
+            continue
+        first = chunks[0]
+        content = "\n\n".join(item.content.strip() for item in chunks if item.content.strip())
+        if not content:
+            continue
+        sections.append(
+            SectionAssertion(
+                note_id=first.note_id,
+                note_rel_path=first.note_rel_path,
+                header_path=first.header_path,
+                section_title=first.section_title,
+                chunk_id=first.chunk_id,
+                line_start=min(item.line_start for item in chunks),
+                line_end=max(item.line_end for item in chunks),
+                content=content,
+            )
+        )
+    return sorted(sections, key=lambda item: item.stable_key)
+
+
+def _classify_pair(left: SectionAssertion, right: SectionAssertion) -> Candidate | None:
+    if _already_handled(left, right):
+        return None
+    left_terms = _terms(_without_update_blocks(left.content))
+    right_terms = _terms(_without_update_blocks(right.content))
+    if not left_terms or not right_terms:
+        return None
+    lexical_score = len(left_terms & right_terms) / min(len(left_terms), len(right_terms))
+    left_date = _latest_content_date(left)
+    right_date = _latest_content_date(right)
+    has_temporal_signal = left_date is not None and right_date is not None
+    normalized_pair = _normalize_text(f"{left.content}\n{right.content}")
+    has_marker = _contains_any(
+        normalized_pair,
+        _OPEN_MARKERS + _CONTRADICTION_MARKERS + _REFINEMENT_MARKERS,
+    )
+    threshold = _MIN_MARKED_SCORE if has_marker or has_temporal_signal else _MIN_LEXICAL_SCORE
+    if lexical_score < threshold:
+        return None
+
+    target, source = _ordered_sides(left, right, left_date=left_date, right_date=right_date)
+    classification, rationale = _classification(source.content)
+    score = round(min(1.0, lexical_score + (0.05 if has_temporal_signal else 0.0)), 6)
+    return Candidate(
+        target=target,
+        source=source,
+        score=score,
+        classification=classification,
+        rationale=rationale,
+    )
+
+
+async def _resolve_addressability(  # noqa: PLR0911 - guard clauses preserve refusal reasons
+    app: DatacronApp,
+    candidate: Candidate,
+    indexed_notes: dict[str, tuple[str, str]],
+    note_cache: dict[str, Note],
+) -> Candidate:
+    target_indexed = indexed_notes.get(candidate.target.note_rel_path)
+    source_indexed = indexed_notes.get(candidate.source.note_rel_path)
+    if target_indexed is None or source_indexed is None:
+        return replace(
+            candidate,
+            manual_action="Indexed note authority is unavailable; rerun scan.",
+        )
+
+    try:
+        target_note = await _cached_note(app, candidate.target.note_rel_path, note_cache)
+        source_note = await _cached_note(app, candidate.source.note_rel_path, note_cache)
+    except (FileNotFoundError, ValueError):
+        return replace(candidate, manual_action="A candidate note is unreadable; inspect manually.")
+
+    if (
+        target_note.content_hash != target_indexed[1]
+        or source_note.content_hash != source_indexed[1]
+    ):
+        return replace(candidate, manual_action="The index is stale; rerun scan before proposing.")
+    if _contains_redacted_material(app, candidate, target_note):
+        return replace(
+            candidate,
+            manual_action="Sensitive content was redacted; review this candidate manually.",
+        )
+
+    selector = _addressable_selector(target_note.content, candidate.target.header_path)
+    if selector is None:
+        return replace(
+            candidate,
+            manual_action=(
+                "Target heading is missing or ambiguous for patch_note_section; edit manually."
+            ),
+        )
+    heading, level = selector
+    if heading != candidate.target.section_title:
+        return replace(candidate, manual_action="Indexed heading no longer matches the note.")
+    return replace(
+        candidate,
+        addressable=True,
+        heading_level=level,
+        expected_hash=target_note.content_hash,
+    )
+
+
+def _candidate_payload(
+    app: DatacronApp,
+    candidate: Candidate,
+    *,
+    proposal_date: date,
+) -> dict[str, Any]:
+    suggested: dict[str, Any] | None = None
+    alternatives: list[dict[str, Any]] = []
+    if candidate.addressable:
+        proposals = _proposal_variants(candidate, proposal_date=proposal_date)
+        for proposal in proposals:
+            rendered = _proposal_summary(app, proposal)
+            if (
+                proposal.classification is candidate.classification
+                and proposal.scope is MutationScope.SECTION
+            ):
+                suggested = rendered
+            else:
+                alternatives.append(rendered)
+
+    return {
+        "candidate_id": _candidate_id(candidate),
+        "score": candidate.score,
+        "class": candidate.classification.value,
+        "classification_options": _classification_options(candidate.classification),
+        "rationale": candidate.rationale,
+        "evidence": {
+            "target": _redact(app, _excerpt(candidate.target.content)),
+            "source": _redact(app, _excerpt(candidate.source.content)),
+        },
+        "target": _section_reference(app, candidate.target),
+        "source": _section_reference(app, candidate.source),
+        "addressable": candidate.addressable,
+        "manual_action": candidate.manual_action,
+        "suggested_mutation": suggested,
+        "alternative_mutations": alternatives,
+    }
+
+
+def _proposal_variants(candidate: Candidate, *, proposal_date: date) -> list[Proposal]:
+    proposals = [
+        build_proposal(
+            candidate,
+            classification=classification,
+            scope=MutationScope.SECTION,
+            today=proposal_date,
+        )
+        for classification in CandidateClass
+    ]
+    proposals.append(
+        build_proposal(
+            candidate,
+            classification=CandidateClass.CONTRADICTION,
+            scope=MutationScope.WHOLE_NOTE,
+            today=proposal_date,
+        )
+    )
+    return proposals
+
+
+def _find_proposal(
+    candidates: list[Candidate],
+    *,
+    proposal_token: str,
+    proposal_date: date,
+) -> Proposal | None:
+    for candidate in candidates:
+        if not candidate.addressable:
+            continue
+        for proposal in _proposal_variants(candidate, proposal_date=proposal_date):
+            if proposal.token == proposal_token:
+                return proposal
+    return None
+
+
+def _proposal_summary(app: DatacronApp, proposal: Proposal) -> dict[str, Any]:
+    return {
+        "proposal_token": proposal.token,
+        "classification": proposal.classification.value,
+        "scope": proposal.scope.value,
+        "tool": proposal.tool,
+        "block": _redact(app, proposal.block) if proposal.block is not None else None,
+    }
+
+
+def _write_call(target_note: Note, proposal: Proposal) -> dict[str, Any]:
+    candidate = proposal.candidate
+    if proposal.scope is MutationScope.WHOLE_NOTE:
+        return {
+            "tool": "set_frontmatter",
+            "arguments": {
+                "rel_path": candidate.target.note_rel_path,
+                "invalid_at": f"{proposal.proposal_date.isoformat()}T00:00:00+00:00",
+                "invalidated_by": candidate.source.note_id,
+                "expected_hash": candidate.expected_hash,
+            },
+        }
+
+    if (
+        proposal.block is None
+        or candidate.target.section_title is None
+        or candidate.heading_level is None
+    ):
+        raise ValueError("section proposal is incomplete")
+    lines = target_note.content.splitlines(keepends=True)
+    content_start, content_end = find_section_span(
+        lines,
+        candidate.target.section_title,
+        candidate.heading_level,
+    )
+    current_content = "".join(lines[content_start:content_end]).rstrip()
+    new_content = f"{current_content}\n\n{proposal.block}" if current_content else proposal.block
+    return {
+        "tool": "patch_note_section",
+        "arguments": {
+            "rel_path": candidate.target.note_rel_path,
+            "heading": candidate.target.section_title,
+            "new_content": new_content,
+            "expected_hash": candidate.expected_hash,
+            "heading_level": candidate.heading_level,
+        },
+    }
+
+
+def _addressable_selector(body: str, header_path: str) -> tuple[str, int] | None:
+    stack: list[str] = []
+    entries: list[tuple[str, int, str]] = []
+    for line in body.splitlines():
+        parsed = parse_heading_line(line)
+        if parsed is None:
+            continue
+        level, text = parsed
+        stack = stack[: max(level - 1, 0)]
+        stack.append(text)
+        entries.append((text, level, _HEADING_SEPARATOR.join(stack)))
+
+    path_matches = [entry for entry in entries if entry[2] == header_path]
+    if len(path_matches) != 1:
+        return None
+    text, level, _path = path_matches[0]
+    if sum(entry[0] == text and entry[1] == level for entry in entries) != 1:
+        return None
+    return text, level
+
+
+def _already_handled(left: SectionAssertion, right: SectionAssertion) -> bool:
+    left_latest = _latest_content_date(left)
+    right_latest = _latest_content_date(right)
+    left_blocks = _block_dates(left.content)
+    right_blocks = _block_dates(right.content)
+    return bool(
+        (right_latest is not None and any(block >= right_latest for block in left_blocks))
+        or (left_latest is not None and any(block >= left_latest for block in right_blocks))
+    )
+
+
+def _ordered_sides(
+    left: SectionAssertion,
+    right: SectionAssertion,
+    *,
+    left_date: date | None,
+    right_date: date | None,
+) -> tuple[SectionAssertion, SectionAssertion]:
+    if left_date is not None and right_date is not None and left_date != right_date:
+        return (left, right) if left_date < right_date else (right, left)
+    return (left, right) if left.stable_key < right.stable_key else (right, left)
+
+
+def _classification(content: str) -> tuple[CandidateClass, str]:
+    normalized = _normalize_text(_without_update_blocks(content))
+    has_open = _contains_any(normalized, _OPEN_MARKERS) or "?" in content
+    has_contradiction = _contains_any(normalized, _CONTRADICTION_MARKERS)
+    has_refinement = _contains_any(normalized, _REFINEMENT_MARKERS)
+    if has_open:
+        return CandidateClass.OPEN_QUESTION, "The newer section explicitly leaves the issue open."
+    if has_contradiction and has_refinement:
+        return CandidateClass.REFINEMENT, (
+            "The section mixes replacement and clarification signals; "
+            "refinement is the safe default."
+        )
+    if has_contradiction:
+        return CandidateClass.CONTRADICTION, (
+            "The newer section explicitly marks earlier information as replaced or obsolete."
+        )
+    if has_refinement:
+        return CandidateClass.REFINEMENT, (
+            "The newer section explicitly confirms, clarifies, or extends the earlier information."
+        )
+    return CandidateClass.OPEN_QUESTION, (
+        "The lexical overlap is real but the relationship is not classifiable without review."
+    )
+
+
+def _classification_options(suggested: CandidateClass) -> list[str]:
+    safe_order = [
+        suggested,
+        CandidateClass.REFINEMENT,
+        CandidateClass.OPEN_QUESTION,
+        CandidateClass.CONTRADICTION,
+    ]
+    return list(dict.fromkeys(item.value for item in safe_order))
+
+
+def _statement(content: str, classification: CandidateClass) -> str:
+    excerpt = _excerpt(_without_update_blocks(content), limit=_STATEMENT_CHAR_LIMIT)
+    return _clean_statement(excerpt, classification)
+
+
+def _clean_statement(statement: str, classification: CandidateClass) -> str:
+    cleaned = _WHITESPACE_PATTERN.sub(" ", statement).strip().rstrip(".?! ")
+    if not cleaned:
+        cleaned = "Review the newer source section"
+    if classification is CandidateClass.OPEN_QUESTION:
+        return f"{cleaned}?"
+    return cleaned
+
+
+def _excerpt(content: str, *, limit: int = _EVIDENCE_CHAR_LIMIT) -> str:
+    lines = [
+        _MARKDOWN_PREFIX_PATTERN.sub("", line).strip()
+        for line in content.splitlines()
+        if line.strip()
+    ]
+    rendered = _WHITESPACE_PATTERN.sub(" ", " ".join(lines)).strip()
+    if len(rendered) <= limit:
+        return rendered
+    return f"{rendered[: max(limit - 3, 0)].rstrip()}..."
+
+
+def _query(section: SectionAssertion) -> str:
+    terms = _terms(f"{section.header_path}\n{_without_update_blocks(section.content)}")
+    selected = sorted(terms, key=lambda item: (-len(item), item))[:_QUERY_TERM_LIMIT]
+    return " ".join(selected)
+
+
+def _terms(value: str) -> set[str]:
+    return {
+        term
+        for term in _WORD_PATTERN.findall(_normalize_text(value))
+        if term not in _STOPWORDS and not term.isdigit()
+    }
+
+
+def _normalize_text(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value)
+    ascii_text = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return ascii_text.casefold()
+
+
+def _contains_any(value: str, markers: tuple[str, ...]) -> bool:
+    return any(marker in value for marker in markers)
+
+
+def _latest_content_date(section: SectionAssertion) -> date | None:
+    without_blocks = _without_update_blocks(section.content)
+    dates = _dates(f"{section.note_rel_path}\n{section.header_path}\n{without_blocks}")
+    return max(dates) if dates else None
+
+
+def _dates(value: str) -> list[date]:
+    parsed: list[date] = []
+    for match in _ISO_DATE_PATTERN.findall(value):
+        try:
+            parsed.append(date.fromisoformat(match))
+        except ValueError:
+            continue
+    return parsed
+
+
+def _block_dates(value: str) -> list[date]:
+    return [
+        date.fromisoformat(match.group("date")) for match in _UPDATE_BLOCK_PATTERN.finditer(value)
+    ]
+
+
+def _without_update_blocks(value: str) -> str:
+    return "\n".join(
+        line for line in value.splitlines() if _UPDATE_BLOCK_PATTERN.match(line) is None
+    )
+
+
+def _candidate_id(candidate: Candidate) -> str:
+    canonical = {
+        "target": candidate.target.chunk_id,
+        "source": candidate.source.chunk_id,
+    }
+    return hashlib.sha256(_canonical_json(canonical)).hexdigest()
+
+
+def _section_reference(app: DatacronApp, section: SectionAssertion) -> dict[str, Any]:
+    return {
+        "note_id": section.note_id,
+        "note_rel_path": _redact(app, section.note_rel_path),
+        "header_path": _redact(app, section.header_path),
+        "chunk_id": section.chunk_id,
+        "line_start": section.line_start,
+        "line_end": section.line_end,
+    }
+
+
+def _verification_query(content: str) -> str:
+    selected = sorted(_terms(content), key=lambda item: (-len(item), item))[:3]
+    return " ".join(selected)
+
+
+def _proposal_date_from_token(token: str) -> date:
+    match = _TOKEN_PATTERN.fullmatch(token)
+    if match is None:
+        raise ValueError("proposal_token must match cs2:YYYY-MM-DD:<sha256>")
+    try:
+        return date.fromisoformat(match.group(1))
+    except ValueError as exc:
+        raise ValueError("proposal_token contains an invalid date") from exc
+
+
+async def _cached_note(
+    app: DatacronApp,
+    rel_path: str,
+    cache: dict[str, Note],
+) -> Note:
+    if rel_path not in cache:
+        cache[rel_path] = await _read_note(app, rel_path)
+    return cache[rel_path]
+
+
+async def _read_note(app: DatacronApp, rel_path: str) -> Note:
+    path = app.scope.authorize_rel_path(rel_path, "read")
+    return await app.vault_reader.read_note(path)
+
+
+def _contains_redacted_material(
+    app: DatacronApp,
+    candidate: Candidate,
+    target_note: Note,
+) -> bool:
+    if not app.secret_redactor.retrieval_enabled(app.settings):
+        return False
+    values = (
+        candidate.target.note_rel_path,
+        candidate.source.note_rel_path,
+        candidate.target.content,
+        candidate.source.content,
+        target_note.content,
+    )
+    return any(app.secret_redactor.redact_text(value) != value for value in values)
+
+
+def _redact(app: DatacronApp, value: str) -> str:
+    if not app.secret_redactor.retrieval_enabled(app.settings):
+        return value
+    return app.secret_redactor.redact_text(value)
+
+
+def _canonical_json(value: object) -> bytes:
     return json.dumps(
         value,
-        ensure_ascii=False,
+        ensure_ascii=True,
         sort_keys=True,
         separators=(",", ":"),
-    ).encode("utf-8")
-
-
-def _load_resource(name: str, expected_sha256: str) -> dict[str, Any]:
-    try:
-        compressed = resources.files("datacron").joinpath(_DATA_DIRECTORY, name).read_bytes()
-        raw = gzip.decompress(compressed)
-    except OSError as exc:
-        raise FrozenContradictionError(f"frozen advisory resource unavailable: {name}") from exc
-    observed = _sha256(raw)
-    if observed != expected_sha256:
-        raise FrozenContradictionError(
-            f"frozen advisory resource hash mismatch for {name}: {observed}"
-        )
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise FrozenContradictionError(f"frozen advisory resource is invalid: {name}") from exc
-    if not isinstance(payload, dict):
-        raise FrozenContradictionError(f"frozen advisory resource must be an object: {name}")
-    return cast("dict[str, Any]", payload)
-
-
-def _mapping(value: Any, *, label: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise FrozenContradictionError(f"{label} must be an object")
-    return cast("dict[str, Any]", value)
-
-
-def _sequence(value: Any, *, label: str) -> list[Any]:
-    if not isinstance(value, list):
-        raise FrozenContradictionError(f"{label} must be an array")
-    return value
-
-
-def _pair(value: Any, *, label: str) -> tuple[str, str]:
-    items = _sequence(value, label=label)
-    if len(items) != 2 or any(not isinstance(item, str) for item in items):
-        raise FrozenContradictionError(f"{label} must contain two paths")
-    return str(items[0]), str(items[1])
-
-
-def _integer(value: Any, *, label: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise FrozenContradictionError(f"{label} must be an integer")
-    return cast("int", value)
-
-
-def _number(value: Any, *, label: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise FrozenContradictionError(f"{label} must be numeric")
-    return float(value)
-
-
-def _ranked_pool(evidence: dict[str, Any]) -> list[dict[str, Any]]:
-    ranking_raw = _sequence(evidence.get("ranking"), label="frozen ranking")
-    if len(ranking_raw) != _POOL_PAIRS:
-        raise FrozenContradictionError("frozen ranking must contain exactly 393 pairs")
-    ranking: list[dict[str, Any]] = []
-    pairs: list[list[str]] = []
-    for expected_rank, raw_item in enumerate(ranking_raw, 1):
-        item = _mapping(raw_item, label=f"frozen rank {expected_rank}")
-        rank = _integer(item.get("rank"), label="frozen rank")
-        if rank != expected_rank:
-            raise FrozenContradictionError("frozen ranking order is not canonical")
-        pair = (str(item.get("a", "")), str(item.get("b", "")))
-        if not all(pair):
-            raise FrozenContradictionError(f"frozen rank {rank} has an invalid pair")
-        pairs.append([pair[0], pair[1]])
-        ranking.append(item)
-    observed = _sha256(json.dumps(pairs, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-    if observed != _RANKING_SHA256:
-        raise FrozenContradictionError(f"frozen ranking hash mismatch: {observed}")
-    return ranking
-
-
-def _cache_by_rank(cache: dict[str, Any]) -> dict[int, dict[str, Any]]:
-    if cache.get("frozen_evidence_sha256") != _EVIDENCE_SHA256:
-        raise FrozenContradictionError("cache evidence namespace mismatch")
-    if cache.get("frozen_ranking_sha256") != _RANKING_SHA256:
-        raise FrozenContradictionError("cache ranking namespace mismatch")
-    entries = _mapping(cache.get("entries"), label="judge cache entries")
-    if len(entries) != _POOL_PAIRS:
-        raise FrozenContradictionError("judge cache must contain exactly 393 entries")
-    by_rank: dict[int, dict[str, Any]] = {}
-    for cache_key, raw_entry in entries.items():
-        entry = _mapping(raw_entry, label="judge cache entry")
-        if entry.get("cache_key") != cache_key or len(cache_key) != 64:
-            raise FrozenContradictionError("judge cache key is not content addressed")
-        context_sha256 = entry.get("context_sha256")
-        if not isinstance(context_sha256, str) or len(context_sha256) != 64:
-            raise FrozenContradictionError("judge cache context hash is invalid")
-        rank = _integer(entry.get("frozen_rank"), label="cached frozen rank")
-        if rank in by_rank:
-            raise FrozenContradictionError(f"duplicate cached frozen rank: {rank}")
-        _pair(entry.get("pair"), label=f"cached pair at rank {rank}")
-        by_rank[rank] = entry
-    return by_rank
-
-
-def _retained_candidates(
-    ranking: list[dict[str, Any]],
-    cache_by_rank: dict[int, dict[str, Any]],
-) -> list[dict[str, Any]]:
-    retained: list[dict[str, Any]] = []
-    for item in ranking:
-        rank = _integer(item.get("rank"), label="frozen rank")
-        pair = (str(item["a"]), str(item["b"]))
-        cached = cache_by_rank.get(rank)
-        if cached is None or _pair(cached.get("pair"), label="cached pair") != pair:
-            raise FrozenContradictionError(f"judge cache misses frozen rank {rank}")
-        judgment = _mapping(cached.get("judgment"), label="cached judgment")
-        contradiction = judgment.get("contradiction")
-        if not isinstance(contradiction, bool):
-            raise FrozenContradictionError("cached contradiction decision must be boolean")
-        confidence = _number(judgment.get("confidence"), label="judge confidence")
-        if not contradiction or confidence < _CONFIDENCE_THRESHOLD:
-            continue
-        scope = judgment.get("scope")
-        if not isinstance(scope, str):
-            raise FrozenContradictionError("cached judgment scope must be text")
-        retained.append(
-            {
-                "a": pair[0],
-                "b": pair[1],
-                "cache_key": str(cached["cache_key"]),
-                "confidence": round(confidence, 6),
-                "frozen_rank": rank,
-                "frozen_score": round(
-                    _number(item.get("score"), label="frozen score"),
-                    6,
-                ),
-                "judgment": judgment,
-                "reasons": [
-                    "cached_llm_judgment",
-                    f"confidence={confidence:.6f}",
-                    f"scope={scope}",
-                ],
-            }
-        )
-    observed = _sha256(_canonical_json(retained))
-    if observed != _RETAINED_RANKING_SHA256:
-        raise FrozenContradictionError(f"retained ranking hash mismatch: {observed}")
-    return retained
-
-
-def _source_rows(assertions: dict[str, Any]) -> dict[int, dict[str, Any]]:
-    expected_headers = {
-        "frozen_evidence_sha256": _EVIDENCE_SHA256,
-        "frozen_ranking_sha256": _RANKING_SHA256,
-        "retained_ranking_sha256": _RETAINED_RANKING_SHA256,
-    }
-    if any(assertions.get(key) != value for key, value in expected_headers.items()):
-        raise FrozenContradictionError("source assertion namespace mismatch")
-    rows = _sequence(assertions.get("candidates"), label="source assertions")
-    by_rank: dict[int, dict[str, Any]] = {}
-    for raw_row in rows:
-        row = _mapping(raw_row, label="source assertion row")
-        rank = _integer(row.get("frozen_rank"), label="source assertion rank")
-        if rank in by_rank:
-            raise FrozenContradictionError(f"duplicate source assertion rank: {rank}")
-        by_rank[rank] = row
-    return by_rank
-
-
-def _claim_payload(value: Any, *, label: str) -> dict[str, Any]:
-    claim = _mapping(value, label=label)
-    text = claim.get("text")
-    if not isinstance(text, str) or not text.strip():
-        raise FrozenContradictionError(f"{label} has no source assertion")
-    return claim
-
-
-def _enrich_candidates(
-    retained: list[dict[str, Any]],
-    sources_by_rank: dict[int, dict[str, Any]],
-) -> list[dict[str, Any]]:
-    enriched: list[dict[str, Any]] = []
-    for output_rank, candidate in enumerate(retained, 1):
-        frozen_rank = _integer(candidate.get("frozen_rank"), label="retained frozen rank")
-        source = sources_by_rank.get(frozen_rank)
-        if source is None:
-            raise FrozenContradictionError(f"source assertions miss frozen rank {frozen_rank}")
-        pair = (str(candidate["a"]), str(candidate["b"]))
-        if _pair(source.get("pair"), label="source assertion pair") != pair:
-            raise FrozenContradictionError(f"source assertion pair mismatch at rank {frozen_rank}")
-        if source.get("cache_key") != candidate["cache_key"]:
-            raise FrozenContradictionError(f"source assertion cache mismatch at rank {frozen_rank}")
-        status = source.get("adjudication_status")
-        if status not in {"adjudicated", "unjudged"}:
-            raise FrozenContradictionError("invalid advisory adjudication status")
-        judgment = _mapping(candidate["judgment"], label="retained judgment")
-        enriched.append(
-            {
-                "advisory_rank": output_rank,
-                "frozen_rank": frozen_rank,
-                "confidence": candidate["confidence"],
-                "confidence_calibrated": False,
-                "scope": judgment["scope"],
-                "rationale": judgment["rationale"],
-                "adjudication_status": status,
-                "cache_key": candidate["cache_key"],
-                "left": {
-                    "path": pair[0],
-                    "source_assertion": _claim_payload(
-                        source.get("assertion_a"),
-                        label="left source assertion",
-                    ),
-                },
-                "right": {
-                    "path": pair[1],
-                    "source_assertion": _claim_payload(
-                        source.get("assertion_b"),
-                        label="right source assertion",
-                    ),
-                },
-            }
-        )
-    return enriched
-
-
-def _effects() -> dict[str, str]:
-    return {
-        "writes": "none",
-        "merges": "none",
-        "health": "none",
-        "ci": "none",
-    }
-
-
-def build_advisory_report() -> dict[str, Any]:
-    """Replay the frozen generator ranking through cached judgments only."""
-    evidence = _load_resource(_EVIDENCE_RESOURCE, _EVIDENCE_SHA256)
-    cache = _load_resource(_CACHE_RESOURCE, _CACHE_SHA256)
-    assertions = _load_resource(_ASSERTIONS_RESOURCE, _ASSERTIONS_SHA256)
-    ranking = _ranked_pool(evidence)
-    cache_by_rank = _cache_by_rank(cache)
-    retained = _retained_candidates(ranking, cache_by_rank)
-    candidates = _enrich_candidates(retained, _source_rows(assertions))
-    retained_unjudged = sum(
-        candidate["adjudication_status"] == "unjudged" for candidate in candidates
-    )
-    return {
-        "warning": ADVISORY_WARNING,
-        "advisory_only": True,
-        "available": True,
-        "effects": _effects(),
-        "frozen_input": {
-            "pool_pairs": len(ranking),
-            "evidence_sha256": _EVIDENCE_SHA256,
-            "ranking_sha256": _RANKING_SHA256,
-        },
-        "cache_replay": {
-            "mode": "content_addressed_cache_only",
-            "cache_sha256": _CACHE_SHA256,
-            "cache_entries": len(cache_by_rank),
-            "cache_hits": len(ranking),
-            "cache_misses": 0,
-            "network_calls": 0,
-            "replay_sha256": _RETAINED_RANKING_SHA256,
-        },
-        "human_adjudication_backlog": {
-            "unjudged_pairs": _UNJUDGED_PAIRS,
-            "retained_candidates": retained_unjudged,
-            "included_in_precision": False,
-        },
-        "candidate_count": len(candidates),
-        "candidates": candidates,
-    }
-
-
-def unavailable_advisory_report() -> dict[str, Any]:
-    """Return a non-blocking response when the frozen replay is unavailable."""
-    return {
-        "warning": ADVISORY_WARNING,
-        "advisory_only": True,
-        "available": False,
-        "effects": _effects(),
-        "candidate_count": 0,
-        "candidates": [],
-        "error": {
-            "type": "FrozenReplayUnavailable",
-            "message": "Frozen contradiction advisory replay is unavailable.",
-        },
-    }
+    ).encode("ascii")

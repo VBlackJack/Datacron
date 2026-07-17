@@ -39,6 +39,8 @@ DEFAULT_MAX_RESULT_TOKENS: Final[int] = 8000
 DEFAULT_MAX_RESULT_COUNT: Final[int] = 20
 DEFAULT_REPAIR_MIN_INTERVAL_SECONDS: Final[float] = 30.0
 DEFAULT_EVAL_REGRESSION_TOLERANCE: Final[float] = 0.02
+DEFAULT_CONTRADICTION_MAX_PAIRS: Final[int] = 256
+DEFAULT_CONTRADICTION_MAX_CANDIDATES: Final[int] = 20
 TOKEN_ESTIMATE_CHARS_PER_TOKEN: Final[int] = 4
 TEMPORAL_OVERFETCH_FACTOR: Final[int] = 3
 SUPERSEDED_DEMOTION_FACTOR: Final[float] = 0.1
@@ -243,6 +245,11 @@ class Settings(BaseSettings):
     eval_regression_tolerance: float = Field(
         default=DEFAULT_EVAL_REGRESSION_TOLERANCE,
         ge=0.0,
+    )
+    contradiction_max_pairs: int = Field(default=DEFAULT_CONTRADICTION_MAX_PAIRS, ge=1)
+    contradiction_max_candidates: int = Field(
+        default=DEFAULT_CONTRADICTION_MAX_CANDIDATES,
+        ge=1,
     )
     ripgrep_path: str = Field(default=DEFAULT_RIPGREP_PATH)
     regex_fallback_max_pattern_length: int = Field(

@@ -214,7 +214,7 @@ vault.
 
 | Tool | Description |
 |---|---|
-| `contradiction_scan` | cache-only advisory report over the frozen contradiction pool; not validated on real content, uncalibrated confidence, never blocks writes, merges, health, or CI |
+| `contradiction_scan` | live, deterministic, bounded scan of contradictions/refinements between sections; proposes and confirms an explicit CAS call read-only, without ever writing automatically |
 
 MCP resources:
 

@@ -214,7 +214,7 @@ single-writer sur le vault.
 
 | Tool | Description |
 |---|---|
-| `contradiction_scan` | rapport advisory cache-only sur le pool de contradictions gelé ; non validé sur contenu réel, confiance non calibrée, ne bloque jamais writes, merges, health ni CI |
+| `contradiction_scan` | scan live, déterministe et borné des contradictions/raffinements entre sections ; propose puis confirme en lecture seule un appel CAS explicite, sans jamais écrire automatiquement |
 
 Resources MCP :
 

@@ -11,64 +11,140 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for the deterministic frozen contradiction advisory."""
+"""Pure contract tests for contradiction scan v2 proposals."""
 
 from __future__ import annotations
 
-import socket
+from datetime import date
 
 import pytest
 
-from datacron.contradictions import ADVISORY_WARNING, build_advisory_report
+from datacron.contradictions import (
+    Candidate,
+    CandidateClass,
+    MutationScope,
+    SectionAssertion,
+    build_proposal,
+    format_update_block,
+)
+
+_TODAY = date(2026, 7, 17)
 
 
-def test_frozen_advisory_replay_is_deterministic_and_explicit() -> None:
-    first = build_advisory_report()
-    second = build_advisory_report()
-
-    assert first == second
-    assert next(iter(first)) == "warning"
-    assert first["warning"] == ADVISORY_WARNING
-    assert "NOT VALIDATED ON REAL CONTENT (0/4)" in first["warning"]
-    assert "UNCALIBRATED" in first["warning"]
-    assert first["advisory_only"] is True
-    assert first["effects"] == {
-        "writes": "none",
-        "merges": "none",
-        "health": "none",
-        "ci": "none",
-    }
-    assert first["frozen_input"] == {
-        "pool_pairs": 393,
-        "evidence_sha256": ("eb421b383c460440cc4749ef649f3f7e23280b8d91d282d079b411f19c80012a"),
-        "ranking_sha256": ("f6e1c1d31a40da7134b285dce1f0690bd033680b22d1fcac8cbc2aa9c619681b"),
-    }
-    assert first["cache_replay"]["cache_hits"] == 393
-    assert first["cache_replay"]["cache_misses"] == 0
-    assert first["cache_replay"]["network_calls"] == 0
-    assert first["candidate_count"] == len(first["candidates"]) == 24
-    assert first["human_adjudication_backlog"] == {
-        "unjudged_pairs": 254,
-        "retained_candidates": 5,
-        "included_in_precision": False,
-    }
-    assert all(candidate["confidence_calibrated"] is False for candidate in first["candidates"])
-    assert all(
-        candidate[side]["source_assertion"]["text"]
-        for candidate in first["candidates"]
-        for side in ("left", "right")
+def _candidate() -> Candidate:
+    target = SectionAssertion(
+        note_id="01HQXR7K9YZ8M2N3PQRSTV4WX5",
+        note_rel_path="_memory/facts/old.md",
+        header_path="Identity / Employer",
+        section_title="Employer",
+        chunk_id="01HQXR7K9YZ8M2N3PQRSTV4WX5::identity/employer::0000",
+        line_start=5,
+        line_end=7,
+        content="The Windows team employer is Magellan.",
+    )
+    source = SectionAssertion(
+        note_id="01HQXR7K9YZ8M2N3PQRSTV4WX6",
+        note_rel_path="_memory/facts/current.md",
+        header_path="Identity / Employer 2026-07-15",
+        section_title="Employer 2026-07-15",
+        chunk_id="01HQXR7K9YZ8M2N3PQRSTV4WX6::identity/employer-2026-07-15::0000",
+        line_start=5,
+        line_end=7,
+        content="The current Windows team employer is Worldline.",
+    )
+    return Candidate(
+        target=target,
+        source=source,
+        score=0.8,
+        classification=CandidateClass.CONTRADICTION,
+        rationale="Explicit replacement.",
+        addressable=True,
+        heading_level=2,
+        expected_hash="a" * 64,
     )
 
 
-def test_frozen_advisory_replay_has_no_network_path(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("classification", "label"),
+    [
+        (CandidateClass.CONTRADICTION, "CORRECTION"),
+        (CandidateClass.REFINEMENT, "MISE A JOUR"),
+        (CandidateClass.OPEN_QUESTION, "QUESTION OUVERTE"),
+    ],
+)
+def test_section_classes_have_one_canonical_provenance_block(
+    classification: CandidateClass,
+    label: str,
 ) -> None:
-    def fail_network(*args: object, **kwargs: object) -> None:
-        raise AssertionError((args, kwargs))
+    proposal = build_proposal(
+        _candidate(),
+        classification=classification,
+        scope=MutationScope.SECTION,
+        today=_TODAY,
+    )
 
-    monkeypatch.setattr(socket, "create_connection", fail_network)
+    assert proposal.tool == "patch_note_section"
+    assert proposal.block is not None
+    assert proposal.block.startswith(f"> {label} 2026-07-17 : ")
+    assert proposal.block.endswith("Voir _memory/facts/current.md.")
+    assert proposal.token.startswith("cs2:2026-07-17:")
 
-    report = build_advisory_report()
 
-    assert report["available"] is True
-    assert report["cache_replay"]["network_calls"] == 0
+def test_open_question_formatter_has_exact_punctuation() -> None:
+    rendered = format_update_block(
+        CandidateClass.OPEN_QUESTION,
+        "Which direction remains active?",
+        "_memory/projects/source.md",
+        today=_TODAY,
+    )
+
+    assert rendered == (
+        "> QUESTION OUVERTE 2026-07-17 : Which direction remains active? "
+        "Voir _memory/projects/source.md."
+    )
+
+
+def test_whole_note_invalidation_is_contradiction_only() -> None:
+    proposal = build_proposal(
+        _candidate(),
+        classification=CandidateClass.CONTRADICTION,
+        scope=MutationScope.WHOLE_NOTE,
+        today=_TODAY,
+    )
+
+    assert proposal.tool == "set_frontmatter"
+    assert proposal.block is None
+    with pytest.raises(
+        ValueError,
+        match="whole-note invalidation requires CONTRADICTION classification",
+    ):
+        build_proposal(
+            _candidate(),
+            classification=CandidateClass.REFINEMENT,
+            scope=MutationScope.WHOLE_NOTE,
+            today=_TODAY,
+        )
+
+
+def test_proposal_token_is_deterministic_and_content_addressed() -> None:
+    first = build_proposal(
+        _candidate(),
+        classification=CandidateClass.CONTRADICTION,
+        scope=MutationScope.SECTION,
+        today=_TODAY,
+    )
+    second = build_proposal(
+        _candidate(),
+        classification=CandidateClass.CONTRADICTION,
+        scope=MutationScope.SECTION,
+        today=_TODAY,
+    )
+    changed = build_proposal(
+        _candidate(),
+        classification=CandidateClass.REFINEMENT,
+        scope=MutationScope.SECTION,
+        today=_TODAY,
+    )
+
+    assert first.token == second.token
+    assert first.token != changed.token
