@@ -25,10 +25,11 @@ env/
 *.db-wal
 *.db-shm
 
-# Private eval data (vault paths)
+# Local-only directory (project convention): agent briefs, audits, studies,
+# reviews, session reports, private eval data. Never committed.
 local/
 
-# Personal audits and studies -- kept local, never committed
+# Safety net: legacy locations of local-only artifacts
 docs/audits/
 docs/etudes/
 
