@@ -262,6 +262,7 @@ datacron eval --questions local/golden.yaml --vault /path/to/vault --save-baseli
 datacron eval --questions local/golden.yaml --vault /path/to/vault --compare --json
 datacron mcp serve --vault /path/to/vault
 datacron mcp install --client claude-desktop --vault /path/to/vault
+datacron unregister --client claude-desktop --vault /path/to/vault
 ```
 
 ## Limites actuelles

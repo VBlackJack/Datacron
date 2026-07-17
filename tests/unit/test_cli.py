@@ -19,6 +19,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from datacron import __version__
 from datacron.cli import app
 from datacron.core.config import DEFAULT_HISTORY_MODE, DEFAULT_HISTORY_RETENTION_DAYS
 from datacron.core.paths import (
@@ -60,11 +61,10 @@ class TestInit:
         assert config["folders"]["drafts"] == "_drafts"
         assert config["excluded_folders"] == [
             "_attachments",
-            "zzz_Corbeille",
             "_trash",
             "_archive",
         ]
-        assert config["excluded_files"] == ["00_INDEX.md"]
+        assert config["excluded_files"] == []
         assert config["query_expansion"]["supervision"] == ["monitoring"]
 
     def test_init_refuses_overwrite_without_force(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -132,6 +132,14 @@ class TestStatus:
         assert " chunks)" in result.stdout
 
 
+class TestVersion:
+    def test_eager_version_option(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["--version"])
+
+        assert result.exit_code == 0
+        assert result.stdout.strip() == f"datacron {__version__}"
+
+
 class TestIndex:
     def test_index_builds_fts5_store_on_demo_vault(
         self, runner: CliRunner, tmp_vault: Path
@@ -144,6 +152,7 @@ class TestIndex:
         db_path = sidecar_index_db(tmp_vault)
         assert db_path.is_file(), "index() must create the FTS5 database"
         # The demo vault has 6 notes; the stdout summary should reflect that.
+        assert "indexed 6/6 notes" in result.stdout
         assert "Indexed 6 notes" in result.stdout
 
     def test_reindex_drops_then_rebuilds(self, runner: CliRunner, tmp_vault: Path) -> None:
@@ -161,6 +170,7 @@ class TestIndex:
 
         second = runner.invoke(app, ["reindex", "--vault", str(tmp_vault)])
         assert second.exit_code == 0
+        assert "indexed 6/6 notes" in second.stdout
         assert db_path.is_file()
         assert marker.is_file(), "reindex must not touch unrelated files"
         # File size after rebuild should be sane (non-zero, comparable to first build).

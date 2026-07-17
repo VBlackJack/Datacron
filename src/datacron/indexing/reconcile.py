@@ -31,14 +31,17 @@ delegate here so the two paths cannot drift.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TypedDict
 
 from datacron.core.logger import get_logger
 from datacron.core.protocols import ASTChunker, FTS5Store, VaultReader
 
-__all__ = ["ReconcileStats", "reconcile"]
+__all__ = ["IndexProgress", "ReconcileStats", "reconcile"]
 
 _LOGGER = get_logger(__name__)
+
+IndexProgress = Callable[[int, int], None]
 
 
 class ReconcileStats(TypedDict):
@@ -57,6 +60,7 @@ async def reconcile(
     chunker: ASTChunker,
     *,
     mtime_gate: bool,
+    progress: IndexProgress | None = None,
 ) -> ReconcileStats:
     """Reconcile the FTS index in ``store`` with the live vault behind ``reader``.
 
@@ -67,6 +71,7 @@ async def reconcile(
         mtime_gate: When True, skip the read+hash of notes whose stored
             ``fs_mtime`` equals the on-disk ``st_mtime_ns``. When False, every
             note is read and compared by ``content_hash`` (full verification).
+        progress: Optional callback receiving completed and total note counts.
 
     Returns:
         Per-pass counts. ``skipped_notes`` covers both mtime-gated skips and
@@ -78,6 +83,9 @@ async def reconcile(
     reindexed = 0
     deleted = 0
     skipped = 0
+    completed = 0
+    if progress is not None:
+        progress(completed, len(live))
 
     # Purge vanished paths before processing live notes. If a note was moved
     # while keeping a stable frontmatter id, delete_note() clears the old row by
@@ -93,6 +101,9 @@ async def reconcile(
         # Cheap path: mtime unchanged -> trust the index, do not read or hash.
         if entry is not None and mtime_gate and entry[2] is not None and entry[2] == st_mtime_ns:
             skipped += 1
+            completed += 1
+            if progress is not None:
+                progress(completed, len(live))
             continue
 
         note = await reader.read_note(path)
@@ -103,6 +114,9 @@ async def reconcile(
             if entry[2] != st_mtime_ns:
                 await store.record_mtime(note.id, st_mtime_ns)
             skipped += 1
+            completed += 1
+            if progress is not None:
+                progress(completed, len(live))
             continue
 
         # New note, or content actually changed.
@@ -113,6 +127,9 @@ async def reconcile(
             deleted += 1
         await store.upsert_note(note, chunker.chunk(note), fs_mtime_ns=st_mtime_ns)
         reindexed += 1
+        completed += 1
+        if progress is not None:
+            progress(completed, len(live))
 
     if reindexed or deleted:
         await store.increment_generation()

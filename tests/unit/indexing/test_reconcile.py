@@ -80,6 +80,23 @@ async def test_first_pass_indexes_all(
     assert await store.get_generation() == 1
 
 
+async def test_reports_note_progress(
+    store: SQLiteFTS5Store, reader: FilesystemVaultReader, chunker: MarkdownChunker
+) -> None:
+    updates: list[tuple[int, int]] = []
+    total = len(await reader.stat_notes())
+
+    await reconcile(
+        store,
+        reader,
+        chunker,
+        mtime_gate=True,
+        progress=lambda completed, count: updates.append((completed, count)),
+    )
+
+    assert updates == [(completed, total) for completed in range(total + 1)]
+
+
 async def test_generation_advances_only_for_changed_index(
     store: SQLiteFTS5Store,
     reader: FilesystemVaultReader,
