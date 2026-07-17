@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,7 +70,14 @@ async def contradiction_app(tmp_path: Path) -> AsyncIterator[tuple[DatacronApp, 
         await store.close()
 
 
-def _write_note(vault: Path, rel_path: str, note_id: str, body: str) -> Path:
+def _write_note(
+    vault: Path,
+    rel_path: str,
+    note_id: str,
+    body: str,
+    *,
+    tags: list[str] | None = None,
+) -> Path:
     target = vault / rel_path
     target.parent.mkdir(parents=True, exist_ok=True)
     raw = serialize(
@@ -81,7 +90,7 @@ def _write_note(vault: Path, rel_path: str, note_id: str, body: str) -> Path:
             "confidence": "high",
             "last_verified": "2026-07-17",
             "supersedes": [],
-            "tags": ["memory"],
+            "tags": tags or ["memory"],
         },
         body,
     )
@@ -135,15 +144,22 @@ async def test_live_scan_is_deterministic_bounded_and_read_only(
     )
     before = _markdown_snapshot(vault)
 
-    first = await _contradiction_scan_impl(app, today=_TODAY)
-    second = await _contradiction_scan_impl(app, today=_TODAY)
+    first = await _contradiction_scan_impl(app, detail="summary", today=_TODAY)
+    second = await _contradiction_scan_impl(app, detail="summary", today=_TODAY)
+    first_full = await _contradiction_scan_impl(app, detail="full", today=_TODAY)
+    second_full = await _contradiction_scan_impl(app, detail="full", today=_TODAY)
 
     assert first == second
+    assert first_full == second_full
     assert first["schema_version"] == 2
     assert first["mode"] == "scan"
     assert first["candidate_count"] == 1
     assert first["examined_pairs"] <= app.settings.contradiction_max_pairs
-    assert first["limits"] == {"max_pairs": 64, "max_candidates": 10}
+    assert first["limits"] == {
+        "max_pairs": 64,
+        "max_candidates": 10,
+        "max_per_note_pair": 2,
+    }
     candidate = first["candidates"][0]
     assert candidate["class"] == "CONTRADICTION"
     assert candidate["addressable"] is True
@@ -154,8 +170,207 @@ async def test_live_scan_is_deterministic_bounded_and_read_only(
     suggested = candidate["suggested_mutation"]
     assert suggested["tool"] == "patch_note_section"
     assert suggested["block"].startswith("> CORRECTION 2026-07-17 :")
+    assert all(item["block"] is None for item in candidate["alternative_mutations"])
     assert _markdown_snapshot(vault) == before
     assert not (vault / ".datacron" / "oplog" / "operations.jsonl").exists()
+
+
+async def test_note_pair_cap_keeps_best_ranked_sections(
+    contradiction_app: tuple[DatacronApp, Path],
+) -> None:
+    app, vault = contradiction_app
+    old_sections = "\n\n".join(
+        (
+            f"## Legacy audit area {index}\n\n"
+            "Heimdall vault audit workflow documents command library usability and "
+            f"external secret storage behavior area{index}."
+        )
+        for index in range(3)
+    )
+    new_sections = "\n\n".join(
+        (
+            f"## Current audit area {index}\n\n"
+            "OBSOLETE: Heimdall vault audit workflow replaces command library usability "
+            f"and external secret storage behavior area{index}."
+        )
+        for index in range(3)
+    )
+    _write_note(vault, "_memory/projects/heimdall-old.md", _OLD_ID, old_sections)
+    _write_note(vault, "_memory/projects/heimdall-new.md", _NEW_ID, new_sections)
+    high_cap_app = replace(
+        app,
+        settings=app.settings.model_copy(update={"contradiction_max_per_note_pair": 20}),
+    )
+
+    uncapped = await _contradiction_scan_impl(high_cap_app, today=_TODAY)
+    capped = await _contradiction_scan_impl(app, today=_TODAY)
+    replay = await _contradiction_scan_impl(app, today=_TODAY)
+
+    assert uncapped["candidate_count"] > app.settings.contradiction_max_per_note_pair
+    assert capped == replay
+    assert capped["candidate_count"] == app.settings.contradiction_max_per_note_pair
+    assert [item["candidate_id"] for item in capped["candidates"]] == [
+        item["candidate_id"]
+        for item in uncapped["candidates"][: app.settings.contradiction_max_per_note_pair]
+    ]
+
+
+async def test_summary_payload_is_compact_and_alternative_confirms_like_full(
+    contradiction_app: tuple[DatacronApp, Path],
+) -> None:
+    app, vault = contradiction_app
+    _write_candidate_pair(
+        vault,
+        source_content=(
+            "CORRECTION: The Windows engineering employer is Worldline and replaces "
+            "the old Magellan statement for the platform team. "
+            + "Detailed audit documentation and migration context. "
+            * 10
+        ),
+    )
+
+    summary = await _contradiction_scan_impl(app, detail="summary", today=_TODAY)
+    full = await _contradiction_scan_impl(app, detail="full", today=_TODAY)
+
+    summary_bytes = len(
+        json.dumps(summary, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
+            "ascii"
+        )
+    )
+    full_bytes = len(
+        json.dumps(full, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
+    )
+    summary_candidate = summary["candidates"][0]
+    full_candidate = full["candidates"][0]
+    assert summary_bytes < full_bytes
+    assert len(summary_candidate["evidence"]["source"]) == 160
+    assert 160 < len(full_candidate["evidence"]["source"]) <= 280
+    assert summary_candidate["suggested_mutation"]["block"] is not None
+    assert all(mutation["block"] is None for mutation in summary_candidate["alternative_mutations"])
+    assert any(
+        mutation["block"] is not None for mutation in full_candidate["alternative_mutations"]
+    )
+
+    summary_alternative = next(
+        mutation
+        for mutation in summary_candidate["alternative_mutations"]
+        if mutation["classification"] == "RAFFINEMENT" and mutation["scope"] == "section"
+    )
+    full_alternative = next(
+        mutation
+        for mutation in full_candidate["alternative_mutations"]
+        if mutation["classification"] == "RAFFINEMENT" and mutation["scope"] == "section"
+    )
+    assert summary_alternative["proposal_token"] == full_alternative["proposal_token"]
+    summary_confirmation = await _contradiction_scan_impl(
+        app,
+        mode="confirm",
+        proposal_token=summary_alternative["proposal_token"],
+    )
+    full_confirmation = await _contradiction_scan_impl(
+        app,
+        mode="confirm",
+        proposal_token=full_alternative["proposal_token"],
+    )
+    assert (
+        summary_confirmation["confirmation"]["write_call"]
+        == full_confirmation["confirmation"]["write_call"]
+    )
+
+
+async def test_cap_does_not_change_candidates_below_threshold(
+    contradiction_app: tuple[DatacronApp, Path],
+) -> None:
+    app, vault = contradiction_app
+    _write_candidate_pair(
+        vault,
+        source_content=(
+            "CORRECTION: The Windows engineering employer is Worldline and replaces "
+            "the old Magellan statement for the platform team."
+        ),
+    )
+    high_cap_app = replace(
+        app,
+        settings=app.settings.model_copy(update={"contradiction_max_per_note_pair": 20}),
+    )
+
+    capped = await _contradiction_scan_impl(app, today=_TODAY)
+    high_cap = await _contradiction_scan_impl(high_cap_app, today=_TODAY)
+
+    assert capped["candidates"] == high_cap["candidates"]
+
+
+@pytest.mark.parametrize(
+    "source_tags",
+    [["memory"], ["memory", "project/beta"]],
+)
+async def test_cross_project_without_temporal_order_is_not_suggested_as_contradiction(
+    contradiction_app: tuple[DatacronApp, Path],
+    source_tags: list[str],
+) -> None:
+    app, vault = contradiction_app
+    _write_note(
+        vault,
+        "_memory/projects/alpha-audit.md",
+        _OLD_ID,
+        (
+            "# Audit UX\n\n## Vault workflow\n\n"
+            "The shared vault audit workflow uses the command library usability review.\n"
+        ),
+        tags=["memory", "project/alpha"],
+    )
+    _write_note(
+        vault,
+        "_memory/projects/beta-audit.md",
+        _NEW_ID,
+        (
+            "# Audit UX\n\n## Vault workflow\n\n"
+            "OBSOLETE: The shared vault audit workflow replaces the command library "
+            "usability review.\n"
+        ),
+        tags=source_tags,
+    )
+
+    scan = await _contradiction_scan_impl(app, today=_TODAY)
+
+    candidate = scan["candidates"][0]
+    assert candidate["class"] == "QUESTION_OUVERTE"
+    assert set(candidate["classification_options"]) == {
+        "CONTRADICTION",
+        "RAFFINEMENT",
+        "QUESTION_OUVERTE",
+    }
+
+
+async def test_cross_project_with_explicit_temporal_order_can_suggest_contradiction(
+    contradiction_app: tuple[DatacronApp, Path],
+) -> None:
+    app, vault = contradiction_app
+    _write_note(
+        vault,
+        "_memory/projects/alpha-audit.md",
+        _OLD_ID,
+        (
+            "# Audit UX\n\n## Vault workflow\n\n"
+            "On 2026-06-20 the shared vault audit workflow used the command library.\n"
+        ),
+        tags=["memory", "project/alpha"],
+    )
+    _write_note(
+        vault,
+        "_memory/projects/beta-audit.md",
+        _NEW_ID,
+        (
+            "# Audit UX\n\n## Vault workflow\n\n"
+            "OBSOLETE: On 2026-06-23 the shared vault audit workflow replaced the "
+            "command library.\n"
+        ),
+        tags=["memory", "project/beta"],
+    )
+
+    scan = await _contradiction_scan_impl(app, today=_TODAY)
+
+    assert scan["candidates"][0]["class"] == "CONTRADICTION"
 
 
 @pytest.mark.parametrize(

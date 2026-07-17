@@ -23,6 +23,7 @@ GetNoteFormat: TypeAlias = Literal["full", "map", "chunk"]
 MemoryOrigin: TypeAlias = Literal["ai", "human", "merged"]
 MemoryConfidence: TypeAlias = Literal["high", "medium", "low", "needs_verification"]
 ContradictionScanMode: TypeAlias = Literal["scan", "confirm"]
+ContradictionScanDetail: TypeAlias = Literal["summary", "full"]
 ContradictionClassName: TypeAlias = Literal[
     "CONTRADICTION",
     "RAFFINEMENT",
@@ -191,6 +192,7 @@ class ContradictionLimitsOutput(TypedDict):
 
     max_pairs: int
     max_candidates: int
+    max_per_note_pair: int
 
 
 class PatchSectionCallArgumentsOutput(TypedDict):
