@@ -52,6 +52,8 @@ __all__ = [
     "ClientTarget",
     "InstallOutcome",
     "UnregisterOutcome",
+    "client_display_name",
+    "detect_clients",
     "discover_targets",
     "discover_unregistration_targets",
     "install_targets",
@@ -234,6 +236,23 @@ def _is_present(client_id: str) -> bool:
     if any(path.exists() for path in paths):
         return True
     return any(shutil.which(binary) is not None for binary in binaries)
+
+
+def detect_clients(*, include: tuple[str, ...] | None = None) -> tuple[str, ...]:
+    """Return installed client identifiers using the shared best-effort detection."""
+    candidates = ALL_CLIENT_IDS if include is None else include
+    unknown = sorted(set(candidates) - set(ALL_CLIENT_IDS))
+    if unknown:
+        raise ValueError(f"Unknown client identifiers: {unknown}")
+    return tuple(client_id for client_id in candidates if _is_present(client_id))
+
+
+def client_display_name(client_id: str) -> str:
+    """Return the human-readable name for a known client identifier."""
+    try:
+        return _DISPLAY_NAMES[client_id]
+    except KeyError as exc:
+        raise ValueError(f"Unknown client identifier: {client_id!r}") from exc
 
 
 # ---------------------------------------------------------------------------

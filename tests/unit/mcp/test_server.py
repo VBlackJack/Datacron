@@ -18,6 +18,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+from mcp.shared.exceptions import McpError
+from mcp.types import INVALID_PARAMS
 
 from datacron.core.config import Settings
 from datacron.core.paths import PathConfinementError, sidecar_index_db, sidecar_vault_config
@@ -35,6 +38,121 @@ def test_server_instructions_include_memory_protocol() -> None:
     assert "create_note_ai" in SERVER_INSTRUCTIONS
     assert "INIT.md" in SERVER_INSTRUCTIONS
     assert "sandbox-wrapped" in SERVER_INSTRUCTIONS
+
+
+@pytest.mark.asyncio
+async def test_tool_annotations_describe_local_effects(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    app = build_app(
+        settings=Settings(read_paths=[vault], write_paths=[vault], vault_root=vault),
+        vault_root=vault,
+    )
+
+    annotations = {
+        tool.name: tool.annotations.model_dump(exclude_none=True)
+        for tool in await create_server(app).list_tools()
+        if tool.annotations is not None
+    }
+
+    read_names = {
+        "list_notes",
+        "get_note",
+        "search_text",
+        "search_regex",
+        "get_backlinks",
+        "get_health",
+        "get_note_history",
+        "audit_query",
+        "contradiction_scan",
+    }
+    for name in read_names:
+        assert annotations[name] == {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        }
+    for name in ("create_note_ai", "append_journal"):
+        assert annotations[name] == {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        }
+    for name in ("set_frontmatter", "patch_note_section"):
+        assert annotations[name] == {
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        }
+    assert annotations["revert_note"] == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
+    tmp_path: Path,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    app = build_app(
+        settings=Settings(read_paths=[vault], write_paths=[vault], vault_root=vault),
+        vault_root=vault,
+    )
+    tools = {tool.name: tool for tool in await create_server(app).list_tools()}
+    structured_names = {
+        "list_notes",
+        "get_note",
+        "search_text",
+        "get_health",
+        "create_note_ai",
+        "append_journal",
+        "set_frontmatter",
+        "patch_note_section",
+        "revert_note",
+    }
+
+    for name in structured_names:
+        schema = tools[name].outputSchema
+        assert schema is not None
+        assert schema.get("additionalProperties") is not True
+        assert schema.get("properties")
+        Draft202012Validator.check_schema(schema)
+
+    assert tools["get_note"].inputSchema["properties"]["format"]["enum"] == [
+        "full",
+        "map",
+        "chunk",
+    ]
+    create_properties = tools["create_note_ai"].inputSchema["properties"]
+    assert set(create_properties["origin"]["enum"]) == {"ai", "human", "merged"}
+    assert set(create_properties["confidence"]["enum"]) == {
+        "high",
+        "medium",
+        "low",
+        "needs_verification",
+    }
+
+
+@pytest.mark.asyncio
+async def test_missing_resource_uses_invalid_params(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    app = build_app(
+        settings=Settings(read_paths=[vault], vault_root=vault),
+        vault_root=vault,
+    )
+
+    with pytest.raises(McpError) as error:
+        await create_server(app).read_resource("datacron://vault/missing")
+
+    assert error.value.error.code == INVALID_PARAMS
 
 
 @pytest.mark.asyncio
@@ -56,6 +174,12 @@ async def test_write_tool_descriptions_lead_with_usage_trigger(tmp_path: Path) -
     for description in descriptions.values():
         assert description is not None
         assert description.startswith(("Call this", "Use this"))
+    set_frontmatter_description = descriptions["set_frontmatter"]
+    assert set_frontmatter_description is not None
+    assert (
+        "Prefer invalidating an outdated fact (invalid_at + invalidated_by) over deleting or "
+        "rewriting it: history stays queryable." in set_frontmatter_description
+    )
 
 
 class TestBuildAppReadPaths:

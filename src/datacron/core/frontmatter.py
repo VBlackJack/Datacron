@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import date
 from pathlib import Path
 from typing import Any, Final, TypeVar
 
@@ -53,6 +54,9 @@ _FRONTMATTER_KEY_ORDER: Final[tuple[str, ...]] = (
     "title",
     "created",
     "updated",
+    "valid_from",
+    "invalid_at",
+    "invalidated_by",
     "origin",
     "confidence",
     "last_verified",
@@ -79,7 +83,16 @@ def parse(raw: str) -> tuple[dict[str, Any], str]:
     except yaml.YAMLError as exc:
         raise FrontmatterError(str(exc)) from exc
     metadata: dict[str, Any] = dict(post.metadata)
+    _normalize_lifecycle_scalars(metadata)
     return metadata, post.content
+
+
+def _normalize_lifecycle_scalars(metadata: dict[str, Any]) -> None:
+    """Represent YAML date objects for lifecycle fields as ISO strings."""
+    for key in ("valid_from", "invalid_at"):
+        value = metadata.get(key)
+        if isinstance(value, date):
+            metadata[key] = value.isoformat()
 
 
 def serialize(metadata: Mapping[str, Any], body: str) -> str:

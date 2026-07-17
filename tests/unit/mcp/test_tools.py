@@ -1504,6 +1504,116 @@ class TestSetFrontmatter:
         assert metadata["supersedes"] == original_metadata["supersedes"]
 
     @pytest.mark.asyncio
+    async def test_bitemporal_fields_update_reindex_and_warn_for_missing_target(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/bitemporal.md"
+        note_id = "01HQXR7K9YZ8M2N3PQRSTV4WX9"
+        replacement_id = "01HQXR7K9YZ8M2N3PQRSTV4WX8"
+        target, _original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Bi-temporal memory\n\nBody.\n",
+            metadata_overrides={"id": note_id},
+        )
+        warnings: list[tuple[str, tuple[object, ...]]] = []
+
+        def capture_warning(message: str, *args: object, **_kwargs: object) -> None:
+            warnings.append((message, args))
+
+        monkeypatch.setattr("datacron.mcp.tools.write._LOGGER.warning", capture_warning)
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            valid_from="2026-07-01",
+            invalid_at="2026-07-17T08:30:00Z",
+            invalidated_by=replacement_id,
+        )
+
+        assert result["updated"] == {
+            "rel_path": rel_path,
+            "fields": ["valid_from", "invalid_at", "invalidated_by"],
+        }
+        metadata, _body = parse(target.read_text(encoding="utf-8"))
+        assert metadata["valid_from"] == "2026-07-01"
+        assert metadata["invalid_at"] == "2026-07-17T08:30:00+00:00"
+        assert metadata["invalidated_by"] == replacement_id
+        temporal = await writable_app.store.list_temporal_metadata()
+        assert temporal[note_id].valid_from == "2026-07-01"
+        assert temporal[note_id].invalid_at == "2026-07-17T08:30:00+00:00"
+        assert temporal[note_id].invalidated_by == replacement_id
+        assert warnings == [("invalidated_by target note is not indexed: %s", (replacement_id,))]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "invalid_at",
+        [
+            "not-a-datetime",
+            "2026-07-17T08:30:00",
+            "2026-07-17T10:30:00+02:00",
+        ],
+    )
+    async def test_invalid_at_requires_iso_utc_datetime_without_write(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        invalid_at: str,
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/invalid-at.md"
+        target, original_raw = _write_memory_note(tmp_vault, rel_path, "# Invalid at\n\nBody.\n")
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            invalid_at=invalid_at,
+        )
+
+        assert result["error"] == {
+            "type": "ValueError",
+            "message": "invalid_at must be an ISO 8601 UTC datetime",
+        }
+        assert target.read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
+    async def test_invalid_valid_from_and_invalidated_by_do_not_write(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/invalid-lifecycle.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Invalid lifecycle\n\nBody.\n"
+        )
+
+        invalid_date = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            valid_from="20260717",
+        )
+        invalid_ulid = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            invalidated_by="01hqxr7k9yz8m2n3pqrstv4wx5",
+        )
+
+        assert invalid_date["error"]["message"] == "valid_from must be a YYYY-MM-DD date"
+        assert (
+            invalid_ulid["error"]["message"]
+            == "invalidated_by must be a canonical 26-character ULID"
+        )
+        assert target.read_text(encoding="utf-8") == original_raw
+
+    @pytest.mark.asyncio
     async def test_existing_lifecycle_fields_still_update_without_origin(
         self, writable_app: DatacronApp, tmp_vault: Path
     ) -> None:
