@@ -26,21 +26,34 @@ Construction is split in two so tests and the CLI can share the wiring:
 
 Tool error handling: every tool catches broad exceptions, logs a full
 traceback via :func:`datacron.core.logger.get_logger`, and returns a
-structured ``{"error": ...}`` payload. FastMCP itself also converts
-unhandled exceptions to MCP error responses, but the explicit guard
-gives us the logged traceback the brief requires.
+structured ``{"error": ...}`` payload. :class:`DatacronFastMCP` maps that
+payload to an MCP tool result with ``isError=true`` while keeping the JSON
+payload intact in text content.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+import json
+from collections.abc import AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, final
+from typing import Any, Final, cast, final
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ResourceError, ToolError
+from mcp.server.lowlevel.helper_types import ReadResourceContents
+from mcp.shared.exceptions import McpError
+from mcp.types import (
+    INTERNAL_ERROR,
+    INVALID_PARAMS,
+    CallToolResult,
+    ContentBlock,
+    ErrorData,
+    TextContent,
+)
+from pydantic import AnyUrl
 
 from datacron import __version__
 from datacron.core.config import Settings, VaultConfig, get_settings, load_vault_config
@@ -131,6 +144,77 @@ class DatacronApp:
     write_policy: WritePolicy
     reconcile_lock: asyncio.Lock
     repair_state: RepairState
+
+
+@final
+class DatacronFastMCP(FastMCP[DatacronApp]):
+    """FastMCP boundary preserving Datacron's structured tool errors."""
+
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> Sequence[ContentBlock] | dict[str, Any]:
+        """Validate success schemas and preserve JSON errors on failure."""
+        context = self.get_context()
+        tool = self._tool_manager.get_tool(name)
+        if tool is None:
+            raise ToolError(f"Unknown tool: {name}")
+
+        result = await tool.run(arguments, context=context, convert_result=False)
+        if _is_structured_tool_error(result):
+            error_result = CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, ensure_ascii=True, sort_keys=True),
+                    )
+                ],
+                isError=True,
+            )
+            # FastMCP's public return annotation predates its low-level support
+            # for returning CallToolResult directly. The runtime accepts it.
+            return cast("Sequence[ContentBlock] | dict[str, Any]", error_result)
+        return cast(
+            "Sequence[ContentBlock] | dict[str, Any]",
+            tool.fn_metadata.convert_result(result),
+        )
+
+    async def read_resource(self, uri: AnyUrl | str) -> Iterable[ReadResourceContents]:
+        """Use standard JSON-RPC codes for missing and failed resources."""
+        try:
+            resource = await self._resource_manager.get_resource(uri, context=self.get_context())
+        except ValueError as exc:
+            raise McpError(
+                ErrorData(code=INVALID_PARAMS, message=f"Unknown resource: {uri}")
+            ) from exc
+        if resource is None:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"Unknown resource: {uri}"))
+        try:
+            content = await resource.read()
+        except ResourceError as exc:
+            raise McpError(ErrorData(code=INTERNAL_ERROR, message="Resource read failed")) from exc
+        except Exception as exc:
+            raise McpError(ErrorData(code=INTERNAL_ERROR, message="Resource read failed")) from exc
+        return [
+            ReadResourceContents(
+                content=content,
+                mime_type=resource.mime_type,
+                meta=resource.meta,
+            )
+        ]
+
+
+def _is_structured_tool_error(result: object) -> bool:
+    """Return whether a tool implementation produced the stable error payload."""
+    if not isinstance(result, dict):
+        return False
+    error = result.get("error")
+    return (
+        isinstance(error, dict)
+        and isinstance(error.get("type"), str)
+        and isinstance(error.get("message"), str)
+    )
 
 
 def build_app(
@@ -284,7 +368,7 @@ def create_server(app: DatacronApp) -> FastMCP[DatacronApp]:
             finally:
                 _LOGGER.info("datacron-mcp v%s shutting down", __version__)
 
-    server: FastMCP[DatacronApp] = FastMCP(
+    server: FastMCP[DatacronApp] = DatacronFastMCP(
         name=SERVER_NAME,
         instructions=SERVER_INSTRUCTIONS,
         lifespan=_lifespan,

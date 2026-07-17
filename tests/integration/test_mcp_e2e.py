@@ -200,8 +200,10 @@ class TestMcpE2E:
             result = await session.call_tool(
                 "get_note", {"id_or_path": "nope.md", "format": "full"}
             )
+            assert result.isError is True
             payload = json.loads(result.content[0].text)  # type: ignore[union-attr]
-            assert "error" in payload
+            assert set(payload) == {"error"}
+            assert set(payload["error"]) == {"message", "type"}
         finally:
             await _close_session(session, streams)
 
