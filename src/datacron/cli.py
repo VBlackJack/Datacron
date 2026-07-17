@@ -57,6 +57,13 @@ from datacron.installers.mcp_clients import (
     discover_unregistration_targets,
     unregister_targets,
 )
+from datacron.installers.protocol import (
+    PROTOCOL_ALL,
+    PROTOCOL_CLIENT_IDS,
+    ProtocolInstallOutcome,
+    install_memory_protocol,
+    uninstall_memory_protocol,
+)
 from datacron.scrubber import CanaryInitializationError, ScrubState, initialize_canaries
 from datacron.setup_wizard import (
     CLIENT_ALL,
@@ -91,7 +98,14 @@ mcp_app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+protocol_app = typer.Typer(
+    name="protocol",
+    help="Install or remove Datacron memory instructions in supported clients.",
+    no_args_is_help=True,
+    add_completion=False,
+)
 app.add_typer(mcp_app, name="mcp")
+app.add_typer(protocol_app, name="protocol")
 
 
 @app.callback()
@@ -635,6 +649,11 @@ def setup(
         "-y",
         help="Accept defaults for every unspecified option; no prompts.",
     ),
+    protocol_enabled: bool = typer.Option(
+        False,
+        "--protocol",
+        help="Install the Datacron memory protocol into detected client instructions.",
+    ),
 ) -> None:
     """Guided end-to-end setup: initialize, wire an MCP client, and index.
 
@@ -669,6 +688,13 @@ def setup(
     resolved_read_only = read_only or (
         not assume_yes and typer.confirm("Configure certified read-only mode?", default=False)
     )
+    resolved_protocol = protocol_enabled or (
+        not assume_yes
+        and typer.confirm(
+            "Install the Datacron memory protocol in detected client instructions?",
+            default=False,
+        )
+    )
 
     plan = SetupPlan(
         vault_path=resolved_vault,
@@ -691,7 +717,13 @@ def setup(
         _error(str(exc))
 
     _render_setup_result(result)
+    protocol_failed = False
+    if resolved_protocol:
+        protocol_outcomes = install_memory_protocol(PROTOCOL_ALL)
+        protocol_failed = _render_protocol_outcomes(protocol_outcomes, operation="install")
     _log_completion("setup", started)
+    if protocol_failed:
+        raise typer.Exit(code=1)
 
 
 # Installer reset invocation:
@@ -912,6 +944,79 @@ def unregister(
 
 # The Windows uninstaller will invoke this before deleting datacron.exe:
 # datacron.exe unregister --yes --client all --scope both --vault "<vault>"
+
+
+# ---------------------------------------------------------------------------
+# `datacron protocol ...`
+# ---------------------------------------------------------------------------
+
+
+@protocol_app.command("install")
+def protocol_install(
+    client: str = typer.Option(
+        PROTOCOL_ALL,
+        "--client",
+        help=(f"Client identifier ({', '.join(PROTOCOL_CLIENT_IDS)}), or all detected clients."),
+    ),
+) -> None:
+    """Install or refresh the marked Datacron memory protocol block."""
+    started = _log_invocation("protocol.install", client=client)
+    try:
+        outcomes = install_memory_protocol(client)
+    except ValueError as exc:
+        _error(str(exc))
+    failed = _render_protocol_outcomes(outcomes, operation="install")
+    _log_completion("protocol.install", started)
+    if failed:
+        raise typer.Exit(code=1)
+
+
+@protocol_app.command("uninstall")
+def protocol_uninstall(
+    client: str = typer.Option(
+        PROTOCOL_ALL,
+        "--client",
+        help=(f"Client identifier ({', '.join(PROTOCOL_CLIENT_IDS)}), or all relevant clients."),
+    ),
+) -> None:
+    """Remove only the marked Datacron memory protocol block."""
+    started = _log_invocation("protocol.uninstall", client=client)
+    try:
+        outcomes = uninstall_memory_protocol(client)
+    except ValueError as exc:
+        _error(str(exc))
+    failed = _render_protocol_outcomes(outcomes, operation="uninstall")
+    _log_completion("protocol.uninstall", started)
+    if failed:
+        raise typer.Exit(code=1)
+
+
+def _render_protocol_outcomes(
+    outcomes: list[ProtocolInstallOutcome],
+    *,
+    operation: str,
+) -> bool:
+    """Render protocol instruction outcomes and return whether any failed."""
+    if not outcomes:
+        if operation == "install":
+            _print("No supported clients detected; protocol instructions were not installed.")
+        else:
+            _print("No supported client instruction files found; nothing to uninstall.")
+        return False
+
+    _print("Protocol client instructions:")
+    for outcome in outcomes:
+        if outcome.skipped:
+            _print(f"  [skip] {outcome.display_name}: {outcome.detail}")
+            continue
+        mark = "ok " if outcome.successful else "err"
+        path = outcome.instruction_path or "n/a"
+        message = f"  [{mark}] {outcome.display_name}: {path} - {outcome.detail}"
+        if outcome.successful:
+            _print(message)
+        else:
+            typer.secho(message, fg=typer.colors.YELLOW, err=True)
+    return any(not outcome.successful for outcome in outcomes)
 
 
 # ---------------------------------------------------------------------------
