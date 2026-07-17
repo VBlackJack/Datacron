@@ -23,6 +23,6 @@ from __future__ import annotations
 # Calendar Versioning: YYYY.MMDD.XX (UTC year, zero-padded month+day, same-day
 # build counter starting at 00). Single source of truth; pyproject reads it via
 # hatch's dynamic version.
-__version__ = "2026.0717.02"
+__version__ = "2026.0717.03"
 
 __all__ = ["__version__"]
