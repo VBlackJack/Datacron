@@ -30,6 +30,9 @@ class TemporalMeta:
 
     confidence: str | None
     supersedes: list[str]
+    valid_from: str | None = None
+    invalid_at: str | None = None
+    invalidated_by: str | None = None
 
 
 def rerank_temporal(
@@ -88,7 +91,9 @@ def _temporal_adjustment(
     item = meta.get(note_id)
     confidence = item.confidence.lower() if item and item.confidence else None
     factor = CONFIDENCE_PENALTY.get(confidence or "", 1.0)
-    is_superseded = note_id in superseded_ids and not include_superseded
-    if is_superseded:
+    is_historical = (
+        note_id in superseded_ids or (item is not None and item.invalid_at is not None)
+    ) and not include_superseded
+    if is_historical:
         factor *= SUPERSEDED_DEMOTION_FACTOR
-    return (int(is_superseded), factor)
+    return (int(is_historical), factor)

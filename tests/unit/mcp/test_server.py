@@ -56,6 +56,12 @@ async def test_write_tool_descriptions_lead_with_usage_trigger(tmp_path: Path) -
     for description in descriptions.values():
         assert description is not None
         assert description.startswith(("Call this", "Use this"))
+    set_frontmatter_description = descriptions["set_frontmatter"]
+    assert set_frontmatter_description is not None
+    assert (
+        "Prefer invalidating an outdated fact (invalid_at + invalidated_by) over deleting or "
+        "rewriting it: history stays queryable." in set_frontmatter_description
+    )
 
 
 class TestBuildAppReadPaths:

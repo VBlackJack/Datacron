@@ -235,9 +235,11 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         title="Set lifecycle frontmatter",
         description=(
             "Use this when a fact's lifecycle changes: verified today, superseded by a "
-            "newer note, or confidence raised or lowered. Update lifecycle frontmatter "
-            "fields on an existing memory note. This write operation only changes "
-            "origin, confidence, last_verified, supersedes, and the automatic updated "
+            "newer note, or confidence raised or lowered. Prefer invalidating an outdated "
+            "fact (invalid_at + invalidated_by) over deleting or rewriting it: history "
+            "stays queryable. Update lifecycle frontmatter fields on an existing memory "
+            "note. This write operation only changes origin, confidence, last_verified, "
+            "supersedes, valid_from, invalid_at, invalidated_by, and the automatic updated "
             "timestamp; the Markdown body is preserved."
         ),
     )
@@ -248,6 +250,9 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         last_verified: str | None = None,
         supersedes: list[str] | None = None,
         origin: str | None = None,
+        valid_from: str | None = None,
+        invalid_at: str | None = None,
+        invalidated_by: str | None = None,
         expected_hash: str | None = None,
     ) -> dict[str, Any]:
         return await _set_frontmatter_impl(
@@ -257,6 +262,9 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             last_verified=last_verified,
             supersedes=supersedes,
             origin=origin,
+            valid_from=valid_from,
+            invalid_at=invalid_at,
+            invalidated_by=invalidated_by,
             expected_hash=expected_hash,
             actor=app.identity_provider.identify(ctx).actor,
         )

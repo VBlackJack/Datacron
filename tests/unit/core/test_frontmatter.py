@@ -38,6 +38,22 @@ class TestParse:
         with pytest.raises(FrontmatterError, match="while parsing"):
             parse(raw)
 
+    def test_lifecycle_dates_are_parsed_as_iso_strings(self) -> None:
+        raw = (
+            "---\n"
+            "valid_from: 2026-07-17\n"
+            "invalid_at: 2026-07-17T08:30:00Z\n"
+            "invalidated_by: 01HQXR7K9YZ8M2N3PQRSTV4WX5\n"
+            "---\n"
+            "Body\n"
+        )
+
+        metadata, _body = parse(raw)
+
+        assert metadata["valid_from"] == "2026-07-17"
+        assert metadata["invalid_at"] == "2026-07-17T08:30:00+00:00"
+        assert metadata["invalidated_by"] == "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+
 
 class TestSerialize:
     def test_round_trips_metadata_and_body(self) -> None:
@@ -79,6 +95,28 @@ class TestSerialize:
             "alpha_extra: first",
         ]
         assert "z_extra: true" in lines
+
+    def test_lifecycle_key_order_is_deterministic(self) -> None:
+        rendered = serialize(
+            {
+                "id": "01HQXR7K9YZ8M2N3PQRSTV4WX5",
+                "origin": "human",
+                "invalidated_by": "01HQXR7K9YZ8M2N3PQRSTV4WX6",
+                "invalid_at": "2026-07-17T08:30:00+00:00",
+                "valid_from": "2026-07-01",
+            },
+            "Body\n",
+        )
+
+        assert rendered.splitlines()[:7] == [
+            "---",
+            "id: 01HQXR7K9YZ8M2N3PQRSTV4WX5",
+            "valid_from: '2026-07-01'",
+            "invalid_at: '2026-07-17T08:30:00+00:00'",
+            "invalidated_by: 01HQXR7K9YZ8M2N3PQRSTV4WX6",
+            "origin: human",
+            "---",
+        ]
 
 
 class TestExtractTags:

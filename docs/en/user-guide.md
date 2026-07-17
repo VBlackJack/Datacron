@@ -64,8 +64,9 @@ Three MCP resources round out these tools: `datacron://vault/map` (vault map),
   surfaces notes that mention "backup".
 - **Conservative temporal re-ranking**:
   - a note referenced in another note's `supersedes` field is strongly demoted;
+  - a note carrying `invalid_at` is demoted identically;
   - `confidence: low` and `confidence: needs_verification` receive a light penalty;
-  - `include_superseded=true` brings historical notes back up.
+  - `include_superseded=true` brings superseded or invalidated history back up.
 
 `search_regex` stays **literal**: no query expansion, no temporal re-ranking. Use it when you
 are after an exact string (an identifier, a path, a snippet of code).
@@ -82,9 +83,18 @@ day to day:
   slightly demoted; handy to flag a draft or an item to verify.
 - `supersedes: <ULID>` - designates the replaced note, which will be strongly demoted in
   everyday searches.
+- `invalid_at: <UTC datetime>` with `invalidated_by: <ULID>` - invalidates a targeted fact
+  without deleting it or rewriting its history.
 
 The result: you can keep history in the vault without polluting answers, while still being
 able to recall it explicitly with `include_superseded=true`.
+
+### Fact lifecycle
+
+A fact is **active** until another note supersedes it or it receives an `invalid_at` field. For a
+targeted correction, prefer `invalid_at + invalidated_by`: the note becomes **invalidated**, stays
+queryable as history with `include_superseded=true`, and the replacement note may be written before
+or after it. `valid_from` can state when validity began; otherwise `created` is the implicit value.
 
 ## Concrete requests
 

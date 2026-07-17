@@ -20,7 +20,7 @@ import json
 import re
 import sqlite3
 from collections.abc import AsyncIterator, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Final, cast, final
 
@@ -895,6 +895,9 @@ def _temporal_meta_from_frontmatter(value: Any) -> TemporalMeta:
     return TemporalMeta(
         confidence=_optional_str(parsed.get("confidence")),
         supersedes=coerce_string_list(parsed.get("supersedes"), split_delimited=False),
+        valid_from=_optional_str(parsed.get("valid_from")),
+        invalid_at=_optional_str(parsed.get("invalid_at")),
+        invalidated_by=_optional_str(parsed.get("invalidated_by")),
     )
 
 
@@ -906,7 +909,7 @@ def _optional_str(value: Any) -> str | None:
 
 
 def _json_default(value: object) -> str:
-    if isinstance(value, datetime):
+    if isinstance(value, date):
         return value.isoformat()
     return str(value)
 
