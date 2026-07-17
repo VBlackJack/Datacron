@@ -599,7 +599,9 @@ async def test_search_multi_term_query_tops_up_sparse_and_results_with_or(
     results = await store.search("demander tenant OSCARE cle API", limit=5)
 
     assert results[0].chunk == false_positive
+    assert results[0].tier == 0
     assert target in [result.chunk for result in results[1:]]
+    assert all(result.tier == 1 for result in results[1:])
     assert len({result.chunk.chunk_id for result in results}) == len(results)
     await store.close()
 
