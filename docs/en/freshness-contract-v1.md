@@ -19,6 +19,20 @@ never calls Datacron at runtime to decide its own freshness.
 The shared manifest `tests/fixtures/freshness-contract-v1.json` contains the Base64 vectors
 for LF, CRLF, BOM, and Unicode NFD. The tests write them in binary before hashing.
 
+## MCP index freshness window
+
+Index-backed reads (`search_text`, `search_regex`, and `get_backlinks`) trigger
+repair-on-read at most once per interval. `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` configures
+that interval and defaults to 30 seconds. Between sweeps, these tools serve the current
+index: a change made outside Datacron can therefore remain invisible until the first
+index-backed read after the interval expires. Setting the value to `0` restores a sweep
+before every index-backed read.
+
+This window does not apply to writes made through Datacron tools: their reconcile remains
+synchronous and the change is indexed before the tool responds. It also does not apply to
+`get_health`, which exhaustively reads the vault and index on every call to provide an exact
+point-in-time diagnosis.
+
 ## Derived chunk hash
 
 For a read by `chunk_id`, `get_note` also returns `chunk_content_hash`: the already-indexed

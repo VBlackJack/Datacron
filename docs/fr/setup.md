@@ -192,6 +192,7 @@ stdout (réservé au protocole).
 | `DATACRON_WRITE_PATHS` | vide | Allowlist d'écriture ; **vide = écriture désactivée**. |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | Nombre max de résultats retournés. |
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | Budget token des résultats de recherche. |
+| `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | Intervalle minimal entre les sweeps repair-on-read ; `0` = chaque lecture. |
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | Budget de `get_note(format="full")`. |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | Taille cible max des chunks. |
 | `DATACRON_RIPGREP_PATH` | `rg` | Binaire ripgrep. |

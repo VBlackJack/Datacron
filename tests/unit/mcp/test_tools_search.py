@@ -22,9 +22,11 @@ from datacron.core.protocols import FTS5Store
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.ripgrep import RegexFallbackError, RipgrepError, RipgrepWrapper
+from datacron.mcp.health import build_health
 from datacron.mcp.server import DatacronApp, build_app
 from datacron.mcp.tools import (
     _get_backlinks_impl,
+    _repair_index_on_read,
     _search_regex_impl,
     _search_text_impl,
 )
@@ -271,6 +273,117 @@ excluded_files:
         assert all("/_attachments/" not in rel_path for rel_path in indexed)
         assert "00_INDEX.md" not in indexed
         assert "subfolder/00_INDEX.md" not in indexed
+
+    @pytest.mark.asyncio
+    async def test_repair_throttle_bounds_external_edit_detection_and_not_health(
+        self,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        settings = Settings(
+            read_paths=[tmp_vault],
+            write_paths=[tmp_vault],
+            vault_root=tmp_vault,
+            max_result_count=20,
+            max_result_tokens=8000,
+            repair_min_interval_seconds=30,
+        )
+        store = SQLiteFTS5Store()
+        await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+        app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+        clock = {"now": 100.0}
+        monkeypatch.setattr(
+            "datacron.mcp.tools.search._repair_clock",
+            lambda: clock["now"],
+        )
+        original_stat_notes = app.vault_reader.stat_notes
+        stat_calls = 0
+
+        async def counting_stat_notes() -> dict[str, tuple[Path, int]]:
+            nonlocal stat_calls
+            stat_calls += 1
+            return await original_stat_notes()
+
+        monkeypatch.setattr(app.vault_reader, "stat_notes", counting_stat_notes)
+
+        try:
+            initial = await _search_text_impl(app, query="Welcome", limit=5)
+            assert initial["returned"] >= 1
+            assert stat_calls == 1
+
+            _write_temporal_note(
+                tmp_vault,
+                rel_path="_memory/temporal/external.md",
+                note_id="01HQXR7K9YZ8M2N3PQRSTV4WX9",
+                title="External freshness window",
+                confidence="high",
+                supersedes=[],
+                body="# External freshness window\n\nexternalfreshnesswindowtoken\n",
+            )
+
+            before_due = await _search_text_impl(
+                app,
+                query="externalfreshnesswindowtoken",
+                limit=5,
+            )
+            assert before_due["returned"] == 0
+            assert stat_calls == 1
+
+            await build_health(app)
+            assert stat_calls == 2
+
+            clock["now"] = 130.0
+            after_due = await _search_text_impl(
+                app,
+                query="externalfreshnesswindowtoken",
+                limit=5,
+            )
+            assert after_due["returned"] == 1
+            assert stat_calls == 3
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_zero_repair_interval_preserves_sweep_per_read(
+        self,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        settings = Settings(
+            read_paths=[tmp_vault],
+            vault_root=tmp_vault,
+            repair_min_interval_seconds=0,
+        )
+        store = SQLiteFTS5Store()
+        await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+        app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+        original_stat_notes = app.vault_reader.stat_notes
+        stat_calls = 0
+
+        async def counting_stat_notes() -> dict[str, tuple[Path, int]]:
+            nonlocal stat_calls
+            stat_calls += 1
+            return await original_stat_notes()
+
+        monkeypatch.setattr(app.vault_reader, "stat_notes", counting_stat_notes)
+
+        try:
+            await _repair_index_on_read(app)
+            await _repair_index_on_read(app)
+        finally:
+            await store.close()
+
+        assert stat_calls == 2
 
     @pytest.mark.asyncio
     async def test_temporal_rerank_demotes_superseded_note(

@@ -27,6 +27,7 @@ from datacron.core.config import (
     DEFAULT_LOG_LEVEL,
     DEFAULT_MAX_RESULT_COUNT,
     DEFAULT_MAX_RESULT_TOKENS,
+    DEFAULT_REPAIR_MIN_INTERVAL_SECONDS,
     DEFAULT_RIPGREP_PATH,
     DEFAULT_SCRUB_CANARIES,
     DEFAULT_SCRUB_CANARY_DIR,
@@ -49,6 +50,7 @@ class TestDefaults:
         assert settings.log_level == DEFAULT_LOG_LEVEL
         assert settings.max_result_tokens == DEFAULT_MAX_RESULT_TOKENS
         assert settings.max_result_count == DEFAULT_MAX_RESULT_COUNT
+        assert settings.repair_min_interval_seconds == DEFAULT_REPAIR_MIN_INTERVAL_SECONDS
         assert settings.eval_regression_tolerance == DEFAULT_EVAL_REGRESSION_TOLERANCE
         assert settings.ripgrep_path == DEFAULT_RIPGREP_PATH
         assert settings.chunk_max_tokens == DEFAULT_CHUNK_MAX_TOKENS
@@ -98,6 +100,11 @@ class TestEnvLoading:
         monkeypatch.setenv("DATACRON_EVAL_REGRESSION_TOLERANCE", "0.05")
 
         assert Settings().eval_regression_tolerance == 0.05
+
+    def test_env_repair_min_interval_seconds(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATACRON_REPAIR_MIN_INTERVAL_SECONDS", "12.5")
+
+        assert Settings().repair_min_interval_seconds == 12.5
 
     def test_read_paths_split_by_os_sep(
         self,
@@ -195,6 +202,11 @@ class TestProgrammatic:
     def test_max_result_count_positive(self) -> None:
         with pytest.raises(ValidationError):
             Settings(max_result_count=0)
+
+    def test_repair_min_interval_accepts_zero_but_rejects_negative(self) -> None:
+        assert Settings(repair_min_interval_seconds=0).repair_min_interval_seconds == 0
+        with pytest.raises(ValidationError):
+            Settings(repair_min_interval_seconds=-0.1)
 
 
 class TestVaultConfig:

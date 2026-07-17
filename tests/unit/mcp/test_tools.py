@@ -877,10 +877,23 @@ class TestGetNoteMap:
 class TestCreateNoteAi:
     @pytest.mark.asyncio
     async def test_creates_typed_note_and_indexes_it_immediately(
-        self, writable_app: DatacronApp, tmp_vault: Path
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from datacron.core.frontmatter import parse
         from datacron.mcp.tools import _create_note_ai_impl, _get_note_impl, _search_text_impl
+
+        original_stat_notes = writable_app.vault_reader.stat_notes
+        stat_calls = 0
+
+        async def counting_stat_notes() -> dict[str, tuple[Path, int]]:
+            nonlocal stat_calls
+            stat_calls += 1
+            return await original_stat_notes()
+
+        monkeypatch.setattr(writable_app.vault_reader, "stat_notes", counting_stat_notes)
 
         rel_path = "_memory/facts/generated.md"
         result = await _create_note_ai_impl(
@@ -912,10 +925,12 @@ class TestCreateNoteAi:
         assert metadata["created"] == metadata["updated"]
         assert isinstance(metadata["last_verified"], str)
         assert "durabletoken" in body
+        assert stat_calls == 1
 
         search = await _search_text_impl(writable_app, query="durabletoken", limit=5)
         assert "error" not in search
         assert any(item["note_rel_path"] == rel_path for item in search["results"])
+        assert stat_calls == 1
 
         fetched = await _get_note_impl(writable_app, id_or_path=rel_path, fmt="full")
         assert fetched["id"] == result["created"]["id"]
@@ -1765,10 +1780,18 @@ class TestSetFrontmatter:
 
     @pytest.mark.asyncio
     async def test_deleted_note_alias_disappears_after_repair_on_read(
-        self, writable_app: DatacronApp, tmp_vault: Path
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from datacron.mcp.tools import _repair_index_on_read
 
+        clock = {"now": 100.0}
+        monkeypatch.setattr(
+            "datacron.mcp.tools.search._repair_clock",
+            lambda: clock["now"],
+        )
         rel_path = "_memory/facts/delete-alias.md"
         target, _raw = _write_memory_note(
             tmp_vault,
@@ -1786,6 +1809,7 @@ class TestSetFrontmatter:
         )
 
         target.unlink()
+        clock["now"] = 130.0
         repaired = await _repair_index_on_read(writable_app)
 
         assert repaired["deleted_notes"] == 1

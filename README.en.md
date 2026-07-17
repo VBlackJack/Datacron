@@ -29,24 +29,25 @@ ULIDs, history, and the operation journal.
 | Clients | Auto-detect and register via `datacron setup --client all`: Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, VS Code |
 | Distribution | Windows installer (`Datacron-Setup.exe`), standalone executable (PyInstaller) with no Python required, or installation from source |
 
-Local measurement of the `tool/impl` pipeline actually received by the agent, Datacron
-`2026.0716.00`, 19 questions:
+Local measurement of the `tool/impl` pipeline actually received by the agent, 19 questions,
+8k-token / 20-result configuration, July 17, 2026:
 
 ```text
-recall@5       0.79
-recall@10      0.84
-recall@20      0.89
-MRR            0.71
-nDCG@10        0.74
-latency p50    1751 ms
-latency p95    1855 ms
-payload tokens 89705
+recall@5       0.89
+recall@10      0.95
+recall@20      0.95
+MRR            0.73
+nDCG@10        0.79
+latency p50    57 ms
+latency p95    276 ms
+payload tokens 90567
 ```
 
-On the same run, the raw store reaches 0.89 recall@5 versus 0.79 for the tool (-0.11).
-The golden set does not yet contain a `forbidden_paths` case and the vault has no indexed
-`supersedes` relationship: this delta primarily exposes the response-budget effect, not a
-temporal re-ranking gain.
+The tool now matches the raw store at recall@5 (0.89): the previous gap came from globally
+comparing scores produced by separate AND and OR queries, not from the response budget or a
+BM25 limitation. Repair-on-read throttling brings its own p50 down to 0.009 ms; the first
+full sweep of the session remains visible in p95. The golden set does not yet contain a
+`forbidden_paths` case and the vault has no indexed `supersedes` relationship.
 
 ## Installation
 
@@ -139,6 +140,7 @@ Useful environment variables:
 | `DATACRON_WRITE_PATHS` | empty | write allowlist; empty = write tools disabled |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | maximum number of results returned |
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | token budget for search results |
+| `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | minimum interval between repair-on-read sweeps; `0` = every read |
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | budget for `get_note(format="full")` |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | target maximum chunk size |
 | `DATACRON_RIPGREP_PATH` | `rg` | ripgrep binary |
@@ -264,8 +266,9 @@ datacron mcp install --client claude-desktop --vault /path/to/vault
 
 ## Current limitations
 
-- No vector search / embeddings yet: tool-level recall@5 at 0.79 triggers a flagged hybrid
-  BM25 + embeddings + RRF spike, measured with the same evaluation.
+- No vector search / embeddings: the spike is ruled out on the current golden because
+  tool-level recall@5 at 0.89 matches the BM25 store. Re-evaluate if an expanded golden
+  falls below 0.85 with the same evaluation.
 - No autonomous agent: the MCP client orchestrates.
 - No GUI.
 - No concurrent multi-machine writes.
