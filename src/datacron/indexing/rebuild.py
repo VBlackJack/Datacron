@@ -31,7 +31,7 @@ from datacron.core.vault import build_configured_reader
 from datacron.core.vault_writer import durable_flush_directory
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
-from datacron.indexing.reconcile import reconcile
+from datacron.indexing.reconcile import IndexProgress, reconcile
 
 __all__ = [
     "REBUILD_FAULT_POINTS",
@@ -71,6 +71,7 @@ async def rebuild_index_atomic(
     vault_config: VaultConfig,
     *,
     fault_injector: FaultInjector | None = None,
+    progress: IndexProgress | None = None,
 ) -> RebuildStats:
     """Build a complete temp index, validate it, then atomically replace live DB."""
     root = vault_root.expanduser().resolve()
@@ -92,7 +93,13 @@ async def rebuild_index_atomic(
     try:
         await temp_store.open(temp_path, sidecar_writeback=False)
         await temp_store.set_generation(previous_generation)
-        reconcile_stats = await reconcile(temp_store, reader, chunker, mtime_gate=False)
+        reconcile_stats = await reconcile(
+            temp_store,
+            reader,
+            chunker,
+            mtime_gate=False,
+            progress=progress,
+        )
         stats = await temp_store.stats()
         indexed = await temp_store.list_indexed_notes()
         live_notes = await reader.list_notes()

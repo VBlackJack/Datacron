@@ -23,12 +23,16 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
 import click
 import typer
+from rich.console import Console
+from rich.progress import Progress, TaskID, TextColumn
 
 from datacron import __version__
 from datacron.bootstrap import initialize_vault
@@ -108,8 +112,22 @@ app.add_typer(mcp_app, name="mcp")
 app.add_typer(protocol_app, name="protocol")
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"datacron {__version__}")
+        raise typer.Exit()
+
+
 @app.callback()
-def main() -> None:
+def main(
+    _version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the version and exit.",
+    ),
+) -> None:
     """Configure process logging once at the CLI execution boundary."""
     configure_logging()
 
@@ -122,6 +140,23 @@ def _print(message: str) -> None:
 def _error(message: str) -> NoReturn:
     typer.secho(message, fg=typer.colors.RED, err=True)
     raise typer.Exit(code=1)
+
+
+@contextmanager
+def _index_progress() -> Iterator[Callable[[int, int], None]]:
+    """Render a plain note counter without a decorative progress bar."""
+    console = Console()
+    with Progress(
+        TextColumn("indexed {task.completed:.0f}/{task.total:.0f} notes"),
+        console=console,
+        auto_refresh=False,
+    ) as display:
+        task_id: TaskID = display.add_task("index", total=0)
+
+        def update(completed: int, total: int) -> None:
+            display.update(task_id, completed=completed, total=total, refresh=True)
+
+        yield update
 
 
 def _resolve_vault_root(explicit: Path | None, settings: Settings) -> Path:
@@ -364,7 +399,13 @@ async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
     config = _load_vault_yaml(vault_root) or VaultConfig()
     if drop_first:
         started = time.perf_counter()
-        rebuilt = await rebuild_index_atomic(vault_root, settings, config)
+        with _index_progress() as progress:
+            rebuilt = await rebuild_index_atomic(
+                vault_root,
+                settings,
+                config,
+                progress=progress,
+            )
         duration_ms = (time.perf_counter() - started) * 1000.0
         _print(
             f"Reindexed {rebuilt['reindexed_notes']} notes "
@@ -386,7 +427,14 @@ async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
     await store.open(db_path)
     started = time.perf_counter()
     try:
-        stats = await reconcile(store, reader, chunker, mtime_gate=True)
+        with _index_progress() as progress:
+            stats = await reconcile(
+                store,
+                reader,
+                chunker,
+                mtime_gate=True,
+                progress=progress,
+            )
     finally:
         await store.close()
 
