@@ -151,7 +151,7 @@ flowchart TB
 | Operational | `get_health` | Freshness, integrity, checksum, durability, and invariant evidence. | Read-only health scanner |
 | Operational | `get_note_history` | Committed operation metadata for a note, without reading historical content. | Operation journal |
 | Operational | `audit_query` | Read-only query of the journal by period, tool, or note. | Operation journal |
-| Advisory (experimental) | `contradiction_scan` | Cache-only advisory report over the frozen contradiction pool. Not validated on real content, uncalibrated confidence; must **never** block writes, merges, health, or CI. | Frozen packaged advisory cache |
+| Advisory (experimental) | `contradiction_scan` | Bounded deterministic live scan over indexed sections. Read-only proposals and confirmations return an explicit CAS write-tool call but never execute it. | FTS index + scoped vault reads |
 
 ### 5.2 Resources (3)
 
@@ -256,8 +256,8 @@ for Python environments), Datacron ships a **standalone executable** built with 
 (`--onefile`) for users without Python. The `datacron setup` command (guided path: init + index
 + client config, with location choices) stays the installation entry point; the binary bundles
 it. Reproducible build via `scripts/build_installer.ps1` (Windows) and `scripts/build_installer.sh`
-(Unix), behind the optional `[build]` dependency. Packaged data
-(`reliability_evidence.json`, `contradiction_data/*.gz`) is included via `--collect-data`.
+(Unix), behind the optional `[build]` dependency. Packaged reliability evidence
+(`reliability_evidence.json`) is included via `--collect-data`.
 Accepted cost: multi-OS builds and size (~22 MB). `dist/` and `build/` stay out of version
 control.
 

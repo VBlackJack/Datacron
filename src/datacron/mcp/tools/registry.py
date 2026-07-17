@@ -23,6 +23,8 @@ from mcp.types import ToolAnnotations
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
 from datacron.mcp.tool_contract import (
     AppendJournalOutput,
+    ContradictionScanMode,
+    ContradictionScanOutput,
     CreateNoteOutput,
     GetHealthOutput,
     GetNoteFormat,
@@ -196,16 +198,29 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
 
     @server.tool(
         name="contradiction_scan",
-        title="Scan frozen contradiction candidates",
+        title="Scan live contradiction candidates",
         description=(
-            "Return a cache-only advisory report over the frozen contradiction pool. "
-            "The report is not validated on real content (0/4), judge confidence is "
-            "uncalibrated, and its candidates must never block writes, merges, health, or CI."
+            "Use this when indexed sections may conflict or refine one another. Scan mode "
+            "returns deterministic section-level candidates and read-only proposal tokens; "
+            "confirm mode validates one token and returns an exact existing write-tool call. "
+            "This tool never writes, including after elicitation or confirmation."
         ),
         annotations=_READ_ANNOTATIONS,
     )
-    async def contradiction_scan() -> dict[str, Any]:
-        return await _contradiction_scan_impl()
+    async def contradiction_scan(
+        ctx: Context[Any, Any, Any],
+        mode: ContradictionScanMode = "scan",
+        proposal_token: str | None = None,
+    ) -> ContradictionScanOutput:
+        return cast(
+            "ContradictionScanOutput",
+            await _contradiction_scan_impl(
+                app,
+                mode=mode,
+                proposal_token=proposal_token,
+                ctx=ctx,
+            ),
+        )
 
     @server.tool(
         name="get_health",
