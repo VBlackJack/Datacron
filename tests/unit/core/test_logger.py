@@ -54,3 +54,14 @@ class TestLogger:
         configure_logging()
         root = logging.getLogger("datacron")
         assert len(root.handlers) == 1
+
+    def test_shutdown_restores_root_propagation(self) -> None:
+        shutdown_logging()
+        configure_logging()
+        root = logging.getLogger("datacron")
+        assert root.propagate is False
+
+        shutdown_logging()
+
+        assert root.handlers == []
+        assert root.propagate is True
