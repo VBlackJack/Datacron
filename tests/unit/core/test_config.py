@@ -17,6 +17,10 @@ from pydantic import ValidationError
 
 from datacron.core.config import (
     DEFAULT_CHUNK_MAX_TOKENS,
+    DEFAULT_CONTRADICTION_MAX_CANDIDATES,
+    DEFAULT_CONTRADICTION_MAX_PAIRS,
+    DEFAULT_CONTRADICTION_MAX_PER_NOTE_PAIR,
+    DEFAULT_CONTRADICTION_SUMMARY_EVIDENCE_CHARS,
     DEFAULT_DURABILITY_MODE,
     DEFAULT_EVAL_REGRESSION_TOLERANCE,
     DEFAULT_EXCLUDED_FILES,
@@ -52,6 +56,13 @@ class TestDefaults:
         assert settings.max_result_count == DEFAULT_MAX_RESULT_COUNT
         assert settings.repair_min_interval_seconds == DEFAULT_REPAIR_MIN_INTERVAL_SECONDS
         assert settings.eval_regression_tolerance == DEFAULT_EVAL_REGRESSION_TOLERANCE
+        assert settings.contradiction_max_pairs == DEFAULT_CONTRADICTION_MAX_PAIRS
+        assert settings.contradiction_max_candidates == DEFAULT_CONTRADICTION_MAX_CANDIDATES
+        assert settings.contradiction_max_per_note_pair == DEFAULT_CONTRADICTION_MAX_PER_NOTE_PAIR
+        assert (
+            settings.contradiction_summary_evidence_chars
+            == DEFAULT_CONTRADICTION_SUMMARY_EVIDENCE_CHARS
+        )
         assert settings.ripgrep_path == DEFAULT_RIPGREP_PATH
         assert settings.chunk_max_tokens == DEFAULT_CHUNK_MAX_TOKENS
         assert settings.get_note_max_tokens == DEFAULT_GET_NOTE_MAX_TOKENS
@@ -207,6 +218,14 @@ class TestProgrammatic:
         assert Settings(repair_min_interval_seconds=0).repair_min_interval_seconds == 0
         with pytest.raises(ValidationError):
             Settings(repair_min_interval_seconds=-0.1)
+
+    @pytest.mark.parametrize(
+        "field",
+        ["contradiction_max_per_note_pair", "contradiction_summary_evidence_chars"],
+    )
+    def test_contradiction_tuning_bounds_must_be_positive(self, field: str) -> None:
+        with pytest.raises(ValidationError):
+            Settings.model_validate({field: 0})
 
 
 class TestVaultConfig:
