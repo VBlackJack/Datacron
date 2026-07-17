@@ -152,6 +152,9 @@ def shutdown_logging() -> None:
             with contextlib.suppress(Exception):
                 handler.close()
         root.handlers.clear()
+        # Restore the documented unconfigured state so callers such as pytest's
+        # root capture handler can observe subsequent Datacron records.
+        root.propagate = True
 
         if listener is not None:
             listener.stop()
