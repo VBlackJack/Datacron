@@ -190,6 +190,7 @@ class SearchResult(BaseModel):
         snippet: A short highlighted excerpt suitable for inclusion in the
             MCP tool response. Plain text, no HTML; query terms surrounded by
             ``**term**`` markers for client display.
+        tier: Retrieval tier. ``0`` is an AND match; ``1`` is an OR fallback.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -197,6 +198,7 @@ class SearchResult(BaseModel):
     chunk: Chunk
     score: float
     snippet: str
+    tier: int = Field(default=0, ge=0, le=1)
 
 
 class IndexStats(BaseModel):

@@ -18,6 +18,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from datacron.core.models import Chunk, Note, SearchResult
 from datacron.core.temporal import TemporalMeta, rerank_temporal
@@ -38,6 +40,7 @@ def _result(
     note_id: str,
     score: float,
     rel_path: str | None = None,
+    tier: int = 0,
 ) -> SearchResult:
     note = note_factory(
         id=note_id,
@@ -49,7 +52,7 @@ def _result(
         chunk_id=f"{note_id}::::0000",
         content="temporal signal",
     )
-    return SearchResult(chunk=chunk, score=score, snippet="temporal signal")
+    return SearchResult(chunk=chunk, score=score, snippet="temporal signal", tier=tier)
 
 
 def _note_ids(results: list[SearchResult]) -> list[str]:
@@ -66,6 +69,103 @@ def test_empty_meta_preserves_order_strictly(
     ]
 
     assert rerank_temporal(results, {}, include_superseded=False) == results
+
+
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    scores=st.lists(
+        st.floats(min_value=0.0, max_value=1000.0, allow_nan=False, allow_infinity=False),
+        min_size=1,
+        max_size=20,
+    ),
+    tiers=st.lists(st.integers(min_value=0, max_value=1), min_size=1, max_size=20),
+)
+def test_no_effective_temporal_signal_preserves_arbitrary_store_order(
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+    scores: list[float],
+    tiers: list[int],
+) -> None:
+    size = min(len(scores), len(tiers))
+    results = [
+        _result(
+            note_factory,
+            chunk_factory,
+            note_id=f"01HQXR7K9YZ8M2N3PQRSTVW{i:03d}",
+            score=scores[i],
+            tier=tiers[i],
+        )
+        for i in range(size)
+    ]
+    meta = {
+        result.chunk.note_id: TemporalMeta(confidence="high", supersedes=[]) for result in results
+    }
+
+    assert rerank_temporal(results, meta, include_superseded=False) == results
+
+
+def test_confidence_penalty_stays_within_retrieval_tier(
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    tier_zero_low = _result(
+        note_factory,
+        chunk_factory,
+        note_id=_LOW_ID,
+        score=0.1,
+        tier=0,
+    )
+    tier_one_high = _result(
+        note_factory,
+        chunk_factory,
+        note_id=_CURRENT_ID,
+        score=100.0,
+        tier=1,
+    )
+    meta = {
+        _LOW_ID: TemporalMeta(confidence="low", supersedes=[]),
+        _CURRENT_ID: TemporalMeta(confidence="high", supersedes=[]),
+    }
+
+    reranked = rerank_temporal(
+        [tier_zero_low, tier_one_high],
+        meta,
+        include_superseded=False,
+    )
+
+    assert _note_ids(reranked) == [_LOW_ID, _CURRENT_ID]
+
+
+def test_superseded_bucket_sinks_below_all_retrieval_tiers(
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    superseded_and = _result(
+        note_factory,
+        chunk_factory,
+        note_id=_OLD_ID,
+        score=100.0,
+        tier=0,
+    )
+    current_or = _result(
+        note_factory,
+        chunk_factory,
+        note_id=_CURRENT_ID,
+        score=0.1,
+        tier=1,
+    )
+    meta = {
+        _CURRENT_ID: TemporalMeta(confidence="high", supersedes=[_OLD_ID]),
+        _OLD_ID: TemporalMeta(confidence="high", supersedes=[]),
+    }
+
+    reranked = rerank_temporal(
+        [superseded_and, current_or],
+        meta,
+        include_superseded=False,
+    )
+
+    assert _note_ids(reranked) == [_CURRENT_ID, _OLD_ID]
 
 
 def test_needs_verification_recedes_below_high_confidence_result(

@@ -456,17 +456,18 @@ class SQLiteFTS5Store:
         else:
             and_query = _join_fts5_terms(terms, operator=" ")
             fallback_terms = terms
-        rows = await _fetch_search_rows(connection, and_query, limit)
-        if len(rows) < limit and len(terms) > 1:
+        and_rows = await _fetch_search_rows(connection, and_query, limit)
+        ranked_rows = [(row, 0) for row in and_rows]
+        if len(ranked_rows) < limit and len(terms) > 1:
             or_query = _join_fts5_terms(fallback_terms, operator=" OR ")
-            seen_chunk_ids = {str(row["chunk_id"]) for row in rows}
+            seen_chunk_ids = {str(row["chunk_id"]) for row in and_rows}
             for row in await _fetch_search_rows(connection, or_query, limit):
                 chunk_id = str(row["chunk_id"])
                 if chunk_id in seen_chunk_ids:
                     continue
-                rows.append(row)
+                ranked_rows.append((row, 1))
                 seen_chunk_ids.add(chunk_id)
-                if len(rows) >= limit:
+                if len(ranked_rows) >= limit:
                     break
 
         return [
@@ -474,8 +475,9 @@ class SQLiteFTS5Store:
                 chunk=_chunk_from_row(row),
                 score=-float(row["raw_score"]),
                 snippet=str(row["snippet"]),
+                tier=tier,
             )
-            for row in rows
+            for row, tier in ranked_rows
         ]
 
     async def get_chunk(self, chunk_id: str) -> Chunk | None:

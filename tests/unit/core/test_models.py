@@ -169,6 +169,7 @@ class TestSearchResult:
         sr = SearchResult(chunk=chunk, score=0.42, snippet="**hello** world")
         assert sr.score == 0.42
         assert sr.snippet.startswith("**hello**")
+        assert sr.tier == 0
 
 
 class TestIndexStats:

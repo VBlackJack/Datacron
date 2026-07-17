@@ -53,31 +53,42 @@ def rerank_temporal(
         for superseded_id in item.supersedes
         if superseded_id
     }
-    adjusted: list[SearchResult] = []
+    adjusted: list[tuple[int, SearchResult]] = []
+    signal_applied = False
     for result in results:
-        factor = _temporal_factor(
+        demoted_bucket, factor = _temporal_adjustment(
             result.chunk.note_id,
             meta,
             superseded_ids=superseded_ids,
             include_superseded=include_superseded,
         )
-        adjusted.append(
+        signal_applied = signal_applied or demoted_bucket > 0 or factor != 1.0
+        adjusted_result = (
             result if factor == 1.0 else result.model_copy(update={"score": result.score * factor})
         )
+        adjusted.append((demoted_bucket, adjusted_result))
 
-    return sorted(adjusted, key=lambda item: -item.score)
+    if not signal_applied:
+        return list(results)
+
+    ranked = sorted(
+        adjusted,
+        key=lambda item: (item[0], item[1].tier, -item[1].score),
+    )
+    return [result for _bucket, result in ranked]
 
 
-def _temporal_factor(
+def _temporal_adjustment(
     note_id: str,
     meta: Mapping[str, TemporalMeta],
     *,
     superseded_ids: set[str],
     include_superseded: bool,
-) -> float:
+) -> tuple[int, float]:
     item = meta.get(note_id)
     confidence = item.confidence.lower() if item and item.confidence else None
     factor = CONFIDENCE_PENALTY.get(confidence or "", 1.0)
-    if note_id in superseded_ids and not include_superseded:
+    is_superseded = note_id in superseded_ids and not include_superseded
+    if is_superseded:
         factor *= SUPERSEDED_DEMOTION_FACTOR
-    return factor
+    return (int(is_superseded), factor)
