@@ -190,6 +190,7 @@ protocol).
 | `DATACRON_WRITE_PATHS` | empty | Write allowlist; **empty = writing disabled**. |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | Maximum number of results returned. |
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | Token budget for search results. |
+| `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | Minimum interval between repair-on-read sweeps; `0` = every read. |
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | Budget for `get_note(format="full")`. |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | Target maximum chunk size. |
 | `DATACRON_RIPGREP_PATH` | `rg` | ripgrep binary. |

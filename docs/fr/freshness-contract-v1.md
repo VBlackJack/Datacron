@@ -20,6 +20,20 @@ localement: Cortex n'appelle jamais Datacron au runtime pour decider de sa fraic
 Le manifeste partage `tests/fixtures/freshness-contract-v1.json` contient les vecteurs
 Base64 pour LF, CRLF, BOM et Unicode NFD. Les tests les ecrivent en binaire avant le hash.
 
+## Fenetre de fraicheur de l'index MCP
+
+Les lectures appuyees sur l'index (`search_text`, `search_regex` et `get_backlinks`)
+declenchent un repair-on-read au plus une fois par intervalle. L'intervalle est configure
+par `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` et vaut 30 secondes par defaut. Entre deux
+sweeps, ces outils servent l'index courant : une modification effectuee hors de Datacron
+peut donc rester invisible jusqu'a la premiere lecture indexee suivant l'expiration de
+l'intervalle. La valeur `0` restaure un sweep avant chaque lecture indexee.
+
+Cette fenetre ne s'applique pas aux ecritures realisees par les tools Datacron : leur
+reconcile reste synchrone et la modification est indexee avant la reponse du tool. Elle ne
+s'applique pas non plus a `get_health`, qui relit exhaustivement le vault et l'index a
+chaque appel afin de fournir un diagnostic ponctuel exact.
+
 ## Hash de chunk derive
 
 Pour une lecture par `chunk_id`, `get_note` retourne aussi `chunk_content_hash`: le

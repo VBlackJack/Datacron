@@ -354,29 +354,57 @@ async def _repair_index_on_read(app: DatacronApp) -> ReconcileStats:
     """Synchronize the FTS index with the live vault before index-backed reads.
 
     Delegates to the shared incremental :func:`reconcile` with the mtime gate
-    enabled, so an unchanged vault costs one ``stat`` sweep rather than a full
-    re-read+hash of every note. ``content_hash`` remains the authority on any
-    note whose mtime moved.
+    enabled when the configured minimum interval has elapsed. Between sweeps,
+    reads serve the current index. ``content_hash`` remains the authority on
+    any note whose mtime moved.
     """
-    if not app.write_policy.writes_allowed:
-        indexed = await app.store.list_indexed_notes_with_mtime()
-        live = await app.vault_reader.stat_notes()
-        return {
-            "checked_notes": len(live),
-            "indexed_notes_before": len(indexed),
-            "reindexed_notes": 0,
-            "deleted_notes": 0,
-            "skipped_notes": len(live),
-        }
-    stats = await _reconcile_serialized(app)
+    async with app.reconcile_lock:
+        now = _repair_clock()
+        last_sweep = app.repair_state.last_sweep_completed_at
+        interval = app.settings.repair_min_interval_seconds
+        if interval > 0.0 and last_sweep is not None and now - last_sweep < interval:
+            return _throttled_repair_stats()
+
+        if not app.write_policy.writes_allowed:
+            indexed = await app.store.list_indexed_notes_with_mtime()
+            live = await app.vault_reader.stat_notes()
+            stats: ReconcileStats = {
+                "checked_notes": len(live),
+                "indexed_notes_before": len(indexed),
+                "reindexed_notes": 0,
+                "deleted_notes": 0,
+                "skipped_notes": len(live),
+            }
+        else:
+            stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        app.repair_state.last_sweep_completed_at = _repair_clock()
+
     await _invalidate_alias_cache_if_index_changed(app, stats)
     return stats
 
 
 async def _reconcile_serialized(app: DatacronApp) -> ReconcileStats:
-    """Serialize transactions that share one aiosqlite connection."""
+    """Serialize a write-triggered reconcile and reset the repair interval."""
     async with app.reconcile_lock:
-        return await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        app.repair_state.last_sweep_completed_at = _repair_clock()
+        return stats
+
+
+def _repair_clock() -> float:
+    """Return a monotonic timestamp, split out for deterministic tests."""
+    return time.monotonic()
+
+
+def _throttled_repair_stats() -> ReconcileStats:
+    """Return the no-op outcome used when the repair sweep is throttled."""
+    return {
+        "checked_notes": 0,
+        "indexed_notes_before": 0,
+        "reindexed_notes": 0,
+        "deleted_notes": 0,
+        "skipped_notes": 0,
+    }
 
 
 async def _invalidate_alias_cache_if_index_changed(app: DatacronApp, stats: ReconcileStats) -> None:

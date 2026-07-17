@@ -96,6 +96,14 @@ SERVER_INSTRUCTIONS: Final[str] = (
 
 
 @final
+@dataclass
+class RepairState:
+    """Mutable monotonic state for repair-on-read throttling."""
+
+    last_sweep_completed_at: float | None = None
+
+
+@final
 @dataclass(frozen=True)
 class DatacronApp:
     """Bundle of resolved dependencies shared by tools and resources.
@@ -122,6 +130,7 @@ class DatacronApp:
     durability_status: DurabilityStatus
     write_policy: WritePolicy
     reconcile_lock: asyncio.Lock
+    repair_state: RepairState
 
 
 def build_app(
@@ -214,6 +223,7 @@ def build_app(
         durability_status=resolved_durability,
         write_policy=write_policy,
         reconcile_lock=asyncio.Lock(),
+        repair_state=RepairState(),
     )
 
 
