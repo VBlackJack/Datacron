@@ -13,9 +13,10 @@
 # limitations under the License.
 """Public MCP tool surface and compatibility re-exports."""
 
+from datacron.mcp.tool_contract import GetNoteFormat
 from datacron.mcp.tools.advisory import _contradiction_scan_impl
 from datacron.mcp.tools.ops import _audit_query_impl, _get_health_impl, _get_note_history_impl
-from datacron.mcp.tools.read import GetNoteFormat, StaleChunkError, _get_note_impl, _list_notes_impl
+from datacron.mcp.tools.read import StaleChunkError, _get_note_impl, _list_notes_impl
 from datacron.mcp.tools.registry import register_tools
 from datacron.mcp.tools.search import (
     _get_backlinks_impl,

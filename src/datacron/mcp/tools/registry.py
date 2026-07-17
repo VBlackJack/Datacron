@@ -15,11 +15,26 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Final, cast
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
+from datacron.mcp.tool_contract import (
+    AppendJournalOutput,
+    CreateNoteOutput,
+    GetHealthOutput,
+    GetNoteFormat,
+    GetNoteOutput,
+    ListNotesOutput,
+    MemoryConfidence,
+    MemoryOrigin,
+    PatchNoteSectionOutput,
+    RevertNoteOutput,
+    SearchTextOutput,
+    SetFrontmatterOutput,
+)
 from datacron.mcp.tools.advisory import _contradiction_scan_impl
 from datacron.mcp.tools.ops import _audit_query_impl, _get_health_impl, _get_note_history_impl
 from datacron.mcp.tools.read import _get_note_impl, _list_notes_impl
@@ -32,7 +47,30 @@ from datacron.mcp.tools.write import (
     _set_frontmatter_impl,
 )
 
-GetNoteFormat = str  # "full" | "map" -- kept loose for FastMCP schema
+_READ_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=False,
+    openWorldHint=False,
+)
+_ADDITIVE_WRITE_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=False,
+    openWorldHint=False,
+)
+_DESTRUCTIVE_WRITE_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=False,
+    openWorldHint=False,
+)
+_REVERT_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+)
 
 
 def register_tools(server: FastMCP[Any], app: Any) -> None:
@@ -51,14 +89,18 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "a subfolder and/or filtered by tags. Each entry includes the stable ULID, "
             "title, tags, aliases, and timestamps."
         ),
+        annotations=_READ_ANNOTATIONS,
     )
     async def list_notes(
         folder: str | None = None,
         tags: list[str] | None = None,
         limit: int = 20,
         offset: int = 0,
-    ) -> dict[str, Any]:
-        return await _list_notes_impl(app, folder=folder, tags=tags, limit=limit, offset=offset)
+    ) -> ListNotesOutput:
+        return cast(
+            "ListNotesOutput",
+            await _list_notes_impl(app, folder=folder, tags=tags, limit=limit, offset=offset),
+        )
 
     @server.tool(
         name="get_note",
@@ -73,19 +115,23 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "format='map' returns the heading outline only (cheap to scan before "
             "requesting full content)."
         ),
+        annotations=_READ_ANNOTATIONS,
     )
     async def get_note(
         id_or_path: str,
         format: GetNoteFormat = "full",
         offset: int = 0,
         limit: int | None = None,
-    ) -> dict[str, Any]:
-        return await _get_note_impl(
-            app,
-            id_or_path=id_or_path,
-            fmt=format,
-            offset=offset,
-            limit=limit,
+    ) -> GetNoteOutput:
+        return cast(
+            "GetNoteOutput",
+            await _get_note_impl(
+                app,
+                id_or_path=id_or_path,
+                fmt=format,
+                offset=offset,
+                limit=limit,
+            ),
         )
 
     @server.tool(
@@ -99,17 +145,21 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "explicitly superseded notes are demoted; set include_superseded=true to "
             "inspect historical notes."
         ),
+        annotations=_READ_ANNOTATIONS,
     )
     async def search_text(
         query: str,
         limit: int = 20,
         include_superseded: bool = False,
-    ) -> dict[str, Any]:
-        return await _search_text_impl(
-            app,
-            query=query,
-            limit=limit,
-            include_superseded=include_superseded,
+    ) -> SearchTextOutput:
+        return cast(
+            "SearchTextOutput",
+            await _search_text_impl(
+                app,
+                query=query,
+                limit=limit,
+                include_superseded=include_superseded,
+            ),
         )
 
     @server.tool(
@@ -121,6 +171,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "scope with `glob` (e.g. '*.md'). Requires `rg` on PATH and "
             "`datacron index` for chunk resolution."
         ),
+        annotations=_READ_ANNOTATIONS,
     )
     async def search_regex(
         pattern: str,
@@ -138,6 +189,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "wikilink alias (resolved via title -> filename -> aliases). Empty list if "
             "unresolved or no incoming links."
         ),
+        annotations=_READ_ANNOTATIONS,
     )
     async def get_backlinks(target: str, limit: int = 20) -> dict[str, Any]:
         return await _get_backlinks_impl(app, target=target, limit=limit)
@@ -150,6 +202,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "The report is not validated on real content (0/4), judge confidence is "
             "uncalibrated, and its candidates must never block writes, merges, health, or CI."
         ),
+        annotations=_READ_ANNOTATIONS,
     )
     async def contradiction_scan() -> dict[str, Any]:
         return await _contradiction_scan_impl()
@@ -161,9 +214,10 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "Return truthful read-only health for index freshness, vault integrity, "
             "point-in-time checksum, durability capability, and invariant evidence."
         ),
+        annotations=_READ_ANNOTATIONS,
     )
-    async def get_health() -> dict[str, Any]:
-        return await _get_health_impl(app)
+    async def get_health() -> GetHealthOutput:
+        return cast("GetHealthOutput", await _get_health_impl(app))
 
     @server.tool(
         name="create_note_ai",
@@ -176,31 +230,35 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "overwrites existing files, writes a durable operation record, and relies "
             "on the MCP client's tool approval for human-in-the-loop review."
         ),
+        annotations=_ADDITIVE_WRITE_ANNOTATIONS,
     )
     async def create_note_ai(
         rel_path: str,
         title: str,
         body: str,
-        origin: str,
-        confidence: str,
+        origin: MemoryOrigin,
+        confidence: MemoryConfidence,
         tags: list[str],
         ctx: Context[Any, Any, Any],
         supersedes: list[str] | None = None,
         last_verified: str | None = None,
         expected_hash: str | None = None,
-    ) -> dict[str, Any]:
-        return await _create_note_ai_impl(
-            app,
-            rel_path=rel_path,
-            title=title,
-            body=body,
-            origin=origin,
-            confidence=confidence,
-            tags=tags,
-            supersedes=supersedes,
-            last_verified=last_verified,
-            expected_hash=expected_hash,
-            actor=app.identity_provider.identify(ctx).actor,
+    ) -> CreateNoteOutput:
+        return cast(
+            "CreateNoteOutput",
+            await _create_note_ai_impl(
+                app,
+                rel_path=rel_path,
+                title=title,
+                body=body,
+                origin=origin,
+                confidence=confidence,
+                tags=tags,
+                supersedes=supersedes,
+                last_verified=last_verified,
+                expected_hash=expected_hash,
+                actor=app.identity_provider.identify(ctx).actor,
+            ),
         )
 
     @server.tool(
@@ -213,6 +271,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "DATACRON_WRITE_PATHS, stores content-addressed history, writes atomically, "
             "and relies on the MCP client's tool approval for human-in-the-loop review."
         ),
+        annotations=_ADDITIVE_WRITE_ANNOTATIONS,
     )
     async def append_journal(
         rel_path: str,
@@ -220,14 +279,17 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         entry: str,
         ctx: Context[Any, Any, Any],
         expected_hash: str | None = None,
-    ) -> dict[str, Any]:
-        return await _append_journal_impl(
-            app,
-            rel_path=rel_path,
-            heading=heading,
-            entry=entry,
-            expected_hash=expected_hash,
-            actor=app.identity_provider.identify(ctx).actor,
+    ) -> AppendJournalOutput:
+        return cast(
+            "AppendJournalOutput",
+            await _append_journal_impl(
+                app,
+                rel_path=rel_path,
+                heading=heading,
+                entry=entry,
+                expected_hash=expected_hash,
+                actor=app.identity_provider.identify(ctx).actor,
+            ),
         )
 
     @server.tool(
@@ -242,6 +304,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "supersedes, valid_from, invalid_at, invalidated_by, and the automatic updated "
             "timestamp; the Markdown body is preserved."
         ),
+        annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
     )
     async def set_frontmatter(
         rel_path: str,
@@ -254,19 +317,22 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         invalid_at: str | None = None,
         invalidated_by: str | None = None,
         expected_hash: str | None = None,
-    ) -> dict[str, Any]:
-        return await _set_frontmatter_impl(
-            app,
-            rel_path=rel_path,
-            confidence=confidence,
-            last_verified=last_verified,
-            supersedes=supersedes,
-            origin=origin,
-            valid_from=valid_from,
-            invalid_at=invalid_at,
-            invalidated_by=invalidated_by,
-            expected_hash=expected_hash,
-            actor=app.identity_provider.identify(ctx).actor,
+    ) -> SetFrontmatterOutput:
+        return cast(
+            "SetFrontmatterOutput",
+            await _set_frontmatter_impl(
+                app,
+                rel_path=rel_path,
+                confidence=confidence,
+                last_verified=last_verified,
+                supersedes=supersedes,
+                origin=origin,
+                valid_from=valid_from,
+                invalid_at=invalid_at,
+                invalidated_by=invalidated_by,
+                expected_hash=expected_hash,
+                actor=app.identity_provider.identify(ctx).actor,
+            ),
         )
 
     @server.tool(
@@ -279,6 +345,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "preserves the heading line and non-target sections, stores exact prior "
             "history, and writes atomically."
         ),
+        annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
     )
     async def patch_note_section(
         rel_path: str,
@@ -287,15 +354,18 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         ctx: Context[Any, Any, Any],
         expected_hash: str | None = None,
         heading_level: int | None = None,
-    ) -> dict[str, Any]:
-        return await _patch_note_section_impl(
-            app,
-            rel_path=rel_path,
-            heading=heading,
-            new_content=new_content,
-            expected_hash=expected_hash,
-            heading_level=heading_level,
-            actor=app.identity_provider.identify(ctx).actor,
+    ) -> PatchNoteSectionOutput:
+        return cast(
+            "PatchNoteSectionOutput",
+            await _patch_note_section_impl(
+                app,
+                rel_path=rel_path,
+                heading=heading,
+                new_content=new_content,
+                expected_hash=expected_hash,
+                heading_level=heading_level,
+                actor=app.identity_provider.identify(ctx).actor,
+            ),
         )
 
     @server.tool(
@@ -307,19 +377,23 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "expected_hash for CAS. The revert is itself durable, reversible, indexed, "
             "and operation-logged."
         ),
+        annotations=_REVERT_ANNOTATIONS,
     )
     async def revert_note(
         note: str,
         to_hash: str,
         ctx: Context[Any, Any, Any],
         expected_hash: str | None = None,
-    ) -> dict[str, Any]:
-        return await _revert_note_impl(
-            app,
-            note=note,
-            to_hash=to_hash,
-            expected_hash=expected_hash,
-            actor=app.identity_provider.identify(ctx).actor,
+    ) -> RevertNoteOutput:
+        return cast(
+            "RevertNoteOutput",
+            await _revert_note_impl(
+                app,
+                note=note,
+                to_hash=to_hash,
+                expected_hash=expected_hash,
+                actor=app.identity_provider.identify(ctx).actor,
+            ),
         )
 
     @server.tool(
@@ -329,6 +403,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "List committed operation metadata for one note without reading history "
             "content or modifying the journal."
         ),
+        annotations=_READ_ANNOTATIONS,
     )
     async def get_note_history(note: str, limit: int = 100) -> dict[str, Any]:
         return await _get_note_history_impl(app, note=note, limit=limit)
@@ -340,6 +415,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "Query committed operation metadata by time range, tool, or note. "
             "This read-only operation never changes the journal or vault."
         ),
+        annotations=_READ_ANNOTATIONS,
     )
     async def audit_query(
         start: str | None = None,

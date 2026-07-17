@@ -174,6 +174,30 @@ flowchart TB
   ```
 - **Audit log NDJSON** sur chaque appel.
 
+### 5.4 Matrice de compatibilité protocolaire MCP
+
+État vérifié le 2026-07-17. La révision `2026-07-28` est encore une release
+candidate verrouillée ; sa publication finale est annoncée pour le 28 juillet.
+
+| Révision | Statut Datacron | Vérification |
+|---|---|---|
+| `2025-03-26` | Compatible | Révision négociée par le SDK Python verrouillé ; tools et resources stdio restent dans le socle de cette révision. |
+| `2025-06-18` | Compatible | Les annotations de tools et les sorties structurées sont publiées ; les schémas de sortie sont validés et le JSON historique reste présent dans `content`. |
+| `2026-07-28` RC | Contrat applicatif prêt, transport en attente du SDK final | Aucun appel ni dépendance Datacron à Roots, Sampling ou Logging MCP. Les schémas d'entrée/sortie passent `Draft202012Validator`. Une ressource absente renvoie `-32602`, une panne interne de resource `-32603`, et les erreurs d'exécution/validation des tools renvoient `isError=true`. La négociation stateless et le code protocolaire `-32602` d'un tool inconnu nécessitent une version du SDK qui implémente la révision finale. |
+
+La distinction d'erreur suit la RC : une requête malformée, un tool inconnu ou
+une ressource absente est une erreur JSON-RPC ; une valeur de tool invalide ou
+une erreur métier est une erreur d'exécution récupérable par le modèle avec
+`isError=true`. Datacron conserve dans ce dernier cas le payload stable
+`{"error": {"type": ..., "message": ...}}` dans le contenu texte.
+
+Références officielles :
+[tools `2025-06-18`](https://modelcontextprotocol.io/specification/2025-06-18/server/tools),
+[release candidate `2026-07-28`](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/),
+[tools de la RC](https://modelcontextprotocol.io/specification/draft/server/tools),
+[resources de la RC](https://modelcontextprotocol.io/specification/draft/server/resources) et
+[SEP-2577](https://modelcontextprotocol.io/seps/2577-deprecate-roots-sampling-and-logging).
+
 ---
 
 ## 6. Architecture Decision Records (résumés - détails dans decisions-v2.1.md)
