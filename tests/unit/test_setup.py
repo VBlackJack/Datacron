@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -29,10 +30,12 @@ from datacron import setup_wizard
 from datacron.bootstrap import initialize_vault
 from datacron.cli import app
 from datacron.core.paths import sidecar_index_db, sidecar_vault_config
+from datacron.installers import mcp_clients
 from datacron.installers.claude_desktop import ClaudeDesktopConfigError, MCPServerInvocation
 from datacron.installers.mcp_clients import ClientTarget, InstallOutcome, UnregisterOutcome
 from datacron.setup_wizard import (
     CLIENT_ALL,
+    CLIENT_CHOICES,
     CLIENT_CLAUDE_CODE,
     CLIENT_CLAUDE_DESKTOP,
     CLIENT_NONE,
@@ -324,6 +327,7 @@ def test_run_setup_all_installs_detected_clients(
     ) -> Any:
         captured["scopes"] = scopes
         captured["project_dir"] = project_dir
+        captured["include"] = include
         return [target]
 
     def fake_install(targets: Any, *, command: str, args: Any, env: dict[str, str]) -> Any:
@@ -351,6 +355,96 @@ def test_run_setup_all_installs_detected_clients(
     assert captured["env"]["DATACRON_VAULT_ROOT"] == str(tmp_path)
     assert captured["env"]["DATACRON_READ_PATHS"] == str(tmp_path)
     assert captured["project_dir"] == tmp_path
+    assert captured["include"] is None
+
+
+@pytest.mark.parametrize(
+    ("client", "relative_path"),
+    [
+        ("cursor", Path(".cursor/mcp.json")),
+        ("gemini-cli", Path(".gemini/settings.json")),
+        ("codex-cli", Path(".codex/config.toml")),
+        ("vscode", Path(".vscode/mcp.json")),
+    ],
+)
+def test_run_setup_specific_client_writes_only_requested_project_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    client: str,
+    relative_path: Path,
+) -> None:
+    command = str((tmp_path / "bin" / "datacron-mcp").resolve())
+    monkeypatch.setattr(
+        setup_wizard,
+        "resolve_mcp_invocation",
+        lambda: MCPServerInvocation(command=command, args=()),
+    )
+    monkeypatch.setattr(mcp_clients, "_is_present", lambda candidate: candidate == client)
+
+    result = asyncio.run(
+        run_setup(
+            SetupPlan(
+                vault_path=tmp_path,
+                client=client,
+                install_scope="project",
+                read_only=True,
+                build_index=False,
+            )
+        )
+    )
+
+    expected = tmp_path / relative_path
+    candidate_paths = {
+        tmp_path / ".cursor" / "mcp.json",
+        tmp_path / ".gemini" / "settings.json",
+        tmp_path / ".codex" / "config.toml",
+        tmp_path / ".vscode" / "mcp.json",
+    }
+    assert client in CLIENT_CHOICES
+    assert len(result.client_installs) == 1
+    assert result.client_installs[0].client_id == client
+    assert result.client_installs[0].scope == "project"
+    assert result.client_installs[0].config_path == expected
+    assert {path for path in candidate_paths if path.is_file()} == {expected}
+
+    if expected.suffix == ".toml":
+        server = tomllib.loads(expected.read_text(encoding="utf-8"))["mcp_servers"]["datacron"]
+    else:
+        parsed = json.loads(expected.read_text(encoding="utf-8"))
+        server = parsed.get("mcpServers", parsed.get("servers"))["datacron"]
+    assert server["command"] == command
+    assert server["env"]["DATACRON_READ_ONLY"] == "true"
+
+
+def test_run_setup_specific_client_warns_when_not_detected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        setup_wizard,
+        "resolve_mcp_invocation",
+        lambda: MCPServerInvocation(command="datacron-mcp", args=()),
+    )
+
+    def fake_discover(**kwargs: Any) -> list[ClientTarget]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(setup_wizard, "discover_targets", fake_discover)
+    result = asyncio.run(
+        run_setup(
+            SetupPlan(
+                vault_path=tmp_path,
+                client="gemini-cli",
+                install_scope="project",
+                build_index=False,
+            )
+        )
+    )
+
+    assert result.client_installs == []
+    assert captured["include"] == ("gemini-cli",)
+    assert any("gemini-cli" in warning for warning in result.warnings)
 
 
 def test_run_setup_all_writes_frozen_invocation_to_client_files(
