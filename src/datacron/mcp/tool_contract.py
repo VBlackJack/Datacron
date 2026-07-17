@@ -239,19 +239,25 @@ class ContradictionConfirmationOutput(TypedDict):
 
 
 class ContradictionScanOutput(TypedDict, total=False):
-    """Successful scan or confirmation response."""
+    """Successful scan or confirmation response.
+
+    Every non-required key must also accept ``None``: structured-output
+    serialization materializes absent optional keys as ``None`` before the
+    low-level server validates the result against this schema, so a
+    non-nullable optional key can never validate.
+    """
 
     schema_version: Required[int]
     mode: Required[ContradictionScanMode]
-    candidates: list[ContradictionCandidateOutput]
-    candidate_count: int
-    examined_pairs: int
-    section_count: int
-    limits: ContradictionLimitsOutput
-    deterministic_order: str
-    index_repair: ReconcileStatsOutput
-    elicitation_action: Literal["accept", "decline", "cancel"]
-    confirmation: ContradictionConfirmationOutput
+    candidates: list[ContradictionCandidateOutput] | None
+    candidate_count: int | None
+    examined_pairs: int | None
+    section_count: int | None
+    limits: ContradictionLimitsOutput | None
+    deterministic_order: str | None
+    index_repair: ReconcileStatsOutput | None
+    elicitation_action: Literal["accept", "decline", "cancel"] | None
+    confirmation: ContradictionConfirmationOutput | None
 
 
 class HealthIndexOutput(TypedDict):

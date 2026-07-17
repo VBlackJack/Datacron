@@ -150,6 +150,26 @@ class TestMcpE2E:
         finally:
             await _close_session(session, streams)
 
+    async def test_contradiction_scan_passes_output_schema_validation(
+        self, vault: Path, tmp_path: Path
+    ) -> None:
+        """Scan must survive low-level structured-output validation end to end.
+
+        Serialization materializes absent optional keys as None, so this only
+        holds when every optional output key is nullable; the in-process unit
+        tests bypass that validation layer entirely.
+        """
+        session, streams = await _open_session(vault, tmp_path)
+        try:
+            result = await session.call_tool("contradiction_scan", {"mode": "scan"})
+            assert not result.isError, result.content
+            assert result.structuredContent is not None
+            assert result.structuredContent["schema_version"] == 2
+            assert result.structuredContent["mode"] == "scan"
+            assert isinstance(result.structuredContent["candidate_count"], int)
+        finally:
+            await _close_session(session, streams)
+
     async def test_get_note_full_returns_sandbox_wrapped_content(
         self, vault: Path, tmp_path: Path
     ) -> None:

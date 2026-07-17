@@ -78,6 +78,9 @@ async def _contradiction_scan_impl(
         if proposal_token is not None:
             raise ValueError("proposal_token is only valid in confirm mode")
 
+        # Repair stats are intentionally not echoed in the payload: consecutive
+        # scans on the same index must be byte-identical, and repair activity
+        # is run-dependent state (the first call may repair, the second not).
         await _repair_index_on_read(app)
         payload, candidates = await build_scan_report(app, today=today)
         if _client_supports_form_elicitation(ctx):
