@@ -23,6 +23,7 @@ from mcp.types import ToolAnnotations
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
 from datacron.mcp.tool_contract import (
     AppendJournalOutput,
+    ContradictionScanDetail,
     ContradictionScanMode,
     ContradictionScanOutput,
     CreateNoteOutput,
@@ -202,6 +203,8 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         description=(
             "Use this when indexed sections may conflict or refine one another. Scan mode "
             "returns deterministic section-level candidates and read-only proposal tokens; "
+            "summary detail omits redundant alternative previews while full detail retains "
+            "them for debugging. "
             "confirm mode validates one token and returns an exact existing write-tool call. "
             "This tool never writes, including after elicitation or confirmation."
         ),
@@ -210,6 +213,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
     async def contradiction_scan(
         ctx: Context[Any, Any, Any],
         mode: ContradictionScanMode = "scan",
+        detail: ContradictionScanDetail = "summary",
         proposal_token: str | None = None,
     ) -> ContradictionScanOutput:
         return cast(
@@ -217,6 +221,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             await _contradiction_scan_impl(
                 app,
                 mode=mode,
+                detail=detail,
                 proposal_token=proposal_token,
                 ctx=ctx,
             ),
