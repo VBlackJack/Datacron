@@ -7,6 +7,29 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [2026.0717.03] - 2026-07-17
+
+### Added
+
+- `contradiction_scan` accepts a `detail` parameter (`summary` by default, or `full`).
+  Summary responses drop the pre-rendered blocks from alternative mutations and shorten
+  evidence excerpts; `full` preserves the previous verbose payload for debugging.
+  Confirmation is unaffected: the exact write-tool call, including its block, is still
+  recomputed from the proposal token.
+- A per-note-pair candidate cap (`contradiction_max_per_note_pair`, default 2), applied
+  after deterministic ranking and before the overall candidate limit, so a single pair of
+  notes can no longer dominate scan results.
+- A configurable summary evidence length (`contradiction_summary_evidence_chars`,
+  default 160).
+
+### Changed
+
+- Scan results default to the compact `summary` payload. On a real vault this roughly
+  halves the response size while preserving candidate identity and ordering.
+- A suggested `CONTRADICTION` between notes with disjoint `project/` tags and no explicit
+  temporal ordering is downgraded to an open question. All classification options remain
+  available at confirmation, so a human can still choose contradiction.
+
 ## [2026.0717.02] - 2026-07-17
 
 ### Fixed
