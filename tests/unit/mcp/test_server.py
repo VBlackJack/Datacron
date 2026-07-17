@@ -141,6 +141,7 @@ async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
     }
     contradiction_properties = tools["contradiction_scan"].inputSchema["properties"]
     assert contradiction_properties["mode"]["enum"] == ["scan", "confirm"]
+    assert contradiction_properties["detail"]["enum"] == ["summary", "full"]
 
 
 @pytest.mark.asyncio

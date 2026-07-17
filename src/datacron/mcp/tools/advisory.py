@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 __all__ = ["_contradiction_scan_impl"]
 
 ScanMode = Literal["scan", "confirm"]
+ScanDetail = Literal["summary", "full"]
 
 
 class ContradictionDecision(BaseModel):
@@ -54,6 +55,7 @@ async def _contradiction_scan_impl(
     app: DatacronApp,
     *,
     mode: ScanMode = "scan",
+    detail: ScanDetail = "summary",
     proposal_token: str | None = None,
     ctx: Context[Any, Any, Any] | None = None,
     today: date | None = None,
@@ -75,6 +77,8 @@ async def _contradiction_scan_impl(
             return payload
         if mode != "scan":
             raise ValueError("mode must be 'scan' or 'confirm'")
+        if detail not in {"summary", "full"}:
+            raise ValueError("detail must be 'summary' or 'full'")
         if proposal_token is not None:
             raise ValueError("proposal_token is only valid in confirm mode")
 
@@ -82,7 +86,7 @@ async def _contradiction_scan_impl(
         # scans on the same index must be byte-identical, and repair activity
         # is run-dependent state (the first call may repair, the second not).
         await _repair_index_on_read(app)
-        payload, candidates = await build_scan_report(app, today=today)
+        payload, candidates = await build_scan_report(app, today=today, detail=detail)
         if _client_supports_form_elicitation(ctx):
             elicited = await _elicit_first_candidate(
                 app,

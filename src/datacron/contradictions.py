@@ -19,10 +19,11 @@ import hashlib
 import json
 import re
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from datacron.core.markdown_sections import find_section_span, parse_heading_line
 from datacron.core.models import Chunk, ChunkType, Note
@@ -221,12 +222,19 @@ async def build_scan_report(
     app: DatacronApp,
     *,
     today: date | None = None,
+    detail: Literal["summary", "full"] = "summary",
 ) -> tuple[dict[str, Any], list[Candidate]]:
     """Scan the live index within configured bounds and return stable candidates."""
     proposal_date = today or datetime.now(tz=UTC).date()
     candidates, examined_pairs, section_count = await _scan_candidate_models(app)
     payload_candidates = [
-        _candidate_payload(app, candidate, proposal_date=proposal_date) for candidate in candidates
+        _candidate_payload(
+            app,
+            candidate,
+            proposal_date=proposal_date,
+            detail=detail,
+        )
+        for candidate in candidates
     ]
     payload = {
         "schema_version": CONTRADICTION_SCHEMA_VERSION,
@@ -238,6 +246,7 @@ async def build_scan_report(
         "limits": {
             "max_pairs": app.settings.contradiction_max_pairs,
             "max_candidates": app.settings.contradiction_max_candidates,
+            "max_per_note_pair": app.settings.contradiction_max_per_note_pair,
         },
         "deterministic_order": (
             "score_desc,target_note_id,target_chunk_id,source_note_id,source_chunk_id"
@@ -387,7 +396,16 @@ async def _scan_candidate_models(
             item.source.chunk_id,
         )
     )
-    limited = raw_candidates[: app.settings.contradiction_max_candidates]
+    note_pair_counts: Counter[tuple[str, str]] = Counter()
+    capped_candidates: list[Candidate] = []
+    for candidate in raw_candidates:
+        first_note_id, second_note_id = sorted((candidate.target.note_id, candidate.source.note_id))
+        note_pair = (first_note_id, second_note_id)
+        if note_pair_counts[note_pair] >= app.settings.contradiction_max_per_note_pair:
+            continue
+        note_pair_counts[note_pair] += 1
+        capped_candidates.append(candidate)
+    limited = capped_candidates[: app.settings.contradiction_max_candidates]
     indexed_notes = await app.store.list_indexed_notes()
     note_cache: dict[str, Note] = {}
     resolved = [
@@ -494,6 +512,8 @@ async def _resolve_addressability(  # noqa: PLR0911 - guard clauses preserve ref
             manual_action="Sensitive content was redacted; review this candidate manually.",
         )
 
+    candidate = _guard_cross_project_contradiction(candidate, target_note, source_note)
+
     selector = _addressable_selector(target_note.content, candidate.target.header_path)
     if selector is None:
         return replace(
@@ -518,17 +538,23 @@ def _candidate_payload(
     candidate: Candidate,
     *,
     proposal_date: date,
+    detail: Literal["summary", "full"],
 ) -> dict[str, Any]:
     suggested: dict[str, Any] | None = None
     alternatives: list[dict[str, Any]] = []
     if candidate.addressable:
         proposals = _proposal_variants(candidate, proposal_date=proposal_date)
         for proposal in proposals:
-            rendered = _proposal_summary(app, proposal)
-            if (
+            is_suggested = (
                 proposal.classification is candidate.classification
                 and proposal.scope is MutationScope.SECTION
-            ):
+            )
+            rendered = _proposal_summary(
+                app,
+                proposal,
+                include_block=detail == "full" or is_suggested,
+            )
+            if is_suggested:
                 suggested = rendered
             else:
                 alternatives.append(rendered)
@@ -540,8 +566,14 @@ def _candidate_payload(
         "classification_options": _classification_options(candidate.classification),
         "rationale": candidate.rationale,
         "evidence": {
-            "target": _redact(app, _excerpt(candidate.target.content)),
-            "source": _redact(app, _excerpt(candidate.source.content)),
+            "target": _redact(
+                app,
+                _excerpt(candidate.target.content, limit=_evidence_limit(app, detail)),
+            ),
+            "source": _redact(
+                app,
+                _excerpt(candidate.source.content, limit=_evidence_limit(app, detail)),
+            ),
         },
         "target": _section_reference(app, candidate.target),
         "source": _section_reference(app, candidate.source),
@@ -588,13 +620,20 @@ def _find_proposal(
     return None
 
 
-def _proposal_summary(app: DatacronApp, proposal: Proposal) -> dict[str, Any]:
+def _proposal_summary(
+    app: DatacronApp,
+    proposal: Proposal,
+    *,
+    include_block: bool,
+) -> dict[str, Any]:
     return {
         "proposal_token": proposal.token,
         "classification": proposal.classification.value,
         "scope": proposal.scope.value,
         "tool": proposal.tool,
-        "block": _redact(app, proposal.block) if proposal.block is not None else None,
+        "block": (
+            _redact(app, proposal.block) if include_block and proposal.block is not None else None
+        ),
     }
 
 
@@ -706,6 +745,54 @@ def _classification(content: str) -> tuple[CandidateClass, str]:
     )
 
 
+def _guard_cross_project_contradiction(
+    candidate: Candidate,
+    target_note: Note,
+    source_note: Note,
+) -> Candidate:
+    """Avoid suggesting contradictions across unrelated, unordered projects."""
+    if candidate.classification is not CandidateClass.CONTRADICTION:
+        return candidate
+    has_temporal_signal = _has_explicit_temporal_order(candidate)
+    target_projects = _frontmatter_project_tags(target_note)
+    source_projects = _frontmatter_project_tags(source_note)
+    if (
+        has_temporal_signal
+        or not (target_projects or source_projects)
+        or not target_projects.isdisjoint(source_projects)
+    ):
+        return candidate
+    return replace(
+        candidate,
+        classification=CandidateClass.OPEN_QUESTION,
+        rationale=(
+            "The notes share no project tag and provide no explicit temporal ordering; "
+            "the relationship requires review."
+        ),
+    )
+
+
+def _has_explicit_temporal_order(candidate: Candidate) -> bool:
+    target_dates = _dates(_without_update_blocks(candidate.target.content))
+    source_dates = _dates(_without_update_blocks(candidate.source.content))
+    return bool(target_dates and source_dates)
+
+
+def _frontmatter_project_tags(note: Note) -> frozenset[str]:
+    raw_tags = note.frontmatter.get("tags", [])
+    if isinstance(raw_tags, str):
+        values = raw_tags.split(",")
+    elif isinstance(raw_tags, list):
+        values = [str(item) for item in raw_tags]
+    else:
+        return frozenset()
+    return frozenset(
+        normalized
+        for value in values
+        if (normalized := value.strip().casefold()).startswith("project/")
+    )
+
+
 def _classification_options(suggested: CandidateClass) -> list[str]:
     safe_order = [
         suggested,
@@ -740,6 +827,15 @@ def _excerpt(content: str, *, limit: int = _EVIDENCE_CHAR_LIMIT) -> str:
     if len(rendered) <= limit:
         return rendered
     return f"{rendered[: max(limit - 3, 0)].rstrip()}..."
+
+
+def _evidence_limit(
+    app: DatacronApp,
+    detail: Literal["summary", "full"],
+) -> int:
+    if detail == "full":
+        return _EVIDENCE_CHAR_LIMIT
+    return app.settings.contradiction_summary_evidence_chars
 
 
 def _query(section: SectionAssertion) -> str:
