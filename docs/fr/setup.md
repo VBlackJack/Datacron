@@ -34,6 +34,7 @@ n'annule jamais l'enregistrement des clients. Options utiles :
 - `datacron setup --no-index` - saute la construction de l'index.
 - `datacron setup --client claude-code` - affiche un snippet de config stdio prêt à coller dans Claude Code.
 - `datacron setup --client none` - configure le vault sans écrire ni afficher de config client.
+- `datacron setup --protocol` - installe aussi le protocole mémoire dans les instructions des clients détectés ; sans ce flag, la réponse unattended par défaut est non.
 
 Les sections ci-dessous décrivent les **mêmes étapes manuellement**, si tu préfères tout
 contrôler pas à pas.
@@ -182,6 +183,26 @@ DATACRON_VAULT_ROOT=/chemin/vers/vault datacron-mcp
 Déclare cette commande dans la configuration MCP du client. Le serveur lit les messages
 JSON-RPC sur stdin et répond sur stdout ; les logs partent dans le FileLogger, jamais sur
 stdout (réservé au protocole).
+
+### Installer le protocole mémoire côté client
+
+Le branchement MCP expose les outils ; le bloc de protocole apprend au client quand les
+utiliser (recherche d'abord, lecture de `_memory/INIT.md`, persistance proactive des faits
+durables confirmés, jamais de spéculation). Installe-le dans tous les clients détectés :
+
+```bash
+datacron protocol install --client all
+```
+
+Ou cible `claude-code`, `cursor`, `gemini-cli` ou `codex-cli`. Claude Desktop est ignoré
+avec un message explicite : les instructions du serveur MCP y suffisent. Datacron écrit
+uniquement entre les marqueurs `<!-- datacron:protocol:begin -->` et
+`<!-- datacron:protocol:end -->`; une nouvelle installation remplace ce bloc et préserve
+le reste du fichier. Pour le retirer :
+
+```bash
+datacron protocol uninstall --client all
+```
 
 ## 7. Variables d'environnement
 
