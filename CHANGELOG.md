@@ -7,6 +7,47 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [2026.0717.00] - 2026-07-17
+
+### Added
+
+- A memory protocol for MCP clients: server instructions covering session start,
+  search-first answering, and conditional proactive persistence, plus trigger-led
+  descriptions on the MCP tools, with structural test coverage.
+- `datacron protocol install` and `datacron protocol uninstall` manage an idempotent,
+  tagged Datacron block in supported agent instruction files; clients that honor the
+  server instructions natively are skipped.
+- Bi-temporal note metadata: `valid_from`, `invalid_at`, and `invalidated_by`
+  frontmatter keys. Notes past `invalid_at` are demoted in search results the same way
+  superseded notes are. Fully backward compatible, no vault migration required.
+- Evaluation harness v2: deduplicated note- and chunk-level metrics, MRR, nDCG@10,
+  forbidden-path checks for knowledge-update questions, latency percentiles, measured
+  payload token counts, per-stage timing, pipeline and transport selection
+  (`--pipeline store|tool`, `--transport impl|e2e`), and a versioned baseline with
+  `--compare` that fails on regression.
+- MCP tool annotations (read-only and destructive hints), typed output schemas, and
+  structured tool errors that preserve the JSON error payload.
+- `--version` on the CLI and progress reporting while indexing.
+
+### Changed
+
+- Note creation resolves ULIDs through the index and sidecar authorities instead of
+  walking the whole vault, cutting creation cost from proportional-to-vault-size to
+  roughly 16 ms on an 1800-note vault. Unreadable files are skipped with a warning.
+- The write tools share a common execution and error-reporting path.
+- Repair-on-read is throttled (`DATACRON_REPAIR_MIN_INTERVAL_SECONDS`, default 30
+  seconds; `0` restores the previous always-repair behavior). `get_health` remains
+  exhaustive. The freshness contract documents this amendment.
+- Personal defaults moved out of the code base; folder exclusions are read from the
+  vault configuration.
+- CI workflows track current major versions of the checkout and setup-python actions.
+
+### Fixed
+
+- Temporal re-ranking no longer merges non-comparable BM25 scores from the strict
+  (AND) and fallback (OR) search passes; result tiers are preserved through
+  re-ranking. Tool-pipeline recall@5 is restored to parity with the store pipeline.
+
 ## [2026.0716.00] - 2026-07-16
 
 ### Added
