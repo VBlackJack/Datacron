@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from datacron.core.config import VaultConfig, load_vault_config
+from datacron.core.config import DEFAULT_EXCLUDED_FOLDERS, VaultConfig, load_vault_config
 from datacron.core.frontmatter import FrontmatterError, parse
 from datacron.core.models import ChunkType
 from datacron.core.paths import sidecar_index_db, sidecar_vault_config
@@ -90,7 +90,7 @@ def main() -> int:
     all_paths = {rel_path for rel_path, _content_hash in scan.content_hashes}
     excluded = sorted(all_paths - indexed)
     rows = [_analyze(root, rel_path, config, thresholds) for rel_path in excluded]
-    report = _render(root, len(all_paths), len(indexed), rows, thresholds)
+    report = _render(root, len(all_paths), len(indexed), rows, thresholds, config)
     output = args.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(report, encoding="ascii", newline="\n")
@@ -227,14 +227,20 @@ def _render(
     index_count: int,
     rows: list[AuditRow],
     thresholds: Thresholds,
+    config: VaultConfig,
 ) -> str:
     groups = Counter(row.group for row in rows)
     reasons = Counter(row.exclusion_reason for row in rows)
     candidates = [row for row in rows if row.candidate]
     sizes = [row.size_bytes for row in rows]
     archive_candidates = [row for row in candidates if row.group == "_archive"]
-    legacy_candidates = [
-        row for row in candidates if row.exclusion_reason == "folder:zzz_Corbeille"
+    configured_folder_reasons = {
+        f"folder:{folder}"
+        for folder in config.excluded_folders
+        if folder not in DEFAULT_EXCLUDED_FOLDERS
+    }
+    configured_candidates = [
+        row for row in candidates if row.exclusion_reason in configured_folder_reasons
     ]
     unexplained = [row for row in rows if row.exclusion_reason == "unexplained_index_gap"]
     lines = [
@@ -249,9 +255,9 @@ def _render(
         f"The integrity scan sees {scan_count:,} Markdown notes and the index contains "
         f"{index_count:,}, leaving exactly {len(rows):,} excluded notes.",
         "",
-        f"One archived note is a plausible reintegration candidate. {len(legacy_candidates)} "
-        "additional knowledge-like files are explicitly under `zzz_Corbeille` legacy paths; "
-        "they should remain excluded unless Julien deliberately restores that legacy material. "
+        f"One archived note is a plausible reintegration candidate. {len(configured_candidates)} "
+        "additional knowledge-like files are explicitly under non-default excluded paths; "
+        "they should remain excluded unless the vault owner deliberately restores that material. "
         f"There are {len(unexplained)} unexplained index gaps.",
         "",
         "## Distribution",
@@ -313,7 +319,7 @@ def _render(
         recommendation = (
             "plausible reintegration candidate"
             if row in archive_candidates
-            else "knowledge-like, but explicit legacy/trash path"
+            else "knowledge-like, but explicit non-default excluded path"
         )
         lines.append(
             f"| `{_ascii(row.rel_path)}` | `{_ascii(row.exclusion_reason)}` | "

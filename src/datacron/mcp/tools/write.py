@@ -303,6 +303,9 @@ async def _set_frontmatter_impl(
     last_verified: str | None = None,
     supersedes: list[str] | None = None,
     origin: str | None = None,
+    valid_from: str | None = None,
+    invalid_at: str | None = None,
+    invalidated_by: str | None = None,
     expected_hash: str | None = None,
     actor: str = "direct-call",
 ) -> dict[str, Any]:
@@ -317,12 +320,18 @@ async def _set_frontmatter_impl(
             cleaned_last_verified,
             cleaned_supersedes,
             cleaned_origin,
+            cleaned_valid_from,
+            cleaned_invalid_at,
+            cleaned_invalidated_by,
         ) = _validate_set_frontmatter_request(
             rel_path=rel_path,
             confidence=confidence,
             last_verified=last_verified,
             supersedes=supersedes,
             origin=origin,
+            valid_from=valid_from,
+            invalid_at=invalid_at,
+            invalidated_by=invalidated_by,
         )
         cleaned_expected_hash = _validate_expected_hash(expected_hash)
         changed_fields: list[str] = []
@@ -333,6 +342,9 @@ async def _set_frontmatter_impl(
                 "last_verified": cleaned_last_verified,
                 "supersedes": cleaned_supersedes,
                 "origin": cleaned_origin,
+                "valid_from": cleaned_valid_from,
+                "invalid_at": cleaned_invalid_at,
+                "invalidated_by": cleaned_invalidated_by,
             }.items()
             if value is not None
         )
@@ -369,6 +381,27 @@ async def _set_frontmatter_impl(
                     "origin",
                     cleaned_origin,
                 )
+            if cleaned_valid_from is not None:
+                _set_changed_frontmatter_field(
+                    metadata,
+                    changed_fields,
+                    "valid_from",
+                    cleaned_valid_from,
+                )
+            if cleaned_invalid_at is not None:
+                _set_changed_frontmatter_field(
+                    metadata,
+                    changed_fields,
+                    "invalid_at",
+                    cleaned_invalid_at,
+                )
+            if cleaned_invalidated_by is not None:
+                _set_changed_frontmatter_field(
+                    metadata,
+                    changed_fields,
+                    "invalidated_by",
+                    cleaned_invalidated_by,
+                )
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
             return _serialize_preserving_bom(metadata, body, has_bom=has_bom)
 
@@ -383,6 +416,14 @@ async def _set_frontmatter_impl(
                 parameters={"fields": ",".join(requested_fields)},
             ),
         )
+        if (
+            cleaned_invalidated_by is not None
+            and await app.store.get_note_rel_path(cleaned_invalidated_by) is None
+        ):
+            _LOGGER.warning(
+                "invalidated_by target note is not indexed: %s",
+                cleaned_invalidated_by,
+            )
         index_stats = await _reconcile_serialized(app)
         await _invalidate_alias_cache_if_index_changed(app, index_stats)
         payload: dict[str, Any] = {

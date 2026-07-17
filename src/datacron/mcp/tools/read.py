@@ -43,8 +43,7 @@ from datacron.mcp.tools.search import _repair_index_on_read
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
-GetNoteFormat = str  # "full" | "map" -- kept loose for FastMCP schema
-_VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map"})
+_VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map", "chunk"})
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
 _CHUNK_ID_SEPARATOR: Final[str] = "::"
@@ -193,6 +192,9 @@ async def _get_note_impl(
                 truncated=False,
             )
             return chunk_payload
+
+        if fmt == "chunk":
+            raise ValueError("format='chunk' requires an indexed chunk_id")
 
         note = await _resolve_note(app, id_or_path)
     except (FileNotFoundError, ValueError, PathConfinementError) as exc:

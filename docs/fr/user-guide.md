@@ -66,8 +66,9 @@ un simple « match de mots » :
   remonte aussi les notes qui parlent de « backup ».
 - **Re-rank temporel conservateur** :
   - une note citée dans le champ `supersedes` d'une autre est fortement démotée ;
+  - une note portant `invalid_at` est démotée de façon identique ;
   - `confidence: low` et `confidence: needs_verification` reçoivent une pénalité légère ;
-  - `include_superseded=true` permet de faire remonter les notes historiques.
+  - `include_superseded=true` permet de faire remonter les notes supersédées ou invalidées.
 
 `search_regex` reste **littéral** : ni query-expansion, ni re-rank temporel. Utilise-le
 quand tu cherches une chaîne exacte (un identifiant, un chemin, un bout de code).
@@ -111,9 +112,19 @@ utiles au quotidien :
   légèrement démotée ; utile pour marquer un brouillon ou une info à vérifier.
 - `supersedes: <ULID>` - désigne la note remplacée, qui sera fortement démotée dans les
   recherches courantes.
+- `invalid_at: <datetime UTC>` avec `invalidated_by: <ULID>` - invalide un fait ciblé sans le
+  supprimer ni réécrire son histoire.
 
 Résultat : tu peux garder l'historique dans le vault sans polluer les réponses, tout en
 pouvant le rappeler explicitement avec `include_superseded=true`.
+
+### Cycle de vie d'un fait
+
+Un fait est **actif** tant qu'il n'a ni été remplacé par une note qui le cite dans `supersedes`,
+ni reçu de champ `invalid_at`. Quand une correction ciblée arrive, préfère
+`invalid_at + invalidated_by` : la note devient **invalidée**, reste interrogeable comme historique
+avec `include_superseded=true`, et la note de remplacement peut être écrite avant ou après elle.
+`valid_from` précise si nécessaire la date de début de validité ; sinon `created` fait foi.
 
 ## Exemples de demandes concrètes
 

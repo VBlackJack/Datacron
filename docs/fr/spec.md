@@ -95,26 +95,35 @@ Zettelkasten existante.
 
 ---
 
-## 4. Le frontmatter que Datacron écrit (v0.2+, quand les outils d'écriture arrivent)
+## 4. Frontmatter des notes mémoire
 
-Quand Datacron crée lui-même une note (post-v0.2 - hors périmètre MVP), il écrit un frontmatter
-**minimal** :
+Quand Datacron crée une note `_memory`, il écrit un frontmatter minimal. Les champs de cycle de
+vie bi-temporel sont optionnels et ne sont matérialisés que lorsqu'ils portent une information :
 
 ```yaml
 ---
 id: 01HQXR7K9YZ8M2N3PQRSTV4WX5
 title: "Synthèse : risques d'adoption de Kafka"
 created: 2026-05-17T16:00:00+02:00
-origin: ai                      # ai | human | imported
-audit_run_id: 2026-05-17T15-58-12Z_a3c2
+updated: 2026-05-17T16:00:00+02:00
+origin: ai                      # ai | human | merged
+confidence: high
+last_verified: 2026-05-17
+supersedes: []                  # ULID des notes entièrement remplacées
+valid_from: 2026-05-17          # optionnel ; défaut implicite = created
+invalid_at: 2026-07-17T08:30:00+00:00  # optionnel ; datetime UTC
+invalidated_by: 01HQXR7K9YZ8M2N3PQRSTV4WX6  # optionnel ; ULID remplaçant
+tags: [memory/fact]
 ---
 ```
 
-C'est tout. Pas de `status`, pas de `trust_level` exposé dans le frontmatter - ceux-ci vivent
-dans le journal d'audit et le moteur de politique.
+`created` est aussi la date d'apprentissage : aucun champ `learned_at` redondant n'est ajouté.
+Une note sans `valid_from`, `invalid_at` ni `invalidated_by` reste active et se comporte exactement
+comme avant. `invalid_at` conserve le fait dans l'historique mais le démote au même niveau qu'une
+note supersédée ; `include_superseded=true` permet de rappeler les deux formes d'historique.
 
-**Les notes existantes ne sont jamais normalisées rétroactivement.** Datacron ne livre aucune
-commande de normalisation.
+**Les notes existantes ne sont jamais normalisées rétroactivement.** Aucune migration du vault
+n'est nécessaire.
 
 ---
 

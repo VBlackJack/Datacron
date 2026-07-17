@@ -83,11 +83,10 @@ DEFAULT_SCRUB_CANARIES: Final[tuple[tuple[str, str], ...]] = (
 )
 DEFAULT_EXCLUDED_FOLDERS: Final[tuple[str, ...]] = (
     "_attachments",
-    "zzz_Corbeille",
     "_trash",
     "_archive",
 )
-DEFAULT_EXCLUDED_FILES: Final[tuple[str, ...]] = ("00_INDEX.md",)
+DEFAULT_EXCLUDED_FILES: Final[tuple[str, ...]] = ()
 
 SIDECAR_DIR_NAME: Final[str] = ".datacron"
 INDEX_DIR_NAME: Final[str] = "index"

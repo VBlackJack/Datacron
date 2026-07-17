@@ -683,7 +683,13 @@ async def test_list_temporal_metadata_reads_frontmatter_json(
     current = note_factory(
         id=_NOTE_ID,
         rel_path="current.md",
-        frontmatter={"confidence": "low", "supersedes": [_OTHER_NOTE_ID, ""]},
+        frontmatter={
+            "confidence": "low",
+            "supersedes": [_OTHER_NOTE_ID, ""],
+            "valid_from": "2026-07-01",
+            "invalid_at": "2026-07-17T08:30:00+00:00",
+            "invalidated_by": _OTHER_NOTE_ID,
+        },
     )
     current_chunk = chunk_factory(note=current, chunk_id=f"{current.id}::::0000")
     plain = note_factory(id=_OTHER_NOTE_ID, rel_path="plain.md", frontmatter={})
@@ -695,7 +701,13 @@ async def test_list_temporal_metadata_reads_frontmatter_json(
     await store.upsert_note(plain, [plain_chunk])
 
     assert await store.list_temporal_metadata() == {
-        _NOTE_ID: TemporalMeta(confidence="low", supersedes=[_OTHER_NOTE_ID]),
+        _NOTE_ID: TemporalMeta(
+            confidence="low",
+            supersedes=[_OTHER_NOTE_ID],
+            valid_from="2026-07-01",
+            invalid_at="2026-07-17T08:30:00+00:00",
+            invalidated_by=_OTHER_NOTE_ID,
+        ),
         _OTHER_NOTE_ID: TemporalMeta(confidence=None, supersedes=[]),
     }
     await store.close()
