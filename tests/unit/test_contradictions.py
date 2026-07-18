@@ -27,6 +27,7 @@ from datacron.contradictions import (
     build_proposal,
     format_update_block,
 )
+from datacron.core import config as core_config
 
 _TODAY = date(2026, 7, 17)
 
@@ -101,6 +102,27 @@ def test_open_question_formatter_has_exact_punctuation() -> None:
     assert rendered == (
         "> QUESTION OUVERTE 2026-07-17 : Which direction remains active? "
         "Voir _memory/projects/source.md."
+    )
+
+
+def test_formatter_reads_provenance_labels_from_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(
+        core_config.DEFAULT_CONTRADICTION_PROVENANCE_LABELS,
+        "open_question",
+        "OPEN QUESTION",
+    )
+    monkeypatch.setattr(core_config, "DEFAULT_CONTRADICTION_SOURCE_CONNECTOR", "See")
+
+    rendered = format_update_block(
+        CandidateClass.OPEN_QUESTION,
+        "Which direction remains active?",
+        "_memory/projects/source.md",
+        today=_TODAY,
+    )
+
+    assert rendered == (
+        "> OPEN QUESTION 2026-07-17 : Which direction remains active? "
+        "See _memory/projects/source.md."
     )
 
 

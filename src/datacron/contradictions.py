@@ -25,6 +25,7 @@ from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal
 
+from datacron.core import config as core_config
 from datacron.core.markdown_sections import find_section_span, parse_heading_line
 from datacron.core.models import Chunk, ChunkType, Note
 
@@ -48,7 +49,11 @@ _TOKEN_PATTERN: Final[re.Pattern[str]] = re.compile(
 )
 _ISO_DATE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 _UPDATE_BLOCK_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^>\s*(?:CORRECTION|MISE A JOUR|QUESTION OUVERTE)\s+"
+    r"^>\s*(?:"
+    + "|".join(
+        re.escape(label) for label in core_config.DEFAULT_CONTRADICTION_PROVENANCE_LABELS.values()
+    )
+    + r")\s+"
     r"(?P<date>\d{4}-\d{2}-\d{2})\s*:",
     flags=re.IGNORECASE | re.MULTILINE,
 )
@@ -204,18 +209,15 @@ def format_update_block(
     today: date,
 ) -> str:
     """Return the one canonical dated section-level provenance block."""
-    labels = {
-        CandidateClass.CONTRADICTION: "CORRECTION",
-        CandidateClass.REFINEMENT: "MISE A JOUR",
-        CandidateClass.OPEN_QUESTION: "QUESTION OUVERTE",
-    }
+    label = core_config.DEFAULT_CONTRADICTION_PROVENANCE_LABELS[classification.name.lower()]
     cleaned_statement = _clean_statement(statement, classification)
     sentence = (
         cleaned_statement
         if cleaned_statement.endswith((".", "?", "!"))
         else f"{cleaned_statement}."
     )
-    return f"> {labels[classification]} {today.isoformat()} : {sentence} Voir {source_rel_path}."
+    connector = core_config.DEFAULT_CONTRADICTION_SOURCE_CONNECTOR
+    return f"> {label} {today.isoformat()} : {sentence} {connector} {source_rel_path}."
 
 
 async def build_scan_report(
