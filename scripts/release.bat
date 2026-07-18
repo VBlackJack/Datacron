@@ -39,7 +39,7 @@ choice /c YN /m "Bump, commit, tag v%VER% and push"
 if errorlevel 2 (echo Aborted, nothing changed. & exit /b 0)
 
 "%PY%" scripts\bump_version.py || (echo Bump failed. & exit /b 1)
-git add src\datacron\__init__.py || (echo git add failed. & exit /b 1)
+git add src\datacron\__init__.py server.json CHANGELOG.md || (echo git add failed. & exit /b 1)
 git commit -m "chore(version): %VER%" || (echo git commit failed. & exit /b 1)
 git tag -a "v%VER%" -m "Datacron %VER%" || (echo git tag failed. & exit /b 1)
 git push origin HEAD || (echo git push branch failed. & exit /b 1)
