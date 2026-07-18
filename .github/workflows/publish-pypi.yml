@@ -20,8 +20,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  verify:
+    name: Verify invariant and regression gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Install project and verification dependencies
+        run: |
+          python -m pip install uv==0.11.3
+          uv sync --frozen --extra dev --extra build
+
+      - name: Blocking invariant gate
+        run: uv run --frozen --extra dev --extra build python scripts/check_invariants.py
+
+      - name: Full regression suite
+        run: uv run --frozen --extra dev --extra build pytest
+
   build-dist:
     name: Build Python distributions
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
