@@ -3,7 +3,7 @@
 > Local MCP server to query and maintain a Markdown vault from Claude Desktop or Claude Code,
 > without sending the whole vault into the context.
 
-<!-- mcp-name: io.github.vblackjack/datacron -->
+<!-- mcp-name: io.github.VBlackJack/datacron -->
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)](pyproject.toml)
