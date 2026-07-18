@@ -23,7 +23,12 @@ from pathlib import Path
 from typing import Final, Literal, TypeAlias
 
 from datacron.core.logger import get_logger
-from datacron.installers.mcp_clients import client_display_name, detect_clients
+from datacron.installers.mcp_clients import (
+    SCOPE_PROJECT,
+    SCOPE_USER,
+    client_display_name,
+    detect_clients,
+)
 
 __all__ = [
     "PROTOCOL_ALL",
@@ -83,8 +88,14 @@ _CURSOR_MANUAL_INSTRUCTIONS: Final[str] = "\n".join(
         PROTOCOL_BLOCK,
     )
 )
+_CURSOR_RULE_FRONTMATTER: Final[str] = (
+    "---\ndescription: Datacron memory protocol\nalwaysApply: true\n---"
+)
+_CURSOR_RULE_CONTENT: Final[str] = f"{_CURSOR_RULE_FRONTMATTER}\n{PROTOCOL_BLOCK}\n"
+_CURSOR_RULE_RELATIVE_PATH: Final[Path] = Path(".cursor") / "rules" / "datacron.mdc"
 
 _Operation: TypeAlias = Literal["install", "uninstall"]
+_Scope: TypeAlias = Literal["user", "project"]
 
 
 class ProtocolInstallError(RuntimeError):
@@ -110,27 +121,55 @@ class ProtocolInstallOutcome:
     manual_instructions: str | None = None
 
 
-def install_memory_protocol(client: str = PROTOCOL_ALL) -> list[ProtocolInstallOutcome]:
-    """Install or refresh the marked protocol block for one client or all detected clients."""
-    selected = _select_install_clients(client)
-    return _apply_to_clients(selected, operation="install")
+def install_memory_protocol(
+    client: str = PROTOCOL_ALL,
+    *,
+    project_dir: Path | None = None,
+    scope: str = SCOPE_USER,
+) -> list[ProtocolInstallOutcome]:
+    """Install or refresh the protocol for one client in one concrete scope."""
+    concrete_scope = _validate_scope(scope)
+    selected = _select_install_clients(client, scope=concrete_scope)
+    _validate_project_dir(selected, project_dir=project_dir, scope=concrete_scope)
+    return _apply_to_clients(
+        selected,
+        operation="install",
+        project_dir=project_dir,
+        scope=concrete_scope,
+    )
 
 
-def uninstall_memory_protocol(client: str = PROTOCOL_ALL) -> list[ProtocolInstallOutcome]:
-    """Remove the marked protocol block for one client or all relevant clients."""
-    selected = _select_uninstall_clients(client)
-    return _apply_to_clients(selected, operation="uninstall")
+def uninstall_memory_protocol(
+    client: str = PROTOCOL_ALL,
+    *,
+    project_dir: Path | None = None,
+    scope: str = SCOPE_USER,
+) -> list[ProtocolInstallOutcome]:
+    """Remove the protocol for one client in one concrete scope."""
+    concrete_scope = _validate_scope(scope)
+    selected = _select_uninstall_clients(client, scope=concrete_scope)
+    _validate_project_dir(selected, project_dir=project_dir, scope=concrete_scope)
+    return _apply_to_clients(
+        selected,
+        operation="uninstall",
+        project_dir=project_dir,
+        scope=concrete_scope,
+    )
 
 
-def _select_install_clients(client: str) -> tuple[str, ...]:
+def _select_install_clients(client: str, *, scope: _Scope) -> tuple[str, ...]:
     _validate_client(client)
+    if scope == SCOPE_PROJECT:
+        return (_CURSOR,) if client == PROTOCOL_ALL else (client,)
     if client != PROTOCOL_ALL:
         return (client,)
     return detect_clients(include=PROTOCOL_CLIENT_IDS)
 
 
-def _select_uninstall_clients(client: str) -> tuple[str, ...]:
+def _select_uninstall_clients(client: str, *, scope: _Scope) -> tuple[str, ...]:
     _validate_client(client)
+    if scope == SCOPE_PROJECT:
+        return (_CURSOR,) if client == PROTOCOL_ALL else (client,)
     if client != PROTOCOL_ALL:
         return (client,)
     detected = set(detect_clients(include=PROTOCOL_CLIENT_IDS))
@@ -149,14 +188,51 @@ def _validate_client(client: str) -> None:
         )
 
 
+def _validate_scope(scope: str) -> _Scope:
+    if scope == SCOPE_USER:
+        return "user"
+    if scope == SCOPE_PROJECT:
+        return "project"
+    raise ValueError(
+        f"Unknown protocol scope {scope!r}. Expected {SCOPE_USER!r} or {SCOPE_PROJECT!r}."
+    )
+
+
+def _validate_project_dir(
+    clients: tuple[str, ...],
+    *,
+    project_dir: Path | None,
+    scope: _Scope,
+) -> None:
+    if scope == SCOPE_PROJECT and _CURSOR in clients and project_dir is None:
+        raise ValueError("A project directory is required for the Cursor project protocol target.")
+
+
 def _apply_to_clients(
     clients: tuple[str, ...],
     *,
     operation: _Operation,
+    project_dir: Path | None,
+    scope: _Scope,
 ) -> list[ProtocolInstallOutcome]:
     outcomes: list[ProtocolInstallOutcome] = []
     for client_id in clients:
         display_name = client_display_name(client_id)
+        if scope == SCOPE_PROJECT:
+            if client_id != _CURSOR:
+                outcomes.append(_project_scope_skip(client_id, display_name))
+                continue
+            if project_dir is None:  # pragma: no cover - validated before dispatch
+                raise ValueError(
+                    "A project directory is required for the Cursor project protocol target."
+                )
+            outcome = (
+                _install_cursor_project_rule(project_dir, display_name)
+                if operation == "install"
+                else _uninstall_cursor_project_rule(project_dir, display_name)
+            )
+            outcomes.append(outcome)
+            continue
         if client_id == _CLAUDE_DESKTOP:
             outcomes.append(
                 ProtocolInstallOutcome(
@@ -179,6 +255,18 @@ def _apply_to_clients(
         for path in paths:
             outcomes.append(_apply_to_path(client_id, display_name, path, operation=operation))
     return outcomes
+
+
+def _project_scope_skip(client_id: str, display_name: str) -> ProtocolInstallOutcome:
+    return ProtocolInstallOutcome(
+        client_id=client_id,
+        display_name=display_name,
+        instruction_path=None,
+        successful=True,
+        changed=False,
+        skipped=True,
+        detail=f"no project-scope protocol target for {client_id}",
+    )
 
 
 def _install_cursor_protocol(display_name: str) -> ProtocolInstallOutcome:
@@ -222,6 +310,99 @@ def _install_cursor_protocol(display_name: str) -> ProtocolInstallOutcome:
         skipped=True,
         detail=detail,
         manual_instructions=_CURSOR_MANUAL_INSTRUCTIONS,
+    )
+
+
+def _cursor_project_rule_path(project_dir: Path) -> Path:
+    """Return the dedicated Cursor project-rule path for ``project_dir``."""
+    return project_dir / _CURSOR_RULE_RELATIVE_PATH
+
+
+def _install_cursor_project_rule(
+    project_dir: Path,
+    display_name: str,
+) -> ProtocolInstallOutcome:
+    """Create or canonically refresh Datacron's dedicated Cursor project rule."""
+    path = _cursor_project_rule_path(project_dir)
+    try:
+        text, has_bom = _read_text(path)
+        if path.exists() and _find_protocol_span(text) is None:
+            raise ProtocolInstallError(
+                f"{path} has no Datacron protocol markers; refusing to overwrite"
+            )
+        changed = has_bom or text != _CURSOR_RULE_CONTENT
+        if changed:
+            _atomic_write_text(path, _CURSOR_RULE_CONTENT, has_bom=False)
+    except (OSError, UnicodeError, ProtocolInstallError) as exc:
+        _LOGGER.warning("Cursor project protocol install failed for %s: %s", display_name, exc)
+        return ProtocolInstallOutcome(
+            client_id=_CURSOR,
+            display_name=display_name,
+            instruction_path=path,
+            successful=False,
+            changed=False,
+            skipped=False,
+            detail=str(exc),
+        )
+    return ProtocolInstallOutcome(
+        client_id=_CURSOR,
+        display_name=display_name,
+        instruction_path=path,
+        successful=True,
+        changed=changed,
+        skipped=False,
+        detail="installed" if changed else "already installed",
+    )
+
+
+def _uninstall_cursor_project_rule(
+    project_dir: Path,
+    display_name: str,
+) -> ProtocolInstallOutcome:
+    """Delete Datacron's dedicated Cursor project rule when its markers prove ownership."""
+    path = _cursor_project_rule_path(project_dir)
+    try:
+        if not path.exists():
+            return ProtocolInstallOutcome(
+                client_id=_CURSOR,
+                display_name=display_name,
+                instruction_path=path,
+                successful=True,
+                changed=False,
+                skipped=False,
+                detail="already absent",
+            )
+        text, _has_bom = _read_text(path)
+        if _find_protocol_span(text) is None:
+            return ProtocolInstallOutcome(
+                client_id=_CURSOR,
+                display_name=display_name,
+                instruction_path=path,
+                successful=True,
+                changed=False,
+                skipped=True,
+                detail="foreign file left unchanged; no Datacron protocol markers",
+            )
+        path.unlink()
+    except (OSError, UnicodeError, ProtocolInstallError) as exc:
+        _LOGGER.warning("Cursor project protocol uninstall failed for %s: %s", display_name, exc)
+        return ProtocolInstallOutcome(
+            client_id=_CURSOR,
+            display_name=display_name,
+            instruction_path=path,
+            successful=False,
+            changed=False,
+            skipped=False,
+            detail=str(exc),
+        )
+    return ProtocolInstallOutcome(
+        client_id=_CURSOR,
+        display_name=display_name,
+        instruction_path=path,
+        successful=True,
+        changed=True,
+        skipped=False,
+        detail="removed",
     )
 
 
