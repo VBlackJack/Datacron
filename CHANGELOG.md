@@ -9,11 +9,14 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0718.02] - 2026-07-18
+
 ### Added
 
 - PyPI releases can be published through a dedicated Trusted Publishing workflow with a
   separate build job and a manually approved `pypi` environment. The publish job receives
   only the short-lived OIDC permission and uses no persistent PyPI credential.
+- Tested and supported on Python 3.13, which is now included in the CI matrix.
 
 ### Changed
 
