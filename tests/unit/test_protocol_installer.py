@@ -23,8 +23,10 @@ import pytest
 from typer.testing import CliRunner
 
 import datacron.cli as cli_module
+from datacron import setup_wizard
 from datacron.cli import app
 from datacron.installers import mcp_clients, protocol
+from datacron.installers.claude_desktop import MCPServerInvocation
 from datacron.installers.protocol import (
     PROTOCOL_ALL,
     PROTOCOL_BLOCK,
@@ -36,6 +38,12 @@ from datacron.installers.protocol import (
 )
 
 _RUNNER = CliRunner()
+_CURSOR_RULE_RELATIVE_PATH = Path(".cursor") / "rules" / "datacron.mdc"
+_CURSOR_RULE_FRONTMATTER = "---\ndescription: Datacron memory protocol\nalwaysApply: true\n---"
+
+
+def _canonical_cursor_rule_bytes() -> bytes:
+    return f"{_CURSOR_RULE_FRONTMATTER}\n{PROTOCOL_BLOCK}\n".encode()
 
 
 @pytest.fixture
@@ -151,6 +159,142 @@ def test_cursor_uninstall_deletes_block_only_file(fake_home: Path) -> None:
     assert not modern.exists()
 
 
+def test_cursor_project_install_writes_canonical_lf_rule_idempotently(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    rule_path = project_dir / _CURSOR_RULE_RELATIVE_PATH
+
+    first = install_memory_protocol("cursor", project_dir=project_dir, scope="project")[0]
+    first_bytes = rule_path.read_bytes()
+    second = install_memory_protocol("cursor", project_dir=project_dir, scope="project")[0]
+
+    assert first.successful is True
+    assert first.changed is True
+    assert first.skipped is False
+    assert first.instruction_path == rule_path
+    assert first.detail == "installed"
+    assert first_bytes == _canonical_cursor_rule_bytes()
+    assert first_bytes.startswith(b"---\n")
+    assert not first_bytes.startswith(codecs.BOM_UTF8)
+    assert b"\r\n" not in first_bytes
+    assert second.successful is True
+    assert second.changed is False
+    assert second.detail == "already installed"
+    assert rule_path.read_bytes() == first_bytes
+
+
+def test_cursor_project_install_refreshes_owned_rule_without_touching_sibling(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    rule_path = project_dir / _CURSOR_RULE_RELATIVE_PATH
+    sibling = rule_path.with_name("team.mdc")
+    rule_path.parent.mkdir(parents=True)
+    rule_path.write_text(
+        f"---\r\nalwaysApply: false\r\n---\r\n"
+        f"{PROTOCOL_MARKER_BEGIN}\r\nEdited body\r\n{PROTOCOL_MARKER_END}\r\n",
+        encoding="utf-8-sig",
+        newline="",
+    )
+    sibling_bytes = b"---\nteam-owned: true\n---\n"
+    sibling.write_bytes(sibling_bytes)
+
+    outcome = install_memory_protocol("cursor", project_dir=project_dir, scope="project")[0]
+
+    assert outcome.successful is True
+    assert outcome.changed is True
+    assert rule_path.read_bytes() == _canonical_cursor_rule_bytes()
+    assert sibling.read_bytes() == sibling_bytes
+
+
+def test_cursor_project_install_refuses_foreign_file_byte_for_byte(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    rule_path = project_dir / _CURSOR_RULE_RELATIVE_PATH
+    rule_path.parent.mkdir(parents=True)
+    foreign_bytes = codecs.BOM_UTF8 + b"---\r\nalwaysApply: true\r\n---\r\nForeign rule.\r\n"
+    rule_path.write_bytes(foreign_bytes)
+
+    outcome = install_memory_protocol("cursor", project_dir=project_dir, scope="project")[0]
+
+    assert outcome.successful is False
+    assert outcome.changed is False
+    assert outcome.instruction_path == rule_path
+    assert "refusing to overwrite" in outcome.detail
+    assert rule_path.read_bytes() == foreign_bytes
+
+
+def test_cursor_project_install_refuses_malformed_owned_markers(tmp_path: Path) -> None:
+    rule_path = tmp_path / _CURSOR_RULE_RELATIVE_PATH
+    rule_path.parent.mkdir(parents=True)
+    malformed_bytes = f"{PROTOCOL_MARKER_BEGIN}\nunterminated\n".encode()
+    rule_path.write_bytes(malformed_bytes)
+
+    outcome = install_memory_protocol("cursor", project_dir=tmp_path, scope="project")[0]
+
+    assert outcome.successful is False
+    assert outcome.changed is False
+    assert "markers" in outcome.detail
+    assert rule_path.read_bytes() == malformed_bytes
+
+
+def test_cursor_project_uninstall_deletes_owned_rule_and_leaves_foreign_file(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    rule_path = project_dir / _CURSOR_RULE_RELATIVE_PATH
+    install_memory_protocol("cursor", project_dir=project_dir, scope="project")
+
+    removed = uninstall_memory_protocol("cursor", project_dir=project_dir, scope="project")[0]
+
+    assert removed.successful is True
+    assert removed.changed is True
+    assert removed.skipped is False
+    assert removed.detail == "removed"
+    assert not rule_path.exists()
+
+    rule_path.parent.mkdir(parents=True, exist_ok=True)
+    foreign_bytes = b"---\nalwaysApply: true\n---\nForeign rule.\n"
+    rule_path.write_bytes(foreign_bytes)
+    foreign = uninstall_memory_protocol("cursor", project_dir=project_dir, scope="project")[0]
+
+    assert foreign.successful is True
+    assert foreign.changed is False
+    assert foreign.skipped is True
+    assert "foreign file left unchanged" in foreign.detail
+    assert rule_path.read_bytes() == foreign_bytes
+
+
+def test_cursor_project_all_is_not_gated_on_client_detection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_detection(**_kwargs: object) -> tuple[str, ...]:
+        raise AssertionError("Cursor project rules must not depend on local detection")
+
+    monkeypatch.setattr(protocol, "detect_clients", forbidden_detection)
+
+    outcome = install_memory_protocol(PROTOCOL_ALL, project_dir=tmp_path, scope="project")[0]
+
+    assert outcome.client_id == "cursor"
+    assert outcome.successful is True
+    assert (tmp_path / _CURSOR_RULE_RELATIVE_PATH).is_file()
+
+
+def test_non_cursor_project_scope_is_an_explicit_skip(tmp_path: Path) -> None:
+    outcome = install_memory_protocol("codex-cli", project_dir=tmp_path, scope="project")[0]
+
+    assert outcome.client_id == "codex-cli"
+    assert outcome.successful is True
+    assert outcome.changed is False
+    assert outcome.skipped is True
+    assert outcome.detail == "no project-scope protocol target for codex-cli"
+    assert not (tmp_path / ".codex").exists()
+
+
+def test_cursor_project_scope_requires_project_directory() -> None:
+    with pytest.raises(ValueError, match="project directory"):
+        install_memory_protocol("cursor", scope="project")
+
+
 def test_install_replaces_only_existing_marked_block(fake_home: Path) -> None:
     path = fake_home / ".codex" / "AGENTS.md"
     path.parent.mkdir(parents=True)
@@ -224,10 +368,15 @@ def test_uninstall_missing_file_is_noop_and_does_not_create_it(fake_home: Path) 
 
 
 def test_cli_protocol_install_forwards_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: list[str] = []
+    captured: list[tuple[str, Path | None, str]] = []
 
-    def fake_install(client: str) -> list[ProtocolInstallOutcome]:
-        captured.append(client)
+    def fake_install(
+        client: str,
+        *,
+        project_dir: Path | None = None,
+        scope: str = "user",
+    ) -> list[ProtocolInstallOutcome]:
+        captured.append((client, project_dir, scope))
         return [
             ProtocolInstallOutcome(
                 client_id="codex-cli",
@@ -245,7 +394,7 @@ def test_cli_protocol_install_forwards_client(monkeypatch: pytest.MonkeyPatch) -
     result = _RUNNER.invoke(app, ["protocol", "install", "--client", "codex-cli"])
 
     assert result.exit_code == 0, result.output
-    assert captured == ["codex-cli"]
+    assert captured == [("codex-cli", None, "user")]
     assert "Codex CLI" in result.output
     assert "installed" in result.output
 
@@ -253,8 +402,15 @@ def test_cli_protocol_install_forwards_client(monkeypatch: pytest.MonkeyPatch) -
 def test_cli_protocol_install_renders_manual_instructions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_install(client: str) -> list[ProtocolInstallOutcome]:
+    def fake_install(
+        client: str,
+        *,
+        project_dir: Path | None = None,
+        scope: str = "user",
+    ) -> list[ProtocolInstallOutcome]:
         assert client == "cursor"
+        assert project_dir is None
+        assert scope == "user"
         return [
             ProtocolInstallOutcome(
                 client_id="cursor",
@@ -282,10 +438,15 @@ def test_setup_protocol_flag_is_opt_in(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[str] = []
+    calls: list[tuple[str, Path | None, str]] = []
 
-    def fake_install(client: str) -> list[ProtocolInstallOutcome]:
-        calls.append(client)
+    def fake_install(
+        client: str,
+        *,
+        project_dir: Path | None = None,
+        scope: str = "user",
+    ) -> list[ProtocolInstallOutcome]:
+        calls.append((client, project_dir, scope))
         return []
 
     monkeypatch.setattr(cli_module, "install_memory_protocol", fake_install)
@@ -304,8 +465,139 @@ def test_setup_protocol_flag_is_opt_in(
 
     assert without_flag.exit_code == 0, without_flag.output
     assert with_flag.exit_code == 0, with_flag.output
-    assert calls == [PROTOCOL_ALL]
+    assert calls == [(PROTOCOL_ALL, None, "user")]
     assert "No supported clients detected" in with_flag.output
+
+
+def test_cli_cursor_project_install_and_uninstall_e2e(tmp_path: Path) -> None:
+    project_dir = tmp_path / "code-project"
+    resolved_rule_path = (project_dir / _CURSOR_RULE_RELATIVE_PATH).resolve()
+
+    installed = _RUNNER.invoke(
+        app,
+        [
+            "protocol",
+            "install",
+            "--client",
+            "cursor",
+            "--scope",
+            "project",
+            "--project",
+            str(project_dir),
+        ],
+    )
+
+    assert installed.exit_code == 0, installed.output
+    assert str(resolved_rule_path) in installed.output
+    assert "installed" in installed.output
+    assert resolved_rule_path.read_bytes() == _canonical_cursor_rule_bytes()
+
+    removed = _RUNNER.invoke(
+        app,
+        [
+            "protocol",
+            "uninstall",
+            "--client",
+            "cursor",
+            "--scope",
+            "project",
+            "--project",
+            str(project_dir),
+        ],
+    )
+
+    assert removed.exit_code == 0, removed.output
+    assert str(resolved_rule_path) in removed.output
+    assert "removed" in removed.output
+    assert not resolved_rule_path.exists()
+
+
+def test_cli_cursor_project_defaults_to_resolved_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "code-project"
+    project_dir.mkdir()
+    monkeypatch.chdir(project_dir)
+    rule_path = project_dir / _CURSOR_RULE_RELATIVE_PATH
+
+    result = _RUNNER.invoke(
+        app,
+        ["protocol", "install", "--client", "cursor", "--scope", "project"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert str(rule_path.resolve()) in result.output
+    assert rule_path.read_bytes() == _canonical_cursor_rule_bytes()
+
+
+def test_cli_cursor_both_scope_emits_manual_and_project_outcomes(
+    fake_home: Path,
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "code-project"
+    rule_path = (project_dir / _CURSOR_RULE_RELATIVE_PATH).resolve()
+
+    result = _RUNNER.invoke(
+        app,
+        [
+            "protocol",
+            "install",
+            "--client",
+            "cursor",
+            "--scope",
+            "both",
+            "--project",
+            str(project_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.count("Cursor:") == 2
+    assert "[skip] Cursor: manual setup required" in result.output
+    assert "Settings > Rules" in result.output
+    assert str(rule_path) in result.output
+    assert rule_path.is_file()
+    assert not (fake_home / ".cursor").exists()
+
+
+def test_setup_cursor_project_protocol_uses_cwd_not_vault(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    code_project = tmp_path / "code-project"
+    vault = tmp_path / "vault"
+    code_project.mkdir()
+    monkeypatch.chdir(code_project)
+    monkeypatch.setattr(
+        setup_wizard,
+        "resolve_mcp_invocation",
+        lambda: MCPServerInvocation(command="datacron-mcp", args=()),
+    )
+    monkeypatch.setattr(mcp_clients, "_is_present", lambda client: client == "cursor")
+
+    result = _RUNNER.invoke(
+        app,
+        [
+            "setup",
+            "--vault",
+            str(vault),
+            "--client",
+            "cursor",
+            "--scope",
+            "project",
+            "--protocol",
+            "--no-index",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (vault / ".cursor" / "mcp.json").is_file()
+    assert (code_project / _CURSOR_RULE_RELATIVE_PATH).read_bytes() == (
+        _canonical_cursor_rule_bytes()
+    )
+    assert not (vault / _CURSOR_RULE_RELATIVE_PATH).exists()
 
 
 def test_cli_protocol_rejects_unknown_client() -> None:
