@@ -7,6 +7,22 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [Unreleased]
+
+### Added
+
+- PyPI releases can be published through a dedicated Trusted Publishing workflow with a
+  separate build job and a manually approved `pypi` environment. The publish job receives
+  only the short-lived OIDC permission and uses no persistent PyPI credential.
+
+### Changed
+
+- The PyPI project description now uses the English README and carries the MCP ownership
+  marker for the future `io.github.vblackjack/datacron` registry entry.
+- Distribution versions use PEP 440 normalization: Git tag `v2026.0718.01` and source
+  version `2026.0718.01` map to PyPI/registry version `2026.718.1`. PEP 440 removes leading
+  zeroes from numeric release segments while preserving version ordering.
+
 ## [2026.0718.01] - 2026-07-18
 
 ### Added
