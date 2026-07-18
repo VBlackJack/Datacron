@@ -55,7 +55,7 @@ _VAULT_MAP_TAG_LIMIT: Final[int] = 5
 
 
 def register_resources(server: FastMCP[DatacronApp], app: DatacronApp) -> None:
-    """Attach the three Phase-0 resources to ``server``."""
+    """Attach the three Datacron resources to ``server``."""
 
     @server.resource(
         URI_VAULT_MAP,
@@ -81,14 +81,11 @@ def register_resources(server: FastMCP[DatacronApp], app: DatacronApp) -> None:
         URI_POLICY_ACTIVE,
         name="policy-active",
         title="Active policy",
-        description=(
-            "Currently active write/trust policy. Empty in Phase 0 (read-only); "
-            "v0.2 will populate this once write tools land."
-        ),
+        description=("Current write-policy state and availability of the L0-L5 trust engine."),
         mime_type="application/json",
     )
     async def policy_active() -> str:
-        return _build_policy_active()
+        return _build_policy_active(app)
 
 
 # ---------------------------------------------------------------------------
@@ -152,27 +149,26 @@ async def _build_vault_info(app: DatacronApp) -> str:
     return json.dumps(info, indent=2, sort_keys=True)
 
 
-def _build_policy_active() -> str:
-    """Return the (currently empty) policy descriptor.
-
-    See ADR-006 / decisions-tranchees-v2.1.md section 4.3: the L0-L5 trust
-    engine is dormant in Phase 0 because no write tools exist yet. The
-    descriptor still ships so MCP clients can render the placeholder UX.
-    """
+def _build_policy_active(app: DatacronApp) -> str:
+    """Return the active write-policy state and trust-engine availability."""
+    settings = app.settings
+    write_tools_enabled = (not settings.read_only) and bool(settings.write_paths)
+    mode = "read-write" if write_tools_enabled else "read-only"
+    write_state = "enabled" if write_tools_enabled else "disabled"
     policy: dict[str, Any] = {
-        "version": "phase0",
-        "mode": "read-only",
-        "write_tools_enabled": False,
+        "version": __version__,
+        "mode": mode,
+        "write_tools_enabled": write_tools_enabled,
         "trust_categories": {
             "auto-create": [],
             "review-patch": [],
             "dangerous": [],
         },
-        "write_paths": [],
+        "write_paths": [str(path) for path in settings.write_paths],
         "active_policies": [],
         "notes": (
-            "Phase 0 ships read-only tools only. Write tools and the L0-L5 "
-            "trust engine arrive in v0.2; this resource will populate then."
+            f"Write tools are {write_state} for this configuration. "
+            "The L0-L5 trust engine is not exposed by the server."
         ),
     }
     return json.dumps(policy, indent=2, sort_keys=True)
