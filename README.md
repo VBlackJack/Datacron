@@ -53,10 +53,10 @@ de la session reste visible dans la p95. Le golden ne contient pas encore de cas
 
 ### Windows : installeur en un double-clic
 
-Le plus simple sous Windows : telecharge `Datacron-Setup.exe` depuis la
-[derniere Release](https://github.com/VBlackJack/datacron/releases/latest), double-clique,
+Le plus simple sous Windows : télécharge `Datacron-Setup.exe` depuis la
+[dernière Release](https://github.com/VBlackJack/datacron/releases/latest), double-clique,
 et choisis ton vault. Aucun Python, aucun terminal, aucun droit administrateur ; Datacron
-s'enregistre automatiquement dans tes clients IA. Guide detaille :
+s'enregistre automatiquement dans tes clients IA. Guide détaillé :
 [Installation sous Windows](docs/fr/installation-windows.md).
 
 ### Depuis les sources

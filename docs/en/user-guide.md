@@ -74,6 +74,33 @@ are after an exact string (an identifier, a path, a snippet of code).
 Rule of thumb: `search_text` for "what was I saying about X", `search_regex` for "where did I
 write exactly this string".
 
+### Evaluating a knowledge update
+
+By default, `datacron eval` measures the real `search_text` pipeline (re-ranking, confinement,
+budget, and serialized snippets). To test that outdated information no longer pollutes answers,
+create a pair: the active note declares the old note's ULID in `supersedes`, then add a question
+to the private golden set:
+
+```yaml
+- id: rotation-certificats-active
+  question: Quelle politique de rotation des certificats est active ?
+  expected_paths:
+    - securite/rotation-certificats-2026.md
+  forbidden_paths:
+    - securite/rotation-certificats-2025.md
+```
+
+Paths are relative to the vault and use `/`. The freshness check fails if the replaced note
+appears among the first five distinct notes. Then run:
+
+```bash
+datacron eval --vault /chemin/vault --questions local/golden.yaml --save-baseline
+datacron eval --vault /chemin/vault --questions local/golden.yaml --compare
+```
+
+The second command returns exit code 1 if recall@5 or nDCG@10 drops by more than 0.02. Configure
+this threshold with `DATACRON_EVAL_REGRESSION_TOLERANCE`.
+
 ## Note trust states
 
 The notes' frontmatter carries signals that Datacron honors at ranking time. The most useful
