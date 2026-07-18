@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -57,10 +58,12 @@ def test_bump_writes_lf_line_endings(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     script = repo / "scripts" / "bump_version.py"
     init_file = repo / "src" / "datacron" / "__init__.py"
+    server_file = repo / "server.json"
     script.parent.mkdir(parents=True)
     init_file.parent.mkdir(parents=True)
     copyfile(_SCRIPT, script)
     init_file.write_bytes(b'"""Test package."""\r\n\r\n__version__ = "2026.0715.00"\r\n')
+    server_file.write_bytes(b'{"version":"2026.715.0","packages":[{"version":"2026.715.0"}]}\r\n')
 
     subprocess.run(
         [sys.executable, str(script), "--date", "2026-07-16"],
@@ -71,3 +74,7 @@ def test_bump_writes_lf_line_endings(tmp_path: Path) -> None:
 
     assert b"\r" not in init_file.read_bytes()
     assert b'__version__ = "2026.0716.00"' in init_file.read_bytes()
+    assert b"\r" not in server_file.read_bytes()
+    server_data = json.loads(server_file.read_text(encoding="utf-8"))
+    assert server_data["version"] == "2026.716.0"
+    assert server_data["packages"][0]["version"] == "2026.716.0"
