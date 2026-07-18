@@ -7,6 +7,27 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [2026.0718.00] - 2026-07-18
+
+### Fixed
+
+- `datacron setup --client <name>` now installs the requested non-Claude MCP client
+  (Gemini CLI, Cursor, Codex CLI, Windsurf, VS Code). The setup dispatcher previously
+  handled only `all`, `claude-desktop`, and `claude-code`; other client identifiers fell
+  through without writing a configuration or emitting a warning. Specific clients now use
+  the shared detected-client installer with an explicit include filter and keep the
+  requested scope; an unknown or undetected client produces an explicit warning.
+- Protocol installation no longer writes an unsupported Cursor user-global rule file
+  (`~/.cursor/rules/datacron.mdc`). Cursor global rules are configured through the Cursor
+  UI (Settings > Rules), so Datacron returns copyable manual instructions instead and
+  safely migrates Datacron-marked blocks out of the two obsolete home paths without
+  removing unrelated user content.
+
+### Changed
+
+- The release workflow runs on Node 24 runtimes: `actions/upload-artifact@v6`,
+  `actions/download-artifact@v7`, and `softprops/action-gh-release@v3`.
+
 ## [2026.0717.03] - 2026-07-17
 
 ### Added
