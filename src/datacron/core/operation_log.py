@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Final, TypeAlias
 
 from datacron.core.config import (
+    DEFAULT_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS,
     HISTORY_DIR_NAME,
     OPLOG_DIR_NAME,
     OPLOG_PENDING_DIR_NAME,
@@ -180,6 +181,7 @@ class OperationJournal:
         *,
         retention_days: int,
         history_mode: str,
+        purge_min_interval_seconds: float = DEFAULT_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS,
     ) -> None:
         self._sidecar = vault_root.expanduser().resolve() / SIDECAR_DIR_NAME
         self._oplog_dir = self._sidecar / OPLOG_DIR_NAME
@@ -188,6 +190,8 @@ class OperationJournal:
         self._history_dir = self._sidecar / HISTORY_DIR_NAME
         self._retention_days = retention_days
         self._history_mode = history_mode
+        self._purge_min_interval = timedelta(seconds=purge_min_interval_seconds)
+        self._last_purge_at: datetime | None = None
         self._tail_record: OperationRecord | None = None
         self._tail_hash: str | None = None
         self._tail_loaded = False
@@ -349,13 +353,18 @@ class OperationJournal:
         self._tail_loaded = True
 
     def purge_history(self, now: datetime | None = None) -> list[str]:
+        purge_at = (now or datetime.now(tz=UTC)).astimezone(UTC)
+        if (
+            self.history_enabled
+            and self._last_purge_at is not None
+            and purge_at - self._last_purge_at < self._purge_min_interval
+        ):
+            return []
         if not self._history_dir.is_dir():
             return []
         retained: set[str] = set()
         if self.history_enabled:
-            cutoff = (now or datetime.now(tz=UTC)).astimezone(UTC) - timedelta(
-                days=self._retention_days
-            )
+            cutoff = purge_at - timedelta(days=self._retention_days)
             for record in self.read_records():
                 timestamp = datetime.fromisoformat(record.timestamp).astimezone(UTC)
                 if timestamp < cutoff:
@@ -373,6 +382,7 @@ class OperationJournal:
             removed.append(path.name)
         if removed:
             _durable_flush_directory(self._history_dir)
+        self._last_purge_at = purge_at
         return removed
 
 

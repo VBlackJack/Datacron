@@ -81,6 +81,68 @@ def test_retention_purges_only_unreferenced_expired_history(tmp_path: Path) -> N
     assert (tmp_path / ".datacron" / "history" / recent_hash).read_bytes() == recent_bytes
 
 
+def test_purge_history_skips_scan_until_interval_elapses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 7, 10, tzinfo=UTC)
+    journal = OperationJournal(
+        tmp_path,
+        retention_days=30,
+        history_mode="full",
+        purge_min_interval_seconds=30,
+    )
+    content_hash = journal.store_history(b"recent version")
+    journal.append_record(
+        _record("recent-operation", now, content_hash, sha256_bytes(b"recent after"))
+    )
+    read_records = Mock(wraps=journal.read_records)
+    monkeypatch.setattr(journal, "read_records", read_records)
+
+    assert journal.purge_history(now) == []
+    assert journal.purge_history(now + timedelta(seconds=29)) == []
+    assert read_records.call_count == 1
+
+    assert journal.purge_history(now + timedelta(seconds=30)) == []
+    assert read_records.call_count == 2
+
+
+async def test_close_writes_only_scan_history_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "note.md").write_bytes(b"before\n")
+    original_read_records = OperationJournal.read_records
+    scan_count = 0
+
+    def counted_read_records(journal: OperationJournal) -> list[OperationRecord]:
+        nonlocal scan_count
+        scan_count += 1
+        return original_read_records(journal)
+
+    monkeypatch.setattr(OperationJournal, "read_records", counted_read_records)
+    writer = FilesystemVaultWriter(
+        vault,
+        Settings(
+            write_paths=[vault],
+            operation_history_purge_min_interval_seconds=3600,
+        ),
+    )
+    operation = OperationContext(
+        op="patch_section",
+        tool="patch_note_section",
+        actor="unit-test",
+        parameters={"new_content_chars": 6},
+    )
+
+    await writer.mutate_note_atomic("note.md", lambda _current: "first\n", operation=operation)
+    await writer.mutate_note_atomic("note.md", lambda _current: "second\n", operation=operation)
+
+    assert scan_count == 1
+
+
 async def test_redacted_mode_logs_hashes_without_storing_content(tmp_path: Path) -> None:
     vault = tmp_path / "vault"
     vault.mkdir()
