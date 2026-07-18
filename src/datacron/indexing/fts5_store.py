@@ -321,6 +321,7 @@ class SQLiteFTS5Store:
         self._db_path: Path | None = None
         self._read_only = False
         self._term_map = normalize_term_map(term_map or {})
+        self._temporal_metadata_cache: tuple[int, dict[str, TemporalMeta]] | None = None
 
     async def open(
         self,
@@ -369,6 +370,7 @@ class SQLiteFTS5Store:
         connection = self._conn
         self._conn = None
         self._read_only = False
+        self._temporal_metadata_cache = None
         if connection is not None:
             await connection.close()
 
@@ -582,13 +584,21 @@ class SQLiteFTS5Store:
 
     async def list_temporal_metadata(self) -> dict[str, TemporalMeta]:
         """Return explicit retrieval lifecycle metadata keyed by note_id."""
+        generation = await self.get_generation()
+        cached = self._temporal_metadata_cache
+        if generation != 0 and cached is not None and cached[0] == generation:
+            return cached[1]
+
         connection = self._require_connection()
         async with connection.execute(_LIST_TEMPORAL_METADATA_SQL) as cursor:
             rows = cast("list[sqlite3.Row]", await cursor.fetchall())
-        return {
+        metadata = {
             str(row["note_id"]): _temporal_meta_from_frontmatter(row["frontmatter_json"])
             for row in rows
         }
+        if generation != 0:
+            self._temporal_metadata_cache = (generation, metadata)
+        return metadata
 
     async def get_generation(self) -> int:
         """Return zero for legacy indexes, otherwise the completed generation."""
