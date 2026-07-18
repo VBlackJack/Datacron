@@ -14,16 +14,18 @@ from pathlib import Path
 
 import pytest
 
+from datacron import __version__
 from datacron.core.config import Settings
 from datacron.core.frontmatter import serialize
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.mcp.resources import (
+    URI_POLICY_ACTIVE,
     _build_policy_active,
     _build_vault_info,
     _build_vault_map,
     _truncate_to_token_budget,
 )
-from datacron.mcp.server import DatacronApp, build_app
+from datacron.mcp.server import DatacronApp, build_app, create_server
 
 
 @pytest.fixture
@@ -31,6 +33,7 @@ def app(tmp_vault: Path) -> DatacronApp:
     settings = Settings(
         read_paths=[tmp_vault],
         vault_root=tmp_vault,
+        read_only=True,
         max_result_tokens=8000,
     )
     return build_app(settings=settings, vault_root=tmp_vault, chunker=MarkdownChunker())
@@ -127,13 +130,41 @@ class TestVaultInfo:
 
 
 class TestPolicyActive:
-    def test_phase_zero_is_read_only(self) -> None:
-        policy = json.loads(_build_policy_active())
+    def test_read_only_without_write_paths(self, app: DatacronApp) -> None:
+        policy = json.loads(_build_policy_active(app))
+        assert policy["version"] == __version__
         assert policy["mode"] == "read-only"
         assert policy["write_tools_enabled"] is False
+        assert policy["write_tools_enabled"] is app.write_policy.writes_allowed
         assert policy["write_paths"] == []
         assert "trust_categories" in policy
         assert set(policy["trust_categories"]) == {"auto-create", "review-patch", "dangerous"}
+        assert all(not category for category in policy["trust_categories"].values())
+        assert policy["active_policies"] == []
+        assert "not exposed" in policy["notes"]
+
+    @pytest.mark.asyncio
+    async def test_with_write_paths_is_read_write(self, tmp_vault: Path) -> None:
+        write_path = tmp_vault / "_memory"
+        settings = Settings(
+            read_paths=[tmp_vault],
+            write_paths=[write_path],
+            vault_root=tmp_vault,
+            read_only=False,
+        )
+        writable_app = build_app(settings=settings, vault_root=tmp_vault)
+
+        contents = await create_server(writable_app).read_resource(URI_POLICY_ACTIVE)
+        rendered = next(iter(contents)).content
+        assert isinstance(rendered, str)
+        policy = json.loads(rendered)
+
+        assert policy["mode"] == "read-write"
+        assert policy["write_tools_enabled"] is True
+        assert policy["write_tools_enabled"] is writable_app.write_policy.writes_allowed
+        assert policy["write_paths"] == [str(write_path.resolve())]
+        assert policy["active_policies"] == []
+        assert "not exposed" in policy["notes"]
 
 
 class TestTruncation:
