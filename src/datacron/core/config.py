@@ -38,6 +38,7 @@ DEFAULT_LOG_DIR: Final[Path] = Path.home() / ".datacron" / "logs"
 DEFAULT_MAX_RESULT_TOKENS: Final[int] = 8000
 DEFAULT_MAX_RESULT_COUNT: Final[int] = 20
 DEFAULT_REPAIR_MIN_INTERVAL_SECONDS: Final[float] = 30.0
+DEFAULT_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS: Final[float] = 30.0
 DEFAULT_EVAL_REGRESSION_TOLERANCE: Final[float] = 0.02
 DEFAULT_CONTRADICTION_MAX_PAIRS: Final[int] = 256
 DEFAULT_CONTRADICTION_MAX_CANDIDATES: Final[int] = 20
@@ -242,6 +243,10 @@ class Settings(BaseSettings):
     max_result_count: int = Field(default=DEFAULT_MAX_RESULT_COUNT, ge=1)
     repair_min_interval_seconds: float = Field(
         default=DEFAULT_REPAIR_MIN_INTERVAL_SECONDS,
+        ge=0.0,
+    )
+    operation_history_purge_min_interval_seconds: float = Field(
+        default=DEFAULT_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS,
         ge=0.0,
     )
     eval_regression_tolerance: float = Field(

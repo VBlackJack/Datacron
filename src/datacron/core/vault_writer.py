@@ -149,6 +149,7 @@ class FilesystemVaultWriter:
             self._vault_root,
             retention_days=self._vault_config.history_retention_days,
             history_mode=self._vault_config.history_mode,
+            purge_min_interval_seconds=(settings.operation_history_purge_min_interval_seconds),
         )
 
     async def write_note_atomic(
