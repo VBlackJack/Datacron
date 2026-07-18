@@ -30,13 +30,3 @@ et maintient un vault Markdown depuis Claude, sans envoyer le vault complet dans
 | [Frontière de sécurité](security-boundary.md) | Confinement lecture/écriture, garanties, modèle de menace local. |
 | [Scrubber d'intégrité](integrity-scrubber.md) | Détection de corruption silencieuse, sentinelles, passes de scrub. |
 | [Santé opérationnelle et durabilité](operational-health.md) | Mode lecture seule certifié, politique de durabilité, `get_health`. |
-
-## Historique et étude
-
-| Document | Pour quoi |
-|---|---|
-| [Audit projet 2026-07-12](../audits/AUDIT-2026-07-12.md) | Audit complet du projet (10 catégories). |
-| [Étude - déploiement en entreprise](../etudes/ETUDE-deploiement-datacron-entreprise.md) | Note de besoins pour un déploiement multi-tenant. |
-
-> Note : le dossier `docs/archive/` contient des revues de fiabilité et rapports de lot
-> conservés **en local uniquement** (gitignorés, non versionnés).
