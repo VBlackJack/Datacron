@@ -713,6 +713,63 @@ async def test_list_temporal_metadata_reads_frontmatter_json(
     await store.close()
 
 
+async def test_list_temporal_metadata_caches_same_generation(tmp_path: Path) -> None:
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+    await store.set_generation(1)
+    connection = store._conn
+    assert connection is not None
+    statements: list[str] = []
+    await connection.set_trace_callback(statements.append)
+
+    assert await store.list_temporal_metadata() == {}
+    assert await store.list_temporal_metadata() == {}
+
+    queries = [
+        statement for statement in statements if "SELECT note_id, frontmatter_json" in statement
+    ]
+    assert len(queries) == 1
+    await store.close()
+
+
+async def test_list_temporal_metadata_recomputes_after_generation_bump(tmp_path: Path) -> None:
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+    await store.set_generation(1)
+    connection = store._conn
+    assert connection is not None
+    statements: list[str] = []
+    await connection.set_trace_callback(statements.append)
+
+    assert await store.list_temporal_metadata() == {}
+    assert await store.increment_generation() == 2
+    assert await store.list_temporal_metadata() == {}
+
+    queries = [
+        statement for statement in statements if "SELECT note_id, frontmatter_json" in statement
+    ]
+    assert len(queries) == 2
+    await store.close()
+
+
+async def test_list_temporal_metadata_never_caches_generation_zero(tmp_path: Path) -> None:
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+    connection = store._conn
+    assert connection is not None
+    statements: list[str] = []
+    await connection.set_trace_callback(statements.append)
+
+    assert await store.list_temporal_metadata() == {}
+    assert await store.list_temporal_metadata() == {}
+
+    queries = [
+        statement for statement in statements if "SELECT note_id, frontmatter_json" in statement
+    ]
+    assert len(queries) == 2
+    await store.close()
+
+
 async def test_record_mtime_updates_only_mtime(
     tmp_path: Path,
     note_factory: NoteFactory,
