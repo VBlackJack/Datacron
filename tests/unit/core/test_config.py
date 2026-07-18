@@ -31,6 +31,7 @@ from datacron.core.config import (
     DEFAULT_LOG_LEVEL,
     DEFAULT_MAX_RESULT_COUNT,
     DEFAULT_MAX_RESULT_TOKENS,
+    DEFAULT_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS,
     DEFAULT_REPAIR_MIN_INTERVAL_SECONDS,
     DEFAULT_RIPGREP_PATH,
     DEFAULT_SCRUB_CANARIES,
@@ -55,6 +56,10 @@ class TestDefaults:
         assert settings.max_result_tokens == DEFAULT_MAX_RESULT_TOKENS
         assert settings.max_result_count == DEFAULT_MAX_RESULT_COUNT
         assert settings.repair_min_interval_seconds == DEFAULT_REPAIR_MIN_INTERVAL_SECONDS
+        assert (
+            settings.operation_history_purge_min_interval_seconds
+            == DEFAULT_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS
+        )
         assert settings.eval_regression_tolerance == DEFAULT_EVAL_REGRESSION_TOLERANCE
         assert settings.contradiction_max_pairs == DEFAULT_CONTRADICTION_MAX_PAIRS
         assert settings.contradiction_max_candidates == DEFAULT_CONTRADICTION_MAX_CANDIDATES
@@ -116,6 +121,13 @@ class TestEnvLoading:
         monkeypatch.setenv("DATACRON_REPAIR_MIN_INTERVAL_SECONDS", "12.5")
 
         assert Settings().repair_min_interval_seconds == 12.5
+
+    def test_env_operation_history_purge_min_interval_seconds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DATACRON_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS", "12.5")
+
+        assert Settings().operation_history_purge_min_interval_seconds == 12.5
 
     def test_read_paths_split_by_os_sep(
         self,
@@ -218,6 +230,12 @@ class TestProgrammatic:
         assert Settings(repair_min_interval_seconds=0).repair_min_interval_seconds == 0
         with pytest.raises(ValidationError):
             Settings(repair_min_interval_seconds=-0.1)
+
+    def test_operation_history_purge_interval_accepts_zero_but_rejects_negative(self) -> None:
+        settings = Settings(operation_history_purge_min_interval_seconds=0)
+        assert settings.operation_history_purge_min_interval_seconds == 0
+        with pytest.raises(ValidationError):
+            Settings(operation_history_purge_min_interval_seconds=-0.1)
 
     @pytest.mark.parametrize(
         "field",
