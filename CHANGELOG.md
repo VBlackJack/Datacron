@@ -7,6 +7,21 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [2026.0718.01] - 2026-07-18
+
+### Added
+
+- Cursor project rules are now a first-class protocol target. `datacron protocol
+  install` and `datacron protocol uninstall` accept `--scope user|project|both`
+  and `--project PATH` (defaulting to the current directory). At project scope
+  for Cursor, Datacron writes a dedicated, canonically owned
+  `<project>/.cursor/rules/datacron.mdc` rule (MDC frontmatter with
+  `alwaysApply: true`; body is the shared protocol block). Re-installs are
+  idempotent, a `datacron.mdc` without Datacron markers is refused rather than
+  overwritten, and uninstall removes only a Datacron-owned rule. `setup` installs
+  the project rule at the code-project root when project scope is selected,
+  without conflating it with the vault root.
+
 ## [2026.0718.00] - 2026-07-18
 
 ### Fixed
