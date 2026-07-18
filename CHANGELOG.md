@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0718.04] - 2026-07-18
+
 ### Added
 
 - `get_health` now reports `write_paths_configured` and `effective_writes_enabled` under
