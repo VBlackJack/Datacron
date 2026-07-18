@@ -50,7 +50,7 @@ jobs:
     needs: verify
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -269,12 +269,14 @@ jobs:
           # artifact is only a hand-off to the release job, so expire it fast.
           retention-days: 1
 
-      - name: Attach Windows installer directly to the GitHub Release
+      - name: Upload Windows installer artifact
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6
         with:
-          files: dist-installer/Datacron-Setup.exe
-          generate_release_notes: true
+          name: datacron-windows-installer
+          path: dist-installer/Datacron-Setup.exe
+          if-no-files-found: error
+          retention-days: 1
 
   release:
     name: Attach binaries to the GitHub Release
@@ -283,6 +285,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Download all build artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7
@@ -290,8 +294,24 @@ jobs:
           path: dist-artifacts
           merge-multiple: true
 
+      - name: Generate SHA256 checksums
+        shell: bash
+        run: |
+          (
+            cd dist-artifacts
+            find . -type f -print0 | sort -z | xargs -0 -r sha256sum
+          ) | sed 's#  \./#  #' > SHA256SUMS
+          test -s SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a  # v3
+        with:
+          subject-path: 'dist-artifacts/**/*'
+
       - name: Publish release with binaries
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3
         with:
-          files: dist-artifacts/**/*
+          files: |
+            dist-artifacts/**/*
+            SHA256SUMS
           generate_release_notes: true
