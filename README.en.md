@@ -1,7 +1,7 @@
 # Datacron
 
-> Local MCP server to query and maintain a Markdown vault from Claude Desktop or Claude Code,
-> without sending the whole vault into the context.
+> Local MCP server to query and maintain a Markdown vault from Claude, Codex, Gemini, or
+> another stdio MCP client, without sending the whole vault into the context.
 
 <!-- mcp-name: io.github.VBlackJack/datacron -->
 
@@ -80,7 +80,7 @@ Runtime prerequisites:
 - Python 3.11+
 - `ripgrep` available on the `PATH` for `search_regex`
 - a folder of Markdown notes
-- Claude Desktop or another stdio MCP client
+- a supported stdio MCP client, such as Claude Desktop, Codex CLI, or Gemini CLI
 
 ## Quick start
 
@@ -101,7 +101,11 @@ datacron status --vault /path/to/vault
 datacron mcp install --client claude-desktop --vault /path/to/vault
 ```
 
-Restart the client (e.g. Claude Desktop) after installation.
+The `mcp install` subcommand above is dedicated to Claude Desktop. For Codex CLI, Gemini CLI,
+Cursor, and the other clients, use multi-client setup with
+`datacron setup --client <identifier>` or auto-detection with `--client all`.
+
+Restart the configured client or clients after installation.
 
 To run the server manually:
 
@@ -138,7 +142,7 @@ Useful environment variables:
 | Variable | Default | Role |
 |---|---:|---|
 | `DATACRON_VAULT_ROOT` | current directory or `--vault` | vault served by the server |
-| `DATACRON_READ_PATHS` | empty | read allowlist; the Claude Desktop installer sets it to the vault |
+| `DATACRON_READ_PATHS` | empty | read allowlist; client setup sets it to the vault |
 | `DATACRON_WRITE_PATHS` | empty | write allowlist; empty = write tools disabled |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | maximum number of results returned |
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | token budget for search results |
@@ -241,8 +245,8 @@ MCP resources:
 
 - Datacron does no telemetry.
 - Datacron calls no cloud LLM.
-- The MCP client, for example Claude Desktop, may send the chunks that Datacron returns to
-  its provider. Datacron does not send it the full vault.
+- The MCP client, for example Claude, Codex, or Gemini, may send the chunks that Datacron
+  returns to its provider. Datacron does not send it the full vault.
 - Content returned to clients is wrapped in `<vault_content>...</vault_content>`.
 - Results are bounded by count and by token budget.
 - Filesystem access is confined by `DATACRON_READ_PATHS` and `DATACRON_WRITE_PATHS`.
@@ -253,6 +257,7 @@ MCP resources:
 ```bash
 datacron setup                      # guided path: init + index + client config
 datacron setup --yes                # all defaults, no prompts
+datacron setup --client all --scope both --vault /path/to/vault
 datacron init /path/to/vault
 datacron status --vault /path/to/vault
 datacron index --vault /path/to/vault
@@ -263,7 +268,8 @@ datacron eval --questions examples/eval-questions.example.yaml --vault /path/to/
 datacron eval --questions local/golden.yaml --vault /path/to/vault --save-baseline
 datacron eval --questions local/golden.yaml --vault /path/to/vault --compare --json
 datacron mcp serve --vault /path/to/vault
-datacron mcp install --client claude-desktop --vault /path/to/vault
+datacron mcp install --client claude-desktop --vault /path/to/vault  # Claude Desktop only
+datacron unregister --client all --scope both --vault /path/to/vault
 ```
 
 ## Current limitations

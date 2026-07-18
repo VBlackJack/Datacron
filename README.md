@@ -1,7 +1,7 @@
 # Datacron
 
-> Serveur MCP local pour interroger et maintenir un vault Markdown depuis Claude Desktop
-> ou Claude Code, sans envoyer tout le vault dans le contexte.
+> Serveur MCP local pour interroger et maintenir un vault Markdown depuis Claude, Codex,
+> Gemini ou un autre client MCP stdio, sans envoyer tout le vault dans le contexte.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)](pyproject.toml)
@@ -78,7 +78,7 @@ Prérequis runtime :
 - Python 3.11+
 - `ripgrep` disponible dans le `PATH` pour `search_regex`
 - un dossier de notes Markdown
-- Claude Desktop ou un autre client MCP stdio
+- un client MCP stdio pris en charge, par exemple Claude Desktop, Codex CLI ou Gemini CLI
 
 ## Démarrage rapide
 
@@ -99,7 +99,11 @@ datacron status --vault /path/to/vault
 datacron mcp install --client claude-desktop --vault /path/to/vault
 ```
 
-Redémarre le client (ex. Claude Desktop) après l'installation.
+La sous-commande `mcp install` ci-dessus est dédiée à Claude Desktop. Pour Codex CLI,
+Gemini CLI, Cursor et les autres clients, utilise le setup multi-client avec
+`datacron setup --client <identifiant>` ou l'auto-détection avec `--client all`.
+
+Redémarre le ou les clients configurés après l'installation.
 
 Pour lancer le serveur manuellement :
 
@@ -136,7 +140,7 @@ Variables d'environnement utiles :
 | Variable | Défaut | Rôle |
 |---|---:|---|
 | `DATACRON_VAULT_ROOT` | répertoire courant ou `--vault` | vault servi par le serveur |
-| `DATACRON_READ_PATHS` | vide | allowlist de lecture ; l'installateur Claude Desktop la fixe au vault |
+| `DATACRON_READ_PATHS` | vide | allowlist de lecture ; le setup des clients la fixe au vault |
 | `DATACRON_WRITE_PATHS` | vide | allowlist d'écriture ; vide = write tools désactivés |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | nombre max de résultats retournés |
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | budget token des résultats de recherche |
@@ -239,8 +243,8 @@ Resources MCP :
 
 - Datacron ne fait pas de télémétrie.
 - Datacron n'appelle pas de LLM cloud.
-- Le client MCP, par exemple Claude Desktop, peut envoyer à son fournisseur les chunks que
-  Datacron lui retourne. Datacron ne lui envoie pas le vault complet.
+- Le client MCP, par exemple Claude, Codex ou Gemini, peut envoyer à son fournisseur les
+  chunks que Datacron lui retourne. Datacron ne lui envoie pas le vault complet.
 - Le contenu retourné aux clients est enveloppé dans `<vault_content>...</vault_content>`.
 - Les résultats sont bornés par nombre et par budget token.
 - Les accès filesystem sont confinés par `DATACRON_READ_PATHS` et `DATACRON_WRITE_PATHS`.
@@ -251,6 +255,7 @@ Resources MCP :
 ```bash
 datacron setup                      # parcours guidé : init + index + config client
 datacron setup --yes                # tout par défaut, sans question
+datacron setup --client all --scope both --vault /path/to/vault
 datacron init /path/to/vault
 datacron status --vault /path/to/vault
 datacron index --vault /path/to/vault
@@ -261,8 +266,8 @@ datacron eval --questions examples/eval-questions.example.yaml --vault /path/to/
 datacron eval --questions local/golden.yaml --vault /path/to/vault --save-baseline
 datacron eval --questions local/golden.yaml --vault /path/to/vault --compare --json
 datacron mcp serve --vault /path/to/vault
-datacron mcp install --client claude-desktop --vault /path/to/vault
-datacron unregister --client claude-desktop --vault /path/to/vault
+datacron mcp install --client claude-desktop --vault /path/to/vault  # dédié Claude Desktop
+datacron unregister --client all --scope both --vault /path/to/vault
 ```
 
 ## Limites actuelles
