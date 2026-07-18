@@ -26,12 +26,16 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 from re import Pattern
 from re import compile as re_compile
 
+from datacron.core.versioning import normalize_calver
+
 _INIT_PATH: Path = Path(__file__).resolve().parent.parent / "src" / "datacron" / "__init__.py"
+_SERVER_JSON_PATH: Path = Path(__file__).resolve().parent.parent / "server.json"
 _VERSION_RE: Pattern[str] = re_compile(
     r'(?P<prefix>__version__\s*=\s*")(?P<value>[^"]*)(?P<suffix>")'
 )
@@ -69,6 +73,23 @@ def write_version(init_path: Path, new_version: str) -> None:
     init_path.write_text(updated, encoding="utf-8", newline="\n")
 
 
+def write_server_version(server_path: Path, new_version: str) -> None:
+    """Write the normalized package version to both MCP registry fields."""
+    raw: object = json.loads(server_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(f"{server_path} must contain a JSON object")
+    data: dict[str, object] = raw
+    packages = data.get("packages")
+    if not isinstance(packages, list) or not packages or not isinstance(packages[0], dict):
+        raise ValueError(f"{server_path} must contain at least one package object")
+
+    normalized = normalize_calver(new_version)
+    data["version"] = normalized
+    packages[0]["version"] = normalized
+    rendered = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    server_path.write_text(rendered, encoding="utf-8", newline="\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point: compute the next CalVer and (unless dry-run) write it."""
     parser = argparse.ArgumentParser(description="Bump Datacron to the next CalVer (YYYY.MMDD.XX).")
@@ -90,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     write_version(_INIT_PATH, new_version)
+    write_server_version(_SERVER_JSON_PATH, new_version)
     print(f"Bumped __version__: {current} -> {new_version}")
     print(f"Now release: git tag -a v{new_version} -m 'Datacron {new_version}'")
     print(f"            then: git push origin v{new_version}")
