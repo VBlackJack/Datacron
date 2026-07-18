@@ -11,7 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Async ripgrep wrapper with JSON output parsing."""
+"""Async ripgrep wrapper with a best-effort indexed Python regex fallback.
+
+Ripgrep is the supported regex path. If its binary is absent, the fallback uses
+heuristic rejection for known catastrophic shapes and an advisory timeout. This
+is not a complete ReDoS sandbox: the timeout cannot preempt ``re`` while it holds
+the GIL, and cancelling the await does not stop the worker thread.
+"""
 
 from __future__ import annotations
 
@@ -40,8 +46,8 @@ __all__ = ["RegexFallbackError", "RipgrepError", "RipgrepWrapper"]
 _LOGGER = get_logger(__name__)
 _RIPGREP_PATH_ENV: Final[str] = "DATACRON_RIPGREP_PATH"
 _NO_MATCH_RETURN_CODE: Final[int] = 1
-_NESTED_QUANTIFIER_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"\([^)]*(?:\+|\*)[^)]*\)(?:\+|\*|\{)"
+_RISKY_REPETITION_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"\([^)]*(?:\||[+*])[^)]*\)(?:[+*]|\{)"
 )
 
 
@@ -56,7 +62,7 @@ class RipgrepError(RuntimeError):
 
 
 class RegexFallbackError(RuntimeError):
-    """Raised when the bounded Python regex fallback cannot run safely."""
+    """Raised when the best-effort Python regex fallback declines or times out."""
 
 
 @final
@@ -76,9 +82,11 @@ class RipgrepWrapper:
     ) -> list[SearchResult]:
         """Search with ripgrep, falling back to indexed chunks if the binary is absent.
 
-        The fallback scans indexed chunk bodies only. That excludes frontmatter and
-        depends on index freshness; MCP ``search_regex`` repairs the index before
-        calling this wrapper.
+        Ripgrep is the supported path. The fallback scans indexed chunk bodies only,
+        applies a best-effort ReDoS guard, and has an advisory timeout that cannot
+        preempt Python ``re`` while it holds the GIL. Installing ripgrep avoids this
+        fallback entirely. The indexed scan excludes frontmatter and depends on index
+        freshness; MCP ``search_regex`` repairs the index before calling this wrapper.
         """
         if limit <= 0:
             return []
@@ -92,7 +100,8 @@ class RipgrepWrapper:
             proc = await asyncio.create_subprocess_exec(*command, stdout=PIPE, stderr=PIPE)
         except FileNotFoundError as exc:
             _LOGGER.warning(
-                "ripgrep binary not found (%s); falling back to indexed Python regex scan: %s",
+                "ripgrep binary not found (%s); falling back to best-effort indexed "
+                "Python regex scan: %s",
                 resolved_rg_path,
                 exc,
             )
@@ -202,9 +211,16 @@ async def _fallback_indexed_regex_search(
     max_pattern_length: int,
     timeout_seconds: float,
 ) -> list[SearchResult]:
+    """Run the best-effort indexed fallback when supported ripgrep is unavailable.
+
+    The timeout is advisory: expiry can return control to the caller, but it does
+    not stop the worker thread and cannot preempt ``re`` while it holds the GIL.
+    Installing ripgrep avoids this fallback entirely.
+    """
     if len(pattern) > max_pattern_length:
         raise RegexFallbackError(
-            f"regex fallback pattern exceeds {max_pattern_length} characters -- install ripgrep"
+            "best-effort regex fallback pattern exceeds "
+            f"{max_pattern_length} characters -- install ripgrep"
         )
     try:
         async with asyncio.timeout(timeout_seconds):
@@ -217,7 +233,10 @@ async def _fallback_indexed_regex_search(
                 chunks,
             )
     except TimeoutError:
-        raise RegexFallbackError("regex fallback timed out -- install ripgrep") from None
+        raise RegexFallbackError(
+            "regex fallback exceeded its advisory timeout; worker scan may continue "
+            "-- install ripgrep"
+        ) from None
 
 
 def _scan_indexed_chunks(
@@ -226,10 +245,16 @@ def _scan_indexed_chunks(
     limit: int,
     chunks: list[Chunk],
 ) -> list[SearchResult]:
-    # Python's re engine can hold the GIL during nested-quantifier backtracking,
-    # so reject that common catastrophic shape before relying on async timeout.
-    if _NESTED_QUANTIFIER_PATTERN.search(pattern):
-        raise RegexFallbackError("regex fallback timed out -- install ripgrep")
+    """Scan chunks after a heuristic guard for known catastrophic regex shapes.
+
+    The guard is deliberately conservative and is not a complete ReDoS sandbox.
+    Ripgrep remains the supported regex path.
+    """
+    if _RISKY_REPETITION_PATTERN.search(pattern):
+        raise RegexFallbackError(
+            "best-effort regex fallback rejected a potentially catastrophic pattern "
+            "-- install ripgrep"
+        )
     compiled = re.compile(pattern)
     results: list[SearchResult] = []
     for chunk in chunks:
