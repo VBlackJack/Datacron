@@ -79,6 +79,8 @@ async def build_health(app: DatacronApp) -> dict[str, Any]:
 
     durability = app.durability_status.to_dict(mode=app.settings.durability)
     durability["writes_allowed"] = app.write_policy.writes_allowed
+    durability["write_paths_configured"] = app.write_policy.write_paths_configured
+    durability["effective_writes_enabled"] = app.write_policy.effective_writes_enabled
     durability["read_only"] = app.settings.read_only
     scrubber = read_scrubber_health(
         root,
