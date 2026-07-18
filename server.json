@@ -1,0 +1,31 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.vblackjack/datacron",
+  "description": "Local-first MCP server that exposes a Markdown vault through MCP.",
+  "repository": {
+    "url": "https://github.com/VBlackJack/Datacron",
+    "source": "github"
+  },
+  "version": "2026.718.2",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "datacron",
+      "version": "2026.718.2",
+      "runtimeHint": "uvx",
+      "transport": { "type": "stdio" },
+      "packageArguments": [
+        { "type": "positional", "value": "mcp" },
+        { "type": "positional", "value": "serve" }
+      ],
+      "environmentVariables": [
+        {
+          "name": "DATACRON_VAULT_ROOT",
+          "description": "Absolute path to the Markdown vault the server indexes and serves.",
+          "isRequired": true
+        }
+      ]
+    }
+  ]
+}
