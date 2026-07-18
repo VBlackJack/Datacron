@@ -51,7 +51,6 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     ("client", "relative_path"),
     [
         ("claude-code", Path(".claude/CLAUDE.md")),
-        ("cursor", Path(".cursor/rules/datacron.mdc")),
         ("gemini-cli", Path(".gemini/GEMINI.md")),
         ("codex-cli", Path(".codex/AGENTS.md")),
     ],
@@ -88,15 +87,68 @@ def test_install_and_uninstall_are_idempotent_and_reversible(
     assert path.read_bytes() == original
 
 
-def test_cursor_uses_existing_legacy_instruction_file(fake_home: Path) -> None:
+def test_cursor_install_returns_manual_instructions_without_creating_home_file(
+    fake_home: Path,
+) -> None:
+    outcome = install_memory_protocol("cursor")[0]
+
+    assert outcome.successful is True
+    assert outcome.changed is False
+    assert outcome.skipped is True
+    assert outcome.instruction_path is None
+    assert outcome.manual_instructions is not None
+    assert "Settings > Rules" in outcome.manual_instructions
+    assert PROTOCOL_BLOCK in outcome.manual_instructions
+    assert not (fake_home / ".cursor").exists()
+    assert not (fake_home / ".cursorrules").exists()
+
+
+def test_cursor_install_migrates_both_obsolete_paths_safely(fake_home: Path) -> None:
+    modern = fake_home / ".cursor" / "rules" / "datacron.mdc"
+    modern.parent.mkdir(parents=True)
+    modern.write_text(f"{PROTOCOL_BLOCK}\n", encoding="utf-8")
     legacy = fake_home / ".cursorrules"
-    legacy.write_text("legacy rules", encoding="utf-8")
+    legacy.write_text(f"Keep this user rule.\n\n{PROTOCOL_BLOCK}\n", encoding="utf-8")
 
-    outcomes = install_memory_protocol("cursor")
+    outcome = install_memory_protocol("cursor")[0]
 
-    assert outcomes[0].instruction_path == legacy
-    assert PROTOCOL_MARKER_BEGIN in legacy.read_text(encoding="utf-8")
-    assert not (fake_home / ".cursor" / "rules" / "datacron.mdc").exists()
+    assert outcome.successful is True
+    assert outcome.changed is True
+    assert outcome.skipped is True
+    assert not modern.exists()
+    assert legacy.is_file()
+    assert legacy.read_text(encoding="utf-8") == "Keep this user rule.\n"
+
+
+def test_cursor_install_preflights_all_markers_before_migration(fake_home: Path) -> None:
+    modern = fake_home / ".cursor" / "rules" / "datacron.mdc"
+    modern.parent.mkdir(parents=True)
+    modern_bytes = f"{PROTOCOL_BLOCK}\n".encode()
+    modern.write_bytes(modern_bytes)
+    legacy = fake_home / ".cursorrules"
+    legacy_bytes = f"user text\n{PROTOCOL_MARKER_BEGIN}\nunterminated\n".encode()
+    legacy.write_bytes(legacy_bytes)
+
+    outcome = install_memory_protocol("cursor")[0]
+
+    assert outcome.successful is False
+    assert outcome.changed is False
+    assert outcome.skipped is False
+    assert "markers" in outcome.detail
+    assert modern.read_bytes() == modern_bytes
+    assert legacy.read_bytes() == legacy_bytes
+
+
+def test_cursor_uninstall_deletes_block_only_file(fake_home: Path) -> None:
+    modern = fake_home / ".cursor" / "rules" / "datacron.mdc"
+    modern.parent.mkdir(parents=True)
+    modern.write_text(f"{PROTOCOL_BLOCK}\n", encoding="utf-8")
+
+    outcome = uninstall_memory_protocol("cursor")[0]
+
+    assert outcome.successful is True
+    assert outcome.changed is True
+    assert not modern.exists()
 
 
 def test_install_replaces_only_existing_marked_block(fake_home: Path) -> None:
@@ -196,6 +248,34 @@ def test_cli_protocol_install_forwards_client(monkeypatch: pytest.MonkeyPatch) -
     assert captured == ["codex-cli"]
     assert "Codex CLI" in result.output
     assert "installed" in result.output
+
+
+def test_cli_protocol_install_renders_manual_instructions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_install(client: str) -> list[ProtocolInstallOutcome]:
+        assert client == "cursor"
+        return [
+            ProtocolInstallOutcome(
+                client_id="cursor",
+                display_name="Cursor",
+                instruction_path=None,
+                successful=True,
+                changed=False,
+                skipped=True,
+                detail="manual setup required; no user-global rules file",
+                manual_instructions="Open Settings > Rules.\nPaste the protocol block.",
+            )
+        ]
+
+    monkeypatch.setattr(cli_module, "install_memory_protocol", fake_install)
+
+    result = _RUNNER.invoke(app, ["protocol", "install", "--client", "cursor"])
+
+    assert result.exit_code == 0, result.output
+    assert "[skip] Cursor" in result.output
+    assert "Open Settings > Rules." in result.output
+    assert "Paste the protocol block." in result.output
 
 
 def test_setup_protocol_flag_is_opt_in(
