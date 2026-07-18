@@ -261,6 +261,10 @@ it. Reproducible build via `scripts/build_installer.ps1` (Windows) and `scripts/
 Accepted cost: multi-OS builds and size (~22 MB). `dist/` and `build/` stay out of version
 control.
 
+PyPI uses the PEP 440 canonical form of the source CalVer. For example, Git tag
+`v2026.0718.01` and source version `2026.0718.01` are published as `2026.718.1` because
+leading zeroes are removed from numeric release segments; version ordering is preserved.
+
 ---
 
 ## 7. Project layout
