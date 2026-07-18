@@ -9,6 +9,33 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- `get_health` now reports `write_paths_configured` and `effective_writes_enabled` under
+  `durability`, distinguishing the write-policy gate from whether a write can actually land.
+  An effective write requires both an enabling policy and at least one configured write path.
+- Release binaries now ship a `SHA256SUMS` manifest and a build-provenance attestation.
+
+### Changed
+
+- The `datacron://policy/active` MCP resource now reports the real write policy, including
+  mode, `write_tools_enabled`, and configured write paths, instead of a static read-only
+  placeholder.
+- `bump_version` now updates `server.json` together with `__init__.py`, and a blocking
+  invariant fails CI if the package version and `server.json` drift.
+- All GitHub Actions are pinned to commit SHAs, and the PyPI publish and release workflows
+  are gated on the invariant suite before building or publishing.
+- The regex search fallback, used only when ripgrep is unavailable, is documented as
+  best-effort with an advisory timeout and rejects a broader set of catastrophic patterns.
+- History purge now runs at most once per configurable interval, off the hot write path, and
+  temporal retrieval metadata is cached by index generation.
+- Contradiction provenance labels are sourced from configuration instead of being hardcoded.
+- CI enforces a minimum coverage floor.
+
+### Dependencies
+
+- `pydantic` is constrained below 3.0 to guard against the known breaking major.
+
 ## [2026.0718.03] - 2026-07-18
 
 ### Changed
