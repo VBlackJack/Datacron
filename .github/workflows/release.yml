@@ -37,10 +37,10 @@ jobs:
             binary: dist/datacron
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
           python-version: "3.12"
 
@@ -232,7 +232,7 @@ jobs:
           cp "${{ matrix.binary }}" "out/${{ matrix.artifact }}"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6
         with:
           name: ${{ matrix.artifact }}
           path: out/${{ matrix.artifact }}
@@ -242,7 +242,7 @@ jobs:
 
       - name: Attach Windows installer directly to the GitHub Release
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3
         with:
           files: dist-installer/Datacron-Setup.exe
           generate_release_notes: true
@@ -256,13 +256,13 @@ jobs:
       contents: write
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7
         with:
           path: dist-artifacts
           merge-multiple: true
 
       - name: Publish release with binaries
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3
         with:
           files: dist-artifacts/**/*
           generate_release_notes: true
