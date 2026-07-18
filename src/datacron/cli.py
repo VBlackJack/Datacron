@@ -58,6 +58,7 @@ from datacron.core.vault import build_configured_reader
 from datacron.installers.mcp_clients import (
     ALL_CLIENT_IDS,
     SCOPE_PROJECT,
+    SCOPE_USER,
     discover_unregistration_targets,
     unregister_targets,
 )
@@ -767,7 +768,11 @@ def setup(
     _render_setup_result(result)
     protocol_failed = False
     if resolved_protocol:
-        protocol_outcomes = install_memory_protocol(PROTOCOL_ALL)
+        protocol_outcomes = _install_setup_protocol(
+            resolved_client,
+            resolved_scope,
+            project_dir=Path.cwd().resolve(),
+        )
         protocol_failed = _render_protocol_outcomes(protocol_outcomes, operation="install")
     _log_completion("setup", started)
     if protocol_failed:
@@ -1006,11 +1011,30 @@ def protocol_install(
         "--client",
         help=(f"Client identifier ({', '.join(PROTOCOL_CLIENT_IDS)}), or all detected clients."),
     ),
+    scope: str = typer.Option(
+        SCOPE_USER,
+        "--scope",
+        help=f"Protocol target scope ({', '.join(INSTALL_SCOPE_CHOICES)}).",
+    ),
+    project: Path | None = typer.Option(
+        None,
+        "--project",
+        help="Code project root for project-scope protocol targets; defaults to cwd.",
+    ),
 ) -> None:
     """Install or refresh the marked Datacron memory protocol block."""
-    started = _log_invocation("protocol.install", client=client)
+    started = _log_invocation("protocol.install", client=client, scope=scope, project=project)
     try:
-        outcomes = install_memory_protocol(client)
+        scopes, project_dir = _resolve_protocol_scopes(scope, project)
+        outcomes: list[ProtocolInstallOutcome] = []
+        for concrete_scope in scopes:
+            outcomes.extend(
+                install_memory_protocol(
+                    client,
+                    project_dir=project_dir if concrete_scope == SCOPE_PROJECT else None,
+                    scope=concrete_scope,
+                )
+            )
     except ValueError as exc:
         _error(str(exc))
     failed = _render_protocol_outcomes(outcomes, operation="install")
@@ -1026,17 +1050,77 @@ def protocol_uninstall(
         "--client",
         help=(f"Client identifier ({', '.join(PROTOCOL_CLIENT_IDS)}), or all relevant clients."),
     ),
+    scope: str = typer.Option(
+        SCOPE_USER,
+        "--scope",
+        help=f"Protocol target scope ({', '.join(INSTALL_SCOPE_CHOICES)}).",
+    ),
+    project: Path | None = typer.Option(
+        None,
+        "--project",
+        help="Code project root for project-scope protocol targets; defaults to cwd.",
+    ),
 ) -> None:
     """Remove only the marked Datacron memory protocol block."""
-    started = _log_invocation("protocol.uninstall", client=client)
+    started = _log_invocation("protocol.uninstall", client=client, scope=scope, project=project)
     try:
-        outcomes = uninstall_memory_protocol(client)
+        scopes, project_dir = _resolve_protocol_scopes(scope, project)
+        outcomes: list[ProtocolInstallOutcome] = []
+        for concrete_scope in scopes:
+            outcomes.extend(
+                uninstall_memory_protocol(
+                    client,
+                    project_dir=project_dir if concrete_scope == SCOPE_PROJECT else None,
+                    scope=concrete_scope,
+                )
+            )
     except ValueError as exc:
         _error(str(exc))
     failed = _render_protocol_outcomes(outcomes, operation="uninstall")
     _log_completion("protocol.uninstall", started)
     if failed:
         raise typer.Exit(code=1)
+
+
+def _resolve_protocol_scopes(
+    scope: str,
+    project: Path | None,
+) -> tuple[tuple[str, ...], Path | None]:
+    """Validate a CLI scope selector and resolve its optional code-project root."""
+    if scope not in INSTALL_SCOPE_CHOICES:
+        raise ValueError(
+            f"Unknown protocol scope {scope!r}. Expected one of {list(INSTALL_SCOPE_CHOICES)}."
+        )
+    scopes = _scopes_for(scope)
+    project_dir = None
+    if SCOPE_PROJECT in scopes:
+        project_dir = (project or Path.cwd()).expanduser().resolve()
+    return scopes, project_dir
+
+
+def _install_setup_protocol(
+    client: str,
+    install_scope: str,
+    *,
+    project_dir: Path,
+) -> list[ProtocolInstallOutcome]:
+    """Install opted-in setup protocol targets without conflating project and vault roots."""
+    outcomes: list[ProtocolInstallOutcome] = []
+    for concrete_scope in _scopes_for(install_scope):
+        if concrete_scope == SCOPE_USER or client == CLIENT_ALL:
+            protocol_client = PROTOCOL_ALL
+        elif client in PROTOCOL_CLIENT_IDS:
+            protocol_client = client
+        else:
+            continue
+        outcomes.extend(
+            install_memory_protocol(
+                protocol_client,
+                project_dir=project_dir if concrete_scope == SCOPE_PROJECT else None,
+                scope=concrete_scope,
+            )
+        )
+    return outcomes
 
 
 def _render_protocol_outcomes(
@@ -1055,7 +1139,8 @@ def _render_protocol_outcomes(
     _print("Protocol client instructions:")
     for outcome in outcomes:
         if outcome.skipped:
-            _print(f"  [skip] {outcome.display_name}: {outcome.detail}")
+            target = f"{outcome.instruction_path} - " if outcome.instruction_path else ""
+            _print(f"  [skip] {outcome.display_name}: {target}{outcome.detail}")
             if outcome.manual_instructions:
                 for line in outcome.manual_instructions.splitlines():
                     _print(f"         {line}" if line else "")
