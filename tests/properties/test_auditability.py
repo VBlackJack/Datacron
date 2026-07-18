@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import json
-import shutil
+import tempfile
 from itertools import pairwise
 from pathlib import Path
 
@@ -56,10 +56,7 @@ _SUPPRESS_FIXTURE_CHECK = [HealthCheck.function_scoped_fixture]
 
 
 def _fresh_vault(tmp_path: Path) -> Path:
-    vault = tmp_path / "vault"
-    shutil.rmtree(vault, ignore_errors=True)
-    vault.mkdir()
-    return vault
+    return Path(tempfile.mkdtemp(prefix="vault-", dir=tmp_path))
 
 
 def _metadata() -> dict[str, object]:

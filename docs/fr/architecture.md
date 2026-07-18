@@ -287,6 +287,10 @@ fiabilité packagée (`reliability_evidence.json`) est incluse via `--collect-da
 build multi-OS et taille (~22 Mo). `dist/` et `build/` restent
 hors versionnement.
 
+PyPI utilise la forme canonique PEP 440 du CalVer source. Par exemple, le tag Git
+`v2026.0718.01` et la version source `2026.0718.01` sont publiés sous `2026.718.1`, car les
+zéros de tête des segments numériques sont supprimés ; l'ordre des versions est préservé.
+
 ---
 
 ## 7. Layout du projet
