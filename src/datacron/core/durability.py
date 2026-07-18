@@ -138,7 +138,7 @@ class DurabilityStatus:
 
 @final
 class WritePolicy:
-    """Fail closed for read-only or unsupported strict durability modes."""
+    """Evaluate the independent mode, durability, and configured-path write gates."""
 
     def __init__(self, settings: Settings, durability: DurabilityStatus) -> None:
         self._settings = settings
@@ -146,11 +146,22 @@ class WritePolicy:
 
     @property
     def writes_allowed(self) -> bool:
+        """Return whether mode and durability policy permit writes."""
         if self._settings.read_only:
             return False
         return not (
             self._settings.durability == "strict" and not self._durability.directory_flush_supported
         )
+
+    @property
+    def write_paths_configured(self) -> bool:
+        """Return whether at least one target root is configured for writes."""
+        return bool(self._settings.write_paths)
+
+    @property
+    def effective_writes_enabled(self) -> bool:
+        """Return whether policy and configured-path gates both permit writes."""
+        return self.writes_allowed and self.write_paths_configured
 
     def ensure_writable(self) -> None:
         if self._settings.read_only:

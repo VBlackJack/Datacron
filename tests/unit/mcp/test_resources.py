@@ -16,8 +16,11 @@ import pytest
 
 from datacron import __version__
 from datacron.core.config import Settings
+from datacron.core.durability import DurabilityStatus
 from datacron.core.frontmatter import serialize
 from datacron.indexing.chunker import MarkdownChunker
+from datacron.indexing.fts5_store import SQLiteFTS5Store
+from datacron.mcp.health import build_health
 from datacron.mcp.resources import (
     URI_POLICY_ACTIVE,
     _build_policy_active,
@@ -135,7 +138,7 @@ class TestPolicyActive:
         assert policy["version"] == __version__
         assert policy["mode"] == "read-only"
         assert policy["write_tools_enabled"] is False
-        assert policy["write_tools_enabled"] is app.write_policy.writes_allowed
+        assert policy["write_tools_enabled"] is app.write_policy.effective_writes_enabled
         assert policy["write_paths"] == []
         assert "trust_categories" in policy
         assert set(policy["trust_categories"]) == {"auto-create", "review-patch", "dangerous"}
@@ -161,10 +164,66 @@ class TestPolicyActive:
 
         assert policy["mode"] == "read-write"
         assert policy["write_tools_enabled"] is True
-        assert policy["write_tools_enabled"] is writable_app.write_policy.writes_allowed
+        assert policy["write_tools_enabled"] is writable_app.write_policy.effective_writes_enabled
         assert policy["write_paths"] == [str(write_path.resolve())]
         assert policy["active_policies"] == []
         assert "not exposed" in policy["notes"]
+
+    @pytest.mark.parametrize(
+        (
+            "write_paths_configured",
+            "durability_mode",
+            "directory_flush_supported",
+            "expected_policy_allowed",
+            "expected_effective",
+        ),
+        [
+            (True, "best-effort", True, True, True),
+            (False, "best-effort", True, True, False),
+            (True, "strict", False, False, False),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_policy_resource_and_health_do_not_diverge(
+        self,
+        tmp_vault: Path,
+        *,
+        write_paths_configured: bool,
+        durability_mode: str,
+        directory_flush_supported: bool,
+        expected_policy_allowed: bool,
+        expected_effective: bool,
+    ) -> None:
+        write_paths = [tmp_vault / "_memory"] if write_paths_configured else []
+        settings = Settings(
+            read_paths=[tmp_vault],
+            write_paths=write_paths,
+            vault_root=tmp_vault,
+            durability=durability_mode,
+        )
+        store = SQLiteFTS5Store()
+        await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+        app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            store=store,
+            durability_status=DurabilityStatus(
+                backend="test",
+                directory_flush_supported=directory_flush_supported,
+            ),
+        )
+        try:
+            policy = json.loads(_build_policy_active(app))
+            health = await build_health(app)
+        finally:
+            await store.close()
+
+        durability = health["durability"]
+        assert durability["writes_allowed"] is expected_policy_allowed
+        assert durability["write_paths_configured"] is write_paths_configured
+        assert durability["effective_writes_enabled"] is expected_effective
+        assert policy["write_tools_enabled"] is expected_effective
+        assert policy["mode"] == ("read-write" if expected_effective else "read-only")
 
 
 class TestTruncation:
