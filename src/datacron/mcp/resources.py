@@ -152,7 +152,7 @@ async def _build_vault_info(app: DatacronApp) -> str:
 def _build_policy_active(app: DatacronApp) -> str:
     """Return the active write-policy state and trust-engine availability."""
     settings = app.settings
-    write_tools_enabled = (not settings.read_only) and bool(settings.write_paths)
+    write_tools_enabled = app.write_policy.effective_writes_enabled
     mode = "read-write" if write_tools_enabled else "read-only"
     write_state = "enabled" if write_tools_enabled else "disabled"
     policy: dict[str, Any] = {

@@ -17,7 +17,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from datacron.core.durability import probe_directory_durability
+import pytest
+
+from datacron.core.config import Settings
+from datacron.core.durability import DurabilityStatus, WritePolicy, probe_directory_durability
 
 
 def test_probe_uses_existing_directory_without_creating_entries(tmp_path: Path) -> None:
@@ -31,3 +34,50 @@ def test_probe_uses_existing_directory_without_creating_entries(tmp_path: Path) 
     assert status.backend
     assert isinstance(status.directory_flush_supported, bool)
     assert before == after == {"anchor.txt": b"unchanged"}
+
+
+@pytest.mark.parametrize(
+    (
+        "read_only",
+        "write_paths_configured",
+        "durability_mode",
+        "directory_flush_supported",
+        "expected_policy_allowed",
+        "expected_effective",
+    ),
+    [
+        (False, True, "best-effort", True, True, True),
+        (False, False, "best-effort", True, True, False),
+        (False, True, "strict", False, False, False),
+        (True, True, "best-effort", True, False, False),
+    ],
+)
+def test_write_policy_reports_independent_and_effective_gates(
+    tmp_path: Path,
+    *,
+    read_only: bool,
+    write_paths_configured: bool,
+    durability_mode: str,
+    directory_flush_supported: bool,
+    expected_policy_allowed: bool,
+    expected_effective: bool,
+) -> None:
+    write_paths = [tmp_path] if write_paths_configured else []
+    settings = Settings(
+        read_paths=[tmp_path],
+        write_paths=write_paths,
+        vault_root=tmp_path,
+        read_only=read_only,
+        durability=durability_mode,
+    )
+    policy = WritePolicy(
+        settings,
+        DurabilityStatus(
+            backend="test",
+            directory_flush_supported=directory_flush_supported,
+        ),
+    )
+
+    assert policy.writes_allowed is expected_policy_allowed
+    assert policy.write_paths_configured is write_paths_configured
+    assert policy.effective_writes_enabled is expected_effective
