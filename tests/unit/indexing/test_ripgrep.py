@@ -399,33 +399,51 @@ async def test_fallback_honors_glob_limit_score_and_snippet(
     assert scoped[0].snippet == "Beta **intro**"
 
 
-async def test_pathological_fallback_regex_returns_before_timeout(
+@pytest.mark.parametrize(
+    "pattern",
+    ["(a+)+$", "(a*)*", "(a|a)*", "(a|aa)+", "(a|ab)*", "(a|a?)+"],
+)
+async def test_fallback_rejects_known_catastrophic_shapes(
     indexed: _IndexedFixture,
     monkeypatch: pytest.MonkeyPatch,
+    pattern: str,
 ) -> None:
-    poisoned_chunk = indexed.chunks["alpha_intro"].model_copy(update={"content": f"{'a' * 64}!"})
-
-    async def _iter_poisoned_chunks(_store: SQLiteFTS5Store) -> AsyncIterator[Chunk]:
-        yield poisoned_chunk
-
     async def _create(*_args: str, **_kwargs: object) -> _FakeProcess:
         raise FileNotFoundError("missing")
 
-    monkeypatch.setattr(SQLiteFTS5Store, "iter_all_chunks", _iter_poisoned_chunks)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _create)
-    timeout_seconds = 0.5
-    started = time.perf_counter()
 
-    with pytest.raises(RegexFallbackError, match="regex fallback timed out -- install ripgrep"):
+    with pytest.raises(RegexFallbackError, match="potentially catastrophic pattern"):
         await RipgrepWrapper().search(
-            "(a+)+$",
+            pattern,
             indexed.vault_root,
             store=indexed.store,
             rg_path="missing-rg",
-            fallback_timeout_seconds=timeout_seconds,
         )
 
-    assert time.perf_counter() - started < timeout_seconds
+
+@pytest.mark.parametrize(
+    "pattern",
+    ["DATACRON_WRITE_PATHS", "foo.*bar", r"\bnote\b", "(abc)+", "a|b"],
+)
+async def test_fallback_allows_supported_benign_shapes(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    pattern: str,
+) -> None:
+    async def _create(*_args: str, **_kwargs: object) -> _FakeProcess:
+        raise FileNotFoundError("missing")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _create)
+
+    results = await RipgrepWrapper().search(
+        pattern,
+        indexed.vault_root,
+        store=indexed.store,
+        rg_path="missing-rg",
+    )
+
+    assert isinstance(results, list)
 
 
 async def test_fallback_enforces_global_timeout(
@@ -444,7 +462,7 @@ async def test_fallback_enforces_global_timeout(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _create)
     monkeypatch.setattr(ripgrep_module, "_scan_indexed_chunks", _slow_scan)
 
-    with pytest.raises(RegexFallbackError, match="regex fallback timed out -- install ripgrep"):
+    with pytest.raises(RegexFallbackError, match="advisory timeout"):
         await RipgrepWrapper().search(
             "safe-pattern",
             indexed.vault_root,
