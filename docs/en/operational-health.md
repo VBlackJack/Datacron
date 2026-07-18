@@ -19,8 +19,10 @@ The response contains:
   mixed-EOL Markdown notes, supersedes cycles, and parse errors;
 - `vault_checksum`: SHA-256 rollup of sorted relative paths and byte-exact note
   content hashes;
-- `durability`: filesystem backend, directory-flush support, selected mode, and
-  whether writes are currently allowed;
+- `durability`: filesystem backend, directory-flush support, selected mode, the
+  policy/durability-only `writes_allowed` gate, whether at least one write path is configured
+  (`write_paths_configured`), and whether a write can actually land
+  (`effective_writes_enabled`, requiring both `writes_allowed` and a configured write path);
 - `scrubber`: last completed scrub, current pass and index generation, coverage,
   checked bytes, canary state, and path/type anomaly evidence;
 - `invariants`: I1 through I15 from packaged `reliability_evidence.json`.
