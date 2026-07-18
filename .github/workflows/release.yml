@@ -232,7 +232,7 @@ jobs:
           cp "${{ matrix.binary }}" "out/${{ matrix.artifact }}"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
           path: out/${{ matrix.artifact }}
@@ -242,7 +242,7 @@ jobs:
 
       - name: Attach Windows installer directly to the GitHub Release
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist-installer/Datacron-Setup.exe
           generate_release_notes: true
@@ -256,13 +256,13 @@ jobs:
       contents: write
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: dist-artifacts
           merge-multiple: true
 
       - name: Publish release with binaries
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist-artifacts/**/*
           generate_release_notes: true

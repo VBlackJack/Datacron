@@ -75,6 +75,14 @@ PROTOCOL_BLOCK: Final[str] = "\n".join(
         PROTOCOL_MARKER_END,
     )
 )
+_CURSOR_MANUAL_INSTRUCTIONS: Final[str] = "\n".join(
+    (
+        "Cursor global rules are set in Settings > Rules "
+        "(there is no user-global rules file). Paste this block there:",
+        "",
+        PROTOCOL_BLOCK,
+    )
+)
 
 _Operation: TypeAlias = Literal["install", "uninstall"]
 
@@ -85,7 +93,12 @@ class ProtocolInstallError(RuntimeError):
 
 @dataclass(frozen=True)
 class ProtocolInstallOutcome:
-    """Result of one protocol instruction-file operation."""
+    """Result of one protocol instruction-file operation.
+
+    Attributes:
+        manual_instructions: Optional text that the operator must install through
+            the client UI when no supported user-global instruction file exists.
+    """
 
     client_id: str
     display_name: str
@@ -94,6 +107,7 @@ class ProtocolInstallOutcome:
     changed: bool
     skipped: bool
     detail: str
+    manual_instructions: str | None = None
 
 
 def install_memory_protocol(client: str = PROTOCOL_ALL) -> list[ProtocolInstallOutcome]:
@@ -156,12 +170,59 @@ def _apply_to_clients(
                 )
             )
             continue
+        if client_id == _CURSOR and operation == "install":
+            outcomes.append(_install_cursor_protocol(display_name))
+            continue
         paths = (
             (_install_path(client_id),) if operation == "install" else _uninstall_paths(client_id)
         )
         for path in paths:
             outcomes.append(_apply_to_path(client_id, display_name, path, operation=operation))
     return outcomes
+
+
+def _install_cursor_protocol(display_name: str) -> ProtocolInstallOutcome:
+    """Remove obsolete Cursor blocks and return manual global-rule instructions."""
+    paths = _cursor_instruction_paths()
+    current_path: Path | None = None
+    changed = False
+    try:
+        # Validate every existing file before changing either one. A malformed
+        # legacy file must not leave the migration half-applied.
+        for current_path in paths:
+            if current_path.is_file():
+                text, _has_bom = _read_text(current_path)
+                _find_protocol_span(text)
+
+        for current_path in paths:
+            changed = _remove_protocol_block(current_path, delete_if_empty=True) or changed
+    except (OSError, UnicodeError, ProtocolInstallError) as exc:
+        _LOGGER.warning("Protocol install failed for %s: %s", display_name, exc)
+        return ProtocolInstallOutcome(
+            client_id=_CURSOR,
+            display_name=display_name,
+            instruction_path=current_path,
+            successful=False,
+            changed=changed,
+            skipped=False,
+            detail=str(exc),
+        )
+
+    detail = (
+        "obsolete global-rule block removed; manual setup required"
+        if changed
+        else "manual setup required; no user-global rules file"
+    )
+    return ProtocolInstallOutcome(
+        client_id=_CURSOR,
+        display_name=display_name,
+        instruction_path=None,
+        successful=True,
+        changed=changed,
+        skipped=True,
+        detail=detail,
+        manual_instructions=_CURSOR_MANUAL_INSTRUCTIONS,
+    )
 
 
 def _apply_to_path(
@@ -172,7 +233,11 @@ def _apply_to_path(
     operation: _Operation,
 ) -> ProtocolInstallOutcome:
     try:
-        changed = _install_block(path) if operation == "install" else _uninstall_block(path)
+        changed = (
+            _install_block(path)
+            if operation == "install"
+            else _remove_protocol_block(path, delete_if_empty=client_id == _CURSOR)
+        )
     except (OSError, UnicodeError, ProtocolInstallError) as exc:
         _LOGGER.warning("Protocol %s failed for %s: %s", operation, display_name, exc)
         return ProtocolInstallOutcome(
@@ -203,10 +268,6 @@ def _install_path(client_id: str) -> Path:
     home = Path.home()
     if client_id == _CLAUDE_CODE:
         return home / ".claude" / "CLAUDE.md"
-    if client_id == _CURSOR:
-        modern = home / ".cursor" / "rules" / "datacron.mdc"
-        legacy = home / ".cursorrules"
-        return legacy if legacy.is_file() and not modern.parent.exists() else modern
     if client_id == _GEMINI_CLI:
         return home / ".gemini" / "GEMINI.md"
     if client_id == _CODEX_CLI:
@@ -219,11 +280,19 @@ def _uninstall_paths(client_id: str) -> tuple[Path, ...]:
         return ()
     if client_id != _CURSOR:
         return (_install_path(client_id),)
-    home = Path.home()
-    modern = home / ".cursor" / "rules" / "datacron.mdc"
-    legacy = home / ".cursorrules"
-    existing = tuple(path for path in (modern, legacy) if path.is_file())
+    paths = _cursor_instruction_paths()
+    existing = tuple(path for path in paths if path.is_file())
+    modern = paths[0]
     return existing or (modern,)
+
+
+def _cursor_instruction_paths() -> tuple[Path, Path]:
+    """Return obsolete Cursor paths used by earlier Datacron releases."""
+    home = Path.home()
+    return (
+        home / ".cursor" / "rules" / "datacron.mdc",
+        home / ".cursorrules",
+    )
 
 
 def _install_block(path: Path) -> bool:
@@ -242,7 +311,8 @@ def _install_block(path: Path) -> bool:
     return True
 
 
-def _uninstall_block(path: Path) -> bool:
+def _remove_protocol_block(path: Path, *, delete_if_empty: bool) -> bool:
+    """Remove only the marked block, optionally deleting an emptied file."""
     if not path.is_file():
         return False
     text, has_bom = _read_text(path)
@@ -258,6 +328,9 @@ def _uninstall_block(path: Path) -> bool:
         if prefix.endswith(newline):
             prefix = prefix[: -len(newline)]
     updated = f"{prefix}{suffix}"
+    if delete_if_empty and not updated.strip():
+        path.unlink()
+        return True
     _atomic_write_text(path, updated, has_bom=has_bom)
     return True
 

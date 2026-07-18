@@ -55,6 +55,7 @@ from datacron.installers.claude_desktop import (
     resolve_mcp_invocation,
 )
 from datacron.installers.mcp_clients import (
+    ALL_CLIENT_IDS,
     SCOPE_PROJECT,
     SCOPE_USER,
     InstallOutcome,
@@ -88,8 +89,7 @@ CLIENT_CLAUDE_CODE: Final[str] = "claude-code"
 CLIENT_NONE: Final[str] = "none"
 CLIENT_CHOICES: Final[tuple[str, ...]] = (
     CLIENT_ALL,
-    CLIENT_CLAUDE_DESKTOP,
-    CLIENT_CLAUDE_CODE,
+    *ALL_CLIENT_IDS,
     CLIENT_NONE,
 )
 
@@ -155,7 +155,7 @@ class SetupPlan:
             ``None`` falls back to ``<vault>/_memory``.
         client: Target MCP client (:data:`CLIENT_CHOICES`). ``all`` auto-detects
             every installed client and registers Datacron with each.
-        install_scope: For ``client=all``, which config scopes to write
+        install_scope: Which config scopes to write for detected clients
             (:data:`INSTALL_SCOPE_CHOICES`).
         durability: Durability mode (:data:`VALID_DURABILITY_MODES`).
         read_only: Whether to run the server in certified read-only mode.
@@ -408,7 +408,13 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
     stdio_config: str | None = None
     client_installs: list[InstallOutcome] = []
     if plan.client == CLIENT_ALL:
-        client_installs = _install_all_clients(plan, vault_root, extra_env, warnings)
+        client_installs = _install_detected_clients(
+            plan,
+            vault_root,
+            extra_env,
+            warnings,
+            include=None,
+        )
     elif plan.client == CLIENT_CLAUDE_DESKTOP:
         try:
             client_config_path = install_claude_desktop_config(vault_root, extra_env=extra_env)
@@ -417,6 +423,14 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
             _LOGGER.warning("cli.setup client config failed: %s", exc)
     elif plan.client == CLIENT_CLAUDE_CODE:
         stdio_config = claude_code_stdio_config(vault_root, extra_env)
+    elif plan.client != CLIENT_NONE:
+        client_installs = _install_detected_clients(
+            plan,
+            vault_root,
+            extra_env,
+            warnings,
+            include=(plan.client,),
+        )
 
     indexed_notes: int | None = None
     index_error: str | None = None
@@ -443,13 +457,15 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
     )
 
 
-def _install_all_clients(
+def _install_detected_clients(
     plan: SetupPlan,
     vault_root: Path,
     extra_env: dict[str, str],
     warnings: list[str],
+    *,
+    include: tuple[str, ...] | None,
 ) -> list[InstallOutcome]:
-    """Detect every installed MCP client and register Datacron with each.
+    """Register Datacron with detected MCP clients in the requested scope.
 
     The vault root doubles as the project directory for project-scope config, so
     opening the vault as a project in an editor picks up Datacron automatically.
@@ -466,9 +482,19 @@ def _install_all_clients(
         _ENV_READ_PATHS: str(vault_root),
         **extra_env,
     }
-    targets = discover_targets(scopes=_scopes_for(plan.install_scope), project_dir=vault_root)
+    targets = discover_targets(
+        scopes=_scopes_for(plan.install_scope),
+        project_dir=vault_root,
+        include=include,
+    )
     if not targets:
-        warnings.append("No MCP clients detected; nothing to auto-install.")
+        if include is None:
+            warnings.append("No MCP clients detected; nothing to auto-install.")
+        else:
+            warnings.append(
+                f"MCP client {include[0]!r} was not detected for scope "
+                f"{plan.install_scope!r}; no config written."
+            )
         return []
     return install_targets(
         targets,
