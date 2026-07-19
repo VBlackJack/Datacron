@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0719.00] - 2026-07-19
+
 ### Added
 
 - The memory protocol now covers every MCP client supported by Datacron. Windsurf receives
