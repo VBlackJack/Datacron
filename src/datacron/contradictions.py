@@ -66,6 +66,7 @@ _SEARCH_NEIGHBOR_LIMIT: Final[int] = 8
 _QUERY_TERM_LIMIT: Final[int] = 6
 _EVIDENCE_CHAR_LIMIT: Final[int] = 280
 _STATEMENT_CHAR_LIMIT: Final[int] = 240
+_ELLIPSIS: Final[str] = "..."
 _MIN_LEXICAL_SCORE: Final[float] = 0.25
 _MIN_MARKED_SCORE: Final[float] = 0.15
 _HEADING_SEPARATOR: Final[str] = " / "
@@ -201,19 +202,26 @@ class _SectionBuilder:
     chunks: list[Chunk]
 
 
+@dataclass(frozen=True)
+class _TruncatedText:
+    text: str
+    truncated: bool
+
+
 def format_update_block(
     classification: CandidateClass,
     statement: str,
     source_rel_path: str,
     *,
     today: date,
+    truncated: bool = False,
 ) -> str:
     """Return the one canonical dated section-level provenance block."""
     label = core_config.DEFAULT_CONTRADICTION_PROVENANCE_LABELS[classification.name.lower()]
-    cleaned_statement = _clean_statement(statement, classification)
+    cleaned_statement = _clean_statement(statement, classification, truncated=truncated)
     sentence = (
         cleaned_statement
-        if cleaned_statement.endswith((".", "?", "!"))
+        if truncated or cleaned_statement.endswith((".", "?", "!"))
         else f"{cleaned_statement}."
     )
     connector = core_config.DEFAULT_CONTRADICTION_SOURCE_CONNECTOR
@@ -309,16 +317,17 @@ def build_proposal(
     if scope is MutationScope.WHOLE_NOTE and classification is not CandidateClass.CONTRADICTION:
         raise ValueError("whole-note invalidation requires CONTRADICTION classification")
 
-    statement = _statement(candidate.source.content, classification)
+    statement = _statement_result(candidate.source.content, classification)
     if scope is MutationScope.SECTION:
         if candidate.heading_level is None or candidate.target.section_title is None:
             raise ValueError("section proposal requires an addressable heading")
         tool = "patch_note_section"
         block = format_update_block(
             classification,
-            statement,
+            statement.text,
             candidate.source.note_rel_path,
             today=today,
+            truncated=statement.truncated,
         )
         mutation_fingerprint: dict[str, object] = {
             "tool": tool,
@@ -806,20 +815,48 @@ def _classification_options(suggested: CandidateClass) -> list[str]:
 
 
 def _statement(content: str, classification: CandidateClass) -> str:
-    excerpt = _excerpt(_without_update_blocks(content), limit=_STATEMENT_CHAR_LIMIT)
-    return _clean_statement(excerpt, classification)
+    return _statement_result(content, classification).text
 
 
-def _clean_statement(statement: str, classification: CandidateClass) -> str:
-    cleaned = _WHITESPACE_PATTERN.sub(" ", statement).strip().rstrip(".?! ")
+def _statement_result(content: str, classification: CandidateClass) -> _TruncatedText:
+    excerpt = _excerpt_result(_without_update_blocks(content), limit=_STATEMENT_CHAR_LIMIT)
+    return _TruncatedText(
+        text=_clean_statement(
+            excerpt.text,
+            classification,
+            truncated=excerpt.truncated,
+        ),
+        truncated=excerpt.truncated,
+    )
+
+
+def _clean_statement(
+    statement: str,
+    classification: CandidateClass,
+    *,
+    truncated: bool = False,
+) -> str:
+    cleaned = _WHITESPACE_PATTERN.sub(" ", statement).strip()
+    if truncated and cleaned.endswith(_ELLIPSIS):
+        cleaned = cleaned[: -len(_ELLIPSIS)].rstrip(".?! ")
+    else:
+        cleaned = cleaned.rstrip(".?! ")
     if not cleaned:
         cleaned = "Review the newer source section"
+    if truncated:
+        return f"{cleaned}{_ELLIPSIS}"
     if classification is CandidateClass.OPEN_QUESTION:
         return f"{cleaned}?"
     return cleaned
 
 
 def _excerpt(content: str, *, limit: int = _EVIDENCE_CHAR_LIMIT) -> str:
+    return _excerpt_result(content, limit=limit).text
+
+
+def _excerpt_result(content: str, *, limit: int) -> _TruncatedText:
+    if limit < 0:
+        raise ValueError("limit must be non-negative")
     lines = [
         _MARKDOWN_PREFIX_PATTERN.sub("", line).strip()
         for line in content.splitlines()
@@ -827,8 +864,16 @@ def _excerpt(content: str, *, limit: int = _EVIDENCE_CHAR_LIMIT) -> str:
     ]
     rendered = _WHITESPACE_PATTERN.sub(" ", " ".join(lines)).strip()
     if len(rendered) <= limit:
-        return rendered
-    return f"{rendered[: max(limit - 3, 0)].rstrip()}..."
+        return _TruncatedText(text=rendered, truncated=False)
+
+    marker = _ELLIPSIS[:limit]
+    budget = max(limit - len(marker), 0)
+    boundary = rendered.rfind(" ", 0, budget + 1)
+    prefix = rendered[:boundary] if boundary >= 0 else rendered[:budget]
+    return _TruncatedText(
+        text=f"{prefix.rstrip()}{marker}",
+        truncated=True,
+    )
 
 
 def _evidence_limit(
