@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import platform
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +46,10 @@ __all__ = [
 
 _LOGGER = get_logger(__name__)
 _WINDOWS_MAX_PATH: Final[int] = 32768
+_WINDOWS_REPLACE_TRANSIENT_ERRORS: Final[frozenset[int]] = frozenset({5, 32, 33})
+_REPLACE_RETRY_MAX_ATTEMPTS: Final[int] = 10
+_REPLACE_RETRY_INITIAL_SLEEP_SECONDS: Final[float] = 0.005
+_REPLACE_RETRY_MAX_SLEEP_SECONDS: Final[float] = 0.1
 FaultInjector = Callable[[str], None]
 
 
@@ -82,7 +87,7 @@ def atomic_durable_write(
             os.fsync(temp_file.fileno())
             _inject(fault_injector, "after_temp_fsync")
 
-        os.replace(temp_path, path)
+        _replace_with_windows_retry(temp_path, path)
         _inject(fault_injector, "after_replace")
         if not _flush_directory_or_false(path.parent):
             _fsync_file(path)
@@ -94,6 +99,35 @@ def atomic_durable_write(
     finally:
         temp_path.unlink(missing_ok=True)
     return sha256_bytes(data)
+
+
+def _replace_with_windows_retry(source: Path, destination: Path) -> None:
+    """Atomically replace a path, retrying only transient Windows sharing errors."""
+    sleep_seconds = _REPLACE_RETRY_INITIAL_SLEEP_SECONDS
+    for attempt in range(1, _REPLACE_RETRY_MAX_ATTEMPTS + 1):
+        try:
+            os.replace(source, destination)
+            return
+        except OSError as exc:
+            winerror = getattr(exc, "winerror", None)
+            should_retry = (
+                sys.platform == "win32"
+                and winerror in _WINDOWS_REPLACE_TRANSIENT_ERRORS
+                and attempt < _REPLACE_RETRY_MAX_ATTEMPTS
+            )
+            if not should_retry:
+                raise
+            _LOGGER.debug(
+                "Retrying atomic replace path=%s winerror=%s failed_attempt=%d/%d "
+                "delay_seconds=%.3f",
+                destination,
+                winerror,
+                attempt,
+                _REPLACE_RETRY_MAX_ATTEMPTS,
+                sleep_seconds,
+            )
+            time.sleep(sleep_seconds)
+            sleep_seconds = min(sleep_seconds * 2, _REPLACE_RETRY_MAX_SLEEP_SECONDS)
 
 
 def durable_flush_directory(path: Path) -> None:
