@@ -4,15 +4,16 @@
 
 This page covers the graphical `Datacron-Setup.exe` installer: one double-click, no
 Python and no terminal, that installs Datacron for your user account and
-**automatically registers Datacron with the detected AI clients** (Claude Desktop,
-Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, VS Code).
+**automatically registers Datacron with the detected AI clients** and installs its memory
+protocol (Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, VS Code).
 
 If you prefer the command line (`datacron setup`), see the
 [installation and setup guide](setup.md) instead.
 
 > Datacron never modifies your notes unless you explicitly enable writing, and never
 > sends anything to a cloud service. It only adds a `.datacron/` folder next to your
-> notes and registers its MCP server with your AI clients.
+> notes, registers its MCP server, and only adds a marked instruction block to supported
+> global client rules.
 
 ## 1. Install
 
@@ -25,7 +26,9 @@ If you prefer the command line (`datacron setup`), see the
    uncheck it to do it later.
 5. Finish. The installer adds `datacron.exe` to your **user PATH**, creates the Start
    menu shortcuts, then runs setup: it registers Datacron with each detected AI
-   client and indexes the vault.
+   client, installs supported global memory instructions, and indexes the vault. Cursor still
+   shows a manual **Settings > Rules** step; Claude Desktop receives the instructions during
+   MCP initialization.
 
 After installing, restart Claude Desktop (or your client) so it loads the Datacron
 server.
@@ -71,8 +74,9 @@ Options:
 ## 6. Uninstall
 
 Uninstall from **Windows Settings > Apps**. In order, it: removes the `datacron` MCP
-entry from your clients, removes `datacron.exe` from your user PATH, then removes the
-program. **Your vault and your notes are never touched.**
+entry from your clients, removes Datacron-managed instruction blocks, removes
+`datacron.exe` from your user PATH, then removes the program. **Your vault and your notes
+are never touched.**
 
 ## 7. Verify
 

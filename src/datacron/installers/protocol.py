@@ -24,8 +24,16 @@ from typing import Final, Literal, TypeAlias
 
 from datacron.core.logger import get_logger
 from datacron.installers.mcp_clients import (
+    ALL_CLIENT_IDS,
+    CLAUDE_CODE,
+    CLAUDE_DESKTOP,
+    CODEX_CLI,
+    CURSOR,
+    GEMINI_CLI,
     SCOPE_PROJECT,
     SCOPE_USER,
+    VS_CODE,
+    WINDSURF,
     client_display_name,
     detect_clients,
 )
@@ -44,19 +52,7 @@ __all__ = [
 _LOGGER = get_logger(__name__)
 
 PROTOCOL_ALL: Final[str] = "all"
-_CLAUDE_CODE: Final[str] = "claude-code"
-_CLAUDE_DESKTOP: Final[str] = "claude-desktop"
-_CURSOR: Final[str] = "cursor"
-_GEMINI_CLI: Final[str] = "gemini-cli"
-_CODEX_CLI: Final[str] = "codex-cli"
-
-PROTOCOL_CLIENT_IDS: Final[tuple[str, ...]] = (
-    _CLAUDE_CODE,
-    _CLAUDE_DESKTOP,
-    _CURSOR,
-    _GEMINI_CLI,
-    _CODEX_CLI,
-)
+PROTOCOL_CLIENT_IDS: Final[tuple[str, ...]] = ALL_CLIENT_IDS
 
 PROTOCOL_MARKER_BEGIN: Final[str] = "<!-- datacron:protocol:begin -->"
 PROTOCOL_MARKER_END: Final[str] = "<!-- datacron:protocol:end -->"
@@ -93,6 +89,20 @@ _CURSOR_RULE_FRONTMATTER: Final[str] = (
 )
 _CURSOR_RULE_CONTENT: Final[str] = f"{_CURSOR_RULE_FRONTMATTER}\n{PROTOCOL_BLOCK}\n"
 _CURSOR_RULE_RELATIVE_PATH: Final[Path] = Path(".cursor") / "rules" / "datacron.mdc"
+_VSCODE_RULE_FRONTMATTER: Final[str] = "\n".join(
+    (
+        "---",
+        "name: Datacron memory protocol",
+        "description: Load Datacron memory before answering",
+        'applyTo: "**"',
+        "---",
+    )
+)
+_VSCODE_RULE_CONTENT: Final[str] = f"{_VSCODE_RULE_FRONTMATTER}\n{PROTOCOL_BLOCK}\n"
+_VSCODE_USER_RULE_RELATIVE_PATH: Final[Path] = (
+    Path(".copilot") / "instructions" / "datacron.instructions.md"
+)
+_WINDSURF_GLOBAL_RULE_MAX_CHARS: Final[int] = 6000
 
 _Operation: TypeAlias = Literal["install", "uninstall"]
 _Scope: TypeAlias = Literal["user", "project"]
@@ -160,7 +170,7 @@ def uninstall_memory_protocol(
 def _select_install_clients(client: str, *, scope: _Scope) -> tuple[str, ...]:
     _validate_client(client)
     if scope == SCOPE_PROJECT:
-        return (_CURSOR,) if client == PROTOCOL_ALL else (client,)
+        return (CURSOR,) if client == PROTOCOL_ALL else (client,)
     if client != PROTOCOL_ALL:
         return (client,)
     return detect_clients(include=PROTOCOL_CLIENT_IDS)
@@ -169,7 +179,7 @@ def _select_install_clients(client: str, *, scope: _Scope) -> tuple[str, ...]:
 def _select_uninstall_clients(client: str, *, scope: _Scope) -> tuple[str, ...]:
     _validate_client(client)
     if scope == SCOPE_PROJECT:
-        return (_CURSOR,) if client == PROTOCOL_ALL else (client,)
+        return (CURSOR,) if client == PROTOCOL_ALL else (client,)
     if client != PROTOCOL_ALL:
         return (client,)
     detected = set(detect_clients(include=PROTOCOL_CLIENT_IDS))
@@ -204,7 +214,7 @@ def _validate_project_dir(
     project_dir: Path | None,
     scope: _Scope,
 ) -> None:
-    if scope == SCOPE_PROJECT and _CURSOR in clients and project_dir is None:
+    if scope == SCOPE_PROJECT and CURSOR in clients and project_dir is None:
         raise ValueError("A project directory is required for the Cursor project protocol target.")
 
 
@@ -219,7 +229,7 @@ def _apply_to_clients(
     for client_id in clients:
         display_name = client_display_name(client_id)
         if scope == SCOPE_PROJECT:
-            if client_id != _CURSOR:
+            if client_id != CURSOR:
                 outcomes.append(_project_scope_skip(client_id, display_name))
                 continue
             if project_dir is None:  # pragma: no cover - validated before dispatch
@@ -233,7 +243,7 @@ def _apply_to_clients(
             )
             outcomes.append(outcome)
             continue
-        if client_id == _CLAUDE_DESKTOP:
+        if client_id == CLAUDE_DESKTOP:
             outcomes.append(
                 ProtocolInstallOutcome(
                     client_id=client_id,
@@ -246,8 +256,19 @@ def _apply_to_clients(
                 )
             )
             continue
-        if client_id == _CURSOR and operation == "install":
+        if client_id == CURSOR and operation == "install":
             outcomes.append(_install_cursor_protocol(display_name))
+            continue
+        if client_id == VS_CODE:
+            outcomes.append(
+                _apply_owned_rule_file(
+                    client_id,
+                    display_name,
+                    _vscode_user_rule_path(),
+                    _VSCODE_RULE_CONTENT,
+                    operation=operation,
+                )
+            )
             continue
         paths = (
             (_install_path(client_id),) if operation == "install" else _uninstall_paths(client_id)
@@ -287,7 +308,7 @@ def _install_cursor_protocol(display_name: str) -> ProtocolInstallOutcome:
     except (OSError, UnicodeError, ProtocolInstallError) as exc:
         _LOGGER.warning("Protocol install failed for %s: %s", display_name, exc)
         return ProtocolInstallOutcome(
-            client_id=_CURSOR,
+            client_id=CURSOR,
             display_name=display_name,
             instruction_path=current_path,
             successful=False,
@@ -302,7 +323,7 @@ def _install_cursor_protocol(display_name: str) -> ProtocolInstallOutcome:
         else "manual setup required; no user-global rules file"
     )
     return ProtocolInstallOutcome(
-        client_id=_CURSOR,
+        client_id=CURSOR,
         display_name=display_name,
         instruction_path=None,
         successful=True,
@@ -336,7 +357,7 @@ def _install_cursor_project_rule(
     except (OSError, UnicodeError, ProtocolInstallError) as exc:
         _LOGGER.warning("Cursor project protocol install failed for %s: %s", display_name, exc)
         return ProtocolInstallOutcome(
-            client_id=_CURSOR,
+            client_id=CURSOR,
             display_name=display_name,
             instruction_path=path,
             successful=False,
@@ -345,7 +366,7 @@ def _install_cursor_project_rule(
             detail=str(exc),
         )
     return ProtocolInstallOutcome(
-        client_id=_CURSOR,
+        client_id=CURSOR,
         display_name=display_name,
         instruction_path=path,
         successful=True,
@@ -364,7 +385,7 @@ def _uninstall_cursor_project_rule(
     try:
         if not path.exists():
             return ProtocolInstallOutcome(
-                client_id=_CURSOR,
+                client_id=CURSOR,
                 display_name=display_name,
                 instruction_path=path,
                 successful=True,
@@ -375,7 +396,7 @@ def _uninstall_cursor_project_rule(
         text, _has_bom = _read_text(path)
         if _find_protocol_span(text) is None:
             return ProtocolInstallOutcome(
-                client_id=_CURSOR,
+                client_id=CURSOR,
                 display_name=display_name,
                 instruction_path=path,
                 successful=True,
@@ -387,7 +408,7 @@ def _uninstall_cursor_project_rule(
     except (OSError, UnicodeError, ProtocolInstallError) as exc:
         _LOGGER.warning("Cursor project protocol uninstall failed for %s: %s", display_name, exc)
         return ProtocolInstallOutcome(
-            client_id=_CURSOR,
+            client_id=CURSOR,
             display_name=display_name,
             instruction_path=path,
             successful=False,
@@ -396,7 +417,7 @@ def _uninstall_cursor_project_rule(
             detail=str(exc),
         )
     return ProtocolInstallOutcome(
-        client_id=_CURSOR,
+        client_id=CURSOR,
         display_name=display_name,
         instruction_path=path,
         successful=True,
@@ -415,9 +436,12 @@ def _apply_to_path(
 ) -> ProtocolInstallOutcome:
     try:
         changed = (
-            _install_block(path)
+            _install_block(
+                path,
+                max_chars=(_WINDSURF_GLOBAL_RULE_MAX_CHARS if client_id == WINDSURF else None),
+            )
             if operation == "install"
-            else _remove_protocol_block(path, delete_if_empty=client_id == _CURSOR)
+            else _remove_protocol_block(path, delete_if_empty=client_id == CURSOR)
         )
     except (OSError, UnicodeError, ProtocolInstallError) as exc:
         _LOGGER.warning("Protocol %s failed for %s: %s", operation, display_name, exc)
@@ -447,19 +471,23 @@ def _apply_to_path(
 
 def _install_path(client_id: str) -> Path:
     home = Path.home()
-    if client_id == _CLAUDE_CODE:
+    if client_id == CLAUDE_CODE:
         return home / ".claude" / "CLAUDE.md"
-    if client_id == _GEMINI_CLI:
+    if client_id == GEMINI_CLI:
         return home / ".gemini" / "GEMINI.md"
-    if client_id == _CODEX_CLI:
+    if client_id == CODEX_CLI:
         return home / ".codex" / "AGENTS.md"
+    if client_id == WINDSURF:
+        return home / ".codeium" / "windsurf" / "memories" / "global_rules.md"
     raise ValueError(f"Client {client_id!r} has no protocol instruction path.")
 
 
 def _uninstall_paths(client_id: str) -> tuple[Path, ...]:
-    if client_id == _CLAUDE_DESKTOP:
+    if client_id == CLAUDE_DESKTOP:
         return ()
-    if client_id != _CURSOR:
+    if client_id == VS_CODE:
+        return (_vscode_user_rule_path(),)
+    if client_id != CURSOR:
         return (_install_path(client_id),)
     paths = _cursor_instruction_paths()
     existing = tuple(path for path in paths if path.is_file())
@@ -476,7 +504,75 @@ def _cursor_instruction_paths() -> tuple[Path, Path]:
     )
 
 
-def _install_block(path: Path) -> bool:
+def _vscode_user_rule_path() -> Path:
+    """Return VS Code's cross-workspace user instruction file for Datacron."""
+    return Path.home() / _VSCODE_USER_RULE_RELATIVE_PATH
+
+
+def _apply_owned_rule_file(
+    client_id: str,
+    display_name: str,
+    path: Path,
+    content: str,
+    *,
+    operation: _Operation,
+) -> ProtocolInstallOutcome:
+    """Install or remove a dedicated rule file without touching foreign bytes."""
+    try:
+        if operation == "install":
+            text, has_bom = _read_text(path)
+            if path.exists() and _find_protocol_span(text) is None:
+                raise ProtocolInstallError(
+                    f"{path} has no Datacron protocol markers; refusing to overwrite"
+                )
+            changed = has_bom or text != content
+            if changed:
+                _atomic_write_text(path, content, has_bom=False)
+            detail = "installed" if changed else "already installed"
+            skipped = False
+        elif not path.exists():
+            changed = False
+            detail = "already absent"
+            skipped = False
+        else:
+            text, _has_bom = _read_text(path)
+            if _find_protocol_span(text) is None:
+                return ProtocolInstallOutcome(
+                    client_id=client_id,
+                    display_name=display_name,
+                    instruction_path=path,
+                    successful=True,
+                    changed=False,
+                    skipped=True,
+                    detail="foreign file left unchanged; no Datacron protocol markers",
+                )
+            path.unlink()
+            changed = True
+            detail = "removed"
+            skipped = False
+    except (OSError, UnicodeError, ProtocolInstallError) as exc:
+        _LOGGER.warning("Protocol %s failed for %s: %s", operation, display_name, exc)
+        return ProtocolInstallOutcome(
+            client_id=client_id,
+            display_name=display_name,
+            instruction_path=path,
+            successful=False,
+            changed=False,
+            skipped=False,
+            detail=str(exc),
+        )
+    return ProtocolInstallOutcome(
+        client_id=client_id,
+        display_name=display_name,
+        instruction_path=path,
+        successful=True,
+        changed=changed,
+        skipped=skipped,
+        detail=detail,
+    )
+
+
+def _install_block(path: Path, *, max_chars: int | None = None) -> bool:
     text, has_bom = _read_text(path)
     newline = _detect_newline(text)
     rendered = PROTOCOL_BLOCK.replace("\n", newline)
@@ -486,6 +582,10 @@ def _install_block(path: Path) -> bool:
     else:
         start, end = span
         updated = f"{text[:start]}{rendered}{text[end:]}"
+    if max_chars is not None and len(updated) > max_chars:
+        raise ProtocolInstallError(
+            f"{path} would exceed the client limit of {max_chars} characters"
+        )
     if updated == text:
         return False
     _atomic_write_text(path, updated, has_bom=has_bom)
