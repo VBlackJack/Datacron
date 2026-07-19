@@ -30,6 +30,7 @@ from datacron.installers.claude_desktop import MCPServerInvocation
 from datacron.installers.protocol import (
     PROTOCOL_ALL,
     PROTOCOL_BLOCK,
+    PROTOCOL_CLIENT_IDS,
     PROTOCOL_MARKER_BEGIN,
     PROTOCOL_MARKER_END,
     ProtocolInstallOutcome,
@@ -40,6 +41,7 @@ from datacron.installers.protocol import (
 _RUNNER = CliRunner()
 _CURSOR_RULE_RELATIVE_PATH = Path(".cursor") / "rules" / "datacron.mdc"
 _CURSOR_RULE_FRONTMATTER = "---\ndescription: Datacron memory protocol\nalwaysApply: true\n---"
+_VSCODE_RULE_RELATIVE_PATH = Path(".copilot") / "instructions" / "datacron.instructions.md"
 
 
 def _canonical_cursor_rule_bytes() -> bytes:
@@ -61,6 +63,7 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         ("claude-code", Path(".claude/CLAUDE.md")),
         ("gemini-cli", Path(".gemini/GEMINI.md")),
         ("codex-cli", Path(".codex/AGENTS.md")),
+        ("windsurf", Path(".codeium/windsurf/memories/global_rules.md")),
     ],
 )
 def test_install_and_uninstall_are_idempotent_and_reversible(
@@ -108,6 +111,60 @@ def test_cursor_install_returns_manual_instructions_without_creating_home_file(
     assert "Settings > Rules" in outcome.manual_instructions
     assert PROTOCOL_BLOCK in outcome.manual_instructions
     assert not (fake_home / ".cursor").exists()
+
+
+def test_vscode_user_rule_is_always_on_idempotent_and_reversible(fake_home: Path) -> None:
+    path = fake_home / _VSCODE_RULE_RELATIVE_PATH
+
+    first = install_memory_protocol("vscode")[0]
+    installed = path.read_bytes()
+    second = install_memory_protocol("vscode")[0]
+
+    assert first.successful is True
+    assert first.changed is True
+    assert first.instruction_path == path
+    assert second.changed is False
+    assert installed.startswith(b"---\n")
+    assert b"name: Datacron memory protocol\n" in installed
+    assert b'applyTo: "**"\n' in installed
+    assert installed.count(PROTOCOL_MARKER_BEGIN.encode()) == 1
+    assert path.read_bytes() == installed
+
+    removed = uninstall_memory_protocol("vscode")[0]
+    absent = uninstall_memory_protocol("vscode")[0]
+
+    assert removed.changed is True
+    assert not path.exists()
+    assert absent.changed is False
+    assert absent.detail == "already absent"
+
+
+def test_vscode_user_rule_refuses_to_overwrite_foreign_file(fake_home: Path) -> None:
+    path = fake_home / _VSCODE_RULE_RELATIVE_PATH
+    path.parent.mkdir(parents=True)
+    foreign = b'---\napplyTo: "**"\n---\nKeep this rule.\n'
+    path.write_bytes(foreign)
+
+    outcome = install_memory_protocol("vscode")[0]
+
+    assert outcome.successful is False
+    assert outcome.changed is False
+    assert "refusing to overwrite" in outcome.detail
+    assert path.read_bytes() == foreign
+
+
+def test_windsurf_global_rule_limit_fails_without_rewriting(fake_home: Path) -> None:
+    path = fake_home / ".codeium" / "windsurf" / "memories" / "global_rules.md"
+    path.parent.mkdir(parents=True)
+    original = ("x" * 5900).encode()
+    path.write_bytes(original)
+
+    outcome = install_memory_protocol("windsurf")[0]
+
+    assert outcome.successful is False
+    assert outcome.changed is False
+    assert "6000 characters" in outcome.detail
+    assert path.read_bytes() == original
     assert not (fake_home / ".cursorrules").exists()
 
 
@@ -333,7 +390,7 @@ def test_all_uses_shared_detection_and_skips_claude_desktop(
     monkeypatch.setattr(
         protocol,
         "detect_clients",
-        lambda **_: ("claude-desktop", "codex-cli"),
+        lambda **_: ("claude-desktop", "codex-cli", "windsurf", "vscode"),
     )
 
     outcomes = install_memory_protocol(PROTOCOL_ALL)
@@ -343,6 +400,25 @@ def test_all_uses_shared_detection_and_skips_claude_desktop(
     assert "server instructions" in outcomes[0].detail
     assert outcomes[1].instruction_path == fake_home / ".codex" / "AGENTS.md"
     assert outcomes[1].changed is True
+    assert outcomes[2].instruction_path == (
+        fake_home / ".codeium" / "windsurf" / "memories" / "global_rules.md"
+    )
+    assert outcomes[2].changed is True
+    assert outcomes[3].instruction_path == fake_home / _VSCODE_RULE_RELATIVE_PATH
+    assert outcomes[3].changed is True
+
+
+def test_protocol_clients_cover_every_mcp_client() -> None:
+    assert PROTOCOL_CLIENT_IDS == mcp_clients.ALL_CLIENT_IDS
+
+
+def test_windows_installer_manages_user_protocol_lifecycle() -> None:
+    installer = (
+        Path(__file__).parents[2] / "packaging" / "windows" / "datacron-installer.iss"
+    ).read_text(encoding="utf-8")
+
+    assert "protocol install --client all --scope user" in installer
+    assert "protocol uninstall --client all --scope user" in installer
 
 
 def test_shared_detection_reports_present_instruction_client(

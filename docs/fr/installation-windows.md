@@ -4,15 +4,17 @@
 
 Cette page décrit l'installeur graphique `Datacron-Setup.exe` : un double-clic, sans
 Python et sans terminal, qui installe Datacron pour ton compte utilisateur et
-**enregistre automatiquement Datacron dans les clients IA détectés** (Claude Desktop,
-Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, VS Code).
+**enregistre automatiquement Datacron dans les clients IA détectés** et y installe son
+protocole mémoire (Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf,
+VS Code).
 
 Si tu préfères la ligne de commande (`datacron setup`), va plutôt sur le
 [guide d'installation et de configuration](setup.md).
 
 > Datacron ne modifie jamais tes notes sans que tu l'actives explicitement, et n'envoie
 > rien vers un service cloud. Il ajoute seulement un dossier `.datacron/` à côté de tes
-> notes, et enregistre son serveur MCP dans tes clients IA.
+> notes, enregistre son serveur MCP et ajoute uniquement un bloc d'instructions balisé dans
+> les règles globales prises en charge.
 
 ## 1. Installer
 
@@ -25,7 +27,9 @@ Si tu préfères la ligne de commande (`datacron setup`), va plutôt sur le
    suite (recommandé), ou décoche-la pour le faire plus tard.
 5. Termine. L'installeur ajoute `datacron.exe` à ton **PATH utilisateur**, crée les
    raccourcis du menu Démarrer, puis lance la configuration : il enregistre Datacron
-   dans chaque client IA détecté et indexe le vault.
+   dans chaque client IA détecté, installe les instructions mémoire globales prises en charge
+   et indexe le vault. Cursor affiche encore une étape manuelle dans **Settings > Rules** ;
+   Claude Desktop reçoit les instructions directement pendant l'initialisation MCP.
 
 Après l'installation, redémarre Claude Desktop (ou ton client) pour qu'il charge le
 serveur Datacron.
@@ -71,9 +75,9 @@ Options :
 ## 6. Désinstaller
 
 Désinstalle depuis **Paramètres Windows > Applications**. L'opération, dans l'ordre :
-retire l'entrée MCP `datacron` de tes clients, retire `datacron.exe` de ton PATH
-utilisateur, puis supprime le programme. **Ton vault et tes notes ne sont jamais
-touchés.**
+retire l'entrée MCP `datacron` de tes clients, retire les blocs d'instructions gérés par
+Datacron, retire `datacron.exe` de ton PATH utilisateur, puis supprime le programme.
+**Ton vault et tes notes ne sont jamais touchés.**
 
 ## 7. Vérifier
 

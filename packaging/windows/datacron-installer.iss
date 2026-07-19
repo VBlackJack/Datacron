@@ -66,6 +66,8 @@ english.DirectoryFailed=Datacron could not create the selected vault folder:
 english.RegistryFailed=Datacron could not save the selected vault for reinstall and uninstall. Automatic setup was not started.
 english.ResetFailed=Datacron could not reset its configuration and generated index. Close every AI application using Datacron, then run the installer again.
 english.UnregisterFailed=Datacron could not remove every MCP client entry. The operation will continue; review the client configurations manually.
+english.ProtocolFailed=Datacron was registered, but its memory instructions could not be installed in every detected AI client. Run Datacron Setup again or use "datacron protocol install --client all".
+english.ProtocolRemoveFailed=Datacron could not remove every installed memory-instruction block. The operation will continue; review the client instruction files manually.
 french.ReinstallCaption=Configuration Datacron existante
 french.ReinstallDescription=Choisissez ce que cette installation doit faire avec le vault selectionne.
 french.ReinstallSubCaption=Garder conserve la configuration et l'index genere. Reinitialiser les supprime avant le setup ; les identites de notes, l'audit, les logs et les fichiers Markdown restent inchanges.
@@ -82,6 +84,8 @@ french.DirectoryFailed=Datacron n'a pas pu creer le dossier de vault selectionne
 french.RegistryFailed=Datacron n'a pas pu memoriser le vault pour la reinstallation et la desinstallation. Le setup automatique n'a pas ete lance.
 french.ResetFailed=Datacron n'a pas pu reinitialiser sa configuration et son index genere. Fermez toutes les applications IA utilisant Datacron, puis relancez l'installeur.
 french.UnregisterFailed=Datacron n'a pas pu retirer toutes les entrees des clients MCP. L'operation continue ; verifiez manuellement les configurations clientes.
+french.ProtocolFailed=Datacron a ete enregistre, mais ses instructions memoire n'ont pas pu etre installees dans tous les clients IA detectes. Relancez Datacron Setup ou utilisez "datacron protocol install --client all".
+french.ProtocolRemoveFailed=Datacron n'a pas pu retirer tous les blocs d'instructions memoire installes. L'operation continue ; verifiez manuellement les fichiers d'instructions des clients.
 
 [Files]
 Source: "..\..\dist\datacron.exe"; DestDir: "{app}"; DestName: "datacron.exe"; Flags: ignoreversion
@@ -503,6 +507,27 @@ begin
       MarkSetupFailure(
         'datacron setup returned exit code ' + IntToStr(ResultCode) + '.'
       );
+  end
+  else
+  begin
+    Parameters := 'protocol install --client all --scope user';
+    if not Exec(
+      ExecutablePath,
+      Parameters,
+      ExpandConstant('{app}'),
+      SW_HIDE,
+      ewWaitUntilTerminated,
+      ResultCode
+    ) then
+      MarkSetupFailure(CustomMessage('ProtocolFailed'))
+    else if ResultCode <> 0 then
+    begin
+      Log(
+        'Datacron protocol installation returned exit code ' +
+        IntToStr(ResultCode) + '.'
+      );
+      MarkSetupFailure(CustomMessage('ProtocolFailed'));
+    end;
   end;
 end;
 
@@ -525,6 +550,17 @@ begin
   Log(LogMessage);
   SuppressibleMsgBox(
     CustomMessage('UnregisterFailed'),
+    mbError,
+    MB_OK,
+    IDOK
+  );
+end;
+
+procedure ShowProtocolRemoveFailure(const LogMessage: String);
+begin
+  Log(LogMessage);
+  SuppressibleMsgBox(
+    CustomMessage('ProtocolRemoveFailed'),
     mbError,
     MB_OK,
     IDOK
@@ -573,6 +609,24 @@ begin
       else if ResultCode <> 0 then
         ShowUnregisterFailure(
           'Datacron client unregistration returned exit code ' +
+          IntToStr(ResultCode) + ' during uninstall.'
+        );
+
+      Parameters := 'protocol uninstall --client all --scope user';
+      if not Exec(
+        ExecutablePath,
+        Parameters,
+        ExpandConstant('{app}'),
+        SW_HIDE,
+        ewWaitUntilTerminated,
+        ResultCode
+      ) then
+        ShowProtocolRemoveFailure(
+          'Datacron protocol removal could not start during uninstall.'
+        )
+      else if ResultCode <> 0 then
+        ShowProtocolRemoveFailure(
+          'Datacron protocol removal returned exit code ' +
           IntToStr(ResultCode) + ' during uninstall.'
         );
     end;

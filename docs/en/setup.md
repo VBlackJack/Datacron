@@ -34,6 +34,7 @@ Useful options:
 - `datacron setup --no-index` - skip building the index.
 - `datacron setup --client claude-code` - print a ready-to-paste stdio config snippet for Claude Code.
 - `datacron setup --client none` - configure the vault without writing or printing any client config.
+- `datacron setup --protocol` - also install the memory protocol in detected client instructions; without this flag the unattended default is no. The Windows installer performs this step automatically.
 
 The sections below describe the **same steps manually**, if you prefer full step-by-step
 control.
@@ -180,6 +181,33 @@ DATACRON_VAULT_ROOT=/path/to/vault datacron-mcp
 Declare this command in the client's MCP configuration. The server reads JSON-RPC messages
 on stdin and replies on stdout; logs go to the FileLogger, never to stdout (reserved for the
 protocol).
+
+### Install the client-side memory protocol
+
+The MCP connection exposes the tools and already sends the standard MCP `instructions`
+field. Native client rules reinforce that behavior in clients that have their own instruction
+files: search first, read `_memory/INIT.md`, proactively persist confirmed durable facts, and
+never persist speculation. Install the protocol in every detected client:
+
+```bash
+datacron protocol install --client all
+```
+
+You can also target `claude-code`, `cursor`, `gemini-cli`, `codex-cli`, `windsurf`, or
+`vscode`. Datacron automatically installs global rules for Claude Code, Gemini CLI, Codex,
+Windsurf, and VS Code. Cursor still requires a paste in **Settings > Rules** because its
+global user rules are only exposed through the UI. Claude Desktop relies on the MCP server
+instructions.
+
+Datacron only writes between `<!-- datacron:protocol:begin -->` and
+`<!-- datacron:protocol:end -->`; reinstalling replaces that block and preserves the rest of
+the file. The VS Code rule is a dedicated file with `applyTo: "**"`. Datacron refuses to
+write if its addition would exceed Windsurf's 6,000-character global limit. To remove
+Datacron-managed rules:
+
+```bash
+datacron protocol uninstall --client all
+```
 
 ## 7. Environment variables
 
