@@ -692,3 +692,5 @@ def test_protocol_block_has_single_marked_source() -> None:
     assert "search_text" in PROTOCOL_BLOCK
     assert "create_note_ai" in PROTOCOL_BLOCK
     assert "contradiction_scan" in PROTOCOL_BLOCK
+    assert "indexed: true" in PROTOCOL_BLOCK
+    assert "datacron reindex" in PROTOCOL_BLOCK
