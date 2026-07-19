@@ -9,6 +9,18 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- The memory protocol now covers every MCP client supported by Datacron. Windsurf receives
+  an always-on block in its global rules file, and VS Code receives a dedicated user-profile
+  `datacron.instructions.md` rule with `applyTo: "**"`. Claude Code, Gemini CLI, Codex,
+  Cursor, and Claude Desktop keep their existing native or MCP-initialization behavior.
+
+### Changed
+
+- The Windows installer now installs the Datacron memory protocol after registering detected
+  AI clients and removes Datacron-managed instruction blocks during uninstall.
+
 ## [2026.0718.04] - 2026-07-18
 
 ### Added

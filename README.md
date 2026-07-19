@@ -27,6 +27,7 @@ les logs, les ULID internes, l'historique et le journal d'opérations.
 | Évaluation | `datacron eval` sur le pipeline MCP réel : recall@k, MRR, nDCG, fraîcheur, latence et payload tokens |
 | Setup guidé | `datacron setup` : init + index + enregistrement MCP en une commande |
 | Clients | Auto-détection et enregistrement via `datacron setup --client all` : Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, VS Code |
+| Protocole mémoire | Instructions MCP universelles + règles globales natives installées pour les clients pris en charge |
 | Distribution | Installeur Windows (`Datacron-Setup.exe`), exécutable autonome (PyInstaller) sans Python requis, ou installation depuis les sources |
 
 Mesure locale du pipeline `tool/impl` réellement reçu par l'agent, 19 questions,
@@ -256,6 +257,8 @@ Resources MCP :
 datacron setup                      # parcours guidé : init + index + config client
 datacron setup --yes                # tout par défaut, sans question
 datacron setup --client all --scope both --vault /path/to/vault
+datacron setup --protocol           # installe aussi les règles mémoire des clients
+datacron protocol install --client all
 datacron init /path/to/vault
 datacron status --vault /path/to/vault
 datacron index --vault /path/to/vault
@@ -268,6 +271,7 @@ datacron eval --questions local/golden.yaml --vault /path/to/vault --compare --j
 datacron mcp serve --vault /path/to/vault
 datacron mcp install --client claude-desktop --vault /path/to/vault  # dédié Claude Desktop
 datacron unregister --client all --scope both --vault /path/to/vault
+datacron protocol uninstall --client all
 ```
 
 ## Limites actuelles

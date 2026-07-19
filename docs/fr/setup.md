@@ -34,7 +34,7 @@ n'annule jamais l'enregistrement des clients. Options utiles :
 - `datacron setup --no-index` - saute la construction de l'index.
 - `datacron setup --client claude-code` - affiche un snippet de config stdio prêt à coller dans Claude Code.
 - `datacron setup --client none` - configure le vault sans écrire ni afficher de config client.
-- `datacron setup --protocol` - installe aussi le protocole mémoire dans les instructions des clients détectés ; sans ce flag, la réponse unattended par défaut est non.
+- `datacron setup --protocol` - installe aussi le protocole mémoire dans les instructions des clients détectés ; sans ce flag, la réponse unattended par défaut est non. L'installeur Windows active cette étape automatiquement.
 
 Les sections ci-dessous décrivent les **mêmes étapes manuellement**, si tu préfères tout
 contrôler pas à pas.
@@ -186,19 +186,28 @@ stdout (réservé au protocole).
 
 ### Installer le protocole mémoire côté client
 
-Le branchement MCP expose les outils ; le bloc de protocole apprend au client quand les
-utiliser (recherche d'abord, lecture de `_memory/INIT.md`, persistance proactive des faits
-durables confirmés, jamais de spéculation). Installe-le dans tous les clients détectés :
+Le branchement MCP expose les outils et transmet déjà le champ standard MCP `instructions`.
+Le bloc de protocole natif renforce ce comportement dans les clients qui possèdent leur
+propre fichier de règles : recherche d'abord, lecture de `_memory/INIT.md`, persistance
+proactive des faits durables confirmés, jamais de spéculation. Installe-le dans tous les
+clients détectés :
 
 ```bash
 datacron protocol install --client all
 ```
 
-Ou cible `claude-code`, `cursor`, `gemini-cli` ou `codex-cli`. Claude Desktop est ignoré
-avec un message explicite : les instructions du serveur MCP y suffisent. Datacron écrit
-uniquement entre les marqueurs `<!-- datacron:protocol:begin -->` et
-`<!-- datacron:protocol:end -->`; une nouvelle installation remplace ce bloc et préserve
-le reste du fichier. Pour le retirer :
+Ou cible `claude-code`, `cursor`, `gemini-cli`, `codex-cli`, `windsurf` ou `vscode`.
+Datacron installe automatiquement les règles globales de Claude Code, Gemini CLI, Codex,
+Windsurf et VS Code. Cursor demande encore un copier-coller dans **Settings > Rules**, car
+ses règles utilisateur globales ne sont exposées que dans l'interface. Claude Desktop
+s'appuie sur les instructions du serveur MCP.
+
+Datacron écrit uniquement entre les marqueurs
+`<!-- datacron:protocol:begin -->` et `<!-- datacron:protocol:end -->`; une nouvelle
+installation remplace ce bloc et préserve le reste du fichier. La règle VS Code est un
+fichier dédié avec `applyTo: "**"`. Datacron refuse l'écriture si son ajout ferait dépasser
+la limite globale de 6 000 caractères de Windsurf. Pour retirer les règles gérées par
+Datacron :
 
 ```bash
 datacron protocol uninstall --client all
