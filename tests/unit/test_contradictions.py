@@ -24,6 +24,8 @@ from datacron.contradictions import (
     CandidateClass,
     MutationScope,
     SectionAssertion,
+    _excerpt,
+    _statement,
     build_proposal,
     format_update_block,
 )
@@ -32,7 +34,10 @@ from datacron.core import config as core_config
 _TODAY = date(2026, 7, 17)
 
 
-def _candidate() -> Candidate:
+def _candidate(
+    *,
+    source_content: str = "The current Windows team employer is Worldline.",
+) -> Candidate:
     target = SectionAssertion(
         note_id="01HQXR7K9YZ8M2N3PQRSTV4WX5",
         note_rel_path="_memory/facts/old.md",
@@ -51,7 +56,7 @@ def _candidate() -> Candidate:
         chunk_id="01HQXR7K9YZ8M2N3PQRSTV4WX6::identity/employer-2026-07-15::0000",
         line_start=5,
         line_end=7,
-        content="The current Windows team employer is Worldline.",
+        content=source_content,
     )
     return Candidate(
         target=target,
@@ -101,6 +106,80 @@ def test_open_question_formatter_has_exact_punctuation() -> None:
 
     assert rendered == (
         "> QUESTION OUVERTE 2026-07-17 : Which direction remains active? "
+        "Voir _memory/projects/source.md."
+    )
+
+
+@pytest.mark.parametrize("limit", [10, 20])
+def test_excerpt_at_or_below_limit_is_unchanged(limit: int) -> None:
+    assert _excerpt("alpha beta", limit=limit) == "alpha beta"
+
+
+def test_excerpt_truncates_at_last_word_boundary() -> None:
+    rendered = _excerpt("alpha beta gamma", limit=13)
+
+    assert rendered == "alpha beta..."
+    assert len(rendered) <= 13
+
+
+def test_excerpt_falls_back_to_hard_cut_for_one_long_token() -> None:
+    rendered = _excerpt("abcdefghijklmnop", limit=10)
+
+    assert rendered == "abcdefg..."
+    assert len(rendered) <= 10
+
+
+def test_excerpt_does_not_split_a_word_when_a_boundary_is_available() -> None:
+    rendered = _excerpt("complete oversizedword remainder", limit=17)
+
+    assert rendered == "complete..."
+    assert len(rendered) <= 17
+
+
+def test_long_statement_preserves_visible_truncation_marker() -> None:
+    prefix = " ".join(["alpha"] * 39)
+    content = f"{prefix} boundary overflow"
+
+    rendered = _statement(content, CandidateClass.REFINEMENT)
+
+    assert rendered == f"{prefix}..."
+    assert len(rendered) <= 240
+
+
+def test_truncated_open_question_ends_with_ellipsis_not_question_mark() -> None:
+    prefix = " ".join(["alpha"] * 39)
+    proposal = build_proposal(
+        _candidate(source_content=f"{prefix} boundary overflow"),
+        classification=CandidateClass.OPEN_QUESTION,
+        scope=MutationScope.SECTION,
+        today=_TODAY,
+    )
+
+    assert proposal.block == (
+        f"> QUESTION OUVERTE 2026-07-17 : {prefix}... Voir _memory/facts/current.md."
+    )
+
+
+def test_short_statement_and_empty_fallback_keep_exact_punctuation() -> None:
+    short = format_update_block(
+        CandidateClass.REFINEMENT,
+        "The current direction is active.",
+        "_memory/projects/source.md",
+        today=_TODAY,
+    )
+    empty = format_update_block(
+        CandidateClass.REFINEMENT,
+        "",
+        "_memory/projects/source.md",
+        today=_TODAY,
+    )
+
+    assert short == (
+        "> MISE A JOUR 2026-07-17 : The current direction is active. "
+        "Voir _memory/projects/source.md."
+    )
+    assert empty == (
+        "> MISE A JOUR 2026-07-17 : Review the newer source section. "
         "Voir _memory/projects/source.md."
     )
 

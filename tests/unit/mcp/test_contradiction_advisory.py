@@ -242,9 +242,12 @@ async def test_summary_payload_is_compact_and_alternative_confirms_like_full(
     )
     summary_candidate = summary["candidates"][0]
     full_candidate = full["candidates"][0]
+    summary_source = summary_candidate["evidence"]["source"]
+    full_source = full_candidate["evidence"]["source"]
     assert summary_bytes < full_bytes
-    assert len(summary_candidate["evidence"]["source"]) == 160
-    assert 160 < len(full_candidate["evidence"]["source"]) <= 280
+    assert summary_source.endswith("...")
+    assert len(summary_source) <= 160
+    assert len(summary_source) < len(full_source) <= 280
     assert summary_candidate["suggested_mutation"]["block"] is not None
     assert all(mutation["block"] is None for mutation in summary_candidate["alternative_mutations"])
     assert any(
