@@ -125,7 +125,7 @@ def test_vscode_user_rule_is_always_on_idempotent_and_reversible(fake_home: Path
     assert first.instruction_path == path
     assert second.changed is False
     assert installed.startswith(b"---\n")
-    assert b'name: Datacron memory protocol\n' in installed
+    assert b"name: Datacron memory protocol\n" in installed
     assert b'applyTo: "**"\n' in installed
     assert installed.count(PROTOCOL_MARKER_BEGIN.encode()) == 1
     assert path.read_bytes() == installed

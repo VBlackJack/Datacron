@@ -438,9 +438,7 @@ def _apply_to_path(
         changed = (
             _install_block(
                 path,
-                max_chars=(
-                    _WINDSURF_GLOBAL_RULE_MAX_CHARS if client_id == WINDSURF else None
-                ),
+                max_chars=(_WINDSURF_GLOBAL_RULE_MAX_CHARS if client_id == WINDSURF else None),
             )
             if operation == "install"
             else _remove_protocol_block(path, delete_if_empty=client_id == CURSOR)
