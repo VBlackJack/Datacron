@@ -691,3 +691,4 @@ def test_protocol_block_has_single_marked_source() -> None:
     assert 14 <= len(lines) <= 18
     assert "search_text" in PROTOCOL_BLOCK
     assert "create_note_ai" in PROTOCOL_BLOCK
+    assert "contradiction_scan" in PROTOCOL_BLOCK
