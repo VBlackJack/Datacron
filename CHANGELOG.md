@@ -9,6 +9,29 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0719.01] - 2026-07-19
+
+### Added
+
+- CI now auto-publishes `server.json` to the MCP Registry via GitHub OIDC after the PyPI
+  publish succeeds, with a bounded PyPI-propagation wait and an idempotent registry pre-check
+  (#27).
+
+### Changed
+
+- The memory protocol now routes contradiction and refinement detection to the
+  `contradiction_scan` tool, kept distinct from consolidation (#26).
+- The memory protocol ships index-freshness guidance - trust writes returning `indexed: true`,
+  use `get_health` only on suspicion, and run `datacron reindex` if the index is inconsistent -
+  replacing the prior `get_health` line (#28).
+
+### Fixed
+
+- `contradiction_scan` statements no longer truncate mid-word and now mark truncation visibly
+  (#25).
+- Atomic writes retry `os.replace` on transient Windows sharing errors (WinError 5/32/33),
+  fixing an intermittent concurrent-write failure on Windows (#29).
+
 ## [2026.0719.00] - 2026-07-19
 
 ### Added
