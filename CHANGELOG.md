@@ -9,6 +9,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Fixed
+
+- `datacron setup --yes` no longer adopts the current directory as the vault silently:
+  non-interactive runs require `--vault`, `DATACRON_VAULT_ROOT`, or an existing
+  `.datacron/VAULT.yaml` in the current directory, and the user profile root is always
+  refused as a vault target, even when passed explicitly.
+
 ## [2026.0720.00] - 2026-07-20
 
 ### Added

@@ -33,6 +33,7 @@ import datacron.cli as cli_module
 from datacron import setup_wizard
 from datacron.bootstrap import initialize_vault
 from datacron.cli import app
+from datacron.core.config import reset_settings_cache
 from datacron.core.paths import sidecar_index_db, sidecar_vault_config
 from datacron.installers import mcp_clients
 from datacron.installers.claude_desktop import ClaudeDesktopConfigError, MCPServerInvocation
@@ -744,6 +745,90 @@ def test_cli_setup_yes_client_none(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "Datacron setup complete." in result.output
     assert sidecar_vault_config(tmp_path).is_file()
+
+
+def test_cli_setup_yes_without_vault_source_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--yes must never silently adopt the cwd when no vault source exists."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.chdir(empty)
+    result = _runner.invoke(app, ["setup", "--client", "none", "--yes"])
+    assert result.exit_code != 0
+    assert "Non-interactive setup (--yes) needs an explicit vault" in result.output
+    assert not sidecar_vault_config(empty).exists()
+
+
+def test_cli_setup_yes_uses_env_vault_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """DATACRON_VAULT_ROOT is an acceptable explicit source for --yes."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _write_note(vault, "a.md", "# A\n\nhello world\n")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.setenv("DATACRON_VAULT_ROOT", str(vault))
+    reset_settings_cache()
+    monkeypatch.chdir(elsewhere)
+    result = _runner.invoke(app, ["setup", "--client", "none", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert sidecar_vault_config(vault).is_file()
+    assert not sidecar_vault_config(elsewhere).exists()
+
+
+def test_cli_setup_yes_accepts_cwd_with_existing_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An existing .datacron/VAULT.yaml in the cwd is an explicit-enough source."""
+    _write_note(tmp_path, "a.md", "# A\n\nhello world\n")
+    initialize_vault(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    result = _runner.invoke(app, ["setup", "--client", "none", "--yes"])
+    assert result.exit_code == 0, result.output
+
+
+def test_cli_setup_refuses_user_profile_root_even_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The user profile root is rejected as a vault even with an explicit --vault."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    result = _runner.invoke(app, ["setup", "--vault", str(fake_home), "--client", "none", "--yes"])
+    assert result.exit_code != 0
+    assert "user profile root" in result.output
+    assert not sidecar_vault_config(fake_home).exists()
+
+
+def test_cli_setup_yes_refuses_env_vault_root_at_user_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DATACRON_VAULT_ROOT must not bypass the user profile root guard."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    monkeypatch.setenv("DATACRON_VAULT_ROOT", str(fake_home))
+    reset_settings_cache()
+    result = _runner.invoke(app, ["setup", "--client", "none", "--yes"])
+    assert result.exit_code != 0
+    assert "user profile root" in result.output
+    assert not sidecar_vault_config(fake_home).exists()
+
+
+def test_cli_setup_accepts_explicit_user_profile_subdirectory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard rejects only the profile root, not a dedicated directory below it."""
+    fake_home = tmp_path / "home"
+    vault = fake_home / "vault"
+    vault.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    result = _runner.invoke(
+        app,
+        ["setup", "--vault", str(vault), "--client", "none", "--yes", "--no-index"],
+    )
+    assert result.exit_code == 0, result.output
+    assert sidecar_vault_config(vault).is_file()
 
 
 def test_cli_setup_reports_deferred_index_and_exits_zero(
