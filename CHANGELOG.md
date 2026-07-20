@@ -11,6 +11,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Added
 
+- `datacron setup` can optionally apply the write allowlist machine-wide through the user
+  environment (`HKCU` registry value plus settings broadcast on Windows; printed `export`
+  line on Unix), defaulting to the `_memory`, `_drafts`, and `_journal` folders, so every
+  MCP client on the machine inherits it.
 - Memory notes can record up to 16 structured rejected options in the optional `rejected`
   frontmatter list through `create_note_ai` and `set_frontmatter`.
 - `list_notes` now accepts up to eight case-insensitive top-level frontmatter key/value

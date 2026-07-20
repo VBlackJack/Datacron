@@ -168,11 +168,15 @@ $env:DATACRON_WRITE_PATHS = "G:\_DATA\_memory"
 datacron mcp serve --vault G:\_DATA
 ```
 
+`datacron setup` can also apply the allowlist machine-wide (user environment
+variable, opt-in) so every MCP client inherits it; default: `_memory`, `_drafts`,
+`_journal`. See the [setup guide](docs/en/setup.md).
+
 Available write tools:
 
 - `create_note_ai`: creates a typed Markdown note, without overwrite.
 - `append_journal`: adds an entry under a heading of an existing note.
-- `set_frontmatter`: updates lifecycle fields without modifying the Markdown body.
+- `set_frontmatter`: updates lifecycle fields and the `rejected` options list without modifying the Markdown body.
 - `patch_note_section`: replaces the content under an existing heading with CAS control.
 - `revert_note`: restores the exact bytes of a version kept in history.
 
@@ -193,7 +197,7 @@ vault.
 
 | Tool | Description |
 |---|---|
-| `list_notes` | returns a paginated list, filterable by folder and tags, with ULID, title, tags, aliases, and dates |
+| `list_notes` | returns a paginated list, filterable by folder, tags, and frontmatter key/value pairs, with ULID, title, tags, aliases, and dates |
 | `get_note` | reads a note by ULID, chunk id, or relative path, as paginated content, chunk, or heading outline |
 | `search_text` | runs a BM25 search on the FTS5 index with ranked snippets and stale notes demoted by default |
 | `search_regex` | runs a regex search via ripgrep and resolves the found lines to indexed chunks |
@@ -205,7 +209,7 @@ vault.
 |---|---|
 | `create_note_ai` | creates a new typed `_memory` note, confined to allowed paths, without overwrite and with a durable journal |
 | `append_journal` | adds a Markdown entry under a heading, with confinement, exact history, and atomic write |
-| `set_frontmatter` | updates only the lifecycle fields and the `updated` date, preserving the Markdown body |
+| `set_frontmatter` | updates only the lifecycle fields, the `rejected` list, and the `updated` date, preserving the Markdown body |
 | `patch_note_section` | replaces the content of an existing heading with CAS, exact history, and preservation of other sections |
 | `revert_note` | restores a note from its content-addressed history; the operation stays durable, reversible, and audited |
 
