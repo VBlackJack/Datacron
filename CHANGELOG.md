@@ -16,6 +16,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   allowlist to the user environment, mapped to `setup --enable-write` and
   `--machine-wide-write`. Silent installs get the matching `/ENABLEWRITE` and
   `/MACHINEWIDEWRITE` switches.
+- `datacron setup` now detects Google Antigravity from its live profile and merges the
+  Datacron server into `~/.gemini/config/mcp_config.json` and
+  `<project>/.agents/mcp_config.json`, accepting an empty user config and preserving all
+  other entries. Its memory protocol is supported in the workspace `GEMINI.md` only.
 
 ### Fixed
 
