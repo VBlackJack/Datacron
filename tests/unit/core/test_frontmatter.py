@@ -126,6 +126,22 @@ class TestSerialize:
             "---",
         ]
 
+    def test_rejected_round_trips_between_supersedes_and_tags(self) -> None:
+        metadata = {
+            "id": "01HQXR7K9YZ8M2N3PQRSTV4WX5",
+            "supersedes": ["01HQXR7K9YZ8M2N3PQRSTV4WX4"],
+            "rejected": ["vector embeddings -- BM25 is sufficient"],
+            "tags": ["memory"],
+        }
+
+        rendered = serialize(metadata, "Body\n")
+        parsed_metadata, parsed_body = parse(rendered)
+        lines = rendered.splitlines()
+
+        assert parsed_metadata == metadata
+        assert parsed_body == "Body"
+        assert lines.index("supersedes:") < lines.index("rejected:") < lines.index("tags:")
+
 
 class TestMatchesFrontmatterFilter:
     def test_scalar_and_key_matching_are_case_insensitive(self) -> None:

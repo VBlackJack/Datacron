@@ -123,6 +123,18 @@ utiles au quotidien :
 Résultat : tu peux garder l'historique dans le vault sans polluer les réponses, tout en
 pouvant le rappeler explicitement avec `include_superseded=true`.
 
+### Consigner les options écartées
+
+Utilise la liste frontmatter optionnelle `rejected` pour consigner les options écartées afin
+qu'elles ne soient pas proposées de nouveau. Chaque entrée suit exactement le format
+`option -- raison` ; une note peut contenir au maximum 16 entrées de 300 caractères chacune.
+`create_note_ai` peut définir la liste et `set_frontmatter` la remplace entièrement ; passe
+`rejected=[]` pour retirer la clé.
+
+Ce champ est déclaratif dans cette version et ne modifie ni le retrieval ni
+`contradiction_scan`. `list_notes` ne peut le filtrer que par correspondance insensible à la
+casse sur une entrée complète.
+
 ### Cycle de vie d'un fait
 
 Un fait est **actif** tant qu'il n'a ni été remplacé par une note qui le cite dans `supersedes`,

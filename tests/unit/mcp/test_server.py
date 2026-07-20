@@ -132,6 +132,7 @@ async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
         "chunk",
     ]
     create_properties = tools["create_note_ai"].inputSchema["properties"]
+    set_frontmatter_properties = tools["set_frontmatter"].inputSchema["properties"]
     assert set(create_properties["origin"]["enum"]) == {"ai", "human", "merged"}
     assert set(create_properties["confidence"]["enum"]) == {
         "high",
@@ -139,6 +140,8 @@ async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
         "low",
         "needs_verification",
     }
+    assert "rejected" in create_properties
+    assert "rejected" in set_frontmatter_properties
     contradiction_properties = tools["contradiction_scan"].inputSchema["properties"]
     assert contradiction_properties["mode"]["enum"] == ["scan", "confirm"]
     assert contradiction_properties["detail"]["enum"] == ["summary", "full"]
@@ -184,6 +187,8 @@ async def test_write_tool_descriptions_lead_with_usage_trigger(tmp_path: Path) -
         "Prefer invalidating an outdated fact (invalid_at + invalidated_by) over deleting or "
         "rewriting it: history stays queryable." in set_frontmatter_description
     )
+    for name in ("create_note_ai", "set_frontmatter"):
+        assert "'option -- reason'" in (descriptions[name] or "")
 
 
 class TestBuildAppReadPaths:

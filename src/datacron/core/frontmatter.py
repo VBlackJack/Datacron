@@ -62,6 +62,7 @@ _FRONTMATTER_KEY_ORDER: Final[tuple[str, ...]] = (
     "confidence",
     "last_verified",
     "supersedes",
+    "rejected",
     "tags",
 )
 
