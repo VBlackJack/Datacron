@@ -297,6 +297,7 @@ Sommaire complet : [docs/fr/index.md](docs/fr/index.md) | [English index](docs/e
 Pour démarrer :
 
 - [Guide d'installation et de configuration](docs/fr/setup.md)
+- [Questions fréquentes](docs/fr/faq.md)
 - [Guide utilisateur](docs/fr/user-guide.md)
 
 Références techniques :

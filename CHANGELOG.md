@@ -11,6 +11,12 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Added
 
+- Interactive `datacron setup` now explains every prompted choice, its safe default, and
+  the concrete effect of opting in before asking for an answer; `--yes` and explicitly
+  supplied options remain quiet and script-compatible.
+- Strictly matched English and French FAQs now cover vault-selection recovery, write-tool
+  opt-in, Antigravity scopes, installed-version mismatches, index freshness, reset, silent
+  installer switches, uninstall boundaries, and log diagnosis from current behavior.
 - The Windows installer wizard now offers a **Write tools** page with two fail-safe
   opt-ins (unchecked by default): enable the confined write tools and apply the write
   allowlist to the user environment, mapped to `setup --enable-write` and
