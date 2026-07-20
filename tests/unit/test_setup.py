@@ -17,12 +17,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import tomllib
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 import datacron.cli as cli_module
@@ -45,6 +49,51 @@ from datacron.setup_wizard import (
 )
 
 _runner = CliRunner()
+
+
+def _fake_winreg(
+    current_value: str | None,
+    *,
+    current_type: int = 2,
+) -> tuple[SimpleNamespace, list[tuple[str, int, str]]]:
+    value = [current_value]
+    writes: list[tuple[str, int, str]] = []
+
+    def open_key(
+        _root: object,
+        _sub_key: str,
+        _reserved: int,
+        _access: int,
+    ) -> AbstractContextManager[object]:
+        return nullcontext(object())
+
+    def query_value(_key: object, _name: str) -> tuple[object, int]:
+        if value[0] is None:
+            raise FileNotFoundError
+        return value[0], current_type
+
+    def set_value(
+        _key: object,
+        name: str,
+        _reserved: int,
+        value_type: int,
+        new_value: str,
+    ) -> None:
+        writes.append((name, value_type, new_value))
+        value[0] = new_value
+
+    fake = SimpleNamespace(
+        HKEY_CURRENT_USER=object(),
+        KEY_READ=1,
+        KEY_SET_VALUE=2,
+        REG_EXPAND_SZ=2,
+        REG_SZ=1,
+        OpenKey=open_key,
+        CreateKeyEx=open_key,
+        QueryValueEx=query_value,
+        SetValueEx=set_value,
+    )
+    return fake, writes
 
 
 def _write_note(vault: Path, name: str, body: str) -> None:
@@ -101,7 +150,7 @@ def test_run_setup_indexes_without_client(tmp_path: Path) -> None:
     assert result.indexed_notes == 1
     assert result.index_error is None
     assert result.client_config_path is None
-    assert result.write_path is None
+    assert result.write_paths == []
     assert sidecar_index_db(tmp_path).is_file()
 
 
@@ -127,21 +176,29 @@ def test_run_setup_registers_before_index_and_defers_index_failure(
         calls.append("init")
         return real_initialize(vault_path, force=force)
 
-    def fake_resolve_write_path(plan: SetupPlan, vault_root: Path) -> Path:
-        calls.append("write_path")
-        return vault_root / "_memory"
+    def fake_resolve_write_paths(plan: SetupPlan, vault_root: Path) -> list[Path]:
+        calls.append("write_paths")
+        return [vault_root / "_memory", vault_root / "_drafts", vault_root / "_journal"]
 
-    def fake_extra_env(plan: SetupPlan, write_path: Path | None) -> dict[str, str]:
+    def fake_extra_env(plan: SetupPlan, write_paths: list[Path]) -> dict[str, str]:
         calls.append("extra_env")
-        assert write_path == tmp_path / "_memory"
-        return {"DATACRON_WRITE_PATHS": str(write_path)}
+        assert write_paths == [
+            tmp_path / "_memory",
+            tmp_path / "_drafts",
+            tmp_path / "_journal",
+        ]
+        return {"DATACRON_WRITE_PATHS": os.pathsep.join(str(path) for path in write_paths)}
 
     def fake_install(
         vault_root: Path, *, extra_env: dict[str, str] | None = None, **_: Any
     ) -> Path:
         calls.append("register")
-        assert (vault_root / "_memory").is_dir()
-        assert extra_env == {"DATACRON_WRITE_PATHS": str(tmp_path / "_memory")}
+        assert all((vault_root / name).is_dir() for name in ("_memory", "_drafts", "_journal"))
+        assert extra_env == {
+            "DATACRON_WRITE_PATHS": os.pathsep.join(
+                str(tmp_path / name) for name in ("_memory", "_drafts", "_journal")
+            )
+        }
         return tmp_path / "client.json"
 
     async def fail_index(vault_root: Path, settings: Any) -> int:
@@ -150,7 +207,7 @@ def test_run_setup_registers_before_index_and_defers_index_failure(
 
     monkeypatch.setattr(setup_wizard, "reset_user_state", fake_reset)
     monkeypatch.setattr(setup_wizard, "initialize_vault", fake_initialize)
-    monkeypatch.setattr(setup_wizard, "_resolve_write_path", fake_resolve_write_path)
+    monkeypatch.setattr(setup_wizard, "_resolve_write_paths", fake_resolve_write_paths)
     monkeypatch.setattr(setup_wizard, "_build_extra_env", fake_extra_env)
     monkeypatch.setattr(setup_wizard, "install_claude_desktop_config", fake_install)
     monkeypatch.setattr(setup_wizard, "_build_index", fail_index)
@@ -166,13 +223,13 @@ def test_run_setup_registers_before_index_and_defers_index_failure(
         )
     )
 
-    assert calls == ["reset", "init", "write_path", "extra_env", "register", "index"]
+    assert calls == ["reset", "init", "write_paths", "extra_env", "register", "index"]
     assert result.client_config_path == tmp_path / "client.json"
     assert result.indexed_notes is None
     assert result.index_error == "RuntimeError: index unavailable"
 
 
-def test_run_setup_enables_write_default_memory(tmp_path: Path) -> None:
+def test_run_setup_enables_write_default_subfolders(tmp_path: Path) -> None:
     result = asyncio.run(
         run_setup(
             SetupPlan(
@@ -183,8 +240,184 @@ def test_run_setup_enables_write_default_memory(tmp_path: Path) -> None:
             )
         )
     )
-    assert result.write_path == tmp_path / "_memory"
-    assert (tmp_path / "_memory").is_dir()
+    assert result.write_paths == [
+        tmp_path / "_memory",
+        tmp_path / "_drafts",
+        tmp_path / "_journal",
+    ]
+    assert all(path.is_dir() for path in result.write_paths)
+
+
+def test_resolve_write_paths_preserves_explicit_multi_path_order(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    plan = SetupPlan(
+        vault_path=tmp_path,
+        enable_write=True,
+        write_paths=[first, second, first],
+    )
+
+    assert setup_wizard._resolve_write_paths(plan, tmp_path) == [
+        first.resolve(),
+        second.resolve(),
+    ]
+
+
+def test_run_setup_single_write_path_keeps_cli_compatibility(tmp_path: Path) -> None:
+    explicit = tmp_path / "custom"
+    result = asyncio.run(
+        run_setup(
+            SetupPlan(
+                vault_path=tmp_path,
+                client=CLIENT_NONE,
+                enable_write=True,
+                write_paths=[explicit],
+                build_index=False,
+            )
+        )
+    )
+
+    assert result.write_paths == [explicit.resolve()]
+    assert explicit.is_dir()
+    assert not (tmp_path / "_memory").exists()
+
+
+def test_configure_user_write_env_windows_is_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = [tmp_path / "_memory", tmp_path / "_drafts", tmp_path / "_journal"]
+    serialized = os.pathsep.join(str(path) for path in paths)
+    fake_winreg, writes = _fake_winreg(serialized)
+    broadcasts: list[bool] = []
+
+    monkeypatch.setattr(setup_wizard, "_is_windows", lambda: True)
+    monkeypatch.setattr(setup_wizard, "_load_winreg", lambda: fake_winreg)
+    monkeypatch.setattr(
+        setup_wizard,
+        "_broadcast_environment_change",
+        lambda: broadcasts.append(True),
+    )
+
+    result = setup_wizard.configure_user_write_env(paths)
+
+    assert result.action == "unchanged"
+    assert result.effective_value == serialized
+    assert writes == []
+    assert broadcasts == []
+
+
+def test_configure_user_write_env_windows_preserves_or_replaces_explicitly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = [tmp_path / "_memory", tmp_path / "_drafts", tmp_path / "_journal"]
+    serialized = os.pathsep.join(str(path) for path in paths)
+    fake_winreg, writes = _fake_winreg("C:\\existing", current_type=2)
+    broadcasts: list[bool] = []
+
+    monkeypatch.setattr(setup_wizard, "_is_windows", lambda: True)
+    monkeypatch.setattr(setup_wizard, "_load_winreg", lambda: fake_winreg)
+    monkeypatch.setattr(
+        setup_wizard,
+        "_broadcast_environment_change",
+        lambda: broadcasts.append(True),
+    )
+
+    preserved = setup_wizard.configure_user_write_env(paths)
+    replaced = setup_wizard.configure_user_write_env(paths, replace_existing=True)
+
+    assert preserved.action == "preserved"
+    assert preserved.effective_value == "C:\\existing"
+    assert replaced.action == "replaced"
+    assert writes == [("DATACRON_WRITE_PATHS", 2, serialized)]
+    assert broadcasts == [True]
+
+
+def test_run_setup_routes_machine_wide_opt_in_without_real_registry_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_configure(
+        write_paths: list[Path],
+        *,
+        replace_existing: bool = False,
+    ) -> setup_wizard.MachineWriteEnvResult:
+        captured["write_paths"] = write_paths
+        captured["replace_existing"] = replace_existing
+        value = os.pathsep.join(str(path) for path in write_paths)
+        return setup_wizard.MachineWriteEnvResult(value, value, None, "created")
+
+    monkeypatch.setattr(setup_wizard, "configure_user_write_env", fake_configure)
+
+    result = asyncio.run(
+        run_setup(
+            SetupPlan(
+                vault_path=tmp_path,
+                client=CLIENT_NONE,
+                enable_write=True,
+                machine_wide_write=True,
+                replace_existing_write_env=True,
+                build_index=False,
+            )
+        )
+    )
+
+    assert captured["write_paths"] == result.write_paths
+    assert captured["replace_existing"] is True
+    assert result.machine_write_env is not None
+    assert result.machine_write_env.action == "created"
+
+
+def test_configure_user_write_env_unix_returns_profile_export(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = [tmp_path / "_memory", tmp_path / "_drafts", tmp_path / "_journal"]
+    serialized = os.pathsep.join(str(path) for path in paths)
+    monkeypatch.setattr(setup_wizard, "_is_windows", lambda: False)
+    monkeypatch.delenv("DATACRON_WRITE_PATHS", raising=False)
+
+    result = setup_wizard.configure_user_write_env(paths)
+
+    assert result.action == "manual-export"
+    assert result.export_command is not None
+    assert result.export_command.startswith("export DATACRON_WRITE_PATHS=")
+    assert serialized in result.export_command
+
+
+def test_single_writer_warning_for_known_sync_folder(tmp_path: Path) -> None:
+    warning = setup_wizard._single_writer_warning(tmp_path / "OneDrive" / "vault")
+
+    assert warning is not None
+    assert "one active writer" in warning
+
+
+def test_machine_wide_prompt_displays_existing_value_and_offers_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    questions: list[str] = []
+
+    def confirm(question: str, *, default: bool) -> bool:
+        questions.append(question)
+        assert default is False
+        return True
+
+    monkeypatch.setattr(cli_module, "get_user_write_env", lambda: "C:\\existing")
+    monkeypatch.setattr(typer, "confirm", confirm)
+
+    result = cli_module._prompt_machine_wide_write(
+        True,
+        True,
+        [tmp_path / "_memory", tmp_path / "_drafts", tmp_path / "_journal"],
+        False,
+    )
+
+    assert result == (True, True)
+    assert questions == ["Replace the existing user write allowlist?"]
 
 
 def test_run_setup_rejects_invalid_client(tmp_path: Path) -> None:

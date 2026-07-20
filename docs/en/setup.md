@@ -22,14 +22,16 @@ By default (`--client all`), it **detects every installed AI client and register
 with each**: Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, and VS Code.
 Each config is merged without clobbering existing servers (JSON or TOML depending on the
 client). It asks questions with sensible defaults (vault location, client, scope, writing,
-durability, read-only), then runs `init`, registers the clients, indexes, and prints a
-per-client summary. An indexing failure is deferred and never undoes client registration.
+user-wide write environment, durability, read-only), then runs `init`, registers the clients,
+indexes, and prints a per-client summary. An indexing failure is deferred and never undoes
+client registration.
 Useful options:
 
 - `datacron setup --yes` - accept every default, no prompts (unattended install).
 - `datacron setup --scope both` - write config at **user** and **project** scope (default); use `user` or `project` to restrict.
 - `datacron setup --vault PATH --client claude-desktop` - target a single specific client.
-- `datacron setup --enable-write --write-path PATH` - enable writing on a subfolder (default: `<vault>/_memory`).
+- `datacron setup --enable-write --write-path PATH` - enable writing on one explicit subfolder; without `--write-path`, the defaults are `<vault>/_memory`, `<vault>/_drafts`, and `<vault>/_journal`.
+- `datacron setup --enable-write --machine-wide-write` - also opt in to the user environment allowlist for future clients.
 - `datacron setup --durability strict --read-only` - strict durability and certified read-only mode.
 - `datacron setup --no-index` - skip building the index.
 - `datacron setup --client claude-code` - print a ready-to-paste stdio config snippet for Claude Code.
@@ -233,13 +235,26 @@ error and create no file. To allow writing to a specific subfolder:
 ```powershell
 $env:DATACRON_VAULT_ROOT = "G:\_DATA"
 $env:DATACRON_READ_PATHS = "G:\_DATA"
-$env:DATACRON_WRITE_PATHS = "G:\_DATA\_memory"
+$env:DATACRON_WRITE_PATHS = "G:\_DATA\_memory;G:\_DATA\_drafts;G:\_DATA\_journal"
 datacron mcp serve --vault G:\_DATA
 ```
 
 Writing stays confined to `DATACRON_WRITE_PATHS`, atomic (temp file + `os.replace`),
 content-addressed in history before any modification, and audited. Keep a **single-writer**
 rule: concurrent multi-machine writing is not supported.
+
+### Machine-wide write allowlist
+
+The guided setup offers a separate, explicit opt-in to apply the resolved write allowlist to
+the user environment. On Windows it writes `DATACRON_WRITE_PATHS` under
+`HKCU\Environment` and broadcasts `WM_SETTINGCHANGE` for future processes. If a value already
+exists, setup displays it and asks whether to keep or replace it; values are never merged
+silently. Already-open MCP clients must still be restarted.
+
+On Unix, setup does not edit shell dotfiles. It prints an
+`export DATACRON_WRITE_PATHS=...` line to copy into the appropriate shell profile. Vaults on
+UNC/network paths or in well-known synchronized folders also trigger a reminder that only one
+writer may be active.
 
 Details and guarantees: [Security boundary](security-boundary.md).
 

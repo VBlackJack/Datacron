@@ -29,7 +29,8 @@ n'annule jamais l'enregistrement des clients. Options utiles :
 - `datacron setup --yes` - accepte tous les défauts, sans question (installation automatique).
 - `datacron setup --scope both` - écrit la config au niveau **utilisateur** et **projet** (défaut) ; `user` ou `project` pour restreindre.
 - `datacron setup --vault CHEMIN --client claude-desktop` - cible un seul client précis.
-- `datacron setup --enable-write --write-path CHEMIN` - active l'écriture sur un sous-dossier (défaut : `<vault>/_memory`).
+- `datacron setup --enable-write --write-path CHEMIN` - active l'écriture sur un sous-dossier explicite ; sans `--write-path`, les défauts sont `<vault>/_memory`, `<vault>/_drafts` et `<vault>/_journal`.
+- `datacron setup --enable-write --machine-wide-write` - active aussi explicitement l'allowlist dans l'environnement utilisateur pour les futurs clients.
 - `datacron setup --durability strict --read-only` - mode durabilité strict et lecture seule certifiée.
 - `datacron setup --no-index` - saute la construction de l'index.
 - `datacron setup --client claude-code` - affiche un snippet de config stdio prêt à coller dans Claude Code.
@@ -238,13 +239,27 @@ sous-dossier précis :
 ```powershell
 $env:DATACRON_VAULT_ROOT = "G:\_DATA"
 $env:DATACRON_READ_PATHS = "G:\_DATA"
-$env:DATACRON_WRITE_PATHS = "G:\_DATA\_memory"
+$env:DATACRON_WRITE_PATHS = "G:\_DATA\_memory;G:\_DATA\_drafts;G:\_DATA\_journal"
 datacron mcp serve --vault G:\_DATA
 ```
 
 L'écriture reste confinée à `DATACRON_WRITE_PATHS`, atomique (fichier temporaire +
 `os.replace`), historisée par contenu avant modification, et auditée. Garde une règle
 **single-writer** : l'écriture concurrente multi-machines n'est pas supportée.
+
+### Allowlist d'écriture pour tout le poste
+
+Le setup guidé propose un opt-in séparé et explicite pour appliquer l'allowlist résolue à
+l'environnement utilisateur. Sous Windows, il écrit `DATACRON_WRITE_PATHS` dans
+`HKCU\Environment` puis diffuse `WM_SETTINGCHANGE` pour les futurs processus. Si une valeur
+existe déjà, le setup l'affiche et demande de la conserver ou de la remplacer ; il ne fusionne
+jamais silencieusement les valeurs. Les clients MCP déjà ouverts doivent tout de même être
+redémarrés.
+
+Sous Unix, le setup ne modifie aucun dotfile. Il affiche une ligne
+`export DATACRON_WRITE_PATHS=...` à copier dans le profil shell adapté. Un vault sur un chemin
+UNC/réseau ou dans un dossier de synchronisation connu déclenche aussi le rappel qu'un seul
+writer peut être actif.
 
 Détails et garanties : [Frontière de sécurité](security-boundary.md).
 

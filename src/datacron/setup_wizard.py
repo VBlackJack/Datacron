@@ -23,14 +23,18 @@ plan (from flags or interactive questions) and renders the result.
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
+import shlex
 import shutil
 import stat
 import sys
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal, Protocol, cast
 
 from datacron.bootstrap import BootstrapResult, initialize_vault
 from datacron.core.config import (
@@ -69,14 +73,17 @@ __all__ = [
     "CLIENT_CLAUDE_CODE",
     "CLIENT_CLAUDE_DESKTOP",
     "CLIENT_NONE",
-    "DEFAULT_WRITE_SUBFOLDER",
+    "DEFAULT_WRITE_SUBFOLDERS",
     "INSTALL_SCOPE_CHOICES",
+    "MachineWriteEnvResult",
     "ResetExecutionError",
     "ResetGuardError",
     "ResetResult",
     "SetupPlan",
     "SetupResult",
     "claude_code_stdio_config",
+    "configure_user_write_env",
+    "get_user_write_env",
     "reset_user_state",
     "run_setup",
 ]
@@ -102,10 +109,9 @@ INSTALL_SCOPE_CHOICES: Final[tuple[str, ...]] = (
     INSTALL_SCOPE_PROJECT,
 )
 
-# Default write-enabled subfolder, matching the ``_memory`` convention that the
-# write tools (create_note_ai) target. Only used when the operator opts in to
-# writing without naming an explicit subfolder.
-DEFAULT_WRITE_SUBFOLDER: Final[str] = "_memory"
+# Default write-enabled subfolders. The vault root itself is deliberately never
+# allowlisted by setup.
+DEFAULT_WRITE_SUBFOLDERS: Final[tuple[str, ...]] = ("_memory", "_drafts", "_journal")
 
 # Runtime environment keys embedded into the MCP client config. Datacron's
 # Settings derive these from the ``DATACRON_`` prefix; they are named
@@ -116,6 +122,17 @@ _ENV_WRITE_PATHS: Final[str] = "DATACRON_WRITE_PATHS"
 _ENV_DURABILITY: Final[str] = "DATACRON_DURABILITY"
 _ENV_READ_ONLY: Final[str] = "DATACRON_READ_ONLY"
 _ENV_TRUE: Final[str] = "true"
+
+_WINDOWS_ENVIRONMENT_KEY: Final[str] = "Environment"
+_WINDOWS_ENVIRONMENT_BROADCAST: Final[str] = "Environment"
+_HWND_BROADCAST: Final[int] = 0xFFFF
+_WM_SETTINGCHANGE: Final[int] = 0x001A
+_SMTO_ABORTIFHUNG: Final[int] = 0x0002
+_BROADCAST_TIMEOUT_MS: Final[int] = 5000
+
+_KNOWN_SYNC_PATH_PARTS: Final[frozenset[str]] = frozenset(
+    {"dropbox", "google drive", "icloud drive", "onedrive", "syncthing"}
+)
 
 _MCP_SERVER_KEY: Final[str] = "datacron"
 
@@ -132,12 +149,37 @@ class ResetExecutionError(RuntimeError):
     """Raised when deletion of a validated reset target fails."""
 
 
+class _WinregModule(Protocol):
+    """Subset of :mod:`winreg` used for the user environment allowlist."""
+
+    HKEY_CURRENT_USER: object
+    KEY_READ: int
+    KEY_SET_VALUE: int
+    REG_EXPAND_SZ: int
+    REG_SZ: int
+    OpenKey: Callable[[object, str, int, int], AbstractContextManager[object]]
+    CreateKeyEx: Callable[[object, str, int, int], AbstractContextManager[object]]
+    QueryValueEx: Callable[[object, str], tuple[object, int]]
+    SetValueEx: Callable[[object, str, int, int, str], None]
+
+
 @dataclass(frozen=True)
 class ResetResult:
     """Files removed by one surgical reset."""
 
     config_removed: bool
     index_removed: bool
+
+
+@dataclass(frozen=True)
+class MachineWriteEnvResult:
+    """Outcome of the explicit user-wide write-allowlist step."""
+
+    requested_value: str
+    effective_value: str
+    previous_value: str | None
+    action: Literal["created", "replaced", "unchanged", "preserved", "manual-export"]
+    export_command: str | None = None
 
 
 @dataclass(frozen=True)
@@ -151,8 +193,12 @@ class SetupPlan:
         vault_path: Markdown vault root to initialize and serve.
         build_index: Whether to build the FTS5 index during setup.
         enable_write: Whether to enable the confined write tools.
-        write_path: Write-allowlisted directory when ``enable_write`` is set.
-            ``None`` falls back to ``<vault>/_memory``.
+        write_paths: Write-allowlisted directories when ``enable_write`` is set.
+            An empty list falls back to the three default vault subfolders.
+        machine_wide_write: Apply the allowlist to the user environment after
+            explicit opt-in.
+        replace_existing_write_env: Replace a different existing user value.
+            False preserves it; setup never merges values silently.
         client: Target MCP client (:data:`CLIENT_CHOICES`). ``all`` auto-detects
             every installed client and registers Datacron with each.
         install_scope: Which config scopes to write for detected clients
@@ -166,7 +212,9 @@ class SetupPlan:
     vault_path: Path
     build_index: bool = True
     enable_write: bool = False
-    write_path: Path | None = None
+    write_paths: list[Path] = field(default_factory=list)
+    machine_wide_write: bool = False
+    replace_existing_write_env: bool = False
     client: str = CLIENT_ALL
     install_scope: str = INSTALL_SCOPE_BOTH
     durability: str = "best-effort"
@@ -187,8 +235,9 @@ class SetupResult:
             file was written (``claude-code`` and ``none``).
         stdio_config: A ready-to-paste stdio MCP config snippet for clients that
             Datacron does not write directly (``claude-code``), else ``None``.
-        write_path: The write-allowlisted directory, or ``None`` when writing
-            stays disabled.
+        write_paths: The write-allowlisted directories; empty when writing stays
+            disabled.
+        machine_write_env: Result of the explicit user-wide environment step.
         read_only: Whether certified read-only mode was selected.
         durability: The selected durability mode.
         client_installs: Per-client registration outcomes for ``client=all``.
@@ -200,9 +249,10 @@ class SetupResult:
     indexed_notes: int | None
     index_error: str | None
     client_config_path: Path | None
-    write_path: Path | None
+    write_paths: list[Path]
     read_only: bool
     durability: str
+    machine_write_env: MachineWriteEnvResult | None = None
     stdio_config: str | None = None
     client_installs: list[InstallOutcome] = field(default_factory=list)
     reset_result: ResetResult | None = None
@@ -223,6 +273,8 @@ def _validate_plan(plan: SetupPlan) -> None:
             f"Unknown durability {plan.durability!r}. "
             f"Expected one of {sorted(VALID_DURABILITY_MODES)}."
         )
+    if plan.machine_wide_write and not plan.enable_write:
+        raise ValueError("Machine-wide write configuration requires enable_write.")
 
 
 def _scopes_for(install_scope: str) -> tuple[str, ...]:
@@ -359,11 +411,167 @@ async def _build_index(vault_root: Path, settings: Settings) -> int:
     return int(stats["reindexed_notes"])
 
 
-def _resolve_write_path(plan: SetupPlan, vault_root: Path) -> Path:
-    """Resolve the write-allowlisted directory, defaulting to ``<vault>/_memory``."""
-    if plan.write_path is not None:
-        return plan.write_path.expanduser().resolve()
-    return vault_root / DEFAULT_WRITE_SUBFOLDER
+def _resolve_write_paths(plan: SetupPlan, vault_root: Path) -> list[Path]:
+    """Resolve explicit write roots or the three confined defaults."""
+    candidates = plan.write_paths or [vault_root / name for name in DEFAULT_WRITE_SUBFOLDERS]
+    resolved: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        path = candidate.expanduser().resolve()
+        if path not in seen:
+            resolved.append(path)
+            seen.add(path)
+    return resolved
+
+
+def _serialize_write_paths(write_paths: list[Path]) -> str:
+    """Serialize a write allowlist with the current platform's path separator."""
+    return os.pathsep.join(str(path) for path in write_paths)
+
+
+def _load_winreg() -> _WinregModule:
+    """Load the Windows-only registry module without breaking Unix imports."""
+    return cast("_WinregModule", importlib.import_module("winreg"))
+
+
+def _is_windows() -> bool:
+    """Return whether user environment persistence uses the Windows registry."""
+    return os.name == "nt"
+
+
+def _read_windows_user_write_env(winreg: _WinregModule) -> tuple[str | None, int | None]:
+    """Read the current HKCU write allowlist and its registry value type."""
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            _WINDOWS_ENVIRONMENT_KEY,
+            0,
+            winreg.KEY_READ,
+        ) as key:
+            raw_value, value_type = winreg.QueryValueEx(key, _ENV_WRITE_PATHS)
+    except FileNotFoundError:
+        return None, None
+    return str(raw_value), value_type
+
+
+def get_user_write_env() -> str | None:
+    """Return the current user-level write allowlist, if one is visible."""
+    if not _is_windows():
+        return os.environ.get(_ENV_WRITE_PATHS)
+    value, _value_type = _read_windows_user_write_env(_load_winreg())
+    return value
+
+
+def _write_windows_user_write_env(
+    winreg: _WinregModule,
+    value: str,
+    existing_type: int | None,
+) -> None:
+    """Write ``DATACRON_WRITE_PATHS`` under ``HKCU\\Environment``."""
+    value_type = (
+        existing_type if existing_type in {winreg.REG_SZ, winreg.REG_EXPAND_SZ} else winreg.REG_SZ
+    )
+    with winreg.CreateKeyEx(
+        winreg.HKEY_CURRENT_USER,
+        _WINDOWS_ENVIRONMENT_KEY,
+        0,
+        winreg.KEY_SET_VALUE,
+    ) as key:
+        winreg.SetValueEx(key, _ENV_WRITE_PATHS, 0, value_type, value)
+
+
+def _broadcast_environment_change() -> None:
+    """Notify Windows applications that the user environment changed."""
+    import ctypes  # noqa: PLC0415
+
+    result = ctypes.c_size_t()
+    windll_attribute = "windll"
+    windll = getattr(ctypes, windll_attribute)
+    sent = windll.user32.SendMessageTimeoutW(
+        _HWND_BROADCAST,
+        _WM_SETTINGCHANGE,
+        0,
+        ctypes.c_wchar_p(_WINDOWS_ENVIRONMENT_BROADCAST),
+        _SMTO_ABORTIFHUNG,
+        _BROADCAST_TIMEOUT_MS,
+        ctypes.byref(result),
+    )
+    if sent == 0:
+        get_last_error_attribute = "get_last_error"
+        last_error = getattr(ctypes, get_last_error_attribute)()
+        raise OSError(last_error, "Could not broadcast the user environment change")
+
+
+def configure_user_write_env(
+    write_paths: list[Path],
+    *,
+    replace_existing: bool = False,
+) -> MachineWriteEnvResult:
+    """Apply or render the explicit user-wide write allowlist without silent merges."""
+    requested = _serialize_write_paths(write_paths)
+    if _is_windows():
+        winreg = _load_winreg()
+        previous, existing_type = _read_windows_user_write_env(winreg)
+        if previous == requested:
+            return MachineWriteEnvResult(requested, requested, previous, "unchanged")
+        if previous is not None and not replace_existing:
+            return MachineWriteEnvResult(requested, previous, previous, "preserved")
+        _write_windows_user_write_env(winreg, requested, existing_type)
+        _broadcast_environment_change()
+        action: Literal["created", "replaced"] = "created" if previous is None else "replaced"
+        return MachineWriteEnvResult(requested, requested, previous, action)
+
+    previous = os.environ.get(_ENV_WRITE_PATHS)
+    if previous is not None and previous != requested and not replace_existing:
+        export = f"export {_ENV_WRITE_PATHS}={shlex.quote(previous)}"
+        return MachineWriteEnvResult(requested, previous, previous, "preserved", export)
+    export = f"export {_ENV_WRITE_PATHS}={shlex.quote(requested)}"
+    return MachineWriteEnvResult(requested, requested, previous, "manual-export", export)
+
+
+def _single_writer_warning(vault_root: Path) -> str | None:
+    """Warn heuristically for network and well-known synchronized vault paths."""
+    path_text = str(vault_root)
+    is_unc = path_text.startswith("\\\\")
+    parts = {part.casefold() for part in vault_root.parts}
+    is_synced = any(part.startswith(known) for part in parts for known in _KNOWN_SYNC_PATH_PARTS)
+    if not is_unc and not is_synced:
+        return None
+    return (
+        "The vault appears to use a network or synchronized path. Keep exactly one active "
+        "writer; concurrent multi-machine writes are unsupported."
+    )
+
+
+def _prepare_write_setup(
+    plan: SetupPlan,
+    vault_root: Path,
+    warnings: list[str],
+) -> tuple[list[Path], MachineWriteEnvResult | None]:
+    """Create opted-in write roots and optionally configure the user environment."""
+    if not plan.enable_write:
+        return [], None
+
+    write_paths = _resolve_write_paths(plan, vault_root)
+    for write_path in write_paths:
+        write_path.mkdir(parents=True, exist_ok=True)
+    single_writer_warning = _single_writer_warning(vault_root)
+    if single_writer_warning is not None:
+        warnings.append(single_writer_warning)
+    if not plan.machine_wide_write:
+        return write_paths, None
+
+    try:
+        machine_write_env = configure_user_write_env(
+            write_paths,
+            replace_existing=plan.replace_existing_write_env,
+        )
+    except OSError as exc:
+        warnings.append(f"User environment not updated: {exc}")
+        _LOGGER.warning("cli.setup user environment update failed: %s", exc)
+        return write_paths, None
+    _LOGGER.info("cli.setup user environment action=%s", machine_write_env.action)
+    return write_paths, machine_write_env
 
 
 async def run_setup(plan: SetupPlan) -> SetupResult:
@@ -398,12 +606,9 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
     bootstrap = initialize_vault(plan.vault_path, force=plan.force)
     vault_root = bootstrap.vault_path
 
-    write_path: Path | None = None
-    if plan.enable_write:
-        write_path = _resolve_write_path(plan, vault_root)
-        write_path.mkdir(parents=True, exist_ok=True)
+    write_paths, machine_write_env = _prepare_write_setup(plan, vault_root, warnings)
 
-    extra_env = _build_extra_env(plan, write_path)
+    extra_env = _build_extra_env(plan, write_paths)
     client_config_path: Path | None = None
     stdio_config: str | None = None
     client_installs: list[InstallOutcome] = []
@@ -447,9 +652,10 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
         indexed_notes=indexed_notes,
         index_error=index_error,
         client_config_path=client_config_path,
-        write_path=write_path,
+        write_paths=write_paths,
         read_only=plan.read_only,
         durability=plan.durability,
+        machine_write_env=machine_write_env,
         stdio_config=stdio_config,
         client_installs=client_installs,
         reset_result=reset_result,
@@ -537,11 +743,11 @@ def claude_code_stdio_config(vault_root: Path, extra_env: dict[str, str]) -> str
     return json.dumps(snippet, indent=2, sort_keys=True, ensure_ascii=False)
 
 
-def _build_extra_env(plan: SetupPlan, write_path: Path | None) -> dict[str, str]:
+def _build_extra_env(plan: SetupPlan, write_paths: list[Path]) -> dict[str, str]:
     """Build the extra client-config environment from the plan's options."""
     env: dict[str, str] = {_ENV_DURABILITY: plan.durability}
-    if write_path is not None:
-        env[_ENV_WRITE_PATHS] = str(write_path)
+    if write_paths:
+        env[_ENV_WRITE_PATHS] = _serialize_write_paths(write_paths)
     if plan.read_only:
         env[_ENV_READ_ONLY] = _ENV_TRUE
     return env
