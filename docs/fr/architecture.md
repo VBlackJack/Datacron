@@ -204,44 +204,68 @@ Références officielles :
 
 ### ADR-001 - Source de vérité = vault Markdown lu en overlay
 Datacron lit n'importe quel vault sans migration. Side-metadata dans `.datacron/`.
+Écarté : une spec DVS normative imposant une migration de frontmatter (l'adoption doit être
+sans friction) ; une base de données comme source de vérité (le vault doit rester lisible
+sans Datacron).
 
 ### ADR-002 - Serveur MCP custom FastMCP
 Convergence Gemini ✅ + ChatGPT ✅. Direct FS, audit, confinement strict.
+Écarté : plugin Obsidian REST API (exige l'application ouverte) ; serveurs MCP filesystem
+génériques (ni audit, ni confinement, ni sémantique vault).
 
 ### ADR-003 - Pas d'orchestration autonome v1
 LangGraph et Ollama hors MVP. Claude orchestre, c'est suffisant.
+Écarté : LangGraph en dépendance « optionnelle » (surface de dépendance quand même ; le mode
+agent offline est un autre produit).
 
 ### ADR-004 - Recherche lexicale mesurée avant embeddings
 SQLite FTS5/BM25 + ripgrep restent le socle. Query-expansion FR↔EN statique est appliquée
 au moment de la recherche. Vectors ajoutés *si* eval mesure un gap persistant.
+Écarté : embeddings/LanceDB dès le lancement (besoin non mesuré). Si un gap de ranking
+réapparaît un jour, tester un reranker avant toute stack vectorielle pure.
 
 ### ADR-005 - Write tools opt-in, confinés, réversibles
 Les écritures sont OFF par défaut. `DATACRON_WRITE_PATHS` active explicitement une allowlist
 d'écriture. `create_note_ai` ne clobber jamais ; `append_journal` est additif et déclenche
 la conservation adressée par contenu de la version précédente avant écriture atomique.
+Écarté : write tools CRUD bruts ; écritures actives par défaut (fail-safe : allowlist vide =
+tout refusé).
 
 ### ADR-006 - Trust model 3 niveaux UX (L0-L5 backend)
 Le backend porte les métadonnées (`origin`, `confidence`, `last_verified`, `supersedes`).
 L'UX fine L0-L5 reste côté client / roadmap, mais `confidence` et `supersedes` influencent
 déjà le retrieval temporel.
+Écarté : exposer les six niveaux L0-L5 dans l'UX (friction sans bénéfice pour un utilisateur
+unique).
 
 ### ADR-007 - Git uniquement pour rollback, pas pour sync
 Single-writer vault rule en v1. Autres patterns documentés non supportés.
+Écarté : sync multi-writer (les patterns deux-écrivains Syncthing/iCloud cassent
+`content_hash`, la fraîcheur d'index et l'audit log).
 
 ### ADR-008 - Sandboxing simple, pas de classifier
 Wrap + escape + path confinement. Classifier ML = latency theater.
+Écarté : un classifier d'injection ML/Ollama local (latency theater sous un modèle de menace
+mono-utilisateur).
 
 ### ADR-009 - Cowork = remote MCP (vérifié empiriquement)
 v1 = Claude Desktop + Code uniquement. Cowork via tunnel HTTPS en v1.x.
+Écarté : promettre le support Cowork/claude.ai en v1 (brokering remote-only, vérifié
+empiriquement).
 
 ### ADR-010 - 1 seul package Python `datacron`
 Monorepo conservé pour futur, mais structure interne minimaliste v1.
+Écarté : un workspace 5 packages plus un crate Rust en v1 (structure en avance sur le besoin).
 
 ### ADR-011 - Distribution PyPI/pipx uniquement
 Homebrew v1.1, Docker = CI, Tauri reporté.
+Écarté (v1) : Homebrew, Docker et binaires Tauri comme canaux de lancement. Révisé par
+ADR-017.
 
 ### ADR-012 - Eval harness obligatoire avant tout retrieval avancé
 30 questions réelles, recall@k, citation precision, latency, tokens. Gate explicite.
+Écarté : ajouter de la technologie retrieval à l'intuition ; chaque ajout passe le gate
+mesuré.
 
 ### ADR-013 - Réconciliation d'index incrémentale, gate `mtime`, `content_hash` autorité
 `datacron index` et la réparation read-path partagent une seule réconciliation : une note
@@ -251,17 +275,23 @@ de faux skip. Une note touchée mais au contenu identique voit son `mtime` rafra
 passe suivante la saute. Remplace le full-scan O(n) par un balayage `stat` ; un `reindex --drop`
 force la reconstruction complète. Comparaison stricte `==` (jamais `<=`) pour gérer les
 restaurations à `mtime` plus ancien.
+Écarté : `mtime` comme autorité unique (granularité exFAT 2 s, outils de sync préservant le
+`mtime`) ; relecture complète O(n) à chaque passe.
 
 ### ADR-014 - Query-expansion FR↔EN statique avant vectoriel
 L'expansion est query-time, configurable par `VAULT.yaml`, et ferme le gap cross-lingue
 mesuré sans embeddings : recall@5 golden Julien 0.74 → 0.89, precision 0.29 → 0.32.
 Les embeddings restent gelés tant que la mesure ne justifie pas leur coût.
+Écarté : recherche vectorielle pure pour le gap cross-lingue (fermé par l'expansion statique
+à coût quasi nul) ; entrées de synonymes multi-mots (le tokenizer les rend inertes).
 
 ### ADR-015 - Temporal re-ranking conservateur
 Le retrieval exploite seulement les signaux explicites : `supersedes` démote fortement les
 notes remplacées, `confidence: low/needs_verification` applique une pénalité légère.
 Pas de decay par âge (`last_verified`/`updated`) tant qu'une mesure ne prouve pas le gain.
 Le re-rank agit sur un pool overfetch ×3 avant troncature, et ne supprime jamais les résultats.
+Écarté : decay par âge (vieux n'est pas faux ; risque de régression) ; suppression des notes
+supersédées des résultats (la démotion les garde accessibles).
 
 ### ADR-016 - Lignes sur-longues brute-splittees : resolution a la premiere piece (limite acceptee)
 Le modèle `Chunk` adresse les chunks par plage de lignes (`line_start`/`line_end`, 1-indexé)
@@ -275,6 +305,8 @@ une correspondance dans le débordement d'une ligne monstre pointe vers la pièc
 **Décision : accepté (WAI).** Le fix propre exigerait des offsets caractère sub-ligne dans
 le modèle `Chunk` (frozen), disproportionné pour un edge rare (lignes > ~`chunk_max_chars` :
 minifié, base64, mono-ligne géant). Clôt l'item backlog P3 chunker.
+Écarté : offsets caractère sub-ligne dans le modèle `Chunk` (frozen), disproportionné pour un
+edge rare.
 
 ### ADR-017 - Installeur autonome (.exe) en complément de PyPI/pipx
 Révise ADR-011. En plus de la distribution PyPI/pipx (canal principal et recommandé pour les
@@ -286,10 +318,24 @@ le binaire l'embarque. Build reproductible via `scripts/build_installer.ps1` (Wi
 fiabilité packagée (`reliability_evidence.json`) est incluse via `--collect-data`. Coût assumé :
 build multi-OS et taille (~22 Mo). `dist/` et `build/` restent
 hors versionnement.
+Écarté : distribution pipx seule (exclut les utilisateurs sans Python) ; Docker comme canal
+utilisateur final (friction uid/gid pour un outil file-local).
 
-PyPI utilise la forme canonique PEP 440 du CalVer source. Par exemple, le tag Git
-`v2026.0718.01` et la version source `2026.0718.01` sont publiés sous `2026.718.1`, car les
-zéros de tête des segments numériques sont supprimés ; l'ordre des versions est préservé.
+### ADR-018 - Pas de GraphRAG / indexation en graphe de connaissances
+Backlinks, tags et chemins de dossiers fournissent déjà la navigation en graphe
+(`get_backlinks`) ; une indexation type GraphRAG sert des questions globales de corpus que
+Datacron ne cible pas (deep research 2026-06-01).
+Écarté : pipelines GraphRAG ; une base graphe à côté du vault.
+
+### ADR-019 - Versionnement CalVer (AAAA.MMJJ.XX)
+Version source et tag Git dérivent de la date : `2026.0714.00` = année, mois-jour, build du
+jour (tag `v2026.0714.00`). Le numéro de version est mécanique, jamais une décision. PyPI
+utilise la forme canonique PEP 440 du CalVer source : les zéros de tête des segments
+numériques sont supprimés (`2026.0718.01` devient `2026.718.1`) ; l'ordre des versions est
+préservé.
+Écarté : SemVer choisi à la main pour une application (aucun contrat de compatibilité public
+à signaler ; pour une vraie librairie, le signal de compatibilité doit dériver des
+Conventional Commits, pas d'un choix manuel).
 
 ---
 

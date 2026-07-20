@@ -180,44 +180,64 @@ flowchart TB
 
 ### ADR-001 - Source of truth = Markdown vault read as overlay
 Datacron reads any vault without migration. Side-metadata in `.datacron/`.
+Rejected: a normative DVS spec forcing frontmatter migration (adoption must be zero-friction);
+a database as source of truth (the vault must stay readable without Datacron).
 
 ### ADR-002 - Custom FastMCP server
 Gemini ✅ + ChatGPT ✅ convergence. Direct FS, audit, strict confinement.
+Rejected: Obsidian REST API plugin (requires the app running); generic filesystem MCP servers
+(no audit, no confinement, no vault semantics).
 
 ### ADR-003 - No autonomous orchestration in v1
 LangGraph and Ollama out of the MVP. Claude orchestrates, that is enough.
+Rejected: LangGraph as an "optional" dependency (still a dependency surface; offline agent
+mode is a different product).
 
 ### ADR-004 - Lexical search measured before embeddings
 SQLite FTS5/BM25 + ripgrep remain the foundation. Static FR↔EN query expansion is applied at
 search time. Vectors added *if* eval measures a persistent gap.
+Rejected: launch-time embeddings/LanceDB (unmeasured need). If a ranking gap ever reappears,
+test a reranker before any pure vector stack.
 
 ### ADR-005 - Opt-in, confined, reversible write tools
 Writes are OFF by default. `DATACRON_WRITE_PATHS` explicitly enables a write allowlist.
 `create_note_ai` never clobbers; `append_journal` is additive and triggers content-addressed
 retention of the previous version before an atomic write.
+Rejected: raw CRUD write tools; writes enabled by default (fail-safe: an empty allowlist
+refuses everything).
 
 ### ADR-006 - 3-level UX trust model (L0-L5 backend)
 The backend carries the metadata (`origin`, `confidence`, `last_verified`, `supersedes`). The
 fine-grained L0-L5 UX stays client-side / roadmap, but `confidence` and `supersedes` already
 influence temporal retrieval.
+Rejected: exposing the six L0-L5 levels in the UX (friction without benefit for a single user).
 
 ### ADR-007 - Git only for rollback, not for sync
 Single-writer vault rule in v1. Other patterns documented as unsupported.
+Rejected: multi-writer sync (two-writer Syncthing/iCloud patterns break `content_hash`,
+index freshness, and the audit log).
 
 ### ADR-008 - Simple sandboxing, no classifier
 Wrap + escape + path confinement. ML classifier = latency theater.
+Rejected: a local ML/Ollama injection classifier (latency theater under a single-user threat
+model).
 
 ### ADR-009 - Cowork = remote MCP (empirically verified)
 v1 = Claude Desktop + Code only. Cowork via HTTPS tunnel in v1.x.
+Rejected: promising Cowork/claude.ai support in v1 (remote-only brokering, empirically
+verified).
 
 ### ADR-010 - A single Python package `datacron`
 Monorepo kept for the future, but minimalist internal structure in v1.
+Rejected: a 5-package workspace plus a Rust crate in v1 (structure ahead of need).
 
 ### ADR-011 - PyPI/pipx distribution only
 Homebrew v1.1, Docker = CI, Tauri deferred.
+Rejected (v1): Homebrew, Docker and Tauri binaries as launch channels. Revised by ADR-017.
 
 ### ADR-012 - Mandatory eval harness before any advanced retrieval
 30 real questions, recall@k, citation precision, latency, tokens. Explicit gate.
+Rejected: adding retrieval technology on intuition; every addition passes the measured gate.
 
 ### ADR-013 - Incremental index reconciliation, `mtime` gate, `content_hash` authority
 `datacron index` and read-path repair share a single reconciliation: a note whose stored
@@ -226,17 +246,23 @@ authority as soon as a note is read, so an unreliable `mtime` never causes a fal
 that was touched but has identical content has its `mtime` refreshed so the next pass skips it.
 Replaces the O(n) full scan with a `stat` sweep; a `reindex --drop` forces a full rebuild.
 Strict `==` comparison (never `<=`) to handle restores with an older `mtime`.
+Rejected: `mtime` as sole authority (exFAT 2 s granularity, sync tools preserving `mtime`);
+full O(n) re-read on every pass.
 
 ### ADR-014 - Static FR↔EN query expansion before vectors
 Expansion is query-time, configurable by `VAULT.yaml`, and closes the measured cross-lingual
 gap without embeddings: golden Julien recall@5 0.74 → 0.89, precision 0.29 → 0.32. Embeddings
 stay frozen until measurement justifies their cost.
+Rejected: pure vector search for the cross-lingual gap (closed by static expansion at near-zero
+cost); multi-word synonym entries (the tokenizer makes them inert).
 
 ### ADR-015 - Conservative temporal re-ranking
 Retrieval uses only explicit signals: `supersedes` strongly demotes replaced notes,
 `confidence: low/needs_verification` applies a light penalty. No age decay
 (`last_verified`/`updated`) until measurement proves the gain. The re-rank acts on a ×3
 overfetch pool before truncation, and never removes results.
+Rejected: age-based decay (old is not wrong; regression risk); deleting superseded notes from
+results (demotion keeps them reachable).
 
 ### ADR-016 - Over-long lines brute-split: resolution to the first piece (accepted limit)
 The `Chunk` model addresses chunks by line range (`line_start`/`line_end`, 1-indexed) so that
@@ -249,6 +275,8 @@ overflow of a monster line points to piece 1. **Decision: accepted (WAI).** The 
 require sub-line character offsets in the (frozen) `Chunk` model, disproportionate for a rare
 edge case (lines > ~`chunk_max_chars`: minified, base64, giant single-line). Closes the P3
 chunker backlog item.
+Rejected: sub-line character offsets in the frozen `Chunk` model (disproportionate for a rare
+edge case).
 
 ### ADR-017 - Standalone installer (.exe) alongside PyPI/pipx
 Revises ADR-011. In addition to PyPI/pipx distribution (the primary channel, still recommended
@@ -260,10 +288,23 @@ it. Reproducible build via `scripts/build_installer.ps1` (Windows) and `scripts/
 (`reliability_evidence.json`) is included via `--collect-data`.
 Accepted cost: multi-OS builds and size (~22 MB). `dist/` and `build/` stay out of version
 control.
+Rejected: pipx-only distribution (excludes users without Python); Docker as an end-user
+channel (uid/gid friction for a file-local tool).
 
-PyPI uses the PEP 440 canonical form of the source CalVer. For example, Git tag
-`v2026.0718.01` and source version `2026.0718.01` are published as `2026.718.1` because
-leading zeroes are removed from numeric release segments; version ordering is preserved.
+### ADR-018 - No GraphRAG / knowledge-graph indexing
+Backlinks, tags and folder paths already provide graph navigation (`get_backlinks`);
+GraphRAG-style indexing serves global corpus questions Datacron does not target (deep
+research 2026-06-01).
+Rejected: GraphRAG pipelines; a graph database alongside the vault.
+
+### ADR-019 - CalVer versioning (YYYY.MMDD.XX)
+Source version and Git tag are date-derived: `2026.0714.00` = year, month-day, build of the
+day (tag `v2026.0714.00`). The version number is mechanical, never a decision. PyPI uses the
+PEP 440 canonical form of the source CalVer: leading zeroes are removed from numeric release
+segments (`2026.0718.01` becomes `2026.718.1`); version ordering is preserved.
+Rejected: hand-picked SemVer for an application (no public compatibility contract to signal;
+for a true library, the compatibility signal must derive from Conventional Commits, not a
+manual choice).
 
 ---
 
