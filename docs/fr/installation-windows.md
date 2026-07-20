@@ -9,7 +9,8 @@ Claude Code, Cursor, Gemini CLI, Antigravity, Codex CLI, Windsurf, VS Code). Il 
 aussi le protocole mémoire pris en charge au scope utilisateur.
 
 Si tu préfères la ligne de commande (`datacron setup`), va plutôt sur le
-[guide d'installation et de configuration](setup.md).
+[guide d'installation et de configuration](setup.md). Pour le dépannage après installation,
+consulte les [questions fréquentes](faq.md).
 
 > Datacron ne modifie jamais tes notes sans que tu l'actives explicitement, et n'envoie
 > rien vers un service cloud. Il ajoute seulement un dossier `.datacron/` à côté de tes

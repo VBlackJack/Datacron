@@ -299,6 +299,7 @@ Full index: [docs/en/index.md](docs/en/index.md) | [Index français](docs/fr/ind
 To get started:
 
 - [Installation and configuration guide](docs/en/setup.md)
+- [Frequently asked questions](docs/en/faq.md)
 - [User guide](docs/en/user-guide.md)
 
 Technical references:

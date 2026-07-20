@@ -9,7 +9,8 @@ Code, Cursor, Gemini CLI, Antigravity, Codex CLI, Windsurf, VS Code). It also in
 supported user-scope memory protocol.
 
 If you prefer the command line (`datacron setup`), see the
-[installation and setup guide](setup.md) instead.
+[installation and setup guide](setup.md) instead. For troubleshooting after installation,
+see the [frequently asked questions](faq.md).
 
 > Datacron never modifies your notes unless you explicitly enable writing, and never
 > sends anything to a cloud service. It only adds a `.datacron/` folder next to your

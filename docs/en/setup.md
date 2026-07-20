@@ -4,7 +4,8 @@
 
 This guide takes you from a folder of Markdown notes to a running Datacron server wired into
 Claude Desktop or Claude Code. It complements the [README](../../README.en.md) and the
-[user guide](user-guide.md).
+[user guide](user-guide.md). For symptom-first troubleshooting, see the
+[frequently asked questions](faq.md).
 
 > Datacron never modifies your notes unless you explicitly enable writing, and never sends
 > anything to a cloud service. It only adds a `.datacron/` folder next to your notes.

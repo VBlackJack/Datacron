@@ -4,7 +4,8 @@
 
 Ce guide t'amène d'un dossier de notes Markdown à un serveur Datacron opérationnel,
 branché sur Claude Desktop ou Claude Code. Il complète le [README](../../README.md) et le
-[guide utilisateur](user-guide.md).
+[guide utilisateur](user-guide.md). Pour un dépannage par symptôme, consulte les
+[questions fréquentes](faq.md).
 
 > Datacron ne modifie jamais tes notes sans que tu l'actives explicitement, et n'envoie
 > rien vers un service cloud. Il ajoute seulement un dossier `.datacron/` à côté de tes notes.
