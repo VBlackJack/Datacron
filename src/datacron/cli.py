@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -73,7 +74,7 @@ from datacron.scrubber import CanaryInitializationError, ScrubState, initialize_
 from datacron.setup_wizard import (
     CLIENT_ALL,
     CLIENT_CHOICES,
-    DEFAULT_WRITE_SUBFOLDER,
+    DEFAULT_WRITE_SUBFOLDERS,
     INSTALL_SCOPE_BOTH,
     INSTALL_SCOPE_CHOICES,
     ResetExecutionError,
@@ -81,6 +82,7 @@ from datacron.setup_wizard import (
     SetupPlan,
     SetupResult,
     _scopes_for,
+    get_user_write_env,
     run_setup,
 )
 
@@ -664,6 +666,11 @@ def setup(
         "--write-path",
         help="Write-allowlisted directory (implies --enable-write).",
     ),
+    machine_wide_write: bool = typer.Option(
+        False,
+        "--machine-wide-write",
+        help="Apply the write allowlist to the user environment for future clients.",
+    ),
     durability: str | None = typer.Option(
         None,
         "--durability",
@@ -731,8 +738,14 @@ def setup(
     resolved_client = _prompt_client(client, assume_yes)
     resolved_scope = _prompt_scope(scope, resolved_client, assume_yes)
     resolved_durability = _prompt_durability(durability, assume_yes)
-    resolved_enable_write, resolved_write_path = _prompt_write(
+    resolved_enable_write, resolved_write_paths = _prompt_write(
         enable_write, write_path, resolved_vault, assume_yes
+    )
+    resolved_machine_wide_write, replace_existing_write_env = _prompt_machine_wide_write(
+        machine_wide_write,
+        resolved_enable_write,
+        resolved_write_paths,
+        assume_yes,
     )
     resolved_read_only = read_only or (
         not assume_yes and typer.confirm("Configure certified read-only mode?", default=False)
@@ -749,7 +762,9 @@ def setup(
         vault_path=resolved_vault,
         build_index=build_index,
         enable_write=resolved_enable_write,
-        write_path=resolved_write_path,
+        write_paths=resolved_write_paths,
+        machine_wide_write=resolved_machine_wide_write,
+        replace_existing_write_env=replace_existing_write_env,
         client=resolved_client,
         install_scope=resolved_scope,
         durability=resolved_durability,
@@ -840,25 +855,87 @@ def _prompt_write(
     write_path: Path | None,
     vault_root: Path,
     assume_yes: bool,
-) -> tuple[bool, Path | None]:
+) -> tuple[bool, list[Path]]:
     if write_path is not None:
-        return True, write_path.expanduser().resolve()
+        return True, [write_path.expanduser().resolve()]
     if enable_write:
-        resolved = _prompt_write_path(vault_root, assume_yes)
-        return True, resolved
+        return True, _prompt_write_paths(vault_root, assume_yes)
     if assume_yes:
-        return False, None
+        return False, []
     if not typer.confirm("Enable the confined write tools?", default=False):
-        return False, None
-    return True, _prompt_write_path(vault_root, assume_yes)
+        return False, []
+    return True, _prompt_write_paths(vault_root, assume_yes)
 
 
-def _prompt_write_path(vault_root: Path, assume_yes: bool) -> Path | None:
-    default_path = vault_root / DEFAULT_WRITE_SUBFOLDER
+def _prompt_write_paths(vault_root: Path, assume_yes: bool) -> list[Path]:
+    default_paths = [vault_root / name for name in DEFAULT_WRITE_SUBFOLDERS]
     if assume_yes:
-        return default_path
-    answer = typer.prompt("Write-allowlisted directory", default=str(default_path))
-    return Path(answer).expanduser().resolve()
+        return default_paths
+    default_value = os.pathsep.join(str(path) for path in default_paths)
+    answer = typer.prompt(
+        f"Write-allowlisted directories (separate with {os.pathsep!r})",
+        default=default_value,
+    )
+    paths = [part.strip() for part in answer.split(os.pathsep) if part.strip()]
+    if not paths:
+        _error("At least one write-allowlisted directory is required.")
+    return [Path(path).expanduser().resolve() for path in paths]
+
+
+def _prompt_machine_wide_write(
+    requested: bool,
+    enable_write: bool,
+    write_paths: list[Path],
+    assume_yes: bool,
+) -> tuple[bool, bool]:
+    """Collect the explicit user-environment opt-in and replacement choice."""
+    if not enable_write:
+        if requested:
+            _error("--machine-wide-write requires --enable-write or --write-path.")
+        return False, False
+    if not requested:
+        if assume_yes:
+            return False, False
+        requested = typer.confirm(
+            "Apply the write allowlist to this user account for all future clients?",
+            default=False,
+        )
+    if not requested:
+        return False, False
+
+    current = get_user_write_env()
+    requested_value = os.pathsep.join(str(path) for path in write_paths)
+    replace = False
+    if current is not None:
+        _print(f"Current user write allowlist: {current}")
+        if current != requested_value:
+            if assume_yes:
+                _print("Existing user write allowlist differs; keeping it unchanged.")
+            else:
+                replace = typer.confirm(
+                    "Replace the existing user write allowlist?",
+                    default=False,
+                )
+    return True, replace
+
+
+def _render_machine_write_env(result: SetupResult) -> None:
+    """Render the user-environment outcome without obscuring setup's main summary."""
+    env_result = result.machine_write_env
+    if env_result is None:
+        return
+    if env_result.action == "preserved":
+        _print(f"  user env:   kept existing -> {env_result.effective_value}")
+        if env_result.export_command is not None:
+            _print("  user env:   add this line to your shell profile:")
+            _print(env_result.export_command)
+    elif env_result.action == "unchanged":
+        _print(f"  user env:   already set -> {env_result.effective_value}")
+    elif env_result.action == "manual-export":
+        _print("  user env:   add this line to your shell profile:")
+        _print(env_result.export_command or "")
+    else:
+        _print(f"  user env:   {env_result.action} -> {env_result.effective_value}")
 
 
 def _render_setup_result(result: SetupResult) -> None:
@@ -876,10 +953,13 @@ def _render_setup_result(result: SetupResult) -> None:
         _print("  action:     run `datacron index` when indexing is available")
     else:
         _print("  index:      skipped (--no-index)")
-    if result.write_path is not None:
-        _print(f"  writing:    enabled -> {result.write_path}")
+    if result.write_paths:
+        _print(
+            f"  writing:    enabled -> {os.pathsep.join(str(path) for path in result.write_paths)}"
+        )
     else:
         _print("  writing:    disabled")
+    _render_machine_write_env(result)
     _print(f"  durability: {result.durability}")
     _print(f"  read-only:  {'yes' if result.read_only else 'no'}")
     if result.client_config_path is not None:
@@ -901,6 +981,8 @@ def _render_setup_result(result: SetupResult) -> None:
             )
     for warning in result.warnings:
         typer.secho(f"  warning: {warning}", fg=typer.colors.YELLOW, err=True)
+    if result.machine_write_env is not None:
+        _print("Restart all already-open MCP clients to inherit the user environment.")
     _print("Verify from your client with get_health, or run `datacron status`.")
 
 
