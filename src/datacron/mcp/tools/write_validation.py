@@ -31,6 +31,9 @@ _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
 )
 _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
 _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
+_REJECTED_ENTRY_SEPARATOR: Final[str] = " -- "
+_MAX_REJECTED_ENTRIES: Final[int] = 16
+_MAX_REJECTED_ENTRY_CHARS: Final[int] = 300
 
 
 def _map_write_path_error(
@@ -114,6 +117,7 @@ def _validate_set_frontmatter_request(
     confidence: str | None,
     last_verified: str | None,
     supersedes: list[str] | None,
+    rejected: list[str] | None,
     origin: str | None,
     valid_from: str | None,
     invalid_at: str | None,
@@ -122,6 +126,7 @@ def _validate_set_frontmatter_request(
     str,
     str | None,
     str | None,
+    list[str] | None,
     list[str] | None,
     str | None,
     str | None,
@@ -135,6 +140,7 @@ def _validate_set_frontmatter_request(
             confidence,
             last_verified,
             supersedes,
+            rejected,
             origin,
             valid_from,
             invalid_at,
@@ -150,6 +156,7 @@ def _validate_set_frontmatter_request(
         _validate_last_verified_date(last_verified) if last_verified is not None else None
     )
     cleaned_supersedes = _clean_string_list(supersedes) if supersedes is not None else None
+    cleaned_rejected = _validate_rejected_entries(rejected) if rejected is not None else None
     cleaned_origin = _validate_memory_origin(origin) if origin is not None else None
     cleaned_valid_from = _validate_valid_from_date(valid_from) if valid_from is not None else None
     cleaned_invalid_at = (
@@ -166,11 +173,36 @@ def _validate_set_frontmatter_request(
         cleaned_confidence,
         cleaned_last_verified,
         cleaned_supersedes,
+        cleaned_rejected,
         cleaned_origin,
         cleaned_valid_from,
         cleaned_invalid_at,
         cleaned_invalidated_by,
     )
+
+
+def _validate_rejected_entries(values: list[str]) -> list[str]:
+    """Validate and normalize structured rejected-option entries."""
+    if len(values) > _MAX_REJECTED_ENTRIES:
+        raise ValueError(f"rejected must contain at most {_MAX_REJECTED_ENTRIES} entries")
+
+    cleaned: list[str] = []
+    for index, raw_value in enumerate(values, start=1):
+        if len(raw_value) > _MAX_REJECTED_ENTRY_CHARS:
+            raise ValueError(
+                f"rejected entry {index} must be at most {_MAX_REJECTED_ENTRY_CHARS} characters"
+            )
+        option, separator, reason = raw_value.partition(_REJECTED_ENTRY_SEPARATOR)
+        if not separator:
+            raise ValueError(f"rejected entry {index} must use the 'option -- reason' format")
+        cleaned_option = option.strip()
+        cleaned_reason = reason.strip()
+        if not cleaned_option:
+            raise ValueError(f"rejected entry {index} option must not be empty")
+        if not cleaned_reason:
+            raise ValueError(f"rejected entry {index} reason must not be empty")
+        cleaned.append(f"{cleaned_option}{_REJECTED_ENTRY_SEPARATOR}{cleaned_reason}")
+    return cleaned
 
 
 def _validate_last_verified_date(value: str) -> str:

@@ -52,6 +52,7 @@ from datacron.mcp.tools.write_validation import (
     _validate_expected_hash,
     _validate_memory_frontmatter,
     _validate_patch_note_section_request,
+    _validate_rejected_entries,
     _validate_set_frontmatter_request,
 )
 
@@ -105,6 +106,7 @@ async def _create_note_ai_impl(
     confidence: str,
     tags: list[str],
     supersedes: list[str] | None = None,
+    rejected: list[str] | None = None,
     last_verified: str | None = None,
     expected_hash: str | None = None,
     actor: str = "direct-call",
@@ -123,10 +125,11 @@ async def _create_note_ai_impl(
             tags=tags,
         )
         cleaned_expected_hash = _validate_expected_hash(expected_hash)
+        cleaned_rejected = _validate_rejected_entries(rejected) if rejected is not None else None
         now = datetime.now(tz=UTC)
         for attempt in range(_ULID_CREATE_ATTEMPTS):
             note_id = str(ULID())
-            frontmatter = {
+            frontmatter: dict[str, Any] = {
                 "id": note_id,
                 "title": cleaned["title"],
                 "created": now.isoformat(),
@@ -139,6 +142,8 @@ async def _create_note_ai_impl(
                 "supersedes": _clean_string_list(supersedes or []),
                 "tags": cleaned["tags"],
             }
+            if cleaned_rejected is not None:
+                frontmatter["rejected"] = cleaned_rejected
             content = serialize(frontmatter, body)
             try:
                 content_hash = await app.vault_writer.write_note_atomic(
@@ -158,6 +163,7 @@ async def _create_note_ai_impl(
                             "confidence": cleaned["confidence"],
                             "tag_count": len(cleaned["tags"]),
                             "supersedes_count": len(supersedes or []),
+                            "rejected_count": len(cleaned_rejected or []),
                         },
                     ),
                 )
@@ -302,6 +308,7 @@ async def _set_frontmatter_impl(
     confidence: str | None = None,
     last_verified: str | None = None,
     supersedes: list[str] | None = None,
+    rejected: list[str] | None = None,
     origin: str | None = None,
     valid_from: str | None = None,
     invalid_at: str | None = None,
@@ -319,6 +326,7 @@ async def _set_frontmatter_impl(
             cleaned_confidence,
             cleaned_last_verified,
             cleaned_supersedes,
+            cleaned_rejected,
             cleaned_origin,
             cleaned_valid_from,
             cleaned_invalid_at,
@@ -328,6 +336,7 @@ async def _set_frontmatter_impl(
             confidence=confidence,
             last_verified=last_verified,
             supersedes=supersedes,
+            rejected=rejected,
             origin=origin,
             valid_from=valid_from,
             invalid_at=invalid_at,
@@ -341,6 +350,7 @@ async def _set_frontmatter_impl(
                 "confidence": cleaned_confidence,
                 "last_verified": cleaned_last_verified,
                 "supersedes": cleaned_supersedes,
+                "rejected": cleaned_rejected,
                 "origin": cleaned_origin,
                 "valid_from": cleaned_valid_from,
                 "invalid_at": cleaned_invalid_at,
@@ -374,6 +384,17 @@ async def _set_frontmatter_impl(
                     "supersedes",
                     cleaned_supersedes,
                 )
+            if cleaned_rejected is not None:
+                if cleaned_rejected:
+                    _set_changed_frontmatter_field(
+                        metadata,
+                        changed_fields,
+                        "rejected",
+                        cleaned_rejected,
+                    )
+                elif "rejected" in metadata:
+                    changed_fields.append("rejected")
+                    del metadata["rejected"]
             if cleaned_origin is not None:
                 _set_changed_frontmatter_field(
                     metadata,

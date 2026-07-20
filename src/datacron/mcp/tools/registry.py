@@ -255,6 +255,8 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "Call this proactively when a durable fact, confirmed decision, or user "
             "preference emerges in conversation - do not wait to be asked. Skip "
             "speculation and one-off chatter. Write a new typed _memory Markdown note. "
+            "Use rejected entries in 'option -- reason' format to record discarded options "
+            "so a future agent does not propose them again. "
             "This is a write operation: it is confined to DATACRON_WRITE_PATHS, never "
             "overwrites existing files, writes a durable operation record, and relies "
             "on the MCP client's tool approval for human-in-the-loop review."
@@ -270,6 +272,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         tags: list[str],
         ctx: Context[Any, Any, Any],
         supersedes: list[str] | None = None,
+        rejected: list[str] | None = None,
         last_verified: str | None = None,
         expected_hash: str | None = None,
     ) -> CreateNoteOutput:
@@ -284,6 +287,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
                 confidence=confidence,
                 tags=tags,
                 supersedes=supersedes,
+                rejected=rejected,
                 last_verified=last_verified,
                 expected_hash=expected_hash,
                 actor=app.identity_provider.identify(ctx).actor,
@@ -328,10 +332,12 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "Use this when a fact's lifecycle changes: verified today, superseded by a "
             "newer note, or confidence raised or lowered. Prefer invalidating an outdated "
             "fact (invalid_at + invalidated_by) over deleting or rewriting it: history "
-            "stays queryable. Update lifecycle frontmatter fields on an existing memory "
-            "note. This write operation only changes origin, confidence, last_verified, "
-            "supersedes, valid_from, invalid_at, invalidated_by, and the automatic updated "
-            "timestamp; the Markdown body is preserved."
+            "stays queryable. Use rejected entries in 'option -- reason' format to record "
+            "discarded options so a future agent does not propose them again. Update "
+            "frontmatter fields on an existing memory note. This write operation only "
+            "changes origin, confidence, last_verified, supersedes, rejected, valid_from, "
+            "invalid_at, invalidated_by, and the automatic updated timestamp; the Markdown "
+            "body is preserved."
         ),
         annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
     )
@@ -341,6 +347,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         confidence: str | None = None,
         last_verified: str | None = None,
         supersedes: list[str] | None = None,
+        rejected: list[str] | None = None,
         origin: str | None = None,
         valid_from: str | None = None,
         invalid_at: str | None = None,
@@ -355,6 +362,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
                 confidence=confidence,
                 last_verified=last_verified,
                 supersedes=supersedes,
+                rejected=rejected,
                 origin=origin,
                 valid_from=valid_from,
                 invalid_at=invalid_at,

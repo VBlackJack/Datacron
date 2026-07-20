@@ -11,6 +11,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Added
 
+- Memory notes can record up to 16 structured rejected options in the optional `rejected`
+  frontmatter list through `create_note_ai` and `set_frontmatter`.
 - `list_notes` now accepts up to eight case-insensitive top-level frontmatter key/value
   filters with AND semantics and list-element matching.
 

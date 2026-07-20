@@ -120,6 +120,17 @@ day to day:
 The result: you can keep history in the vault without polluting answers, while still being
 able to recall it explicitly with `include_superseded=true`.
 
+### Recording rejected options
+
+Use the optional `rejected` frontmatter list to record discarded options so they are not
+proposed again. Each entry uses the exact `option -- reason` format; a note can contain at most
+16 entries of 300 characters each. `create_note_ai` can set the list, and `set_frontmatter`
+replaces it completely; pass `rejected=[]` to remove the key.
+
+This field is declarative in this release and does not alter retrieval or
+`contradiction_scan`. `list_notes` can filter it only by matching one complete entry,
+case-insensitively.
+
 ### Fact lifecycle
 
 A fact is **active** until another note supersedes it or it receives an `invalid_at` field. For a

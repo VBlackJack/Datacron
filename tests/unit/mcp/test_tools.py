@@ -1053,6 +1053,7 @@ class TestCreateNoteAi:
         assert metadata["confidence"] == "high"
         assert metadata["tags"] == ["memory", "datacron"]
         assert metadata["supersedes"] == []
+        assert "rejected" not in metadata
         assert isinstance(metadata["created"], str)
         assert metadata["created"] == metadata["updated"]
         assert isinstance(metadata["last_verified"], str)
@@ -1067,6 +1068,73 @@ class TestCreateNoteAi:
         fetched = await _get_note_impl(writable_app, id_or_path=rel_path, fmt="full")
         assert fetched["id"] == result["created"]["id"]
         assert fetched["rel_path"] == rel_path
+
+    @pytest.mark.asyncio
+    async def test_rejected_options_are_written_and_read_back_exactly(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+    ) -> None:
+        from datacron.mcp.tools import _create_note_ai_impl, _get_note_impl
+
+        rejected = [
+            "vector embeddings -- BM25 is sufficient",
+            "temporal decay -- old does not mean false",
+        ]
+        rel_path = "_memory/facts/rejected-options.md"
+
+        result = await _create_note_ai_impl(
+            writable_app,
+            rel_path=rel_path,
+            title="Rejected options",
+            body="# Rejected options\n\nDecision context.\n",
+            origin="human",
+            confidence="high",
+            tags=["memory", "decision"],
+            rejected=rejected,
+        )
+        fetched = await _get_note_impl(writable_app, id_or_path=rel_path, fmt="full")
+
+        assert "error" not in result
+        assert fetched["frontmatter"]["rejected"] == rejected
+        metadata, _body = parse((tmp_vault / rel_path).read_text(encoding="utf-8"))
+        assert metadata["rejected"] == rejected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("rejected", "message"),
+        [
+            (["missing separator"], "must use the 'option -- reason' format"),
+            ([" -- reason"], "option must not be empty"),
+            (["option -- "], "reason must not be empty"),
+            ([f"option-{index} -- reason" for index in range(17)], "at most 16 entries"),
+            ([f"o -- {'r' * 296}"], "at most 300 characters"),
+        ],
+    )
+    async def test_rejected_validation_errors_are_structured_and_do_not_write(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        rejected: list[str],
+        message: str,
+    ) -> None:
+        from datacron.mcp.tools import _create_note_ai_impl
+
+        rel_path = "_memory/facts/invalid-rejected.md"
+        result = await _create_note_ai_impl(
+            writable_app,
+            rel_path=rel_path,
+            title="Invalid rejected options",
+            body="Invalid rejected options body",
+            origin="ai",
+            confidence="high",
+            tags=["memory"],
+            rejected=rejected,
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert message in result["error"]["message"]
+        assert not (tmp_vault / rel_path).exists()
 
     @pytest.mark.asyncio
     async def test_created_note_alias_is_resolvable_for_backlinks_without_restart(
@@ -1554,6 +1622,7 @@ class TestSetFrontmatter:
 
         assert new_body == original_body
         assert new_metadata["confidence"] == "low"
+        assert "rejected" not in new_metadata
         assert new_without_updated == {**original_without_updated, "confidence": "low"}
         assert new_updated != original_updated
 
@@ -1610,6 +1679,66 @@ class TestSetFrontmatter:
         assert result["updated"] == {"rel_path": rel_path, "fields": ["supersedes"]}
         metadata, _body = parse(target.read_text(encoding="utf-8"))
         assert metadata["supersedes"] == ["01NEWNEWNEWNEWNEWNEWNEWN", "other"]
+
+    @pytest.mark.asyncio
+    async def test_rejected_replaces_then_empty_list_removes_key(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/rejected-replacement.md"
+        target, _original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Rejected replacement\n\nBody.\n",
+            metadata_overrides={"rejected": ["old option -- old reason"]},
+        )
+        replacement = [
+            "vector embeddings -- BM25 is sufficient",
+            "temporal decay -- old does not mean false",
+        ]
+
+        replaced = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            rejected=replacement,
+        )
+        replaced_metadata, _body = parse(target.read_text(encoding="utf-8"))
+        cleared = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            rejected=[],
+        )
+        cleared_metadata, _body = parse(target.read_text(encoding="utf-8"))
+
+        assert replaced["updated"] == {"rel_path": rel_path, "fields": ["rejected"]}
+        assert replaced_metadata["rejected"] == replacement
+        assert cleared["updated"] == {"rel_path": rel_path, "fields": ["rejected"]}
+        assert "rejected" not in cleared_metadata
+
+    @pytest.mark.asyncio
+    async def test_rejected_empty_list_alone_is_not_nothing_to_update(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/rejected-empty.md"
+        target, _original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Rejected empty\n\nBody.\n",
+        )
+
+        result = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            rejected=[],
+        )
+        metadata, _body = parse(target.read_text(encoding="utf-8"))
+
+        assert "error" not in result
+        assert result["updated"] == {"rel_path": rel_path, "fields": []}
+        assert "rejected" not in metadata
 
     @pytest.mark.asyncio
     async def test_last_verified_valid_date_is_partial_update(
