@@ -18,8 +18,8 @@ configuration references the ``datacron-mcp`` command. Each client stores that
 configuration differently (path, file format, top-level key), so this module
 models one adapter per client:
 
-- Claude Desktop, Claude Code, Cursor, Gemini CLI, Windsurf - JSON with a
-  top-level ``mcpServers`` object.
+- Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, Windsurf -
+  JSON with a top-level ``mcpServers`` object.
 - VS Code - JSON with a top-level ``servers`` object and an explicit
   ``type: "stdio"`` per server.
 - Codex CLI - TOML with ``[mcp_servers.<name>]`` tables.
@@ -72,6 +72,7 @@ CLAUDE_DESKTOP: Final[str] = "claude-desktop"
 CLAUDE_CODE: Final[str] = "claude-code"
 CURSOR: Final[str] = "cursor"
 GEMINI_CLI: Final[str] = "gemini-cli"
+ANTIGRAVITY: Final[str] = "antigravity"
 CODEX_CLI: Final[str] = "codex-cli"
 WINDSURF: Final[str] = "windsurf"
 VS_CODE: Final[str] = "vscode"
@@ -81,6 +82,7 @@ ALL_CLIENT_IDS: Final[tuple[str, ...]] = (
     CLAUDE_CODE,
     CURSOR,
     GEMINI_CLI,
+    ANTIGRAVITY,
     CODEX_CLI,
     WINDSURF,
     VS_CODE,
@@ -96,6 +98,7 @@ _DISPLAY_NAMES: Final[dict[str, str]] = {
     CLAUDE_CODE: "Claude Code",
     CURSOR: "Cursor",
     GEMINI_CLI: "Gemini CLI",
+    ANTIGRAVITY: "Antigravity",
     CODEX_CLI: "Codex CLI",
     WINDSURF: "Windsurf",
     VS_CODE: "VS Code",
@@ -189,6 +192,7 @@ def _user_config_path(client_id: str) -> Path | None:
         CLAUDE_CODE: home / ".claude.json",
         CURSOR: home / ".cursor" / "mcp.json",
         GEMINI_CLI: home / ".gemini" / "settings.json",
+        ANTIGRAVITY: home / ".gemini" / "config" / "mcp_config.json",
         CODEX_CLI: home / ".codex" / "config.toml",
         WINDSURF: home / ".codeium" / "windsurf" / "mcp_config.json",
         VS_CODE: _vscode_user_dir() / "mcp.json",
@@ -198,18 +202,17 @@ def _user_config_path(client_id: str) -> Path | None:
 
 def _project_config_path(client_id: str, project_dir: Path) -> Path | None:
     """Return the project-scope config path for ``client_id`` (``None`` if N/A)."""
-    if client_id == CLAUDE_CODE:
-        return project_dir / ".mcp.json"
-    if client_id == CURSOR:
-        return project_dir / ".cursor" / "mcp.json"
-    if client_id == GEMINI_CLI:
-        return project_dir / ".gemini" / "settings.json"
-    if client_id == CODEX_CLI:
-        return project_dir / ".codex" / "config.toml"
-    if client_id == VS_CODE:
-        return project_dir / ".vscode" / "mcp.json"
+    relative_paths: dict[str, Path] = {
+        CLAUDE_CODE: Path(".mcp.json"),
+        CURSOR: Path(".cursor") / "mcp.json",
+        GEMINI_CLI: Path(".gemini") / "settings.json",
+        ANTIGRAVITY: Path(".agents") / "mcp_config.json",
+        CODEX_CLI: Path(".codex") / "config.toml",
+        VS_CODE: Path(".vscode") / "mcp.json",
+    }
+    relative_path = relative_paths.get(client_id)
     # Claude Desktop and Windsurf have no documented project scope.
-    return None
+    return None if relative_path is None else project_dir / relative_path
 
 
 def _client_format(client_id: str) -> str:
@@ -228,11 +231,14 @@ def _is_present(client_id: str) -> bool:
         CLAUDE_CODE: ((home / ".claude.json", home / ".claude"), ("claude",)),
         CURSOR: ((home / ".cursor",), ("cursor",)),
         GEMINI_CLI: ((home / ".gemini",), ("gemini",)),
+        ANTIGRAVITY: ((home / ".gemini" / "antigravity",), ()),
         CODEX_CLI: ((home / ".codex",), ("codex",)),
         WINDSURF: ((home / ".codeium" / "windsurf",), ("windsurf",)),
         VS_CODE: ((_vscode_user_dir().parent,), ("code",)),
     }
     paths, binaries = checks[client_id]
+    if client_id == ANTIGRAVITY:
+        return any(path.is_dir() for path in paths)
     if any(path.exists() for path in paths):
         return True
     return any(shutil.which(binary) is not None for binary in binaries)

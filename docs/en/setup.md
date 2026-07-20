@@ -19,17 +19,19 @@ datacron setup
 ```
 
 By default (`--client all`), it **detects every installed AI client and registers Datacron
-with each**: Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, and VS Code.
-Each config is merged without clobbering existing servers (JSON or TOML depending on the
-client). It asks questions with sensible defaults (vault location, client, scope, writing,
-user-wide write environment, durability, read-only), then runs `init`, registers the clients,
-indexes, and prints a per-client summary. An indexing failure is deferred and never undoes
-client registration.
+with each**: Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, Codex CLI,
+Windsurf, and VS Code. Each config is merged without clobbering existing servers (JSON or
+TOML depending on the client). It asks questions with sensible defaults (vault location,
+client, scope, writing, user-wide write environment, durability, read-only), then runs
+`init`, registers the clients, indexes, and prints a per-client summary. An indexing failure
+is deferred and never undoes client registration.
 Useful options:
 
 - `datacron setup --yes` - accept every default, no prompts (unattended install).
 - `datacron setup --scope both` - write config at **user** and **project** scope (default); use `user` or `project` to restrict.
 - `datacron setup --vault PATH --client claude-desktop` - target a single specific client.
+- `datacron setup --vault PATH --client antigravity` - register Antigravity in its user and
+  workspace MCP configurations.
 - `datacron setup --enable-write --write-path PATH` - enable writing on one explicit subfolder; without `--write-path`, the defaults are `<vault>/_memory`, `<vault>/_drafts`, and `<vault>/_journal`.
 - `datacron setup --enable-write --machine-wide-write` - also opt in to the user environment allowlist for future clients.
 - `datacron setup --durability strict --read-only` - strict durability and certified read-only mode.
@@ -184,6 +186,12 @@ Declare this command in the client's MCP configuration. The server reads JSON-RP
 on stdin and replies on stdout; logs go to the FileLogger, never to stdout (reserved for the
 protocol).
 
+Antigravity is detected only from its live `~/.gemini/antigravity` profile. Its user MCP
+configuration is `~/.gemini/config/mcp_config.json`; its project configuration is
+`<vault>/.agents/mcp_config.json`. Both use the standard top-level `mcpServers` object. An
+existing empty user configuration is treated as a new configuration, while non-Datacron
+entries in either file are preserved.
+
 ### Install the client-side memory protocol
 
 The MCP connection exposes the tools and already sends the standard MCP `instructions`
@@ -195,11 +203,13 @@ never persist speculation. Install the protocol in every detected client:
 datacron protocol install --client all
 ```
 
-You can also target `claude-code`, `cursor`, `gemini-cli`, `codex-cli`, `windsurf`, or
-`vscode`. Datacron automatically installs global rules for Claude Code, Gemini CLI, Codex,
-Windsurf, and VS Code. Cursor still requires a paste in **Settings > Rules** because its
-global user rules are only exposed through the UI. Claude Desktop relies on the MCP server
-instructions.
+You can also target `claude-code`, `cursor`, `gemini-cli`, `antigravity`, `codex-cli`,
+`windsurf`, or `vscode`. Datacron automatically installs global rules for Claude Code,
+Gemini CLI, Codex, Windsurf, and VS Code. Antigravity is project-scoped only:
+`--client antigravity --scope project` manages the marked block in `<project>/GEMINI.md`
+and does not write a user-global instruction file. Cursor still requires a paste in
+**Settings > Rules** because its global user rules are only exposed through the UI. Claude
+Desktop relies on the MCP server instructions.
 
 Datacron only writes between `<!-- datacron:protocol:begin -->` and
 `<!-- datacron:protocol:end -->`; reinstalling replaces that block and preserves the rest of

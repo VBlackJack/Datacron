@@ -19,16 +19,18 @@ datacron setup
 ```
 
 Par défaut (`--client all`), elle **détecte tous les clients IA installés et enregistre
-Datacron dans chacun** : Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf
-et VS Code. Chaque config est fusionnée sans écraser les serveurs déjà présents (JSON ou TOML
-selon le client). Elle pose des questions avec des valeurs par défaut (emplacement du vault,
-client, portée, écriture, durabilité, lecture seule), puis exécute `init`, enregistre les
-clients, indexe, et affiche un récapitulatif par client. Un échec d'indexation est différé et
-n'annule jamais l'enregistrement des clients. Options utiles :
+Datacron dans chacun** : Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity,
+Codex CLI, Windsurf et VS Code. Chaque config est fusionnée sans écraser les serveurs déjà
+présents (JSON ou TOML selon le client). Elle pose des questions avec des valeurs par défaut
+(emplacement du vault, client, portée, écriture, durabilité, lecture seule), puis exécute
+`init`, enregistre les clients, indexe, et affiche un récapitulatif par client. Un échec
+d'indexation est différé et n'annule jamais l'enregistrement des clients. Options utiles :
 
 - `datacron setup --yes` - accepte tous les défauts, sans question (installation automatique).
 - `datacron setup --scope both` - écrit la config au niveau **utilisateur** et **projet** (défaut) ; `user` ou `project` pour restreindre.
 - `datacron setup --vault CHEMIN --client claude-desktop` - cible un seul client précis.
+- `datacron setup --vault CHEMIN --client antigravity` - enregistre Antigravity dans ses
+  configurations MCP utilisateur et workspace.
 - `datacron setup --enable-write --write-path CHEMIN` - active l'écriture sur un sous-dossier explicite ; sans `--write-path`, les défauts sont `<vault>/_memory`, `<vault>/_drafts` et `<vault>/_journal`.
 - `datacron setup --enable-write --machine-wide-write` - active aussi explicitement l'allowlist dans l'environnement utilisateur pour les futurs clients.
 - `datacron setup --durability strict --read-only` - mode durabilité strict et lecture seule certifiée.
@@ -185,6 +187,12 @@ Déclare cette commande dans la configuration MCP du client. Le serveur lit les 
 JSON-RPC sur stdin et répond sur stdout ; les logs partent dans le FileLogger, jamais sur
 stdout (réservé au protocole).
 
+Antigravity est détecté uniquement par son profil actif `~/.gemini/antigravity`. Sa
+configuration MCP utilisateur est `~/.gemini/config/mcp_config.json` ; sa configuration
+projet est `<vault>/.agents/mcp_config.json`. Les deux utilisent l'objet racine standard
+`mcpServers`. Une configuration utilisateur existante mais vide est traitée comme une
+nouvelle configuration, tandis que les entrées autres que Datacron sont préservées.
+
 ### Installer le protocole mémoire côté client
 
 Le branchement MCP expose les outils et transmet déjà le champ standard MCP `instructions`.
@@ -197,11 +205,14 @@ clients détectés :
 datacron protocol install --client all
 ```
 
-Ou cible `claude-code`, `cursor`, `gemini-cli`, `codex-cli`, `windsurf` ou `vscode`.
-Datacron installe automatiquement les règles globales de Claude Code, Gemini CLI, Codex,
-Windsurf et VS Code. Cursor demande encore un copier-coller dans **Settings > Rules**, car
-ses règles utilisateur globales ne sont exposées que dans l'interface. Claude Desktop
-s'appuie sur les instructions du serveur MCP.
+Ou cible `claude-code`, `cursor`, `gemini-cli`, `antigravity`, `codex-cli`, `windsurf` ou
+`vscode`. Datacron installe automatiquement les règles globales de Claude Code, Gemini CLI,
+Codex, Windsurf et VS Code. Antigravity est limité au scope projet : la commande
+`--client antigravity --scope project` gère le bloc marqué dans `<projet>/GEMINI.md` et
+n'écrit aucun fichier d'instructions global utilisateur. Cursor demande encore un
+copier-coller dans
+**Settings > Rules**, car ses règles utilisateur globales ne sont exposées que dans
+l'interface. Claude Desktop s'appuie sur les instructions du serveur MCP.
 
 Datacron écrit uniquement entre les marqueurs
 `<!-- datacron:protocol:begin -->` et `<!-- datacron:protocol:end -->`; une nouvelle

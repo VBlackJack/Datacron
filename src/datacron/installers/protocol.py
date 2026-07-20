@@ -25,6 +25,7 @@ from typing import Final, Literal, TypeAlias
 from datacron.core.logger import get_logger
 from datacron.installers.mcp_clients import (
     ALL_CLIENT_IDS,
+    ANTIGRAVITY,
     CLAUDE_CODE,
     CLAUDE_DESKTOP,
     CODEX_CLI,
@@ -108,6 +109,8 @@ _VSCODE_RULE_CONTENT: Final[str] = f"{_VSCODE_RULE_FRONTMATTER}\n{PROTOCOL_BLOCK
 _VSCODE_USER_RULE_RELATIVE_PATH: Final[Path] = (
     Path(".copilot") / "instructions" / "datacron.instructions.md"
 )
+_ANTIGRAVITY_PROJECT_INSTRUCTION_RELATIVE_PATH: Final[Path] = Path("GEMINI.md")
+_PROJECT_PROTOCOL_CLIENT_IDS: Final[tuple[str, ...]] = (CURSOR, ANTIGRAVITY)
 _WINDSURF_GLOBAL_RULE_MAX_CHARS: Final[int] = 6000
 
 _Operation: TypeAlias = Literal["install", "uninstall"]
@@ -176,7 +179,14 @@ def uninstall_memory_protocol(
 def _select_install_clients(client: str, *, scope: _Scope) -> tuple[str, ...]:
     _validate_client(client)
     if scope == SCOPE_PROJECT:
-        return (CURSOR,) if client == PROTOCOL_ALL else (client,)
+        if client != PROTOCOL_ALL:
+            return (client,)
+        detected = set(detect_clients(include=(ANTIGRAVITY,)))
+        return tuple(
+            client_id
+            for client_id in _PROJECT_PROTOCOL_CLIENT_IDS
+            if client_id == CURSOR or client_id in detected
+        )
     if client != PROTOCOL_ALL:
         return (client,)
     return detect_clients(include=PROTOCOL_CLIENT_IDS)
@@ -185,7 +195,7 @@ def _select_install_clients(client: str, *, scope: _Scope) -> tuple[str, ...]:
 def _select_uninstall_clients(client: str, *, scope: _Scope) -> tuple[str, ...]:
     _validate_client(client)
     if scope == SCOPE_PROJECT:
-        return (CURSOR,) if client == PROTOCOL_ALL else (client,)
+        return _PROJECT_PROTOCOL_CLIENT_IDS if client == PROTOCOL_ALL else (client,)
     if client != PROTOCOL_ALL:
         return (client,)
     detected = set(detect_clients(include=PROTOCOL_CLIENT_IDS))
@@ -220,8 +230,12 @@ def _validate_project_dir(
     project_dir: Path | None,
     scope: _Scope,
 ) -> None:
-    if scope == SCOPE_PROJECT and CURSOR in clients and project_dir is None:
-        raise ValueError("A project directory is required for the Cursor project protocol target.")
+    if (
+        scope == SCOPE_PROJECT
+        and any(client_id in _PROJECT_PROTOCOL_CLIENT_IDS for client_id in clients)
+        and project_dir is None
+    ):
+        raise ValueError("A project directory is required for the project protocol target.")
 
 
 def _apply_to_clients(
@@ -235,19 +249,38 @@ def _apply_to_clients(
     for client_id in clients:
         display_name = client_display_name(client_id)
         if scope == SCOPE_PROJECT:
-            if client_id != CURSOR:
+            if client_id not in _PROJECT_PROTOCOL_CLIENT_IDS:
                 outcomes.append(_project_scope_skip(client_id, display_name))
                 continue
             if project_dir is None:  # pragma: no cover - validated before dispatch
-                raise ValueError(
-                    "A project directory is required for the Cursor project protocol target."
+                raise ValueError("A project directory is required for the project protocol target.")
+            if client_id == CURSOR:
+                outcome = (
+                    _install_cursor_project_rule(project_dir, display_name)
+                    if operation == "install"
+                    else _uninstall_cursor_project_rule(project_dir, display_name)
                 )
-            outcome = (
-                _install_cursor_project_rule(project_dir, display_name)
-                if operation == "install"
-                else _uninstall_cursor_project_rule(project_dir, display_name)
-            )
+            else:
+                outcome = _apply_to_path(
+                    client_id,
+                    display_name,
+                    _antigravity_project_instruction_path(project_dir),
+                    operation=operation,
+                )
             outcomes.append(outcome)
+            continue
+        if client_id == ANTIGRAVITY:
+            outcomes.append(
+                ProtocolInstallOutcome(
+                    client_id=client_id,
+                    display_name=display_name,
+                    instruction_path=None,
+                    successful=True,
+                    changed=False,
+                    skipped=True,
+                    detail="no validated user-scope instruction target; use project scope",
+                )
+            )
             continue
         if client_id == CLAUDE_DESKTOP:
             outcomes.append(
@@ -343,6 +376,11 @@ def _install_cursor_protocol(display_name: str) -> ProtocolInstallOutcome:
 def _cursor_project_rule_path(project_dir: Path) -> Path:
     """Return the dedicated Cursor project-rule path for ``project_dir``."""
     return project_dir / _CURSOR_RULE_RELATIVE_PATH
+
+
+def _antigravity_project_instruction_path(project_dir: Path) -> Path:
+    """Return Antigravity's workspace instruction path for ``project_dir``."""
+    return project_dir / _ANTIGRAVITY_PROJECT_INSTRUCTION_RELATIVE_PATH
 
 
 def _install_cursor_project_rule(
@@ -489,7 +527,7 @@ def _install_path(client_id: str) -> Path:
 
 
 def _uninstall_paths(client_id: str) -> tuple[Path, ...]:
-    if client_id == CLAUDE_DESKTOP:
+    if client_id in {CLAUDE_DESKTOP, ANTIGRAVITY}:
         return ()
     if client_id == VS_CODE:
         return (_vscode_user_rule_path(),)

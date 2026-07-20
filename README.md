@@ -26,7 +26,7 @@ les logs, les ULID internes, l'historique et le journal d'opérations.
 | Index | `datacron index` incrémental, `datacron reindex` complet, réparation automatique à la lecture |
 | Évaluation | `datacron eval` sur le pipeline MCP réel : recall@k, MRR, nDCG, fraîcheur, latence et payload tokens |
 | Setup guidé | `datacron setup` : init + index + enregistrement MCP en une commande |
-| Clients | Auto-détection et enregistrement via `datacron setup --client all` : Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, VS Code |
+| Clients | Auto-détection et enregistrement via `datacron setup --client all` : Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, Codex CLI, Windsurf, VS Code |
 | Protocole mémoire | Instructions MCP universelles + règles globales natives installées pour les clients pris en charge |
 | Distribution | Installeur Windows (`Datacron-Setup.exe`), exécutable autonome (PyInstaller) sans Python requis, ou installation depuis les sources |
 
@@ -101,7 +101,7 @@ datacron mcp install --client claude-desktop --vault /path/to/vault
 ```
 
 La sous-commande `mcp install` ci-dessus est dédiée à Claude Desktop. Pour Codex CLI,
-Gemini CLI, Cursor et les autres clients, utilise le setup multi-client avec
+Gemini CLI, Antigravity, Cursor et les autres clients, utilise le setup multi-client avec
 `datacron setup --client <identifiant>` ou l'auto-détection avec `--client all`.
 
 Redémarre le ou les clients configurés après l'installation.

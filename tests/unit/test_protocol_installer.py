@@ -320,20 +320,77 @@ def test_cursor_project_uninstall_deletes_owned_rule_and_leaves_foreign_file(
     assert rule_path.read_bytes() == foreign_bytes
 
 
+def test_antigravity_project_protocol_is_idempotent_and_reversible(tmp_path: Path) -> None:
+    project_dir = tmp_path / "workspace"
+    path = project_dir / "GEMINI.md"
+    path.parent.mkdir(parents=True)
+    original = codecs.BOM_UTF8 + b"# Workspace instructions\r\n\r\nKeep this text."
+    path.write_bytes(original)
+
+    first = install_memory_protocol("antigravity", project_dir=project_dir, scope="project")[0]
+    installed = path.read_bytes()
+    second = install_memory_protocol("antigravity", project_dir=project_dir, scope="project")[0]
+
+    assert first.successful is True
+    assert first.changed is True
+    assert first.instruction_path == path
+    assert second.successful is True
+    assert second.changed is False
+    assert path.read_bytes() == installed
+    assert installed.startswith(original)
+    assert installed.count(PROTOCOL_MARKER_BEGIN.encode()) == 1
+    assert installed.count(PROTOCOL_MARKER_END.encode()) == 1
+
+    removed = uninstall_memory_protocol("antigravity", project_dir=project_dir, scope="project")[0]
+    absent = uninstall_memory_protocol("antigravity", project_dir=project_dir, scope="project")[0]
+
+    assert removed.successful is True
+    assert removed.changed is True
+    assert absent.changed is False
+    assert path.read_bytes() == original
+
+
+def test_antigravity_user_protocol_is_explicitly_skipped(fake_home: Path) -> None:
+    outcome = install_memory_protocol("antigravity")[0]
+
+    assert outcome.successful is True
+    assert outcome.changed is False
+    assert outcome.skipped is True
+    assert outcome.instruction_path is None
+    assert "no validated user-scope instruction target" in outcome.detail
+    assert not (fake_home / ".gemini").exists()
+
+
 def test_cursor_project_all_is_not_gated_on_client_detection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def forbidden_detection(**_kwargs: object) -> tuple[str, ...]:
-        raise AssertionError("Cursor project rules must not depend on local detection")
+    detected: list[tuple[str, ...] | None] = []
 
-    monkeypatch.setattr(protocol, "detect_clients", forbidden_detection)
+    def absent_antigravity(*, include: tuple[str, ...] | None = None) -> tuple[str, ...]:
+        detected.append(include)
+        return ()
+
+    monkeypatch.setattr(protocol, "detect_clients", absent_antigravity)
 
     outcome = install_memory_protocol(PROTOCOL_ALL, project_dir=tmp_path, scope="project")[0]
 
     assert outcome.client_id == "cursor"
     assert outcome.successful is True
     assert (tmp_path / _CURSOR_RULE_RELATIVE_PATH).is_file()
+    assert detected == [("antigravity",)]
+
+
+def test_project_all_adds_antigravity_protocol_when_profile_is_detected(
+    fake_home: Path, tmp_path: Path
+) -> None:
+    (fake_home / ".gemini" / "antigravity").mkdir(parents=True)
+
+    outcomes = install_memory_protocol(PROTOCOL_ALL, project_dir=tmp_path, scope="project")
+
+    assert [outcome.client_id for outcome in outcomes] == ["cursor", "antigravity"]
+    assert all(outcome.successful for outcome in outcomes)
+    assert (tmp_path / "GEMINI.md").read_text(encoding="utf-8").count(PROTOCOL_MARKER_BEGIN) == 1
 
 
 def test_non_cursor_project_scope_is_an_explicit_skip(tmp_path: Path) -> None:

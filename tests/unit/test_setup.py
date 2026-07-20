@@ -597,6 +597,7 @@ def test_run_setup_all_installs_detected_clients(
     [
         ("cursor", Path(".cursor/mcp.json")),
         ("gemini-cli", Path(".gemini/settings.json")),
+        ("antigravity", Path(".agents/mcp_config.json")),
         ("codex-cli", Path(".codex/config.toml")),
         ("vscode", Path(".vscode/mcp.json")),
     ],
@@ -631,6 +632,7 @@ def test_run_setup_specific_client_writes_only_requested_project_config(
     candidate_paths = {
         tmp_path / ".cursor" / "mcp.json",
         tmp_path / ".gemini" / "settings.json",
+        tmp_path / ".agents" / "mcp_config.json",
         tmp_path / ".codex" / "config.toml",
         tmp_path / ".vscode" / "mcp.json",
     }

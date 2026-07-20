@@ -4,8 +4,9 @@
 
 This page covers the graphical `Datacron-Setup.exe` installer: one double-click, no
 Python and no terminal, that installs Datacron for your user account and
-**automatically registers Datacron with the detected AI clients** and installs its memory
-protocol (Claude Desktop, Claude Code, Cursor, Gemini CLI, Codex CLI, Windsurf, VS Code).
+**automatically registers Datacron with the detected AI clients** (Claude Desktop, Claude
+Code, Cursor, Gemini CLI, Antigravity, Codex CLI, Windsurf, VS Code). It also installs the
+supported user-scope memory protocol.
 
 If you prefer the command line (`datacron setup`), see the
 [installation and setup guide](setup.md) instead.

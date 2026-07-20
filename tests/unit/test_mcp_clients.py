@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from datacron import setup_wizard
 from datacron.installers import mcp_clients
 from datacron.installers.mcp_clients import (
     SCOPE_PROJECT,
@@ -33,6 +34,14 @@ from datacron.installers.mcp_clients import (
 
 _COMMAND = "datacron-mcp"
 _ENV = {"DATACRON_VAULT_ROOT": "/vault", "DATACRON_READ_PATHS": "/vault"}
+_ANTIGRAVITY_COMMAND = "datacron"
+_ANTIGRAVITY_ARGS = ["mcp", "serve"]
+_ANTIGRAVITY_ENV = {
+    "DATACRON_VAULT_ROOT": "/vault",
+    "DATACRON_READ_PATHS": "/vault",
+    "DATACRON_WRITE_PATHS": "/vault/_memory",
+    "DATACRON_DURABILITY": "best-effort",
+}
 
 
 @pytest.fixture
@@ -83,6 +92,150 @@ def test_discover_detects_present_clients(fake_home: Path, tmp_path: Path) -> No
     assert ("claude-code", SCOPE_PROJECT) in found
     # Windsurf was not made present.
     assert not any(client == "windsurf" for client, _ in found)
+
+
+def test_antigravity_detection_requires_live_profile(fake_home: Path) -> None:
+    gemini_home = fake_home / ".gemini"
+    (gemini_home / "antigravity-ide").mkdir(parents=True)
+    (gemini_home / "antigravity-backup").mkdir()
+    live_profile = gemini_home / "antigravity"
+    live_profile.write_text("not a profile directory", encoding="utf-8")
+
+    absent = mcp_clients.detect_clients(include=(mcp_clients.ANTIGRAVITY,))
+
+    live_profile.unlink()
+    live_profile.mkdir()
+    present = mcp_clients.detect_clients(include=(mcp_clients.ANTIGRAVITY,))
+
+    assert absent == ()
+    assert present == (mcp_clients.ANTIGRAVITY,)
+    assert mcp_clients.ANTIGRAVITY in mcp_clients.ALL_CLIENT_IDS
+    assert mcp_clients.ANTIGRAVITY in setup_wizard.CLIENT_CHOICES
+    assert mcp_clients.client_display_name(mcp_clients.ANTIGRAVITY) == "Antigravity"
+
+
+def test_antigravity_discovery_returns_user_and_project_targets(
+    fake_home: Path, tmp_path: Path
+) -> None:
+    (fake_home / ".gemini" / "antigravity").mkdir(parents=True)
+    project_dir = tmp_path / "workspace"
+
+    targets = discover_targets(
+        scopes=(SCOPE_USER, SCOPE_PROJECT),
+        project_dir=project_dir,
+        include=(mcp_clients.ANTIGRAVITY,),
+    )
+
+    assert targets == [
+        mcp_clients.ClientTarget(
+            mcp_clients.ANTIGRAVITY,
+            "Antigravity",
+            SCOPE_USER,
+            fake_home / ".gemini" / "config" / "mcp_config.json",
+            "json-mcpservers",
+        ),
+        mcp_clients.ClientTarget(
+            mcp_clients.ANTIGRAVITY,
+            "Antigravity",
+            SCOPE_PROJECT,
+            project_dir / ".agents" / "mcp_config.json",
+            "json-mcpservers",
+        ),
+    ]
+
+
+def test_antigravity_install_user_and_project_is_idempotent(
+    fake_home: Path, tmp_path: Path
+) -> None:
+    (fake_home / ".gemini" / "antigravity").mkdir(parents=True)
+    targets = discover_targets(
+        scopes=(SCOPE_USER, SCOPE_PROJECT),
+        project_dir=tmp_path,
+        include=(mcp_clients.ANTIGRAVITY,),
+    )
+
+    first = install_targets(
+        targets,
+        command=_ANTIGRAVITY_COMMAND,
+        args=list(_ANTIGRAVITY_ARGS),
+        env=dict(_ANTIGRAVITY_ENV),
+    )
+    first_bytes = {target.config_path: target.config_path.read_bytes() for target in targets}
+    second = install_targets(
+        targets,
+        command=_ANTIGRAVITY_COMMAND,
+        args=list(_ANTIGRAVITY_ARGS),
+        env=dict(_ANTIGRAVITY_ENV),
+    )
+
+    assert all(outcome.installed for outcome in [*first, *second])
+    for target in targets:
+        config = json.loads(target.config_path.read_text(encoding="utf-8"))
+        assert target.config_path.read_bytes() == first_bytes[target.config_path]
+        assert config["mcpServers"] == {
+            "datacron": {
+                "args": _ANTIGRAVITY_ARGS,
+                "command": _ANTIGRAVITY_COMMAND,
+                "env": _ANTIGRAVITY_ENV,
+            }
+        }
+
+
+def test_antigravity_install_accepts_empty_user_config(fake_home: Path, tmp_path: Path) -> None:
+    (fake_home / ".gemini" / "antigravity").mkdir(parents=True)
+    config_path = fake_home / ".gemini" / "config" / "mcp_config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_bytes(b"")
+    target = discover_targets(
+        scopes=(SCOPE_USER,),
+        project_dir=tmp_path,
+        include=(mcp_clients.ANTIGRAVITY,),
+    )[0]
+
+    outcome = install_targets(
+        [target],
+        command=_ANTIGRAVITY_COMMAND,
+        args=list(_ANTIGRAVITY_ARGS),
+        env=dict(_ANTIGRAVITY_ENV),
+    )[0]
+
+    assert outcome.installed is True
+    assert json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["datacron"] == {
+        "args": _ANTIGRAVITY_ARGS,
+        "command": _ANTIGRAVITY_COMMAND,
+        "env": _ANTIGRAVITY_ENV,
+    }
+
+
+def test_antigravity_unregister_preserves_other_config(fake_home: Path, tmp_path: Path) -> None:
+    user_path = fake_home / ".gemini" / "config" / "mcp_config.json"
+    project_path = tmp_path / ".agents" / "mcp_config.json"
+    existing = {
+        "mcpServers": {
+            "datacron": {"command": "datacron"},
+            "other": {"command": "keep"},
+        },
+        "theme": "dark",
+    }
+    for path in (user_path, project_path):
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(existing), encoding="utf-8")
+    targets = discover_unregistration_targets(
+        scopes=(SCOPE_USER, SCOPE_PROJECT),
+        project_dir=tmp_path,
+        include=(mcp_clients.ANTIGRAVITY,),
+    )
+
+    outcomes = unregister_targets(targets)
+
+    assert len(outcomes) == 2
+    assert all(outcome.successful and outcome.changed for outcome in outcomes)
+    for path in (user_path, project_path):
+        config = json.loads(path.read_text(encoding="utf-8"))
+        assert config == {
+            "mcpServers": {"other": {"command": "keep"}},
+            "theme": "dark",
+        }
 
 
 def test_install_json_mcpservers_merges_and_preserves(fake_home: Path, tmp_path: Path) -> None:
