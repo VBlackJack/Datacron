@@ -373,6 +373,105 @@ class TestListNotes:
         assert actual == expected
 
     @pytest.mark.asyncio
+    async def test_frontmatter_filter_has_index_fallback_parity_before_pagination(
+        self,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datacron.mcp.tools import _list_notes_impl
+
+        filter_notes = (
+            ("filter/a.md", "01HQXR7K9YZ8M2N3PQRSTV4WXD", {"lot1": "Target"}),
+            ("filter/b.md", "01HQXR7K9YZ8M2N3PQRSTV4WXE", {"lot1": "target"}),
+            (
+                "filter/c.md",
+                "01HQXR7K9YZ8M2N3PQRSTV4WXF",
+                {"lot1": ["other", "TARGET"]},
+            ),
+            ("filter/d.md", "01HQXR7K9YZ8M2N3PQRSTV4WXG", {"lot1": "miss"}),
+        )
+        for rel_path, note_id, metadata in filter_notes:
+            _write_memory_note(
+                tmp_vault,
+                rel_path,
+                f"# {rel_path}\n",
+                metadata_overrides={"id": note_id, "kind": "Decision", **metadata},
+            )
+        settings = Settings(
+            read_paths=[tmp_vault],
+            vault_root=tmp_vault,
+            max_result_count=20,
+            max_result_tokens=8000,
+        )
+        fallback_app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+        )
+        frontmatter_filter = {"LOT1": "target", "KIND": "decision"}
+        expected = await _list_notes_impl(
+            fallback_app,
+            folder="filter",
+            tags=None,
+            frontmatter=frontmatter_filter,
+            limit=1,
+            offset=1,
+        )
+
+        store = SQLiteFTS5Store()
+        await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+        indexed_app = build_app(
+            settings=settings,
+            vault_root=tmp_vault,
+            chunker=MarkdownChunker(),
+            store=store,
+        )
+
+        async def fail_full_listing(
+            folder: str | None = None,
+            limit: int | None = None,
+        ) -> list[Note]:
+            raise AssertionError(f"unexpected filesystem listing: {folder=}, {limit=}")
+
+        monkeypatch.setattr(indexed_app.vault_reader, "list_notes", fail_full_listing)
+        try:
+            actual = await _list_notes_impl(
+                indexed_app,
+                folder="filter",
+                tags=None,
+                frontmatter=frontmatter_filter,
+                limit=1,
+                offset=1,
+            )
+        finally:
+            await store.close()
+
+        assert actual == expected
+        assert actual["total"] == 3
+        assert actual["returned"] == 1
+        assert actual["offset"] == 1
+        assert actual["next_offset"] == 2
+        assert [note["rel_path"] for note in actual["notes"]] == ["filter/b.md"]
+
+    @pytest.mark.asyncio
+    async def test_omitted_frontmatter_filter_is_backward_compatible(
+        self,
+        app: DatacronApp,
+    ) -> None:
+        from datacron.mcp.tools import _list_notes_impl
+
+        omitted = await _list_notes_impl(app, folder=None, tags=None, limit=20)
+        explicit_none = await _list_notes_impl(
+            app,
+            folder=None,
+            tags=None,
+            frontmatter=None,
+            limit=20,
+        )
+
+        assert explicit_none == omitted
+
+    @pytest.mark.asyncio
     async def test_index_unavailable_uses_filesystem_fallback(
         self,
         app: DatacronApp,
@@ -406,6 +505,39 @@ class TestListNotes:
 
         assert result["error"]["type"] == "ValueError"
         assert result["error"]["message"] == "offset must be >= 0"
+
+    @pytest.mark.asyncio
+    async def test_frontmatter_filter_rejects_more_than_eight_pairs(
+        self,
+        app: DatacronApp,
+    ) -> None:
+        from datacron.mcp.tools import _list_notes_impl
+
+        result = await _list_notes_impl(
+            app,
+            folder=None,
+            tags=None,
+            frontmatter={f"key-{index}": "value" for index in range(9)},
+            limit=20,
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["message"] == "frontmatter must contain at most 8 pairs"
+
+    @pytest.mark.asyncio
+    async def test_frontmatter_filter_rejects_empty_key(self, app: DatacronApp) -> None:
+        from datacron.mcp.tools import _list_notes_impl
+
+        result = await _list_notes_impl(
+            app,
+            folder=None,
+            tags=None,
+            frontmatter={"   ": "value"},
+            limit=20,
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["message"] == "frontmatter keys must be non-empty"
 
     @pytest.mark.asyncio
     async def test_folder_escape_returns_error_response(self, app: DatacronApp) -> None:
@@ -2292,13 +2424,21 @@ class TestAudit:
         configure_logging(app.settings)
         # Re-resolve the logger so the QueueListener is wired before the call.
         get_logger("mcp.tools").info("warmup")
-        await _list_notes_impl(app, folder=None, tags=None, limit=5)
+        frontmatter_filter = {"title": "welcome to the demo vault"}
+        await _list_notes_impl(
+            app,
+            folder=None,
+            tags=None,
+            frontmatter=frontmatter_filter,
+            limit=5,
+        )
         shutdown_logging()
 
         log_files = list((tmp_path / "logs").glob("datacron_*.log"))
         assert log_files, "expected at least one log file under DATACRON_LOG_DIR"
         contents = log_files[0].read_text(encoding="utf-8")
         assert "AUDIT tool=list_notes" in contents
+        assert f"frontmatter={frontmatter_filter!r}" in contents
 
     @pytest.mark.asyncio
     async def test_get_note_emits_audit_line(self, app: DatacronApp, tmp_path: Path) -> None:

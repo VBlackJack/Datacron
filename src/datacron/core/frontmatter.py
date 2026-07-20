@@ -35,6 +35,7 @@ __all__ = [
     "build_tiered_alias_index",
     "coerce_string_list",
     "extract_tags",
+    "matches_frontmatter_filter",
     "parse",
     "resolve_note_title",
     "serialize",
@@ -132,6 +133,37 @@ def coerce_string_list(
         return [str(item).strip() for item in value if str(item).strip()]
     stripped = str(value).strip()
     return [stripped] if stripped or keep_empty_scalar else []
+
+
+def matches_frontmatter_filter(
+    metadata: Mapping[str, object],
+    filters: Mapping[str, str] | None,
+) -> bool:
+    """Return whether top-level frontmatter matches every requested key/value pair.
+
+    Keys and values are compared case-insensitively. Scalar values use their
+    string representation; list values match when any element does.
+    """
+    if not filters:
+        return True
+
+    for raw_key, expected in filters.items():
+        normalized_key = raw_key.casefold()
+        if not normalized_key:
+            return False
+        actual_values = [
+            value for key, value in metadata.items() if str(key).casefold() == normalized_key
+        ]
+        if not actual_values:
+            return False
+        normalized_expected = expected.casefold()
+        if not any(
+            str(candidate).casefold() == normalized_expected
+            for value in actual_values
+            for candidate in (value if isinstance(value, list) else [value])
+        ):
+            return False
+    return True
 
 
 def resolve_note_title(

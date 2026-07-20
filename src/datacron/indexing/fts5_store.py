@@ -26,7 +26,11 @@ from typing import Any, Final, cast, final
 
 import aiosqlite
 
-from datacron.core.frontmatter import coerce_string_list, extract_tags
+from datacron.core.frontmatter import (
+    coerce_string_list,
+    extract_tags,
+    matches_frontmatter_filter,
+)
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, ChunkType, IndexStats, Note, SearchResult
 from datacron.core.paths import read_ulid_mappings
@@ -277,6 +281,12 @@ ORDER BY sort_key COLLATE BINARY
 LIMIT ? OFFSET ?;
 """
 
+_LIST_FILTERABLE_NOTE_PATHS_SQL: Final[str] = f"""
+SELECT rel_path, frontmatter_json
+{_NOTE_PATH_FILTER_SQL}
+ORDER BY sort_key COLLATE BINARY;
+"""
+
 _LIST_INDEXED_NOTES_WITH_MTIME_SQL: Final[str] = """
 SELECT rel_path, note_id, content_hash, fs_mtime
 FROM notes
@@ -522,10 +532,11 @@ class SQLiteFTS5Store:
         *,
         folder: str | None,
         tags: list[str],
+        frontmatter: dict[str, str] | None = None,
         limit: int,
         offset: int,
     ) -> tuple[list[str], int]:
-        """Return one SQL-paginated path page in filesystem discovery order."""
+        """Return one filtered path page in filesystem discovery order."""
         if limit <= 0:
             raise ValueError("limit must be positive")
         if offset < 0:
@@ -544,6 +555,26 @@ class SQLiteFTS5Store:
             normalized_folder,
             json.dumps(required_tags, ensure_ascii=False),
         )
+        if frontmatter:
+            async with connection.execute(
+                _LIST_FILTERABLE_NOTE_PATHS_SQL,
+                parameters,
+            ) as cursor:
+                rows = await cursor.fetchall()
+            matching_paths: list[str] = []
+            for row in rows:
+                metadata_raw = json.loads(str(row["frontmatter_json"]))
+                metadata = (
+                    cast("dict[str, object]", metadata_raw)
+                    if isinstance(metadata_raw, dict)
+                    else {}
+                )
+                if matches_frontmatter_filter(metadata, frontmatter):
+                    matching_paths.append(str(row["rel_path"]))
+            total = len(matching_paths)
+            start = min(offset, total)
+            return matching_paths[start : start + limit], total
+
         async with connection.execute(_COUNT_NOTE_PATHS_SQL, parameters) as cursor:
             count_row = await cursor.fetchone()
         total = 0 if count_row is None else int(count_row[0])

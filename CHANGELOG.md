@@ -9,6 +9,11 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- `list_notes` now accepts up to eight case-insensitive top-level frontmatter key/value
+  filters with AND semantics and list-element matching.
+
 ## [2026.0719.01] - 2026-07-19
 
 ### Added

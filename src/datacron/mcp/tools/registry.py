@@ -89,20 +89,29 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         description=(
             "Use this to discover vault structure before deeper reads. Return an "
             "offset/limit paginated list of notes in the vault, optionally scoped to "
-            "a subfolder and/or filtered by tags. Each entry includes the stable ULID, "
-            "title, tags, aliases, and timestamps."
+            "a subfolder and/or filtered by tags or top-level frontmatter (for example, "
+            "frontmatter={'confidence': 'needs_verification'}). Each entry includes the "
+            "stable ULID, title, tags, aliases, and timestamps."
         ),
         annotations=_READ_ANNOTATIONS,
     )
     async def list_notes(
         folder: str | None = None,
         tags: list[str] | None = None,
+        frontmatter: dict[str, str] | None = None,
         limit: int = 20,
         offset: int = 0,
     ) -> ListNotesOutput:
         return cast(
             "ListNotesOutput",
-            await _list_notes_impl(app, folder=folder, tags=tags, limit=limit, offset=offset),
+            await _list_notes_impl(
+                app,
+                folder=folder,
+                tags=tags,
+                frontmatter=frontmatter,
+                limit=limit,
+                offset=offset,
+            ),
         )
 
     @server.tool(

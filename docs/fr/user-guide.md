@@ -25,11 +25,16 @@ il renvoie à Claude uniquement les notes ou fragments (chunks) pertinents. Conc
 
 | Outil | À quoi il sert |
 |---|---|
-| `list_notes` | Liste paginée des notes, filtrable par dossier et par tags ; renvoie ULID, titre, tags, alias et dates. |
+| `list_notes` | Liste paginée des notes, filtrable par dossier, par tags et par frontmatter de premier niveau ; renvoie ULID, titre, tags, alias et dates. |
 | `get_note` | Lit une note précise par ULID, par identifiant de chunk ou par chemin relatif ; contenu paginé, chunk isolé, ou plan des titres. |
 | `search_text` | Recherche BM25 sur l'index FTS5 : snippets classés, notes obsolètes démotées par défaut. |
 | `search_regex` | Recherche littérale par expression régulière via ripgrep, résolue vers les chunks indexés. |
 | `get_backlinks` | Renvoie les chunks dont les wikilinks pointent vers un ULID ou un alias donné. |
+
+Par exemple, `list_notes(frontmatter={"confidence": "needs_verification", "origin": "ai"})`
+renvoie les notes qui correspondent aux deux paires. Les clés et les valeurs de frontmatter
+sont comparées sans tenir compte de la casse ; une liste correspond si l'un de ses éléments
+correspond. Une requête peut contenir au maximum huit paires.
 
 ### Écrire (si activé)
 
