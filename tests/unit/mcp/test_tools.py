@@ -1101,6 +1101,30 @@ class TestCreateNoteAi:
         assert metadata["rejected"] == rejected
 
     @pytest.mark.asyncio
+    async def test_empty_rejected_list_is_omitted_from_created_note(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+    ) -> None:
+        from datacron.mcp.tools import _create_note_ai_impl
+
+        rel_path = "_memory/facts/empty-rejected-options.md"
+        result = await _create_note_ai_impl(
+            writable_app,
+            rel_path=rel_path,
+            title="Empty rejected options",
+            body="# Empty rejected options\n\nDecision context.\n",
+            origin="human",
+            confidence="high",
+            tags=["memory", "decision"],
+            rejected=[],
+        )
+        metadata, _body = parse((tmp_vault / rel_path).read_text(encoding="utf-8"))
+
+        assert "error" not in result
+        assert "rejected" not in metadata
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("rejected", "message"),
         [
