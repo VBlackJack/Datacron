@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0720.00] - 2026-07-20
+
 ### Added
 
 - `datacron setup` can optionally apply the write allowlist machine-wide through the user
