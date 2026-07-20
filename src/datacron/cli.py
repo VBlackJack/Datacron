@@ -798,13 +798,45 @@ def setup(
 # datacron.exe setup --reset --yes --client all --scope both --vault "<vault>"
 
 
+def _guard_vault_target(vault_root: Path) -> Path:
+    """Reject the user profile root as a vault target, regardless of how it was chosen.
+
+    A vault rooted at the profile directory would put every client config, the
+    sidecar index, and the write allowlist on top of the user's entire home
+    tree. There is no legitimate setup for it, so this fails closed even when
+    the path was passed explicitly.
+    """
+    if vault_root == Path.home().resolve():
+        _error(
+            f"Refusing to use the user profile root as a vault ({vault_root}). "
+            "Create a dedicated directory and pass it with --vault."
+        )
+    return vault_root
+
+
 def _prompt_vault(vault: Path | None, assume_yes: bool) -> Path:
+    """Resolve the setup vault root without ever adopting a directory silently.
+
+    Non-interactive runs (``--yes``) require an explicit source: the ``--vault``
+    flag, ``DATACRON_VAULT_ROOT``, or an existing ``.datacron/VAULT.yaml`` in
+    the current directory. A bare cwd/home fallback is never accepted.
+    """
     if vault is not None:
-        return vault.expanduser().resolve()
+        return _guard_vault_target(vault.expanduser().resolve())
     if assume_yes:
-        return Path.cwd().resolve()
+        settings = get_settings()
+        if settings.vault_root is not None:
+            return _guard_vault_target(settings.vault_root.expanduser().resolve())
+        cwd = Path.cwd().resolve()
+        if sidecar_vault_config(cwd).exists():
+            return _guard_vault_target(cwd)
+        _error(
+            "Non-interactive setup (--yes) needs an explicit vault. Pass --vault, "
+            "set DATACRON_VAULT_ROOT, or run from a directory that already "
+            "contains .datacron/VAULT.yaml."
+        )
     answer = typer.prompt("Vault path", default=str(Path.cwd()))
-    return Path(answer).expanduser().resolve()
+    return _guard_vault_target(Path(answer).expanduser().resolve())
 
 
 def _prompt_client(client: str | None, assume_yes: bool) -> str:
