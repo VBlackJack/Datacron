@@ -166,11 +166,15 @@ $env:DATACRON_WRITE_PATHS = "G:\_DATA\_memory"
 datacron mcp serve --vault G:\_DATA
 ```
 
+`datacron setup` peut aussi poser l'allowlist au niveau du poste (variable
+d'environnement utilisateur, opt-in) pour que tous les clients MCP en héritent ;
+défaut : `_memory`, `_drafts`, `_journal`. Voir le [guide d'installation](docs/fr/setup.md).
+
 Tools d'écriture disponibles :
 
 - `create_note_ai` : crée une note Markdown typée, sans overwrite.
 - `append_journal` : ajoute une entrée sous un heading d'une note existante.
-- `set_frontmatter` : met à jour les champs de cycle de vie sans modifier le corps Markdown.
+- `set_frontmatter` : met à jour les champs de cycle de vie et la liste `rejected` (options écartées) sans modifier le corps Markdown.
 - `patch_note_section` : remplace le contenu sous un heading existant avec contrôle CAS.
 - `revert_note` : restaure les octets exacts d'une version conservée dans l'historique.
 
@@ -191,7 +195,7 @@ single-writer sur le vault.
 
 | Tool | Description |
 |---|---|
-| `list_notes` | retourne une liste paginée, filtrable par dossier et tags, avec ULID, titre, tags, alias et dates |
+| `list_notes` | retourne une liste paginée, filtrable par dossier, tags et paires frontmatter clé/valeur, avec ULID, titre, tags, alias et dates |
 | `get_note` | lit une note par ULID, chunk id ou chemin relatif, en contenu paginé, chunk ou plan de headings |
 | `search_text` | effectue une recherche BM25 sur l'index FTS5 avec snippets classés et notes obsolètes démotées par défaut |
 | `search_regex` | effectue une recherche regex via ripgrep et résout les lignes trouvées vers les chunks indexés |
@@ -203,7 +207,7 @@ single-writer sur le vault.
 |---|---|
 | `create_note_ai` | crée une nouvelle note `_memory` typée, confinée aux chemins autorisés, sans overwrite et avec journal durable |
 | `append_journal` | ajoute une entrée Markdown sous un heading, avec confinement, historique exact et écriture atomique |
-| `set_frontmatter` | modifie uniquement les champs de cycle de vie et la date `updated`, en préservant le corps Markdown |
+| `set_frontmatter` | modifie uniquement les champs de cycle de vie, la liste `rejected` et la date `updated`, en préservant le corps Markdown |
 | `patch_note_section` | remplace le contenu d'un heading existant avec CAS, historique exact et préservation des autres sections |
 | `revert_note` | restaure une note depuis son historique adressé par contenu ; l'opération reste durable, réversible et auditée |
 
