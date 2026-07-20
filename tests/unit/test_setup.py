@@ -399,6 +399,7 @@ def test_single_writer_warning_for_known_sync_folder(tmp_path: Path) -> None:
 def test_machine_wide_prompt_displays_existing_value_and_offers_replacement(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     questions: list[str] = []
 
@@ -419,6 +420,9 @@ def test_machine_wide_prompt_displays_existing_value_and_offers_replacement(
 
     assert result == (True, True)
     assert questions == ["Replace the existing user write allowlist?"]
+    output = capsys.readouterr().out
+    assert "The existing user-wide write allowlist differs" in output
+    assert "Default: no, which preserves the existing user environment" in output
 
 
 def test_run_setup_rejects_invalid_client(tmp_path: Path) -> None:
@@ -739,6 +743,106 @@ def test_run_setup_all_warns_when_no_clients(
 # ---------------------------------------------------------------------------
 # CLI wiring
 # ---------------------------------------------------------------------------
+
+
+def test_cli_setup_interactive_explains_prompts_without_changing_defaults(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(setup_wizard, "discover_targets", lambda **_: [])
+
+    result = _runner.invoke(
+        app,
+        ["setup", "--no-index"],
+        input="\n\n\n\nno\nno\nno\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Choose the dedicated Markdown folder" in result.output
+    assert "Vault path" in result.output
+    assert "Default: all, which registers every supported client" in result.output
+    assert "MCP client" in result.output
+    assert "Default: both, so user-wide and project-local" in result.output
+    assert "Install scope" in result.output
+    assert "Default: best-effort, which works across common filesystems" in result.output
+    assert "Durability mode" in result.output
+    assert "Default: no, which keeps write tools unavailable" in result.output
+    assert "Enable the confined write tools?" in result.output
+    assert "Default: no, which keeps normal operation" in result.output
+    assert "Configure certified read-only mode?" in result.output
+    assert "Default: no, which leaves all client instruction files unchanged" in result.output
+    assert "Install the Datacron memory protocol" in result.output
+
+
+def test_cli_setup_interactive_explains_write_boundaries(
+    tmp_path: Path,
+) -> None:
+    result = _runner.invoke(
+        app,
+        [
+            "setup",
+            "--vault",
+            str(tmp_path),
+            "--client",
+            "none",
+            "--enable-write",
+            "--no-index",
+        ],
+        input="\n\nno\nno\nno\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "Choose the only directories where Datacron write tools may change notes" in result.output
+    )
+    assert "_memory, _drafts, _journal under this vault" in result.output
+    assert "Write-allowlisted directories" in result.output
+    assert "Default: no, which limits the change to client configs" in result.output
+    assert "Apply the write allowlist to this user account" in result.output
+
+
+def test_cli_setup_reset_confirmation_is_explained(tmp_path: Path) -> None:
+    result = _runner.invoke(
+        app,
+        [
+            "setup",
+            "--vault",
+            str(tmp_path),
+            "--client",
+            "none",
+            "--reset",
+            "--no-index",
+        ],
+        input="no\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Reset removes this vault's Datacron configuration and generated index" in result.output
+    assert "Default: no, which protects the current configuration and index" in result.output
+    assert "Reset Datacron configuration and generated index for this vault?" in result.output
+    assert "Reset cancelled; nothing changed." in result.output
+
+
+def test_cli_setup_yes_does_not_print_interactive_explanations(tmp_path: Path) -> None:
+    result = _runner.invoke(
+        app,
+        [
+            "setup",
+            "--vault",
+            str(tmp_path),
+            "--client",
+            "none",
+            "--yes",
+            "--no-index",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    for lines in cli_module._SETUP_PROMPT_EXPLANATIONS.values():
+        for line in lines:
+            if "{" not in line:
+                assert line not in result.output
 
 
 def test_cli_setup_yes_client_none(tmp_path: Path) -> None:

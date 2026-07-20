@@ -27,8 +27,9 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, Final, NoReturn
 
 import click
 import typer
@@ -93,6 +94,81 @@ __all__ = ["app", "mcp_entry"]
 
 _LOGGER = get_logger(__name__)
 
+
+class _SetupPrompt(StrEnum):
+    """Stable identifiers for setup's centralized interactive guidance."""
+
+    VAULT = "vault"
+    RESET = "reset"
+    CLIENT = "client"
+    SCOPE = "scope"
+    DURABILITY = "durability"
+    WRITE = "write"
+    WRITE_PATHS = "write-paths"
+    MACHINE_WIDE_WRITE = "machine-wide-write"
+    REPLACE_WRITE_ENV = "replace-write-env"
+    READ_ONLY = "read-only"
+    PROTOCOL = "protocol"
+
+
+_SETUP_PROMPT_EXPLANATIONS: Final[dict[_SetupPrompt, tuple[str, ...]]] = {
+    _SetupPrompt.VAULT: (
+        "Choose the dedicated Markdown folder Datacron will serve as this vault.",
+        "Default: the current directory, which is right when setup runs from the intended vault.",
+        "A different path serves notes and stores the Datacron sidecar there instead.",
+    ),
+    _SetupPrompt.RESET: (
+        "Reset removes this vault's Datacron configuration and generated index before setup.",
+        "Default: no, which protects the current configuration and index.",
+        "Choosing yes still preserves Markdown notes, identities, audit data, and logs.",
+    ),
+    _SetupPrompt.CLIENT: (
+        "Choose which MCP client configuration receives the Datacron server entry.",
+        "Default: all, which registers every supported client detected on this machine.",
+        "Choose one client to limit registration, or none to leave client configs unchanged.",
+    ),
+    _SetupPrompt.SCOPE: (
+        "Choose where detected MCP clients receive their Datacron entry.",
+        "Default: both, so user-wide and project-local configurations are covered.",
+        "Choose user for all projects or project to confine registration to this vault.",
+    ),
+    _SetupPrompt.DURABILITY: (
+        "Durability controls whether writes require proof that directory metadata reached storage.",
+        "Default: best-effort, which works across common filesystems and logs degraded guarantees.",
+        "Choose strict to refuse writes when the filesystem cannot prove directory durability.",
+    ),
+    _SetupPrompt.WRITE: (
+        "Write tools let AI clients create and update notes inside an explicit allowlist.",
+        "Default: no, which keeps write tools unavailable unless you opt in.",
+        "Choose yes to expose them only inside the directories selected next.",
+    ),
+    _SetupPrompt.WRITE_PATHS: (
+        "Choose the only directories where Datacron write tools may change notes.",
+        "Default: {default_paths} under this vault, the standard confined work areas.",
+        "Changing the list moves or narrows the write boundary; other paths stay read-only.",
+    ),
+    _SetupPrompt.MACHINE_WIDE_WRITE: (
+        "This can persist the write allowlist for future MCP clients in this user account.",
+        "Default: no, which limits the change to client configs written by this setup.",
+        "Choose yes to make the same allowlist available user-wide.",
+    ),
+    _SetupPrompt.REPLACE_WRITE_ENV: (
+        "The existing user-wide write allowlist differs from this setup's directories.",
+        "Default: no, which preserves the existing user environment unchanged.",
+        "Choose yes to replace it with the allowlist selected for this vault.",
+    ),
+    _SetupPrompt.READ_ONLY: (
+        "Certified read-only mode blocks every MCP write operation.",
+        "Default: no, which keeps normal operation while writes still require a separate opt-in.",
+        "Choose yes to block writes even when write directories were allowlisted.",
+    ),
+    _SetupPrompt.PROTOCOL: (
+        "The memory protocol adds Datacron workflow instructions to supported client files.",
+        "Default: no, which leaves all client instruction files unchanged.",
+        "Choose yes to add or update only Datacron's marked instruction blocks.",
+    ),
+}
+
 app = typer.Typer(
     name="datacron",
     help="Datacron -- local-first MCP server for Markdown vaults.",
@@ -138,6 +214,12 @@ def main(
 def _print(message: str) -> None:
     """Write to stdout via Typer (testable and stream-safe)."""
     typer.echo(message)
+
+
+def _explain(prompt: _SetupPrompt, **values: str) -> None:
+    """Render centralized guidance immediately before one interactive setup prompt."""
+    for line in _SETUP_PROMPT_EXPLANATIONS[prompt]:
+        _print(f"  {line.format_map(values)}")
 
 
 def _error(message: str) -> NoReturn:
@@ -724,17 +806,15 @@ def setup(
     started = _log_invocation("setup", assume_yes=assume_yes)
 
     resolved_vault = _prompt_vault(vault, assume_yes)
-    if (
-        reset
-        and not assume_yes
-        and not typer.confirm(
+    if reset and not assume_yes:
+        _explain(_SetupPrompt.RESET)
+        if not typer.confirm(
             "Reset Datacron configuration and generated index for this vault?",
             default=False,
-        )
-    ):
-        _print("Reset cancelled; nothing changed.")
-        _log_completion("setup", started)
-        return
+        ):
+            _print("Reset cancelled; nothing changed.")
+            _log_completion("setup", started)
+            return
     resolved_client = _prompt_client(client, assume_yes)
     resolved_scope = _prompt_scope(scope, resolved_client, assume_yes)
     resolved_durability = _prompt_durability(durability, assume_yes)
@@ -747,16 +827,19 @@ def setup(
         resolved_write_paths,
         assume_yes,
     )
-    resolved_read_only = read_only or (
-        not assume_yes and typer.confirm("Configure certified read-only mode?", default=False)
-    )
-    resolved_protocol = protocol_enabled or (
-        not assume_yes
-        and typer.confirm(
+    if read_only or assume_yes:
+        resolved_read_only = read_only
+    else:
+        _explain(_SetupPrompt.READ_ONLY)
+        resolved_read_only = typer.confirm("Configure certified read-only mode?", default=False)
+    if protocol_enabled or assume_yes:
+        resolved_protocol = protocol_enabled
+    else:
+        _explain(_SetupPrompt.PROTOCOL)
+        resolved_protocol = typer.confirm(
             "Install the Datacron memory protocol in detected client instructions?",
             default=False,
         )
-    )
 
     plan = SetupPlan(
         vault_path=resolved_vault,
@@ -835,6 +918,7 @@ def _prompt_vault(vault: Path | None, assume_yes: bool) -> Path:
             "set DATACRON_VAULT_ROOT, or run from a directory that already "
             "contains .datacron/VAULT.yaml."
         )
+    _explain(_SetupPrompt.VAULT)
     answer = typer.prompt("Vault path", default=str(Path.cwd()))
     return _guard_vault_target(Path(answer).expanduser().resolve())
 
@@ -846,6 +930,7 @@ def _prompt_client(client: str | None, assume_yes: bool) -> str:
         return client
     if assume_yes:
         return CLIENT_ALL
+    _explain(_SetupPrompt.CLIENT)
     answer: str = typer.prompt(
         "MCP client",
         default=CLIENT_ALL,
@@ -861,6 +946,7 @@ def _prompt_scope(scope: str | None, client: str, assume_yes: bool) -> str:
         return scope
     if client != CLIENT_ALL or assume_yes:
         return INSTALL_SCOPE_BOTH
+    _explain(_SetupPrompt.SCOPE)
     answer: str = typer.prompt(
         "Install scope",
         default=INSTALL_SCOPE_BOTH,
@@ -874,6 +960,7 @@ def _prompt_durability(durability: str | None, assume_yes: bool) -> str:
         return durability
     if assume_yes:
         return DEFAULT_DURABILITY_MODE
+    _explain(_SetupPrompt.DURABILITY)
     answer: str = typer.prompt(
         "Durability mode",
         default=DEFAULT_DURABILITY_MODE,
@@ -894,6 +981,7 @@ def _prompt_write(
         return True, _prompt_write_paths(vault_root, assume_yes)
     if assume_yes:
         return False, []
+    _explain(_SetupPrompt.WRITE)
     if not typer.confirm("Enable the confined write tools?", default=False):
         return False, []
     return True, _prompt_write_paths(vault_root, assume_yes)
@@ -904,6 +992,10 @@ def _prompt_write_paths(vault_root: Path, assume_yes: bool) -> list[Path]:
     if assume_yes:
         return default_paths
     default_value = os.pathsep.join(str(path) for path in default_paths)
+    _explain(
+        _SetupPrompt.WRITE_PATHS,
+        default_paths=", ".join(DEFAULT_WRITE_SUBFOLDERS),
+    )
     answer = typer.prompt(
         f"Write-allowlisted directories (separate with {os.pathsep!r})",
         default=default_value,
@@ -928,6 +1020,7 @@ def _prompt_machine_wide_write(
     if not requested:
         if assume_yes:
             return False, False
+        _explain(_SetupPrompt.MACHINE_WIDE_WRITE)
         requested = typer.confirm(
             "Apply the write allowlist to this user account for all future clients?",
             default=False,
@@ -944,6 +1037,7 @@ def _prompt_machine_wide_write(
             if assume_yes:
                 _print("Existing user write allowlist differs; keeping it unchanged.")
             else:
+                _explain(_SetupPrompt.REPLACE_WRITE_ENV)
                 replace = typer.confirm(
                     "Replace the existing user write allowlist?",
                     default=False,
