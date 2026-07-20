@@ -9,6 +9,14 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- The Windows installer wizard now offers a **Write tools** page with two fail-safe
+  opt-ins (unchecked by default): enable the confined write tools and apply the write
+  allowlist to the user environment, mapped to `setup --enable-write` and
+  `--machine-wide-write`. Silent installs get the matching `/ENABLEWRITE` and
+  `/MACHINEWIDEWRITE` switches.
+
 ### Fixed
 
 - `datacron setup --yes` no longer adopts the current directory as the vault silently:

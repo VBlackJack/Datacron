@@ -59,6 +59,11 @@ english.VaultPageCaption=Markdown vault
 english.VaultPageDescription=Choose the folder Datacron should serve.
 english.VaultPageSubCaption=You can start with an empty folder and add Markdown notes later.
 english.IndexNow=Index this vault now
+english.WritePageCaption=Write tools
+english.WritePageDescription=Choose whether Datacron may write inside the vault.
+english.WritePageSubCaption=Both options are off by default: the installer does not enable write access unless you opt in. Write access is confined to the _memory, _drafts, and _journal subfolders.
+english.EnableWriteTools=Enable the confined write tools for this vault
+english.MachineWideWrite=Also apply the write allowlist to my user environment (future MCP clients)
 english.VaultRequiredSilent=/VAULT=<path> is required for a silent Datacron installation.
 english.SetupFailed=Datacron was installed, but automatic setup failed. Correct the problem, then run Datacron Setup from the Start menu. Setup will return a failure exit code.
 english.PathFailed=Datacron could not add its application folder to your user PATH.
@@ -77,6 +82,11 @@ french.VaultPageCaption=Vault Markdown
 french.VaultPageDescription=Choisissez le dossier que Datacron doit servir.
 french.VaultPageSubCaption=Vous pouvez commencer avec un dossier vide et ajouter des notes Markdown plus tard.
 french.IndexNow=Indexer ce vault maintenant
+french.WritePageCaption=Outils d'ecriture
+french.WritePageDescription=Choisissez si Datacron peut ecrire dans le vault.
+french.WritePageSubCaption=Les deux options sont desactivees par defaut : l'installeur n'active pas l'ecriture sans votre accord explicite. L'ecriture est confinee aux sous-dossiers _memory, _drafts et _journal.
+french.EnableWriteTools=Activer les outils d'ecriture confines pour ce vault
+french.MachineWideWrite=Appliquer aussi la liste d'autorisation d'ecriture a mon environnement utilisateur (futurs clients MCP)
 french.VaultRequiredSilent=/VAULT=<chemin> est obligatoire pour une installation silencieuse de Datacron.
 french.SetupFailed=Datacron a ete installe, mais la configuration automatique a echoue. Corrigez le probleme, puis lancez Datacron Setup depuis le menu Demarrer. Le setup retournera un code d'echec.
 french.PathFailed=Datacron n'a pas pu ajouter son dossier d'application au PATH utilisateur.
@@ -102,6 +112,7 @@ const
 var
   VaultPage: TInputDirWizardPage;
   ReinstallPage: TInputOptionWizardPage;
+  WritePage: TInputOptionWizardPage;
   IndexNowCheckBox: TNewCheckBox;
   PreviousVaultPath: String;
   LastDetectedVaultPath: String;
@@ -163,6 +174,25 @@ begin
     Result := IndexNowCheckBox.Checked;
 end;
 
+function WriteToolsRequested: Boolean;
+begin
+  if WizardSilent then
+    Result := CommandLineSwitchPresent('ENABLEWRITE')
+  else
+    Result := WritePage.Values[0];
+end;
+
+function MachineWideWriteRequested: Boolean;
+begin
+  { Fail-safe: machine-wide is only honored when write tools are enabled. }
+  if not WriteToolsRequested then
+    Result := False
+  else if WizardSilent then
+    Result := CommandLineSwitchPresent('MACHINEWIDEWRITE')
+  else
+    Result := WritePage.Values[1];
+end;
+
 function ShortcutParameters(const Subcommand: String): String;
 var
   Command: String;
@@ -180,6 +210,13 @@ end;
 function SetupShortcutParameters(Param: String): String;
 begin
   Result := ShortcutParameters('setup');
+end;
+
+procedure WritePageClickCheck(Sender: TObject);
+begin
+  { Machine-wide propagation is meaningless without the write tools opt-in. }
+  if WritePage.Values[1] and not WritePage.Values[0] then
+    WritePage.Values[1] := False;
 end;
 
 procedure InitializeWizard;
@@ -235,6 +272,21 @@ begin
   else
     ReinstallPage.SelectedValueIndex := 0;
 
+  WritePage := CreateInputOptionPage(
+    ReinstallPage.ID,
+    CustomMessage('WritePageCaption'),
+    CustomMessage('WritePageDescription'),
+    CustomMessage('WritePageSubCaption'),
+    False,
+    False
+  );
+  WritePage.Add(CustomMessage('EnableWriteTools'));
+  WritePage.Add(CustomMessage('MachineWideWrite'));
+  { Fail-safe defaults: both opt-ins start unchecked. }
+  WritePage.Values[0] := False;
+  WritePage.Values[1] := False;
+  WritePage.CheckListBox.OnClickCheck := @WritePageClickCheck;
+
   ExistingConfigDetected := False;
   LastDetectedVaultPath := '';
   VaultPath := '';
@@ -264,6 +316,7 @@ function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   if WizardSilent then
     Result := (PageID = VaultPage.ID) or (PageID = ReinstallPage.ID)
+      or (PageID = WritePage.ID)
   else if PageID = ReinstallPage.ID then
     Result := not ExistingConfigDetected
   else
@@ -489,6 +542,10 @@ begin
     Parameters := Parameters + ' --reset';
   if not ShouldIndexNow then
     Parameters := Parameters + ' --no-index';
+  if WriteToolsRequested then
+    Parameters := Parameters + ' --enable-write';
+  if MachineWideWriteRequested then
+    Parameters := Parameters + ' --machine-wide-write';
 
   if not Exec(
     ExecutablePath,
