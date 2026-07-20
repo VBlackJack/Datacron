@@ -24,11 +24,15 @@ returns only the relevant notes or fragments (chunks) to Claude. Concretely:
 
 | Tool | What it does |
 |---|---|
-| `list_notes` | Paginated list of notes, filterable by folder and tags; returns ULID, title, tags, aliases, and dates. |
+| `list_notes` | Paginated list of notes, filterable by folder, tags, and top-level frontmatter; returns ULID, title, tags, aliases, and dates. |
 | `get_note` | Reads a specific note by ULID, chunk id, or relative path; paginated content, single chunk, or heading outline. |
 | `search_text` | BM25 search over the FTS5 index: ranked snippets, stale notes demoted by default. |
 | `search_regex` | Literal regular-expression search via ripgrep, resolved to indexed chunks. |
 | `get_backlinks` | Returns chunks whose wikilinks point to a given ULID or alias. |
+
+For example, `list_notes(frontmatter={"confidence": "needs_verification", "origin": "ai"})`
+returns notes matching both pairs. Frontmatter keys and values are matched case-insensitively;
+a list value matches when any element matches. A request can contain at most eight pairs.
 
 ### Write (if enabled)
 

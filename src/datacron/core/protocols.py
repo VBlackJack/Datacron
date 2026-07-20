@@ -165,6 +165,7 @@ class FTS5Store(Protocol):
         *,
         folder: str | None,
         tags: list[str],
+        frontmatter: dict[str, str] | None = None,
         limit: int,
         offset: int,
     ) -> tuple[list[str], int]:

@@ -21,6 +21,7 @@ import time
 from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
+from datacron.core.frontmatter import matches_frontmatter_filter
 from datacron.core.hashing import FRESHNESS_CONTRACT_ID
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.core.paths import PathConfinementError, read_ulid_mappings, sidecar_dir
@@ -47,6 +48,7 @@ _VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map", "chunk"})
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
 _CHUNK_ID_SEPARATOR: Final[str] = "::"
+_MAX_FRONTMATTER_FILTER_PAIRS: Final[int] = 8
 
 
 class StaleChunkError(ValueError):
@@ -60,24 +62,37 @@ async def _list_notes_impl(
     tags: list[str] | None,
     limit: int,
     offset: int = 0,
+    frontmatter: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     bounded_limit = _bounded_count(limit, app.settings.max_result_count)
-    validation_error = _validate_list_notes_request(offset=offset)
+    validation_error = _validate_list_notes_request(offset=offset, frontmatter=frontmatter)
     if validation_error is not None:
         exc, context = validation_error
-        return _error_response("list_notes", exc, started, folder=folder, **context)
+        return _error_response(
+            "list_notes",
+            exc,
+            started,
+            folder=folder,
+            frontmatter=frontmatter,
+            **context,
+        )
     try:
         indexed_page = await _list_notes_from_index(
             app,
             folder=folder,
             tags=tags,
+            frontmatter=frontmatter,
             limit=bounded_limit,
             offset=offset,
         )
         if indexed_page is None:
             notes = await app.vault_reader.list_notes(folder=folder)
-            filtered = _filter_by_tags(notes, tags)
+            filtered = [
+                note
+                for note in _filter_by_tags(notes, tags)
+                if matches_frontmatter_filter(note.frontmatter, frontmatter)
+            ]
             total = len(filtered)
             start = min(offset, total)
             returned = filtered[start : start + bounded_limit]
@@ -85,12 +100,26 @@ async def _list_notes_impl(
             returned, total = indexed_page
             start = min(offset, total)
     except (FileNotFoundError, ValueError, PathConfinementError) as exc:
-        return _error_response("list_notes", exc, started, folder=folder)
+        return _error_response(
+            "list_notes",
+            exc,
+            started,
+            folder=folder,
+            tags=tags,
+            frontmatter=frontmatter,
+        )
     except Exception:
         # Defensive: per brief, any unexpected tool failure must log a
         # traceback and return an error rather than crashing the server.
         _LOGGER.exception("list_notes failed (folder=%r)", folder)
-        return _error_response("list_notes", RuntimeError("internal error"), started, folder=folder)
+        return _error_response(
+            "list_notes",
+            RuntimeError("internal error"),
+            started,
+            folder=folder,
+            tags=tags,
+            frontmatter=frontmatter,
+        )
 
     end = min(start + bounded_limit, total)
     next_offset = end if end < total else None
@@ -108,6 +137,7 @@ async def _list_notes_impl(
         started,
         folder=folder,
         tags=tags,
+        frontmatter=frontmatter,
         limit=limit,
         offset=offset,
         bounded_limit=bounded_limit,
@@ -122,6 +152,7 @@ async def _list_notes_from_index(
     *,
     folder: str | None,
     tags: list[str] | None,
+    frontmatter: dict[str, str] | None,
     limit: int,
     offset: int,
 ) -> tuple[list[Note], int] | None:
@@ -134,6 +165,7 @@ async def _list_notes_from_index(
         rel_paths, total = await app.store.list_note_paths(
             folder=normalized_folder,
             tags=tags or [],
+            frontmatter=frontmatter,
             limit=limit,
             offset=offset,
         )
@@ -249,9 +281,22 @@ def _validate_get_note_request(
     return None
 
 
-def _validate_list_notes_request(*, offset: int) -> tuple[BaseException, dict[str, int]] | None:
+def _validate_list_notes_request(
+    *,
+    offset: int,
+    frontmatter: dict[str, str] | None,
+) -> tuple[BaseException, dict[str, object]] | None:
     if offset < 0:
         return ValueError("offset must be >= 0"), {"offset": offset}
+    if frontmatter and len(frontmatter) > _MAX_FRONTMATTER_FILTER_PAIRS:
+        return (
+            ValueError(f"frontmatter must contain at most {_MAX_FRONTMATTER_FILTER_PAIRS} pairs"),
+            {"frontmatter_pair_count": len(frontmatter)},
+        )
+    if frontmatter and any(not key.strip() for key in frontmatter):
+        return ValueError("frontmatter keys must be non-empty"), {
+            "frontmatter_pair_count": len(frontmatter)
+        }
     return None
 
 

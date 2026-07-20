@@ -9,9 +9,17 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
-from datacron.core.frontmatter import FrontmatterError, extract_tags, parse, serialize
+from datacron.core.frontmatter import (
+    FrontmatterError,
+    extract_tags,
+    matches_frontmatter_filter,
+    parse,
+    serialize,
+)
 
 
 class TestParse:
@@ -117,6 +125,47 @@ class TestSerialize:
             "origin: human",
             "---",
         ]
+
+
+class TestMatchesFrontmatterFilter:
+    def test_scalar_and_key_matching_are_case_insensitive(self) -> None:
+        assert matches_frontmatter_filter({"Origin": "AI"}, {"origin": "ai"}) is True
+
+    def test_list_matches_any_element(self) -> None:
+        assert (
+            matches_frontmatter_filter(
+                {"supersedes": ["01AAA", "01BBB"]},
+                {"SUPERSEDES": "01bbb"},
+            )
+            is True
+        )
+
+    def test_all_pairs_are_required(self) -> None:
+        assert (
+            matches_frontmatter_filter(
+                {"origin": "ai", "confidence": "high"},
+                {"origin": "AI", "confidence": "low"},
+            )
+            is False
+        )
+
+    def test_missing_key_and_empty_frontmatter_do_not_match(self) -> None:
+        assert matches_frontmatter_filter({"origin": "ai"}, {"type": "decision"}) is False
+        assert matches_frontmatter_filter({}, {"origin": "ai"}) is False
+
+    def test_non_string_values_use_string_representation(self) -> None:
+        metadata = {"priority": 7, "important": True, "reviewed": date(2026, 7, 20)}
+        assert (
+            matches_frontmatter_filter(
+                metadata,
+                {"priority": "7", "important": "true", "reviewed": "2026-07-20"},
+            )
+            is True
+        )
+
+    def test_omitted_or_empty_filter_matches_any_frontmatter(self) -> None:
+        assert matches_frontmatter_filter({}, None) is True
+        assert matches_frontmatter_filter({}, {}) is True
 
 
 class TestExtractTags:
