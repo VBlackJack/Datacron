@@ -25,7 +25,14 @@ Si tu préfères la ligne de commande (`datacron setup`), va plutôt sur le
    Obsidian. Datacron y créera un sous-dossier `.datacron/` (index, config, audit).
 4. Laisse cochée la case **Indexer maintenant** pour construire l'index tout de
    suite (recommandé), ou décoche-la pour le faire plus tard.
-5. Termine. L'installeur ajoute `datacron.exe` à ton **PATH utilisateur**, crée les
+5. **Outils d'écriture** (optionnel) : les deux cases sont décochées par défaut,
+   l'installeur n'active donc pas l'écriture. Coche **Activer les outils d'écriture
+   confinés** pour autoriser l'écriture uniquement dans les sous-dossiers `_memory`,
+   `_drafts` et `_journal`. Coche **Appliquer aussi la liste d'autorisation à mon
+   environnement utilisateur** pour la propager également aux futurs clients MCP.
+   Une variable utilisateur `DATACRON_WRITE_PATHS` existante reste inchangée quand
+   cette option est décochée.
+6. Termine. L'installeur ajoute `datacron.exe` à ton **PATH utilisateur**, crée les
    raccourcis du menu Démarrer, puis lance la configuration : il enregistre Datacron
    dans chaque client IA détecté, installe les instructions mémoire globales prises en charge
    et indexe le vault. Cursor affiche encore une étape manuelle dans **Settings > Rules** ;
@@ -71,6 +78,12 @@ Options :
 - `/RESETCONFIG` : réinitialise la config et l'index (au lieu de garder).
 - `/INDEX` : indexe pendant l'installation. Sans ce commutateur, l'index n'est pas
   construit à ce moment-là.
+- `/ENABLEWRITE` : active les outils d'écriture confinés (`_memory`, `_drafts`,
+  `_journal`). Sans ce commutateur, l'installeur ne transmet aucune liste
+  d'autorisation au setup ; une variable utilisateur `DATACRON_WRITE_PATHS` existante
+  reste inchangée.
+- `/MACHINEWIDEWRITE` : applique aussi la liste d'autorisation d'écriture à
+  l'environnement utilisateur. Ignoré sans `/ENABLEWRITE`.
 
 ## 6. Désinstaller
 

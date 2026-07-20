@@ -24,7 +24,13 @@ If you prefer the command line (`datacron setup`), see the
    Datacron creates a `.datacron/` subfolder there (index, config, audit).
 4. Leave **Index now** checked to build the index immediately (recommended), or
    uncheck it to do it later.
-5. Finish. The installer adds `datacron.exe` to your **user PATH**, creates the Start
+5. **Write tools** (optional): both boxes are unchecked by default, so the installer
+   does not enable write access. Check **Enable the confined write tools** to allow
+   writes in the `_memory`, `_drafts`, and `_journal` subfolders only. Check **Also
+   apply the write allowlist to my user environment** to propagate the allowlist to
+   future MCP clients as well. An existing `DATACRON_WRITE_PATHS` user environment
+   setting is left unchanged when this option is unchecked.
+6. Finish. The installer adds `datacron.exe` to your **user PATH**, creates the Start
    menu shortcuts, then runs setup: it registers Datacron with each detected AI
    client, installs supported global memory instructions, and indexes the vault. Cursor still
    shows a manual **Settings > Rules** step; Claude Desktop receives the instructions during
@@ -70,6 +76,11 @@ Options:
 - `/RESETCONFIG`: reset the config and index (instead of keeping).
 - `/INDEX`: index during installation. Without this switch, the index is not built at
   that time.
+- `/ENABLEWRITE`: enable the confined write tools (`_memory`, `_drafts`, `_journal`).
+  Without this switch, the installer passes no write allowlist to setup; an existing
+  `DATACRON_WRITE_PATHS` user environment setting remains unchanged.
+- `/MACHINEWIDEWRITE`: also apply the write allowlist to the user environment.
+  Ignored unless `/ENABLEWRITE` is present.
 
 ## 6. Uninstall
 
