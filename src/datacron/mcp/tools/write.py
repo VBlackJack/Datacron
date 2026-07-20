@@ -142,7 +142,7 @@ async def _create_note_ai_impl(
                 "supersedes": _clean_string_list(supersedes or []),
                 "tags": cleaned["tags"],
             }
-            if cleaned_rejected is not None:
+            if cleaned_rejected:
                 frontmatter["rejected"] = cleaned_rejected
             content = serialize(frontmatter, body)
             try:
