@@ -9,6 +9,14 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- `datacron setup` now detects LM Studio from its real `~/.lmstudio` profile and merges the
+  Datacron server into the user-only `~/.lmstudio/mcp.json`, preserving every other entry.
+  The documentation includes an official `lmstudio://add_mcp` deeplink, while protocol
+  installation deliberately excludes LM Studio because it has no documented global
+  instruction file.
+
 ### Changed
 
 - The public specification was rewritten as v2.0 to match the current implementation.

@@ -70,6 +70,22 @@ the installed IDE version. If the global route does not load, open the vault as 
 use the validated `.agents/mcp_config.json` route. Stale `antigravity-ide` and
 `antigravity-backup` profile folders are intentionally ignored.
 
+## Why can't LM Studio see Datacron?
+
+LM Studio 0.3.17+ has one user MCP configuration at `~/.lmstudio/mcp.json` and no project
+configuration. Datacron detects the real `~/.lmstudio` profile directory, then merges only
+the `datacron` entry and preserves every other server and setting.
+
+```bash
+datacron setup --yes --vault "VAULT_PATH" --client lmstudio --scope user
+```
+
+Restart LM Studio after setup so it reloads the file. Do not use `--scope project`: LM Studio
+has no project target. Its absence from `datacron protocol install` is also intentional,
+because the official documentation defines no global instruction file. The
+[README deeplink](../../README.en.md#add-to-lm-studio) is a manual alternative for Python
+installations, but its `<YOUR_VAULT>` placeholders must be replaced in the MCP editor.
+
 ## Why does the CLI say "Unknown client X" when the documentation lists it?
 
 The documentation may come from a newer repository revision than the executable on your `PATH`.

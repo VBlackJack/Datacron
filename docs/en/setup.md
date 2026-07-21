@@ -20,8 +20,8 @@ datacron setup
 ```
 
 By default (`--client all`), it **detects every installed AI client and registers Datacron
-with each**: Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, Codex CLI,
-Windsurf, and VS Code. Each config is merged without clobbering existing servers (JSON or
+with each**: Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, LM Studio,
+Codex CLI, Windsurf, and VS Code. Each config is merged without clobbering existing servers (JSON or
 TOML depending on the client). It asks questions with sensible defaults (vault location,
 client, scope, writing, user-wide write environment, durability, read-only), then runs
 `init`, registers the clients, indexes, and prints a per-client summary. An indexing failure
@@ -33,6 +33,8 @@ Useful options:
 - `datacron setup --vault PATH --client claude-desktop` - target a single specific client.
 - `datacron setup --vault PATH --client antigravity` - register Antigravity in its user and
   workspace MCP configurations.
+- `datacron setup --vault PATH --client lmstudio --scope user` - register LM Studio in its
+  user MCP configuration.
 - `datacron setup --enable-write --write-path PATH` - enable writing on one explicit subfolder; without `--write-path`, the defaults are `<vault>/_memory`, `<vault>/_drafts`, and `<vault>/_journal`.
 - `datacron setup --enable-write --machine-wide-write` - also opt in to the user environment allowlist for future clients.
 - `datacron setup --durability strict --read-only` - strict durability and certified read-only mode.
@@ -193,6 +195,11 @@ configuration is `~/.gemini/config/mcp_config.json`; its project configuration i
 existing empty user configuration is treated as a new configuration, while non-Datacron
 entries in either file are preserved.
 
+LM Studio is detected only from its real `~/.lmstudio` profile directory. It has user scope
+only and targets `~/.lmstudio/mcp.json`, using the same top-level `mcpServers` object. A
+requested project scope produces no LM Studio target. Installation and unregistration
+preserve every other server and top-level setting.
+
 ### Install the client-side memory protocol
 
 The MCP connection exposes the tools and already sends the standard MCP `instructions`
@@ -211,6 +218,9 @@ Gemini CLI, Codex, Windsurf, and VS Code. Antigravity is project-scoped only:
 and does not write a user-global instruction file. Cursor still requires a paste in
 **Settings > Rules** because its global user rules are only exposed through the UI. Claude
 Desktop relies on the MCP server instructions.
+
+LM Studio is deliberately absent from the protocol client list. Its official documentation
+does not define a global instruction file, so Datacron configures only its MCP server entry.
 
 Datacron only writes between `<!-- datacron:protocol:begin -->` and
 `<!-- datacron:protocol:end -->`; reinstalling replaces that block and preserves the rest of

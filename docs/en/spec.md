@@ -267,7 +267,7 @@ The read allowlist grants no write permission.
 
 ## 12. Supported MCP clients
 
-Setup knows exactly eight client identifiers. `user` scope is available for all eight;
+Setup knows exactly nine client identifiers. `user` scope is available for all nine;
 `project` scope is written only when a project path is defined for that client.
 
 | CLI ID | Display name | Configuration scopes | Format |
@@ -277,6 +277,7 @@ Setup knows exactly eight client identifiers. `user` scope is available for all 
 | `cursor` | Cursor | `user`, `project` | JSON `mcpServers` |
 | `gemini-cli` | Gemini CLI | `user`, `project` | JSON `mcpServers` |
 | `antigravity` | Antigravity | `user`, `project` | JSON `mcpServers` |
+| `lmstudio` | LM Studio | `user` | JSON `mcpServers` |
 | `codex-cli` | Codex CLI | `user`, `project` | TOML |
 | `windsurf` | Windsurf | `user` | JSON `mcpServers` |
 | `vscode` | VS Code | `user`, `project` | JSON `servers` |
@@ -286,6 +287,10 @@ Discovery is best-effort. For Antigravity, it requires the live
 count. Antigravity project scope targets `<project>/.agents/mcp_config.json`; user scope targets
 `~/.gemini/config/mcp_config.json`. An empty JSON file is treated as absent configuration.
 Installation and unregistration change only the `datacron` entry and preserve other servers.
+
+LM Studio discovery requires the real `~/.lmstudio` profile directory. Its only target is
+the user configuration `~/.lmstudio/mcp.json`; no project target is defined. LM Studio is
+excluded from `datacron protocol install` because no global instruction file is documented.
 
 ---
 

@@ -238,6 +238,112 @@ def test_antigravity_unregister_preserves_other_config(fake_home: Path, tmp_path
         }
 
 
+def test_lmstudio_detection_requires_profile_directory(fake_home: Path) -> None:
+    profile = fake_home / ".lmstudio"
+    profile.write_text("not a profile directory", encoding="utf-8")
+
+    absent = mcp_clients.detect_clients(include=(mcp_clients.LMSTUDIO,))
+
+    profile.unlink()
+    profile.mkdir()
+    present = mcp_clients.detect_clients(include=(mcp_clients.LMSTUDIO,))
+
+    assert absent == ()
+    assert present == (mcp_clients.LMSTUDIO,)
+    assert mcp_clients.LMSTUDIO in mcp_clients.ALL_CLIENT_IDS
+    assert mcp_clients.LMSTUDIO in setup_wizard.CLIENT_CHOICES
+    assert mcp_clients.client_display_name(mcp_clients.LMSTUDIO) == "LM Studio"
+
+
+def test_lmstudio_discovery_returns_user_target_only(fake_home: Path, tmp_path: Path) -> None:
+    (fake_home / ".lmstudio").mkdir()
+
+    targets = discover_targets(
+        scopes=(SCOPE_USER, SCOPE_PROJECT),
+        project_dir=tmp_path,
+        include=(mcp_clients.LMSTUDIO,),
+    )
+
+    assert targets == [
+        mcp_clients.ClientTarget(
+            mcp_clients.LMSTUDIO,
+            "LM Studio",
+            SCOPE_USER,
+            fake_home / ".lmstudio" / "mcp.json",
+            "json-mcpservers",
+        )
+    ]
+
+
+def test_lmstudio_install_preserves_existing_config_and_is_idempotent(
+    fake_home: Path, tmp_path: Path
+) -> None:
+    profile = fake_home / ".lmstudio"
+    profile.mkdir()
+    config_path = profile / "mcp.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {"other": {"command": "keep"}},
+                "ui": {"theme": "dark"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    target = discover_targets(
+        scopes=(SCOPE_USER,),
+        project_dir=tmp_path,
+        include=(mcp_clients.LMSTUDIO,),
+    )[0]
+
+    first = _install_single(target)
+    installed = config_path.read_bytes()
+    second = _install_single(target)
+
+    assert first.installed is True
+    assert second.installed is True
+    assert config_path.read_bytes() == installed
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {
+        "mcpServers": {
+            "datacron": {"args": [], "command": _COMMAND, "env": _ENV},
+            "other": {"command": "keep"},
+        },
+        "ui": {"theme": "dark"},
+    }
+
+
+def test_lmstudio_unregister_preserves_other_config(fake_home: Path, tmp_path: Path) -> None:
+    config_path = fake_home / ".lmstudio" / "mcp.json"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "datacron": {"command": "datacron-mcp"},
+                    "other": {"command": "keep"},
+                },
+                "ui": {"theme": "dark"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    targets = discover_unregistration_targets(
+        scopes=(SCOPE_USER, SCOPE_PROJECT),
+        project_dir=tmp_path,
+        include=(mcp_clients.LMSTUDIO,),
+    )
+
+    outcomes = unregister_targets(targets)
+
+    assert len(outcomes) == 1
+    assert outcomes[0].successful is True
+    assert outcomes[0].changed is True
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {
+        "mcpServers": {"other": {"command": "keep"}},
+        "ui": {"theme": "dark"},
+    }
+
+
 def test_install_json_mcpservers_merges_and_preserves(fake_home: Path, tmp_path: Path) -> None:
     cursor_cfg = fake_home / ".cursor" / "mcp.json"
     cursor_cfg.parent.mkdir()
