@@ -163,7 +163,7 @@ La commande écrit l'entrée serveur dans la configuration de Claude Desktop et 
 l'allowlist de lecture sur le vault. **Redémarre Claude Desktop** pour que le changement
 prenne effet. La commande `mcp install` ne vise que `claude-desktop` ; pour enregistrer
 Datacron dans **tous** les clients détectés d'un coup, utilise plutôt `datacron setup`
-(voir « Parcours guidé » plus haut).
+(voir "Parcours guidé" plus haut).
 
 Pour cibler un fichier de configuration précis (test, install non standard) :
 

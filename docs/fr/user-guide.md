@@ -64,11 +64,11 @@ Trois ressources MCP complètent ces outils : `datacron://vault/map` (carte du v
 ## Comment fonctionne la recherche
 
 `search_text` combine plusieurs signaux, ce qui explique pourquoi les résultats ne sont pas
-un simple « match de mots » :
+un simple "match de mots" :
 
 - **FTS5 / BM25** pour le score lexical de base.
-- **Query-expansion FR↔EN** configurée dans `VAULT.yaml` : par exemple « sauvegarde »
-  remonte aussi les notes qui parlent de « backup ».
+- **Query-expansion FR↔EN** configurée dans `VAULT.yaml` : par exemple "sauvegarde"
+  remonte aussi les notes qui parlent de "backup".
 - **Re-rank temporel conservateur** :
   - une note citée dans le champ `supersedes` d'une autre est fortement démotée ;
   - une note portant `invalid_at` est démotée de façon identique ;
@@ -78,8 +78,8 @@ un simple « match de mots » :
 `search_regex` reste **littéral** : ni query-expansion, ni re-rank temporel. Utilise-le
 quand tu cherches une chaîne exacte (un identifiant, un chemin, un bout de code).
 
-Règle pratique : `search_text` pour « de quoi je parlais à propos de X », `search_regex`
-pour « où ai-je écrit exactement cette chaîne ».
+Règle pratique : `search_text` pour "de quoi je parlais à propos de X", `search_regex`
+pour "où ai-je écrit exactement cette chaîne".
 
 ### Évaluer une mise à jour de connaissance
 
@@ -147,19 +147,19 @@ avec `include_superseded=true`, et la note de remplacement peut être écrite av
 
 Tu formules en langage naturel ; Claude traduit en appels d'outils. Quelques exemples :
 
-- « Qu'est-ce que j'ai noté sur la rotation des certificats ? »
+- "Qu'est-ce que j'ai noté sur la rotation des certificats ?"
   → `search_text` puis `get_note` sur les meilleurs résultats.
-- « Montre-moi le plan de la note sur le déploiement entreprise. »
+- "Montre-moi le plan de la note sur le déploiement entreprise."
   → `get_note(format="map")`.
-- « Où ai-je écrit exactement `DATACRON_WRITE_PATHS` ? »
+- "Où ai-je écrit exactement `DATACRON_WRITE_PATHS` ?"
   → `search_regex`.
-- « Quelles notes renvoient vers celle sur la frontière de sécurité ? »
+- "Quelles notes renvoient vers celle sur la frontière de sécurité ?"
   → `get_backlinks`.
-- « Ajoute une entrée de journal d'aujourd'hui sous "Suivi" dans la note projet Datacron. »
+- "Ajoute une entrée de journal d'aujourd'hui sous "Suivi" dans la note projet Datacron."
   → `append_journal` (nécessite l'écriture activée).
-- « Passe cette note en confidence: low. »
+- "Passe cette note en confidence: low."
   → `set_frontmatter`.
-- « Est-ce que l'index est frais et intègre ? »
+- "Est-ce que l'index est frais et intègre ?"
   → `get_health`.
 
 ## Bonnes pratiques
