@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0721.00] - 2026-07-21
+
 ### Added
 
 - Interactive `datacron setup` now explains every prompted choice, its safe default, and

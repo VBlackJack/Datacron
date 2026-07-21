@@ -6,13 +6,13 @@
     "url": "https://github.com/VBlackJack/Datacron",
     "source": "github"
   },
-  "version": "2026.720.0",
+  "version": "2026.721.0",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "datacron",
-      "version": "2026.720.0",
+      "version": "2026.721.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
