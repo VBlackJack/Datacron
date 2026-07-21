@@ -9,6 +9,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Changed
+
+- The public specification was rewritten as v2.0 to match the current implementation.
+
 ### Removed
 
 - The historical decision record was moved out of the public documentation; Git history
