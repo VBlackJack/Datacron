@@ -6,14 +6,12 @@
 > **Author**: Julien Bombled
 > **Date**: 2026-07-12
 > **Sources**:
-> - Initial deep-research and v2.0 cross-review: unversioned local archives under `local/docs-ai/`
-> - v2.1 arbitration: [`decisions-v2.1.md`](decisions-v2.1.md)
+> - Current source code and regression tests
 > - Empirical verification: Anthropic Help Center (Cowork = remote MCP only)
 > **Code license**: Apache 2.0 | **Code/comments/docstrings**: English | **Guides and overviews**: French | **Technical contracts**: English
 
-> 🔄 **This v2.1 replaces v2.0** after a cross-review that pivoted 11 decisions out of 12.
-> The MVP scope was divided by 5 (4 weeks vs 20). Arbitration details are in
-> [`decisions-v2.1.md`](decisions-v2.1.md).
+> This architecture describes the product's current state. The summarized ADRs in section 6
+> are the living public reference for design choices.
 
 ---
 
@@ -176,7 +174,7 @@ flowchart TB
 
 ---
 
-## 6. Architecture Decision Records (summaries - details in decisions-v2.1.md)
+## 6. Architecture Decision Records (summaries)
 
 ### ADR-001 - Source of truth = Markdown vault read as overlay
 Datacron reads any vault without migration. Side-metadata in `.datacron/`.

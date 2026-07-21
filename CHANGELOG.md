@@ -9,6 +9,11 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Removed
+
+- The historical decision record was moved out of the public documentation; Git history
+  remains the archive.
+
 ## [2026.0721.00] - 2026-07-21
 
 ### Added
