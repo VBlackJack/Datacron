@@ -26,12 +26,14 @@ see the [frequently asked questions](faq.md).
    Datacron creates a `.datacron/` subfolder there (index, config, audit).
 4. Leave **Index now** checked to build the index immediately (recommended), or
    uncheck it to do it later.
-5. **Write tools** (optional): both boxes are unchecked by default, so the installer
-   does not enable write access. Check **Enable the confined write tools** to allow
-   writes in the `_memory`, `_drafts`, and `_journal` subfolders only. Check **Also
-   apply the write allowlist to my user environment** to propagate the allowlist to
-   future MCP clients as well. An existing `DATACRON_WRITE_PATHS` user environment
-   setting is left unchanged when this option is unchecked.
+5. **Allow note writing** (optional): by default, your AI assistants can read your notes
+   but never change them, and both boxes are unchecked. Check **Let my AI assistants
+   write notes (in 3 dedicated subfolders only)** to let them create and update notes
+   only in `_memory`, `_drafts`, and `_journal`; everything else stays untouched. Check
+   **Remember this permission for AI assistants installed later** to reuse the same
+   permission for assistants added in the future. If unsure, leave both boxes unchecked;
+   you can enable writing later by running Datacron Setup again. Leaving the second box
+   unchecked does not change a permission that was already remembered.
 6. Finish. The installer adds `datacron.exe` to your **user PATH**, creates the Start
    menu shortcuts, then runs setup: it registers Datacron with each detected AI
    client, installs supported global memory instructions, and indexes the vault. Cursor still

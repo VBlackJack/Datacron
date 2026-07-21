@@ -26,13 +26,15 @@ consulte les [questions fréquentes](faq.md).
    Obsidian. Datacron y créera un sous-dossier `.datacron/` (index, config, audit).
 4. Laisse cochée la case **Indexer maintenant** pour construire l'index tout de
    suite (recommandé), ou décoche-la pour le faire plus tard.
-5. **Outils d'écriture** (optionnel) : les deux cases sont décochées par défaut,
-   l'installeur n'active donc pas l'écriture. Coche **Activer les outils d'écriture
-   confinés** pour autoriser l'écriture uniquement dans les sous-dossiers `_memory`,
-   `_drafts` et `_journal`. Coche **Appliquer aussi la liste d'autorisation à mon
-   environnement utilisateur** pour la propager également aux futurs clients MCP.
-   Une variable utilisateur `DATACRON_WRITE_PATHS` existante reste inchangée quand
-   cette option est décochée.
+5. **Autoriser l'écriture de notes** (facultatif) : par défaut, tes assistants IA peuvent
+   lire tes notes mais jamais les modifier, et les deux cases sont décochées. Coche
+   **Autoriser mes assistants IA à écrire des notes (dans 3 sous-dossiers dédiés
+   uniquement)** pour leur permettre de créer et mettre à jour des notes uniquement dans
+   `_memory`, `_drafts` et `_journal` ; tout le reste reste intouchable. Coche **Retenir
+   cette autorisation pour les assistants IA installés plus tard** pour réutiliser la même
+   autorisation avec les assistants ajoutés à l'avenir. Dans le doute, laisse les deux
+   cases décochées ; tu pourras activer l'écriture plus tard en relançant Datacron Setup.
+   Laisser la seconde case décochée ne modifie pas une autorisation déjà mémorisée.
 6. Termine. L'installeur ajoute `datacron.exe` à ton **PATH utilisateur**, crée les
    raccourcis du menu Démarrer, puis lance la configuration : il enregistre Datacron
    dans chaque client IA détecté, installe les instructions mémoire globales prises en charge

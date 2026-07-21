@@ -138,9 +138,10 @@ _SETUP_PROMPT_EXPLANATIONS: Final[dict[_SetupPrompt, tuple[str, ...]]] = {
         "Choose strict to refuse writes when the filesystem cannot prove directory durability.",
     ),
     _SetupPrompt.WRITE: (
-        "Write tools let AI clients create and update notes inside an explicit allowlist.",
-        "Default: no, which keeps write tools unavailable unless you opt in.",
-        "Choose yes to expose them only inside the directories selected next.",
+        "By default, your AI assistants can read your notes but never change them.",
+        "Default: no, which leaves every note protected from AI changes.",
+        "Choose yes to let them create and update notes only in _memory, _drafts, and "
+        "_journal. You can enable this later by running setup again.",
     ),
     _SetupPrompt.WRITE_PATHS: (
         "Choose the only directories where Datacron write tools may change notes.",
@@ -148,9 +149,10 @@ _SETUP_PROMPT_EXPLANATIONS: Final[dict[_SetupPrompt, tuple[str, ...]]] = {
         "Changing the list moves or narrows the write boundary; other paths stay read-only.",
     ),
     _SetupPrompt.MACHINE_WIDE_WRITE: (
-        "This can persist the write allowlist for future MCP clients in this user account.",
-        "Default: no, which limits the change to client configs written by this setup.",
-        "Choose yes to make the same allowlist available user-wide.",
+        "This remembers the same note-writing permission for AI assistants installed later.",
+        "Default: no, which applies the permission only to assistants configured by this setup.",
+        "Choose yes to reuse the same 3-subfolder permission automatically for future "
+        "assistants; leave no to decide again later.",
     ),
     _SetupPrompt.REPLACE_WRITE_ENV: (
         "The existing user-wide write allowlist differs from this setup's directories.",
@@ -982,7 +984,10 @@ def _prompt_write(
     if assume_yes:
         return False, []
     _explain(_SetupPrompt.WRITE)
-    if not typer.confirm("Enable the confined write tools?", default=False):
+    if not typer.confirm(
+        "Let my AI assistants write notes (in 3 dedicated subfolders only)?",
+        default=False,
+    ):
         return False, []
     return True, _prompt_write_paths(vault_root, assume_yes)
 
@@ -1022,7 +1027,7 @@ def _prompt_machine_wide_write(
             return False, False
         _explain(_SetupPrompt.MACHINE_WIDE_WRITE)
         requested = typer.confirm(
-            "Apply the write allowlist to this user account for all future clients?",
+            "Remember this permission for AI assistants installed later?",
             default=False,
         )
     if not requested:

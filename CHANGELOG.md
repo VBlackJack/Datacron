@@ -19,6 +19,9 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- The installer write page and matching interactive setup prompts were reworded for
+  non-technical users, explaining who may write, the three dedicated subfolders, what
+  remains protected, and how to enable the permission later.
 - The public specification was rewritten as v2.0 to match the current implementation.
 
 ### Removed
