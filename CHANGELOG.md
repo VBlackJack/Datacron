@@ -11,6 +11,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- The architecture documentation no longer claims that Cowork is remote-MCP-only; ADR-009
+  is superseded by the 2026-07-21 production validation of local stdio MCP in Cowork desktop.
 - Windows installer compilation now fails closed when `dist/datacron.exe` is missing or its
   reported version differs from `AppVersion`; local and CI builds share the same validated
   wrapper, and direct ISCC compilation is rejected.
