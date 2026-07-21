@@ -714,7 +714,7 @@ def _print_baseline_comparison(comparison: BaselineComparison) -> None:
         _print(f"Regression check: PASS (tolerance {comparison.tolerance:.3f})")
     else:
         _print(
-            "Regression check: FAIL — "
+            "Regression check: FAIL - "
             f"{', '.join(comparison.regressions)} exceeded tolerance "
             f"{comparison.tolerance:.3f}"
         )
