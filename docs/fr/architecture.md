@@ -210,7 +210,7 @@ génériques (ni audit, ni confinement, ni sémantique vault).
 
 ### ADR-003 - Pas d'orchestration autonome v1
 LangGraph et Ollama hors MVP. Claude orchestre, c'est suffisant.
-Écarté : LangGraph en dépendance « optionnelle » (surface de dépendance quand même ; le mode
+Écarté : LangGraph en dépendance "optionnelle" (surface de dépendance quand même ; le mode
 agent offline est un autre produit).
 
 ### ADR-004 - Recherche lexicale mesurée avant embeddings

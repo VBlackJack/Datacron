@@ -92,7 +92,7 @@ aucun fichier d'instructions globales. Le [deeplink du README](../../README.md#a
 est une alternative manuelle pour les installations Python, mais ses placeholders
 `<YOUR_VAULT>` doivent être remplacés dans l'éditeur MCP.
 
-## Pourquoi la CLI répond-elle « Unknown client X » alors que la documentation le mentionne ?
+## Pourquoi la CLI répond-elle "Unknown client X" alors que la documentation le mentionne ?
 
 La documentation peut provenir d'une révision du dépôt plus récente que l'exécutable présent sur
 ton `PATH`. Vérifie à la fois la version et l'exécutable lancé :
