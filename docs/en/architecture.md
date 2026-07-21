@@ -7,7 +7,7 @@
 > **Date**: 2026-07-12
 > **Sources**:
 > - Current source code and regression tests
-> - Empirical verification: Anthropic Help Center (Cowork = remote MCP only)
+> - Production validation (2026-07-21): Cowork desktop runs Datacron through local stdio MCP; claude.ai in the browser remains remote-only
 > **Code license**: Apache 2.0 | **Code/comments/docstrings**: English | **Guides and overviews**: French | **Technical contracts**: English
 
 > This architecture describes the product's current state. The summarized ADRs in section 6
@@ -17,16 +17,16 @@
 
 ## 1. Architecture verdict
 
-Datacron v1 is a **local stdio MCP server** that makes a Markdown vault queryable by Claude
-Desktop / Claude Code, cutting token consumption by 20-50× compared with dumping notes into
-the context.
+Datacron v1 is a **local stdio MCP server** that makes a Markdown vault queryable by supported
+local MCP clients, cutting token consumption by 20-50× compared with dumping notes into the
+context.
 
 The delivered foundation stays deliberately **minimalist**:
 
 1. **Vault layer** - Any folder of Markdown files. No migration required.
 2. **`.datacron/` layer** - Invisible sidecar (SQLite FTS5, ULID side-table, logs, history, and operation journal).
 3. **MCP server layer** - Custom Python FastMCP, stdio. Read/search tools, client-approved write tools, 3 resources.
-4. **Client layer** - Claude Desktop or Claude Code via local config.
+4. **Client layer** - Nine setup client IDs through user and, where available, project config.
 
 **Delivered on `main` after the Phase 0 foundation**:
 - Static FR↔EN query expansion at search time, configured by `VAULT.yaml`.
@@ -37,8 +37,7 @@ The delivered foundation stays deliberately **minimalist**:
 - Vector embeddings / LanceDB / Contextual Retrieval (added *if* eval measures a need)
 - LangGraph / autonomous agent (Claude orchestrates, sufficient)
 - Tauri Studio (CLI is enough for the MVP)
-- Multi-client (Cursor v1.1, ChatGPT/Gemini v2)
-- Cowork support (v1.x via HTTPS tunnel, documented)
+- claude.ai browser support (requires a remote MCP endpoint)
 - Concurrent multi-machine writes (single-writer rule)
 
 ---
@@ -63,7 +62,7 @@ The delivered foundation stays deliberately **minimalist**:
 ### v1 (MVP, 4 weeks)
 
 ```
-Claude Desktop  /  Claude Code
+Supported local MCP clients
             │
             │ MCP stdio (JSON-RPC, local)
             ▼
@@ -78,11 +77,11 @@ Claude Desktop  /  Claude Code
 | Version | Addition |
 |---|---|
 | v0.2 | Write tools delivered: creation, journal, frontmatter, patch, and revert with history + confinement |
-| v0.3 | Future tunnel mode for Cowork via Cloudflare Tunnel + auth; no command delivered |
+| v0.3 | Historical: an HTTPS tunnel for Cowork was considered, then dropped after local stdio validation on 2026-07-21 |
 | v0.4 | Embeddings + LanceDB *if* eval shows a need |
 | v0.5 | Contextual Retrieval *if* v0.4 eval still shows a gap |
 | v1.0 | Stabilization + Homebrew tap + MkDocs docs |
-| v2.0+ | LangGraph offline mode, Tauri Studio, full Cursor/ChatGPT/Gemini support |
+| v2.0+ | LangGraph offline mode and Tauri Studio |
 
 ---
 
@@ -90,9 +89,8 @@ Claude Desktop  /  Claude Code
 
 ```mermaid
 flowchart TB
-    subgraph CLIENTS["MCP clients (v1)"]
-        CD[Claude Desktop]
-        CC[Claude Code]
+    subgraph CLIENTS["Supported local MCP clients"]
+        CLIENT[9 setup client IDs]
     end
 
     subgraph SERVER["Datacron MCP server (Python, FastMCP, stdio)"]
@@ -114,8 +112,7 @@ flowchart TB
         WL[Obsidian-compat wikilinks]
     end
 
-    CD --> TOOLS
-    CC --> TOOLS
+    CLIENT --> TOOLS
     TOOLS --> SBX --> CONF
     TOOLS --> DB
     TOOLS -.read FS.-> NOTES
@@ -221,6 +218,11 @@ Rejected: a local ML/Ollama injection classifier (latency theater under a single
 model).
 
 ### ADR-009 - Cowork = remote MCP (empirically verified)
+**Status: Superseded (2026-07-21).**
+Supersession evidence: a Cowork desktop production session ran Datacron through local stdio
+MCP on 2026-07-21, without a tunnel or remote server. This does not apply to claude.ai in the
+browser, which remains remote-only.
+
 v1 = Claude Desktop + Code only. Cowork via HTTPS tunnel in v1.x.
 Rejected: promising Cowork/claude.ai support in v1 (remote-only brokering, empirically
 verified).
@@ -486,7 +488,7 @@ and token cost. Current measurement on golden Julien: recall@5 0.89, recall@10 0
 | Phase 2 Contextual Retrieval (before eval) | ~2 weeks + Ollama cost |
 | Phase 3 write tools (before HITL maturity) | ~3 weeks + corruption risk |
 | ML sandboxing classifier | perpetual maintenance + latency |
-| Native Cowork support (before an Anthropic feature) | observed technical impossibility |
+| Cowork HTTPS tunnel | no longer needed after local stdio validation in production on 2026-07-21 |
 | 5 Python workspace packages | release-engineering overhead |
 | Docker + Homebrew + Tauri channels | ~1 week release eng × 3 |
 
