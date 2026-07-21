@@ -9,6 +9,12 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows installer compilation now fails closed when `dist/datacron.exe` is missing or its
+  reported version differs from `AppVersion`; local and CI builds share the same validated
+  wrapper, and direct ISCC compilation is rejected.
+
 ## [2026.0721.01] - 2026-07-21
 
 ### Added

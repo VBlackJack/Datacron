@@ -200,7 +200,8 @@ jobs:
           }
 
           $arguments = @(
-            "/DAppVersion=$env:DATACRON_INSTALLER_VERSION"
+            "--app-version=$env:DATACRON_INSTALLER_VERSION",
+            "--iscc=$iscc"
           )
           if ($env:DATACRON_SIGNING_AVAILABLE -eq "true") {
             if (-not (Test-Path -LiteralPath $env:DATACRON_CERT_PATH)) {
@@ -217,17 +218,16 @@ jobs:
               $env:DATACRON_CERT_PATH,
               $env:WINDOWS_CERT_PASSWORD
             )
-            $arguments += "/DInstallerSignTool=datacron-sign"
-            $arguments += "/Sdatacron-sign=$signCommand"
+            $arguments += (
+              "--iscc-argument=/DInstallerSignTool=datacron-sign"
+            )
+            $arguments += "--iscc-argument=/Sdatacron-sign=$signCommand"
           }
-          $arguments += "packaging\windows\datacron-installer.iss"
 
-          & $iscc @arguments
+          & uv run --frozen --extra build python `
+            packaging\windows\build_installer.py @arguments
           if ($LASTEXITCODE -ne 0) {
-            throw "Inno Setup compilation failed with exit code $LASTEXITCODE."
-          }
-          if (-not (Test-Path -LiteralPath "dist-installer\Datacron-Setup.exe")) {
-            throw "Inno Setup reported success but Datacron-Setup.exe is missing."
+            throw "Windows installer build failed with exit code $LASTEXITCODE."
           }
 
       - name: Verify Windows installer signature
