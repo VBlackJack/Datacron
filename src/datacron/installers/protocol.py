@@ -31,6 +31,7 @@ from datacron.installers.mcp_clients import (
     CODEX_CLI,
     CURSOR,
     GEMINI_CLI,
+    LMSTUDIO,
     SCOPE_PROJECT,
     SCOPE_USER,
     VS_CODE,
@@ -53,7 +54,10 @@ __all__ = [
 _LOGGER = get_logger(__name__)
 
 PROTOCOL_ALL: Final[str] = "all"
-PROTOCOL_CLIENT_IDS: Final[tuple[str, ...]] = ALL_CLIENT_IDS
+_PROTOCOL_EXCLUDED_CLIENT_IDS: Final[tuple[str, ...]] = (LMSTUDIO,)
+PROTOCOL_CLIENT_IDS: Final[tuple[str, ...]] = tuple(
+    client_id for client_id in ALL_CLIENT_IDS if client_id not in _PROTOCOL_EXCLUDED_CLIENT_IDS
+)
 
 PROTOCOL_MARKER_BEGIN: Final[str] = "<!-- datacron:protocol:begin -->"
 PROTOCOL_MARKER_END: Final[str] = "<!-- datacron:protocol:end -->"

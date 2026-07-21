@@ -21,7 +21,7 @@ datacron setup
 
 Par défaut (`--client all`), elle **détecte tous les clients IA installés et enregistre
 Datacron dans chacun** : Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity,
-Codex CLI, Windsurf et VS Code. Chaque config est fusionnée sans écraser les serveurs déjà
+LM Studio, Codex CLI, Windsurf et VS Code. Chaque config est fusionnée sans écraser les serveurs déjà
 présents (JSON ou TOML selon le client). Elle pose des questions avec des valeurs par défaut
 (emplacement du vault, client, portée, écriture, durabilité, lecture seule), puis exécute
 `init`, enregistre les clients, indexe, et affiche un récapitulatif par client. Un échec
@@ -32,6 +32,8 @@ d'indexation est différé et n'annule jamais l'enregistrement des clients. Opti
 - `datacron setup --vault CHEMIN --client claude-desktop` - cible un seul client précis.
 - `datacron setup --vault CHEMIN --client antigravity` - enregistre Antigravity dans ses
   configurations MCP utilisateur et workspace.
+- `datacron setup --vault CHEMIN --client lmstudio --scope user` - enregistre LM Studio
+  dans sa configuration MCP utilisateur.
 - `datacron setup --enable-write --write-path CHEMIN` - active l'écriture sur un sous-dossier explicite ; sans `--write-path`, les défauts sont `<vault>/_memory`, `<vault>/_drafts` et `<vault>/_journal`.
 - `datacron setup --enable-write --machine-wide-write` - active aussi explicitement l'allowlist dans l'environnement utilisateur pour les futurs clients.
 - `datacron setup --durability strict --read-only` - mode durabilité strict et lecture seule certifiée.
@@ -194,6 +196,11 @@ projet est `<vault>/.agents/mcp_config.json`. Les deux utilisent l'objet racine 
 `mcpServers`. Une configuration utilisateur existante mais vide est traitée comme une
 nouvelle configuration, tandis que les entrées autres que Datacron sont préservées.
 
+LM Studio est détecté uniquement depuis son vrai dossier de profil `~/.lmstudio`. Il possède
+seulement le scope utilisateur et cible `~/.lmstudio/mcp.json`, avec le même objet racine
+`mcpServers`. Un scope projet demandé ne produit aucune cible LM Studio. L'installation et
+la désinstallation préservent tous les autres serveurs et réglages racine.
+
 ### Installer le protocole mémoire côté client
 
 Le branchement MCP expose les outils et transmet déjà le champ standard MCP `instructions`.
@@ -214,6 +221,10 @@ n'écrit aucun fichier d'instructions global utilisateur. Cursor demande encore 
 copier-coller dans
 **Settings > Rules**, car ses règles utilisateur globales ne sont exposées que dans
 l'interface. Claude Desktop s'appuie sur les instructions du serveur MCP.
+
+LM Studio est volontairement absent de la liste des clients du protocole. Sa documentation
+officielle ne définit aucun fichier d'instructions globales, donc Datacron configure seulement
+son entrée de serveur MCP.
 
 Datacron écrit uniquement entre les marqueurs
 `<!-- datacron:protocol:begin -->` et `<!-- datacron:protocol:end -->`; une nouvelle

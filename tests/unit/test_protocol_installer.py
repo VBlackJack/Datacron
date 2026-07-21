@@ -465,8 +465,11 @@ def test_all_uses_shared_detection_and_skips_claude_desktop(
     assert outcomes[3].changed is True
 
 
-def test_protocol_clients_cover_every_mcp_client() -> None:
-    assert PROTOCOL_CLIENT_IDS == mcp_clients.ALL_CLIENT_IDS
+def test_protocol_clients_explicitly_exclude_clients_without_instruction_target() -> None:
+    assert set(PROTOCOL_CLIENT_IDS) == set(mcp_clients.ALL_CLIENT_IDS) - {mcp_clients.LMSTUDIO}
+    assert mcp_clients.LMSTUDIO not in PROTOCOL_CLIENT_IDS
+    with pytest.raises(ValueError, match="Unknown protocol client"):
+        install_memory_protocol(mcp_clients.LMSTUDIO)
 
 
 def test_windows_installer_manages_user_protocol_lifecycle() -> None:

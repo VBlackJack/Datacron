@@ -5,7 +5,7 @@
 Cette page décrit l'installeur graphique `Datacron-Setup.exe` : un double-clic, sans
 Python et sans terminal, qui installe Datacron pour ton compte utilisateur et
 **enregistre automatiquement Datacron dans les clients IA détectés** (Claude Desktop,
-Claude Code, Cursor, Gemini CLI, Antigravity, Codex CLI, Windsurf, VS Code). Il installe
+Claude Code, Cursor, Gemini CLI, Antigravity, LM Studio, Codex CLI, Windsurf, VS Code). Il installe
 aussi le protocole mémoire pris en charge au scope utilisateur.
 
 Si tu préfères la ligne de commande (`datacron setup`), va plutôt sur le

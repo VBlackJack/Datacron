@@ -28,7 +28,7 @@ ULIDs, history, and the operation journal.
 | Index | `datacron index` incremental, `datacron reindex` full, automatic repair on read |
 | Evaluation | `datacron eval` over the real MCP pipeline: recall@k, MRR, nDCG, freshness, latency, and payload tokens |
 | Guided setup | `datacron setup`: init + index + MCP registration in one command |
-| Clients | Auto-detect and register via `datacron setup --client all`: Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, Codex CLI, Windsurf, VS Code |
+| Clients | Auto-detect and register via `datacron setup --client all`: Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, LM Studio, Codex CLI, Windsurf, VS Code |
 | Memory protocol | Universal MCP instructions plus native global rules installed for supported clients |
 | Distribution | Windows installer (`Datacron-Setup.exe`), standalone executable (PyInstaller) with no Python required, or installation from source |
 
@@ -103,8 +103,43 @@ datacron mcp install --client claude-desktop --vault /path/to/vault
 ```
 
 The `mcp install` subcommand above is dedicated to Claude Desktop. For Codex CLI, Gemini CLI,
-Antigravity, Cursor, and the other clients, use multi-client setup with
+Antigravity, LM Studio, Cursor, and the other clients, use multi-client setup with
 `datacron setup --client <identifier>` or auto-detection with `--client all`.
+
+### Add to LM Studio
+
+LM Studio 0.3.17+ has one user configuration and no project scope. The preferred command is:
+
+```bash
+datacron setup --yes --vault "VAULT_PATH" --client lmstudio --scope user
+```
+
+For a Python installation where `datacron-mcp` is on `PATH`, the equivalent read-only
+configuration can also be imported with this official deeplink:
+
+[Add to LM Studio](lmstudio://add_mcp?name=datacron&config=eyJjb21tYW5kIjoiZGF0YWNyb24tbWNwIiwiYXJncyI6W10sImVudiI6eyJEQVRBQ1JPTl9WQVVMVF9ST09UIjoiPFlPVVJfVkFVTFQ%2BIiwiREFUQUNST05fUkVBRF9QQVRIUyI6IjxZT1VSX1ZBVUxUPiIsIkRBVEFDUk9OX0RVUkFCSUxJVFkiOiJiZXN0LWVmZm9ydCJ9fQ%3D%3D)
+
+The link imports this example. Open LM Studio's MCP editor and replace both
+`<YOUR_VAULT>` placeholders before starting the server:
+
+```json
+{
+  "mcpServers": {
+    "datacron": {
+      "command": "datacron-mcp",
+      "args": [],
+      "env": {
+        "DATACRON_VAULT_ROOT": "<YOUR_VAULT>",
+        "DATACRON_READ_PATHS": "<YOUR_VAULT>",
+        "DATACRON_DURABILITY": "best-effort"
+      }
+    }
+  }
+}
+```
+
+The example does not enable write tools. CLI setup is safer for packaged installations
+because it writes the actual executable path automatically.
 
 Restart the configured client or clients after installation.
 
