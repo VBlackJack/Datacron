@@ -767,8 +767,11 @@ def test_cli_setup_interactive_explains_prompts_without_changing_defaults(
     assert "Install scope" in result.output
     assert "Default: best-effort, which works across common filesystems" in result.output
     assert "Durability mode" in result.output
-    assert "Default: no, which keeps write tools unavailable" in result.output
-    assert "Enable the confined write tools?" in result.output
+    assert (
+        "By default, your AI assistants can read your notes but never change them" in result.output
+    )
+    assert "Default: no, which leaves every note protected" in result.output
+    assert "Let my AI assistants write notes (in 3 dedicated subfolders only)?" in result.output
     assert "Default: no, which keeps normal operation" in result.output
     assert "Configure certified read-only mode?" in result.output
     assert "Default: no, which leaves all client instruction files unchanged" in result.output
@@ -798,8 +801,45 @@ def test_cli_setup_interactive_explains_write_boundaries(
     )
     assert "_memory, _drafts, _journal under this vault" in result.output
     assert "Write-allowlisted directories" in result.output
-    assert "Default: no, which limits the change to client configs" in result.output
-    assert "Apply the write allowlist to this user account" in result.output
+    assert "This remembers the same note-writing permission" in result.output
+    assert "Default: no, which applies the permission only to assistants" in result.output
+    assert "leave no to decide again later" in result.output
+    assert "Remember this permission for AI assistants installed later?" in result.output
+
+
+def test_windows_installer_write_page_uses_plain_language() -> None:
+    installer = (
+        Path(__file__).parents[2] / "packaging" / "windows" / "datacron-installer.iss"
+    ).read_text(encoding="utf-8")
+    expected_messages = (
+        "english.WritePageCaption=Allow note writing",
+        "english.WritePageDescription=Choose whether your AI assistants can create notes.",
+        "english.EnableWriteTools=Let my AI assistants write notes "
+        "(in 3 dedicated subfolders only)",
+        "english.MachineWideWrite=Remember this permission for AI assistants installed later",
+        "french.WritePageCaption=Autoriser l'ecriture de notes",
+        "french.WritePageDescription=Choisissez si vos assistants IA peuvent creer des notes.",
+        "french.EnableWriteTools=Autoriser mes assistants IA a ecrire des notes "
+        "(dans 3 sous-dossiers dedies uniquement)",
+        "french.MachineWideWrite=Retenir cette autorisation pour les assistants IA "
+        "installes plus tard",
+    )
+
+    for message in expected_messages:
+        assert message in installer
+    french_write_messages = [
+        line for line in installer.splitlines() if line.startswith("french.WritePage")
+    ]
+    french_write_messages.extend(
+        line
+        for line in installer.splitlines()
+        if line.startswith(("french.EnableWriteTools", "french.MachineWideWrite"))
+    )
+    assert len(french_write_messages) == 5
+    assert all(message.isascii() for message in french_write_messages)
+    assert "WritePage.Values[0] := False;" in installer
+    assert "WritePage.Values[1] := False;" in installer
+    assert "WritePage.CheckListBox.OnClickCheck := @WritePageClickCheck;" in installer
 
 
 def test_cli_setup_reset_confirmation_is_explained(tmp_path: Path) -> None:

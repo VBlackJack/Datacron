@@ -35,26 +35,26 @@ datacron protocol uninstall --client all --scope project --project "CHEMIN_WORKS
 N'utilise pas `--reset` pour déplacer un vault : reset agit seulement sur la configuration et
 l'index Datacron du vault sélectionné, pas sur les enregistrements clients.
 
-## Pourquoi mon client IA ne peut-il pas écrire de notes ?
+## Pourquoi mon assistant IA ne peut-il pas écrire de notes ?
 
-Les outils d'écriture sont opt-in. Sans `--enable-write`, le client MCP ne reçoit aucune
-allowlist d'écriture et Datacron n'expose pas d'accès effectif en écriture. Avec l'opt-in et sans
-`--write-path` explicite, le setup confine les écritures à `<vault>/_memory`,
-`<vault>/_drafts` et `<vault>/_journal`. Les chemins hors allowlist restent en lecture seule. Le
-mode certifié `--read-only` bloque les écritures même si des chemins sont autorisés.
+Par défaut, les assistants IA peuvent lire tes notes mais jamais les modifier. Pour leur permettre
+de créer et mettre à jour des notes, active **Autoriser mes assistants IA à écrire des notes**
+dans Datacron Setup. L'autorisation par défaut couvre uniquement trois sous-dossiers dédiés :
+`<vault>/_memory`, `<vault>/_drafts` et `<vault>/_journal`. Tout le reste reste intouchable. Le mode
+certifié `--read-only` bloque l'écriture même quand cette autorisation est activée.
 
-Active l'écriture après l'installation en relançant le setup, puis redémarre le client IA pour
-qu'il recharge la configuration MCP :
+Tu peux activer l'écriture plus tard en relançant le setup, puis redémarrer l'assistant IA pour
+qu'il recharge la configuration :
 
 ```bash
 datacron setup --yes --vault "CHEMIN_VAULT" --client all --scope both --enable-write
 ```
 
-Utilise `--write-path` pour choisir une frontière explicite ; le prompt interactif des répertoires
-accepte aussi une liste séparée par le séparateur de chemins du système. Ajoute
-`--machine-wide-write` seulement si les futurs clients doivent hériter de l'allowlist via
-l'environnement utilisateur ; c'est un opt-in séparé qui ne rend pas inscriptibles les chemins
-hors allowlist.
+Utilise `--write-path` pour remplacer les trois sous-dossiers par défaut par un emplacement
+explicite ; tous les autres chemins restent protégés. L'option de l'installeur **Retenir cette
+autorisation pour les assistants IA installés plus tard**, ou le flag CLI `--machine-wide-write`,
+réutilise la même autorisation pour les assistants ajoutés à l'avenir. Elle n'élargit jamais les
+emplacements d'écriture sélectionnés.
 
 ## Pourquoi Antigravity ne voit-il pas Datacron ?
 

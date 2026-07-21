@@ -33,25 +33,25 @@ datacron protocol uninstall --client all --scope project --project "WORKSPACE_PA
 Do not use `--reset` to move a vault: reset changes only the selected vault's Datacron config and
 index, not client registrations.
 
-## Why can't my AI client write notes?
+## Why can't my AI assistant write notes?
 
-Write tools are opt-in. Without `--enable-write`, the MCP client receives no write allowlist and
-Datacron does not expose effective write access. With the opt-in and no explicit `--write-path`,
-setup confines writes to `<vault>/_memory`, `<vault>/_drafts`, and `<vault>/_journal`. Paths outside
-the allowlist remain read-only. Certified `--read-only` mode blocks writes even when paths are
-allowlisted.
+By default, AI assistants can read your notes but never change them. To let them create and
+update notes, enable **Let my AI assistants write notes** in Datacron Setup. The default
+permission covers only three dedicated subfolders: `<vault>/_memory`, `<vault>/_drafts`, and
+`<vault>/_journal`. Everything else stays untouched. Certified `--read-only` mode blocks writing
+even when this permission is enabled.
 
-Enable writing after installation by re-running setup, then restart the AI client so it reloads
-the MCP configuration:
+You can enable writing later by running setup again, then restarting the AI assistant so it
+reloads the configuration:
 
 ```bash
 datacron setup --yes --vault "VAULT_PATH" --client all --scope both --enable-write
 ```
 
-Use `--write-path` to choose one explicit boundary; the interactive directory prompt also accepts
-a path-separator-delimited list. Add `--machine-wide-write` only if future clients should inherit
-the allowlist through the user environment; it is a separate opt-in and does not make paths
-outside the allowlist writable.
+Use `--write-path` to replace the three default subfolders with one explicit location; every other
+path stays protected. The installer option **Remember this permission for AI assistants installed
+later**, or the CLI flag `--machine-wide-write`, reuses the same permission for assistants added
+in the future. It never expands the selected writing locations.
 
 ## Why can't Antigravity see Datacron?
 
