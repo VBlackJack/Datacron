@@ -7,7 +7,7 @@ These answers describe the current Datacron behavior. For the complete workflows
 [Windows installer guide](installation-windows.md), and
 [operational health and durability](operational-health.md).
 
-## Datacron configured the wrong folder—or my user profile—as the vault. Why, and how do I fix it?
+## Datacron configured the wrong folder-or my user profile-as the vault. Why, and how do I fix it?
 
 Interactive setup uses the vault path you select; its default is the current directory. Current
 releases explain that choice before prompting. Non-interactive `setup --yes` no longer adopts an
@@ -33,7 +33,7 @@ datacron protocol uninstall --client all --scope project --project "WORKSPACE_PA
 Do not use `--reset` to move a vault: reset changes only the selected vault's Datacron config and
 index, not client registrations.
 
-## Why can’t my AI client write notes?
+## Why can't my AI client write notes?
 
 Write tools are opt-in. Without `--enable-write`, the MCP client receives no write allowlist and
 Datacron does not expose effective write access. With the opt-in and no explicit `--write-path`,
@@ -53,7 +53,7 @@ a path-separator-delimited list. Add `--machine-wide-write` only if future clien
 the allowlist through the user environment; it is a separate opt-in and does not make paths
 outside the allowlist writable.
 
-## Why can’t Antigravity see Datacron?
+## Why can't Antigravity see Datacron?
 
 Datacron detects the live Antigravity profile only at `~/.gemini/antigravity`. For user scope it
 merges the `datacron` server into `~/.gemini/config/mcp_config.json`. For project scope it writes
@@ -70,7 +70,7 @@ the installed IDE version. If the global route does not load, open the vault as 
 use the validated `.agents/mcp_config.json` route. Stale `antigravity-ide` and
 `antigravity-backup` profile folders are intentionally ignored.
 
-## Why does the CLI say “Unknown client X” when the documentation lists it?
+## Why does the CLI say "Unknown client X" when the documentation lists it?
 
 The documentation may come from a newer repository revision than the executable on your `PATH`.
 Check both the version and the executable being launched:
@@ -80,8 +80,8 @@ datacron --version
 ```
 
 On Windows, `where datacron` or `Get-Command datacron` identifies the executable. Reinstall or
-upgrade the current Datacron release—using the latest `Datacron-Setup.exe` or
-`python -m pip install --upgrade datacron`—then open a new terminal and restart the AI client.
+upgrade the current Datacron release-using the latest `Datacron-Setup.exe` or
+`python -m pip install --upgrade datacron`-then open a new terminal and restart the AI client.
 Running an older installed binary from a fresh source checkout does not add the checkout's newer
 client identifiers.
 

@@ -7,7 +7,7 @@ Ces réponses décrivent le comportement actuel de Datacron. Pour les procédure
 [guide de l'installeur Windows](installation-windows.md) et la
 [santé opérationnelle et durabilité](operational-health.md).
 
-## Datacron a configuré le mauvais dossier — ou mon profil utilisateur — comme vault. Pourquoi et comment le réparer ?
+## Datacron a configuré le mauvais dossier - ou mon profil utilisateur - comme vault. Pourquoi et comment le réparer ?
 
 Le setup interactif utilise le chemin de vault sélectionné ; son défaut est le dossier courant.
 Les versions actuelles expliquent ce choix avant de poser la question. Le mode non interactif
@@ -84,8 +84,8 @@ datacron --version
 ```
 
 Sous Windows, `where datacron` ou `Get-Command datacron` identifie l'exécutable. Réinstalle ou
-mets à niveau la release Datacron courante — avec le dernier `Datacron-Setup.exe` ou
-`python -m pip install --upgrade datacron` — puis ouvre un nouveau terminal et redémarre le client
+mets à niveau la release Datacron courante - avec le dernier `Datacron-Setup.exe` ou
+`python -m pip install --upgrade datacron` - puis ouvre un nouveau terminal et redémarre le client
 IA. Lancer un ancien binaire installé depuis un checkout source récent n'ajoute pas les nouveaux
 identifiants clients présents dans le checkout.
 
