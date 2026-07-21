@@ -15,6 +15,15 @@
 #ifndef AppVersion
   #error AppVersion must be provided with ISCC /DAppVersion=<version>
 #endif
+#ifndef PayloadVersionVerified
+  #error Compile through build_installer.py to validate dist/datacron.exe first
+#endif
+#if !SameStr(AppVersion, PayloadVersionVerified)
+  #error AppVersion does not match the validated dist/datacron.exe version
+#endif
+
+; Direct ISCC compilation is intentionally blocked above. The shared local and
+; CI wrapper validates dist/datacron.exe --version before supplying the proof.
 
 [Setup]
 AppId=Datacron

@@ -322,6 +322,22 @@ The binary bundles the full CLI (including `datacron setup`) and its packaged da
 installed Python. `dist/` and `build/` are not version-controlled. Context: ADR-017 in the
 [architecture](architecture.md).
 
+### Build the Windows installer
+
+Rebuild `dist/datacron.exe` before every local installer build, then use the same fail-closed
+wrapper as CI:
+
+```powershell
+./scripts/build_installer.ps1
+$version = & .venv\Scripts\python.exe -c "from datacron import __version__; print(__version__)"
+& .venv\Scripts\python.exe packaging\windows\build_installer.py --app-version $version
+```
+
+The wrapper runs `dist/datacron.exe --version` and requires an exact match with the requested
+installer version before starting Inno Setup. A missing or stale executable stops the build with
+an explicit error. Direct ISCC compilation is intentionally rejected by the `.iss` file so local
+and CI builds cannot bypass this check.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
