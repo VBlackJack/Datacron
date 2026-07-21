@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0721.01] - 2026-07-21
+
 ### Added
 
 - `datacron setup` now detects LM Studio from its real `~/.lmstudio` profile and merges the
