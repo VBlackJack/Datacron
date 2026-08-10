@@ -25,6 +25,11 @@ from datacron.core.models import Note
 from datacron.core.operation_log import OperationContext, OperationRecord
 from datacron.core.paths import PathConfinementError, assert_within_paths
 from datacron.core.protocols import VaultReader, VaultWriter
+from datacron.core.recovery import (
+    BlockedOperation,
+    RecoveryRepairAction,
+    RecoveryRepairResult,
+)
 
 __all__ = [
     "AccessMode",
@@ -153,6 +158,15 @@ class ScopedVaultWriter:
         self._scope = scope
         self._write_policy = write_policy
 
+    @property
+    def recovery_blocked(self) -> tuple[BlockedOperation, ...]:
+        """Return only blocked operations visible in this read scope."""
+        return tuple(
+            item
+            for item in self._delegate.recovery_blocked
+            if self._scope.allows_rel_path(item.rel_path, "read")
+        )
+
     async def write_note_atomic(
         self,
         rel_path: str,
@@ -211,6 +225,34 @@ class ScopedVaultWriter:
     async def recover_operations(self) -> int:
         self._write_policy.ensure_writable()
         return await self._delegate.recover_operations()
+
+    async def inspect_recovery(self) -> tuple[BlockedOperation, ...]:
+        blocked = await self._delegate.inspect_recovery()
+        return tuple(item for item in blocked if self._scope.allows_rel_path(item.rel_path, "read"))
+
+    async def repair_recovery(
+        self,
+        operation_id: str,
+        action: RecoveryRepairAction,
+        *,
+        expected_disk_hash: str,
+        actor: str,
+    ) -> RecoveryRepairResult:
+        self._write_policy.ensure_writable()
+        blocked = await self.inspect_recovery()
+        selected = next(
+            (item for item in blocked if item.operation_id == operation_id),
+            None,
+        )
+        if selected is None:
+            raise FileNotFoundError(f"blocked operation not found in scope: {operation_id}")
+        self._scope.authorize_rel_path(selected.rel_path, "write")
+        return await self._delegate.repair_recovery(
+            operation_id,
+            action,
+            expected_disk_hash=expected_disk_hash,
+            actor=actor,
+        )
 
     async def list_operations(self) -> list[OperationRecord]:
         records = await self._delegate.list_operations()

@@ -46,6 +46,11 @@ from datacron.core.models import (
     Wikilink,
 )
 from datacron.core.operation_log import OperationContext, OperationRecord
+from datacron.core.recovery import (
+    BlockedOperation,
+    RecoveryRepairAction,
+    RecoveryRepairResult,
+)
 from datacron.core.temporal import TemporalMeta
 
 if TYPE_CHECKING:
@@ -309,6 +314,11 @@ class VaultReader(Protocol):
 class VaultWriter(Protocol):
     """Writes notes through confined, reversible filesystem primitives."""
 
+    @property
+    def recovery_blocked(self) -> tuple[BlockedOperation, ...]:
+        """Return blocked operations observed by the latest complete scan."""
+        ...
+
     async def write_note_atomic(
         self,
         rel_path: str,
@@ -346,6 +356,21 @@ class VaultWriter(Protocol):
 
     async def recover_operations(self) -> int:
         """Recover durable pending operation manifests."""
+        ...
+
+    async def inspect_recovery(self) -> tuple[BlockedOperation, ...]:
+        """Inspect blocked operation manifests without mutating vault state."""
+        ...
+
+    async def repair_recovery(
+        self,
+        operation_id: str,
+        action: RecoveryRepairAction,
+        *,
+        expected_disk_hash: str,
+        actor: str,
+    ) -> RecoveryRepairResult:
+        """Apply one explicitly confirmed recovery repair under exact-hash CAS."""
         ...
 
     async def list_operations(self) -> list[OperationRecord]:

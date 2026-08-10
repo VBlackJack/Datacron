@@ -338,9 +338,7 @@ async def _startup_recover_operations(app: DatacronApp) -> None:
         return
     if recovered:
         _LOGGER.warning("Recovered %d committed operation-log entries", recovered)
-    delegate = getattr(app.vault_writer, "_delegate", app.vault_writer)
-    observed = delegate.__getattribute__("recovery_blocked")
-    blocked = observed if isinstance(observed, tuple) else ()
+    blocked = app.vault_writer.recovery_blocked
     if blocked:
         _LOGGER.error(
             "Startup operation-log recovery blocked count=%d first_operation_id=%s; "
