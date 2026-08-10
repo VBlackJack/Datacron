@@ -24,7 +24,7 @@ ULIDs, history, and the operation journal.
 | Vault reading | `list_notes`, `get_note`, resources `datacron://vault/map`, `vault/info`, `policy/active` |
 | Search | SQLite FTS5/BM25, FR↔EN query expansion, temporal re-rank, `ripgrep` via `search_regex` |
 | Local graph | Wikilinks and backlinks via `get_backlinks` |
-| Writing | 5 confined, reversible tools, disabled by default without `DATACRON_WRITE_PATHS` |
+| Writing | 8 confined, reversible tools, disabled by default without `DATACRON_WRITE_PATHS` |
 | Index | `datacron index` incremental, `datacron reindex` full, automatic repair on read |
 | Evaluation | `datacron eval` over the real MCP pipeline: recall@k, MRR, nDCG, freshness, latency, and payload tokens |
 | Guided setup | `datacron setup`: init + index + MCP registration in one command |
@@ -334,6 +334,7 @@ Full index: [docs/en/index.md](docs/en/index.md) | [Index français](docs/fr/ind
 To get started:
 
 - [Installation and configuration guide](docs/en/setup.md)
+- [Use Datacron with Ollama](docs/en/ollama.md)
 - [Frequently asked questions](docs/en/faq.md)
 - [User guide](docs/en/user-guide.md)
 
