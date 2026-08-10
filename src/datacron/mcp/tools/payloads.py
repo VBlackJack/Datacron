@@ -40,12 +40,14 @@ def _estimate_tokens(text: str) -> int:
 def _error_response(tool: str, exc: BaseException, started: float, **fields: Any) -> dict[str, Any]:
     message = sanitize_metadata_value(str(exc))
     _audit(tool, started, error=type(exc).__name__, error_message=message, **fields)
-    return {
-        "error": {
-            "type": type(exc).__name__,
-            "message": message,
-        }
+    error: dict[str, Any] = {
+        "type": type(exc).__name__,
+        "message": message,
     }
+    code = getattr(exc, "code", None)
+    if code is not None:
+        error["code"] = code
+    return {"error": error}
 
 
 def _audit(tool: str, started: float, **fields: Any) -> None:
