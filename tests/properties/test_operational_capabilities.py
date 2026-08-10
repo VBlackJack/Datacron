@@ -39,6 +39,7 @@ from datacron.mcp.tools import (
     _delete_note_section_impl,
     _get_health_impl,
     _patch_note_section_impl,
+    _rename_note_section_impl,
     _revert_note_impl,
     _search_text_impl,
     _set_frontmatter_impl,
@@ -189,6 +190,12 @@ async def test_prop_read_only_blocks_writes(tmp_path: Path) -> None:
                 app,
                 rel_path="note.md",
                 heading="Journal",
+            ),
+            await _rename_note_section_impl(
+                app,
+                rel_path="note.md",
+                heading="Journal",
+                new_heading="Renamed journal",
             ),
             await _revert_note_impl(app, note="note.md", to_hash="0" * 64),
         ]

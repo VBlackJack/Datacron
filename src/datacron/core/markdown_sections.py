@@ -22,6 +22,7 @@ __all__ = [
     "append_entry_to_heading",
     "find_section_span",
     "parse_heading_line",
+    "rename_atx_heading_line",
     "section_replacement_block",
 ]
 
@@ -86,6 +87,31 @@ def parse_heading_line(line: str) -> tuple[int, str] | None:
     level = len(match.group(1))
     text = line[match.end() :].strip()
     return level, text
+
+
+def rename_atx_heading_line(line: str, new_heading: str) -> str:
+    """Replace only the text portion of one ATX heading line.
+
+    Args:
+        line: Existing ATX heading line, optionally including its line ending.
+        new_heading: Validated replacement heading text.
+
+    Returns:
+        The heading line with its indentation, level, separator, and line ending preserved.
+
+    Raises:
+        ValueError: If ``line`` is not an addressable ATX heading.
+    """
+    match = _HEADING_HASH_PATTERN.match(line)
+    if match is None:
+        raise ValueError("line must be an ATX heading line")
+    if line.endswith("\r\n"):
+        line_ending = "\r\n"
+    elif line.endswith(("\n", "\r")):
+        line_ending = line[-1]
+    else:
+        line_ending = ""
+    return f"{line[: match.end()]}{new_heading}{line_ending}"
 
 
 def section_replacement_block(new_content: str, *, prefix: str, suffix: str) -> str:

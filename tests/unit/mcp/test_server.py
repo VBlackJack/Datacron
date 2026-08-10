@@ -40,12 +40,17 @@ from datacron.mcp.server import (
 def test_server_instructions_include_memory_protocol() -> None:
     assert "create_note_ai" in SERVER_INSTRUCTIONS
     assert "delete_note_section" in SERVER_INSTRUCTIONS
+    assert "rename_note_section" in SERVER_INSTRUCTIONS
+    assert "current write selector" in SERVER_INSTRUCTIONS
+    assert "heading-like lines in fenced code" in SERVER_INSTRUCTIONS
     assert "INIT.md" in SERVER_INSTRUCTIONS
     assert "sandbox-wrapped" in SERVER_INSTRUCTIONS
 
 
 @pytest.mark.asyncio
-async def test_tool_annotations_describe_local_effects(tmp_path: Path) -> None:
+async def test_rename_note_section_tool_annotations_describe_local_effects(
+    tmp_path: Path,
+) -> None:
     vault = tmp_path / "vault"
     vault.mkdir()
     app = build_app(
@@ -84,7 +89,12 @@ async def test_tool_annotations_describe_local_effects(tmp_path: Path) -> None:
             "idempotentHint": False,
             "openWorldHint": False,
         }
-    for name in ("set_frontmatter", "patch_note_section", "delete_note_section"):
+    for name in (
+        "set_frontmatter",
+        "patch_note_section",
+        "delete_note_section",
+        "rename_note_section",
+    ):
         assert annotations[name] == {
             "readOnlyHint": False,
             "destructiveHint": True,
@@ -100,7 +110,7 @@ async def test_tool_annotations_describe_local_effects(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
+async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compatible(
     tmp_path: Path,
 ) -> None:
     vault = tmp_path / "vault"
@@ -121,6 +131,7 @@ async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
         "set_frontmatter",
         "patch_note_section",
         "delete_note_section",
+        "rename_note_section",
         "revert_note",
     }
 
@@ -163,7 +174,8 @@ async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
     assert "Findings do not include line numbers" in health_description
     assert "actionable" not in health_description
     delete_tool = tools["delete_note_section"]
-    assert len(tools) == 15
+    rename_tool = tools["rename_note_section"]
+    assert len(tools) == 16
     assert set(delete_tool.inputSchema["properties"]) == {
         "rel_path",
         "heading",
@@ -195,6 +207,27 @@ async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
         "content_hash",
         "indexed",
     ]
+    assert set(rename_tool.inputSchema["properties"]) == {
+        "rel_path",
+        "heading",
+        "new_heading",
+        "expected_hash",
+        "heading_level",
+    }
+    assert rename_tool.inputSchema["required"] == ["rel_path", "heading", "new_heading"]
+    assert rename_tool.inputSchema["properties"]["rel_path"]["type"] == "string"
+    assert rename_tool.inputSchema["properties"]["heading"]["type"] == "string"
+    assert rename_tool.inputSchema["properties"]["new_heading"]["type"] == "string"
+    assert rename_tool.inputSchema["properties"]["expected_hash"]["default"] is None
+    assert rename_tool.inputSchema["properties"]["heading_level"]["default"] is None
+    rename_output_schema = rename_tool.outputSchema
+    assert rename_output_schema is not None
+    assert set(rename_output_schema["properties"]) == {
+        "renamed",
+        "content_hash",
+        "indexed",
+    }
+    assert rename_output_schema["required"] == ["renamed", "content_hash", "indexed"]
 
 
 @pytest.mark.asyncio
@@ -213,7 +246,9 @@ async def test_missing_resource_uses_invalid_params(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_write_tool_descriptions_lead_with_usage_trigger(tmp_path: Path) -> None:
+async def test_rename_note_section_write_descriptions_lead_with_usage_trigger(
+    tmp_path: Path,
+) -> None:
     vault = tmp_path / "vault"
     vault.mkdir()
     app = build_app(
@@ -246,6 +281,14 @@ async def test_write_tool_descriptions_lead_with_usage_trigger(tmp_path: Path) -
     assert delete_description is not None
     assert "H2-H6" in delete_description
     assert "lifecycle invalidation" in delete_description
+    rename_description = descriptions["rename_note_section"]
+    assert rename_description is not None
+    assert "ATX H2-H6" in rename_description
+    assert "Setext" in rename_description
+    assert "frontmatter title" in rename_description
+    assert "current write selector" in rename_description
+    assert "collisions recognized by the same selector" in rename_description
+    assert "heading-like lines in fenced code" in rename_description
 
 
 class TestBuildAppReadPaths:

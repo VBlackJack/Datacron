@@ -34,6 +34,10 @@ _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PA
 _REJECTED_ENTRY_SEPARATOR: Final[str] = " -- "
 _MAX_REJECTED_ENTRIES: Final[int] = 16
 _MAX_REJECTED_ENTRY_CHARS: Final[int] = 300
+_RENAME_H1_REFUSAL_MESSAGE: Final[str] = (
+    "rename_note_section only supports ATX heading levels 2 through 6; "
+    "level 1 is refused because frontmatter title synchronization is outside this tool"
+)
 
 
 def _map_write_path_error(
@@ -305,6 +309,42 @@ def _validate_delete_note_section_request(
     return (
         cleaned_rel_path,
         cleaned_heading,
+        cleaned_expected_hash,
+        heading_level,
+    )
+
+
+def _validate_rename_note_section_request(
+    *,
+    rel_path: str,
+    heading: str,
+    new_heading: str,
+    expected_hash: str | None,
+    heading_level: int | None,
+) -> tuple[str, str, str, str | None, int | None]:
+    cleaned_rel_path = rel_path.strip()
+    cleaned_heading = heading.strip()
+    cleaned_new_heading = new_heading.strip()
+    cleaned_expected_hash = _validate_expected_hash(expected_hash)
+
+    if not cleaned_rel_path.endswith(".md"):
+        raise ValueError("rel_path must end with .md")
+    if not cleaned_heading:
+        raise ValueError("heading must not be empty")
+    if not cleaned_new_heading:
+        raise ValueError("new_heading must not be empty")
+    if "\r" in new_heading or "\n" in new_heading:
+        raise ValueError("new_heading must be a single line")
+    if cleaned_new_heading.startswith("#"):
+        raise ValueError("new_heading must contain text only, without Markdown heading markers")
+    if heading_level is not None and heading_level not in range(1, 7):
+        raise ValueError("heading_level must be between 1 and 6")
+    if heading_level == 1:
+        raise ValueError(_RENAME_H1_REFUSAL_MESSAGE)
+    return (
+        cleaned_rel_path,
+        cleaned_heading,
+        cleaned_new_heading,
         cleaned_expected_hash,
         heading_level,
     )

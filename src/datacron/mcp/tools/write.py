@@ -32,6 +32,7 @@ from datacron.core.markdown_sections import (
     append_entry_to_heading,
     find_section_span,
     parse_heading_line,
+    rename_atx_heading_line,
     section_replacement_block,
 )
 from datacron.core.operation_log import (
@@ -48,6 +49,7 @@ from datacron.mcp.tools.search import (
     _reconcile_serialized,
 )
 from datacron.mcp.tools.write_validation import (
+    _RENAME_H1_REFUSAL_MESSAGE,
     _clean_string_list,
     _map_write_path_error,
     _parse_preserving_bom,
@@ -58,6 +60,7 @@ from datacron.mcp.tools.write_validation import (
     _validate_memory_frontmatter,
     _validate_patch_note_section_request,
     _validate_rejected_entries,
+    _validate_rename_note_section_request,
     _validate_set_frontmatter_request,
 )
 
@@ -632,6 +635,137 @@ async def _patch_note_section_impl(
             ValueError,
         ),
         expected_audit_fields=expected_audit_fields,
+    )
+
+
+async def _rename_note_section_impl(
+    app: DatacronApp,
+    *,
+    rel_path: str,
+    heading: str,
+    new_heading: str,
+    expected_hash: str | None = None,
+    heading_level: int | None = None,
+    actor: str = "direct-call",
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    audit_fields = {"rel_path": rel_path}
+
+    async def action() -> dict[str, Any]:
+        app.write_policy.ensure_writable()
+        (
+            cleaned_rel_path,
+            cleaned_heading,
+            cleaned_new_heading,
+            cleaned_expected_hash,
+            cleaned_heading_level,
+        ) = _validate_rename_note_section_request(
+            rel_path=rel_path,
+            heading=heading,
+            new_heading=new_heading,
+            expected_hash=expected_hash,
+            heading_level=heading_level,
+        )
+        matched_level = 0
+        matched_text = ""
+        operation_parameters: dict[str, Any] = {
+            "old_heading": cleaned_heading,
+            "new_heading": cleaned_new_heading,
+            "heading_level": cleaned_heading_level,
+        }
+
+        def mutation(raw: str) -> str:
+            nonlocal matched_level, matched_text
+            metadata, body, has_bom = _parse_preserving_bom(raw)
+            lines = body.splitlines(keepends=True)
+            try:
+                content_start, _content_end = find_section_span(
+                    lines,
+                    cleaned_heading,
+                    cleaned_heading_level,
+                )
+            except ValueError as exc:
+                if str(exc) == "heading not found; nothing to patch":
+                    raise ValueError("heading not found; nothing to rename") from exc
+                raise
+            heading_index = content_start - 1
+            matched_heading = parse_heading_line(lines[heading_index])
+            if matched_heading is None:
+                raise RuntimeError("section span does not follow a heading")
+            matched_level, matched_text = matched_heading
+            if matched_level == 1:
+                raise ValueError(_RENAME_H1_REFUSAL_MESSAGE)
+            if cleaned_new_heading == matched_text:
+                raise ValueError("new_heading must differ from the current heading")
+            if any(
+                index != heading_index
+                and (parsed := parse_heading_line(line)) is not None
+                and parsed[1] == cleaned_new_heading
+                for index, line in enumerate(lines)
+            ):
+                raise ValueError(
+                    "new_heading already exists in the note; "
+                    "refusing to create an ambiguous heading"
+                )
+            lines[heading_index] = rename_atx_heading_line(
+                lines[heading_index],
+                cleaned_new_heading,
+            )
+            operation_parameters.update(
+                old_heading=matched_text,
+                heading_level=matched_level,
+            )
+            metadata["updated"] = datetime.now(tz=UTC).isoformat()
+            return _serialize_preserving_bom(metadata, "".join(lines), has_bom=has_bom)
+
+        content_hash = await app.vault_writer.mutate_note_atomic(
+            cleaned_rel_path,
+            mutation,
+            expected_hash=cleaned_expected_hash,
+            operation=OperationContext(
+                op="rename_section",
+                tool="rename_note_section",
+                actor=actor,
+                parameters=operation_parameters,
+            ),
+        )
+        index_stats = await _reconcile_serialized(app)
+        await _invalidate_alias_cache_if_index_changed(app, index_stats)
+        payload: dict[str, Any] = {
+            "renamed": {
+                "rel_path": cleaned_rel_path,
+                "old_heading": matched_text,
+                "new_heading": cleaned_new_heading,
+                "level": matched_level,
+            },
+            "content_hash": content_hash,
+            "indexed": True,
+        }
+        _audit(
+            "rename_note_section",
+            started,
+            rel_path=cleaned_rel_path,
+            heading_level=matched_level,
+            old_heading_chars=len(matched_text),
+            new_heading_chars=len(cleaned_new_heading),
+            reindexed_notes=index_stats["reindexed_notes"],
+            deleted_notes=index_stats["deleted_notes"],
+        )
+        return payload
+
+    return await _execute_write_tool(
+        "rename_note_section",
+        started,
+        action,
+        app=app,
+        audit_fields=audit_fields,
+        expected=(
+            DurabilityUnavailableError,
+            ReadOnlyModeError,
+            FileNotFoundError,
+            FrontmatterError,
+            ValueError,
+        ),
     )
 
 

@@ -85,6 +85,7 @@ class TestMcpE2E:
                 "list_notes",
                 "get_note",
                 "delete_note_section",
+                "rename_note_section",
                 "revert_note",
                 "get_note_history",
                 "audit_query",
@@ -137,6 +138,41 @@ class TestMcpE2E:
         actor = history_payload["operations"][0]["actor"]
         assert actor.startswith("mcp-client:")
         assert actor != "mcp-client:unidentified"
+
+    async def test_rename_note_section_round_trips_over_stdio(
+        self, vault: Path, tmp_path: Path
+    ) -> None:
+        session, streams = await _open_session(vault, tmp_path)
+        try:
+            renamed = await session.call_tool(
+                "rename_note_section",
+                {
+                    "rel_path": "welcome.md",
+                    "heading": "Quick links",
+                    "new_heading": "Useful links",
+                    "heading_level": 2,
+                },
+            )
+            note_map = await session.call_tool(
+                "get_note", {"id_or_path": "welcome.md", "format": "map"}
+            )
+        finally:
+            await _close_session(session, streams)
+
+        assert not renamed.isError
+        assert renamed.structuredContent is not None
+        assert renamed.structuredContent["renamed"] == {
+            "rel_path": "welcome.md",
+            "old_heading": "Quick links",
+            "new_heading": "Useful links",
+            "level": 2,
+        }
+        assert renamed.structuredContent["indexed"] is True
+        assert not note_map.isError
+        assert note_map.structuredContent is not None
+        headings = note_map.structuredContent["headings"]
+        assert any(heading["text"] == "Useful links" for heading in headings)
+        assert all(heading["text"] != "Quick links" for heading in headings)
 
     async def test_list_notes_tool_returns_demo_vault(self, vault: Path, tmp_path: Path) -> None:
         session, streams = await _open_session(vault, tmp_path)
