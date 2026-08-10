@@ -261,7 +261,8 @@ def _validate_patch_note_section_request(
     new_content: str,
     expected_hash: str | None,
     heading_level: int | None,
-) -> tuple[str, str, str, str | None, int | None]:
+    heading_occurrence: int | None,
+) -> tuple[str, str, str, str | None, int | None, int | None]:
     cleaned_rel_path = rel_path.strip()
     cleaned_heading = heading.strip()
     cleaned_expected_hash = _validate_expected_hash(expected_hash)
@@ -274,6 +275,11 @@ def _validate_patch_note_section_request(
         raise ValueError("new_content must not be empty")
     if heading_level is not None and heading_level not in range(1, 7):
         raise ValueError("heading_level must be between 1 and 6")
+    cleaned_heading_occurrence = _validate_heading_occurrence(
+        heading_occurrence,
+        heading_level=heading_level,
+        expected_hash=cleaned_expected_hash,
+    )
 
     normalized_content = new_content.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
     return (
@@ -282,6 +288,7 @@ def _validate_patch_note_section_request(
         normalized_content,
         cleaned_expected_hash,
         heading_level,
+        cleaned_heading_occurrence,
     )
 
 
@@ -291,7 +298,8 @@ def _validate_delete_note_section_request(
     heading: str,
     expected_hash: str | None,
     heading_level: int | None,
-) -> tuple[str, str, str | None, int | None]:
+    heading_occurrence: int | None,
+) -> tuple[str, str, str | None, int | None, int | None]:
     cleaned_rel_path = rel_path.strip()
     cleaned_heading = heading.strip()
     cleaned_expected_hash = _validate_expected_hash(expected_hash)
@@ -306,11 +314,17 @@ def _validate_delete_note_section_request(
         raise ValueError(
             "delete_note_section only supports heading levels 2 through 6; level 1 is refused"
         )
+    cleaned_heading_occurrence = _validate_heading_occurrence(
+        heading_occurrence,
+        heading_level=heading_level,
+        expected_hash=cleaned_expected_hash,
+    )
     return (
         cleaned_rel_path,
         cleaned_heading,
         cleaned_expected_hash,
         heading_level,
+        cleaned_heading_occurrence,
     )
 
 
@@ -321,7 +335,8 @@ def _validate_rename_note_section_request(
     new_heading: str,
     expected_hash: str | None,
     heading_level: int | None,
-) -> tuple[str, str, str, str | None, int | None]:
+    heading_occurrence: int | None,
+) -> tuple[str, str, str, str | None, int | None, int | None]:
     cleaned_rel_path = rel_path.strip()
     cleaned_heading = heading.strip()
     cleaned_new_heading = new_heading.strip()
@@ -341,13 +356,38 @@ def _validate_rename_note_section_request(
         raise ValueError("heading_level must be between 1 and 6")
     if heading_level == 1:
         raise ValueError(_RENAME_H1_REFUSAL_MESSAGE)
+    cleaned_heading_occurrence = _validate_heading_occurrence(
+        heading_occurrence,
+        heading_level=heading_level,
+        expected_hash=cleaned_expected_hash,
+    )
     return (
         cleaned_rel_path,
         cleaned_heading,
         cleaned_new_heading,
         cleaned_expected_hash,
         heading_level,
+        cleaned_heading_occurrence,
     )
+
+
+def _validate_heading_occurrence(
+    heading_occurrence: int | None,
+    *,
+    heading_level: int | None,
+    expected_hash: str | None,
+) -> int | None:
+    if heading_occurrence is None:
+        return None
+    if isinstance(heading_occurrence, bool) or not isinstance(heading_occurrence, int):
+        raise ValueError("heading_occurrence must be an integer")
+    if heading_occurrence < 1:
+        raise ValueError("heading_occurrence must be at least 1")
+    if heading_level is None:
+        raise ValueError("heading_occurrence requires heading_level")
+    if expected_hash is None:
+        raise ValueError("heading_occurrence requires expected_hash")
+    return heading_occurrence
 
 
 def _validate_expected_hash(expected_hash: str | None) -> str | None:

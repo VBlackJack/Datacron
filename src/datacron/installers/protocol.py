@@ -79,6 +79,9 @@ PROTOCOL_BLOCK: Final[str] = "\n".join(
         "outside the supported guarantee.",
         "- Use `delete_note_section` only for an explicitly obsolete H2-H6 section; "
         "prefer lifecycle invalidation when the fact must remain queryable.",
+        "- To select a duplicate section title, pass 1-based `heading_occurrence` with "
+        "`heading_level` and the exact expected_hash; the ordinal follows document "
+        "order for those hashed bytes. Do not use `chunk_id`.",
         "- Use `set_frontmatter` for verification, confidence, and fact lifecycle changes.",
         "- Prefer superseding or invalidating outdated facts over deleting history.",
         "- Use `contradiction_scan` to surface contradicting or refining sections across "

@@ -43,6 +43,10 @@ def test_server_instructions_include_memory_protocol() -> None:
     assert "rename_note_section" in SERVER_INSTRUCTIONS
     assert "current write selector" in SERVER_INSTRUCTIONS
     assert "heading-like lines in fenced code" in SERVER_INSTRUCTIONS
+    assert "1-based heading_occurrence" in SERVER_INSTRUCTIONS
+    assert "exact expected_hash" in SERVER_INSTRUCTIONS
+    assert "document order" in SERVER_INSTRUCTIONS
+    assert "chunk_id" in SERVER_INSTRUCTIONS
     assert "INIT.md" in SERVER_INSTRUCTIONS
     assert "sandbox-wrapped" in SERVER_INSTRUCTIONS
 
@@ -181,12 +185,14 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         "heading",
         "expected_hash",
         "heading_level",
+        "heading_occurrence",
     }
     assert delete_tool.inputSchema["required"] == ["rel_path", "heading"]
     assert delete_tool.inputSchema["properties"]["rel_path"]["type"] == "string"
     assert delete_tool.inputSchema["properties"]["heading"]["type"] == "string"
     assert delete_tool.inputSchema["properties"]["expected_hash"]["default"] is None
     assert delete_tool.inputSchema["properties"]["heading_level"]["default"] is None
+    assert delete_tool.inputSchema["properties"]["heading_occurrence"]["default"] is None
     delete_output_schema = delete_tool.outputSchema
     patch_output_schema = tools["patch_note_section"].outputSchema
     assert delete_output_schema is not None
@@ -197,7 +203,16 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         "indexed",
     }
     assert delete_output_schema["required"] == ["deleted", "content_hash", "indexed"]
-    assert tools["patch_note_section"].inputSchema["required"] == [
+    patch_tool = tools["patch_note_section"]
+    assert set(patch_tool.inputSchema["properties"]) == {
+        "rel_path",
+        "heading",
+        "new_content",
+        "expected_hash",
+        "heading_level",
+        "heading_occurrence",
+    }
+    assert patch_tool.inputSchema["required"] == [
         "rel_path",
         "heading",
         "new_content",
@@ -213,6 +228,7 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         "new_heading",
         "expected_hash",
         "heading_level",
+        "heading_occurrence",
     }
     assert rename_tool.inputSchema["required"] == ["rel_path", "heading", "new_heading"]
     assert rename_tool.inputSchema["properties"]["rel_path"]["type"] == "string"
@@ -220,6 +236,7 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     assert rename_tool.inputSchema["properties"]["new_heading"]["type"] == "string"
     assert rename_tool.inputSchema["properties"]["expected_hash"]["default"] is None
     assert rename_tool.inputSchema["properties"]["heading_level"]["default"] is None
+    assert rename_tool.inputSchema["properties"]["heading_occurrence"]["default"] is None
     rename_output_schema = rename_tool.outputSchema
     assert rename_output_schema is not None
     assert set(rename_output_schema["properties"]) == {
@@ -228,6 +245,33 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         "indexed",
     }
     assert rename_output_schema["required"] == ["renamed", "content_hash", "indexed"]
+    for tool_name, output_name, required in (
+        (
+            "patch_note_section",
+            "patched",
+            ["rel_path", "heading", "level"],
+        ),
+        (
+            "delete_note_section",
+            "deleted",
+            ["rel_path", "heading", "level"],
+        ),
+        (
+            "rename_note_section",
+            "renamed",
+            ["rel_path", "old_heading", "new_heading", "level"],
+        ),
+    ):
+        tool = tools[tool_name]
+        occurrence_schema = tool.inputSchema["properties"]["heading_occurrence"]
+        assert occurrence_schema["default"] is None
+        assert occurrence_schema["anyOf"] == [{"type": "integer"}, {"type": "null"}]
+        output_schema = tool.outputSchema
+        assert output_schema is not None
+        reference = output_schema["properties"][output_name]["$ref"].split("/")[-1]
+        selected_schema = output_schema["$defs"][reference]
+        assert selected_schema["properties"]["heading_occurrence"]["type"] == "integer"
+        assert selected_schema["required"] == required
 
 
 @pytest.mark.asyncio
@@ -289,6 +333,12 @@ async def test_rename_note_section_write_descriptions_lead_with_usage_trigger(
     assert "current write selector" in rename_description
     assert "collisions recognized by the same selector" in rename_description
     assert "heading-like lines in fenced code" in rename_description
+    for description in (patch_description, delete_description, rename_description):
+        assert "1-based heading_occurrence" in description
+        assert "heading_level" in description
+        assert "exact expected_hash" in description
+        assert "document order" in description
+        assert "chunk_id" in description
 
 
 class TestBuildAppReadPaths:

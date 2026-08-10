@@ -174,6 +174,68 @@ class TestMcpE2E:
         assert any(heading["text"] == "Useful links" for heading in headings)
         assert all(heading["text"] != "Quick links" for heading in headings)
 
+    async def test_heading_occurrence_patches_second_duplicate_over_stdio(
+        self, vault: Path, tmp_path: Path
+    ) -> None:
+        rel_path = "_memory/facts/stdio-heading-occurrence.md"
+        session, streams = await _open_session(vault, tmp_path)
+        try:
+            created = await session.call_tool(
+                "create_note_ai",
+                {
+                    "rel_path": rel_path,
+                    "title": "Stdio heading occurrence",
+                    "body": (
+                        "# Root\n\n## Same\n\nfirstblocktoken\n\n## Same\n\nsecondblocktoken\n"
+                    ),
+                    "origin": "ai",
+                    "confidence": "high",
+                    "tags": ["integration"],
+                },
+            )
+            before_map = await session.call_tool(
+                "get_note", {"id_or_path": rel_path, "format": "map"}
+            )
+            assert before_map.structuredContent is not None
+            patched = await session.call_tool(
+                "patch_note_section",
+                {
+                    "rel_path": rel_path,
+                    "heading": "Same",
+                    "new_content": "replacementblocktoken",
+                    "expected_hash": before_map.structuredContent["content_hash"],
+                    "heading_level": 2,
+                    "heading_occurrence": 2,
+                },
+            )
+            after_map = await session.call_tool(
+                "get_note", {"id_or_path": rel_path, "format": "map"}
+            )
+            after_full = await session.call_tool(
+                "get_note", {"id_or_path": rel_path, "format": "full"}
+            )
+        finally:
+            await _close_session(session, streams)
+
+        assert not created.isError
+        assert not before_map.isError
+        assert not patched.isError
+        assert patched.structuredContent is not None
+        assert patched.structuredContent["patched"]["heading_occurrence"] == 2
+        assert not after_map.isError
+        assert after_map.structuredContent is not None
+        assert [
+            heading["text"]
+            for heading in after_map.structuredContent["headings"]
+            if heading["text"] == "Same"
+        ] == ["Same", "Same"]
+        assert not after_full.isError
+        assert after_full.structuredContent is not None
+        content = after_full.structuredContent["content"]
+        assert "firstblocktoken" in content
+        assert "replacementblocktoken" in content
+        assert "secondblocktoken" not in content
+
     async def test_list_notes_tool_returns_demo_vault(self, vault: Path, tmp_path: Path) -> None:
         session, streams = await _open_session(vault, tmp_path)
         try:
