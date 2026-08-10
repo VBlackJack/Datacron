@@ -86,6 +86,7 @@ class TestMcpE2E:
                 "get_note",
                 "delete_note_section",
                 "rename_note_section",
+                "patch_note_preamble",
                 "revert_note",
                 "get_note_history",
                 "audit_query",
@@ -235,6 +236,50 @@ class TestMcpE2E:
         assert "firstblocktoken" in content
         assert "replacementblocktoken" in content
         assert "secondblocktoken" not in content
+
+    async def test_patch_note_preamble_round_trips_over_stdio(
+        self, vault: Path, tmp_path: Path
+    ) -> None:
+        rel_path = "_memory/facts/stdio-preamble.md"
+        session, streams = await _open_session(vault, tmp_path)
+        try:
+            created = await session.call_tool(
+                "create_note_ai",
+                {
+                    "rel_path": rel_path,
+                    "title": "Stdio preamble",
+                    "body": "oldpreambletoken\n\n# Root\n\nbodypreservedtoken\n",
+                    "origin": "ai",
+                    "confidence": "high",
+                    "tags": ["integration"],
+                },
+            )
+            assert created.structuredContent is not None
+            patched = await session.call_tool(
+                "patch_note_preamble",
+                {
+                    "rel_path": rel_path,
+                    "new_content": "newpreambletoken",
+                    "expected_hash": created.structuredContent["content_hash"],
+                },
+            )
+            fetched = await session.call_tool(
+                "get_note", {"id_or_path": rel_path, "format": "full"}
+            )
+        finally:
+            await _close_session(session, streams)
+
+        assert not created.isError
+        assert not patched.isError
+        assert patched.structuredContent is not None
+        assert patched.structuredContent["patched"] == {"rel_path": rel_path}
+        assert patched.structuredContent["indexed"] is True
+        assert not fetched.isError
+        assert fetched.structuredContent is not None
+        content = fetched.structuredContent["content"]
+        assert "newpreambletoken\n\n# Root" in content
+        assert "oldpreambletoken" not in content
+        assert "bodypreservedtoken" in content
 
     async def test_list_notes_tool_returns_demo_vault(self, vault: Path, tmp_path: Path) -> None:
         session, streams = await _open_session(vault, tmp_path)

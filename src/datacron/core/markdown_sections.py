@@ -22,6 +22,7 @@ __all__ = [
     "append_entry_to_heading",
     "find_section_span",
     "parse_heading_line",
+    "patch_note_preamble",
     "rename_atx_heading_line",
     "section_replacement_block",
 ]
@@ -110,6 +111,39 @@ def parse_heading_line(line: str) -> tuple[int, str] | None:
     level = len(match.group(1))
     text = line[match.end() :].strip()
     return level, text
+
+
+def patch_note_preamble(body: str, new_content: str) -> str:
+    """Replace content strictly before the first recognized ATX heading.
+
+    Args:
+        body: Markdown body without frontmatter.
+        new_content: Replacement preamble. Whitespace-only content removes it.
+
+    Returns:
+        The body with a normalized preamble and the original heading suffix.
+
+    Raises:
+        ValueError: If no ATX heading exists or the rendered body is unchanged.
+    """
+    lines = body.splitlines(keepends=True)
+    heading_index = next(
+        (index for index, line in enumerate(lines) if parse_heading_line(line) is not None),
+        None,
+    )
+    if heading_index is None:
+        raise ValueError("no ATX heading found; refusing to replace the entire note body")
+
+    normalized = new_content.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+    if not normalized.strip():
+        normalized = ""
+    suffix = "".join(lines[heading_index:])
+    rendered = suffix if not normalized else f"{normalized}\n\n{suffix}"
+    normalized_body = body.replace("\r\n", "\n").replace("\r", "\n")
+    normalized_rendered = rendered.replace("\r\n", "\n").replace("\r", "\n")
+    if normalized_rendered == normalized_body:
+        raise ValueError("preamble is unchanged; nothing to patch")
+    return rendered
 
 
 def rename_atx_heading_line(line: str, new_heading: str) -> str:

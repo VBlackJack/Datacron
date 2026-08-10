@@ -32,6 +32,7 @@ from datacron.core.markdown_sections import (
     append_entry_to_heading,
     find_section_span,
     parse_heading_line,
+    patch_note_preamble,
     rename_atx_heading_line,
     section_replacement_block,
 )
@@ -53,11 +54,13 @@ from datacron.mcp.tools.write_validation import (
     _clean_string_list,
     _map_write_path_error,
     _parse_preserving_bom,
+    _parse_preserving_bom_and_body_eols,
     _serialize_preserving_bom,
     _validate_append_journal_request,
     _validate_delete_note_section_request,
     _validate_expected_hash,
     _validate_memory_frontmatter,
+    _validate_patch_note_preamble_request,
     _validate_patch_note_section_request,
     _validate_rejected_entries,
     _validate_rename_note_section_request,
@@ -517,6 +520,77 @@ def _reject_destructive_h1_patch(
         raise ValueError(
             "level-1 patching would replace subsections; patch a lower-level heading instead"
         )
+
+
+async def _patch_note_preamble_impl(
+    app: DatacronApp,
+    *,
+    rel_path: str,
+    new_content: str,
+    expected_hash: str | None = None,
+    actor: str = "direct-call",
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    audit_fields = {"rel_path": rel_path}
+
+    async def action() -> dict[str, Any]:
+        app.write_policy.ensure_writable()
+        cleaned_rel_path, cleaned_new_content, cleaned_expected_hash = (
+            _validate_patch_note_preamble_request(
+                rel_path=rel_path,
+                new_content=new_content,
+                expected_hash=expected_hash,
+            )
+        )
+
+        def mutation(raw: str) -> str:
+            metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
+            new_body = patch_note_preamble(body, cleaned_new_content)
+            metadata["updated"] = datetime.now(tz=UTC).isoformat()
+            return _serialize_preserving_bom(metadata, new_body, has_bom=has_bom)
+
+        content_hash = await app.vault_writer.mutate_note_atomic(
+            cleaned_rel_path,
+            mutation,
+            expected_hash=cleaned_expected_hash,
+            operation=OperationContext(
+                op="patch_preamble",
+                tool="patch_note_preamble",
+                actor=actor,
+                parameters={"new_content_chars": len(cleaned_new_content)},
+            ),
+        )
+        index_stats = await _reconcile_serialized(app)
+        await _invalidate_alias_cache_if_index_changed(app, index_stats)
+        payload: dict[str, Any] = {
+            "patched": {"rel_path": cleaned_rel_path},
+            "content_hash": content_hash,
+            "indexed": True,
+        }
+        _audit(
+            "patch_note_preamble",
+            started,
+            rel_path=cleaned_rel_path,
+            preamble_chars=len(cleaned_new_content),
+            reindexed_notes=index_stats["reindexed_notes"],
+            deleted_notes=index_stats["deleted_notes"],
+        )
+        return payload
+
+    return await _execute_write_tool(
+        "patch_note_preamble",
+        started,
+        action,
+        app=app,
+        audit_fields=audit_fields,
+        expected=(
+            DurabilityUnavailableError,
+            ReadOnlyModeError,
+            FileNotFoundError,
+            FrontmatterError,
+            ValueError,
+        ),
+    )
 
 
 async def _patch_note_section_impl(

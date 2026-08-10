@@ -20,6 +20,52 @@ import pytest
 from datacron.core.markdown_sections import find_section_span
 
 
+def test_patch_note_preamble_replaces_and_normalizes_before_preserved_suffix() -> None:
+    from datacron.core.markdown_sections import patch_note_preamble
+
+    suffix = "# Root\r\n\r\nBody.\r\n"
+    body = f"Old preamble.\r\n\r\n{suffix}"
+
+    assert patch_note_preamble(body, "\r\nNew line.\r\nSecond line.\r\n") == (
+        f"New line.\nSecond line.\n\n{suffix}"
+    )
+
+
+def test_patch_note_preamble_inserts_before_first_h2_and_deletes_with_whitespace() -> None:
+    from datacron.core.markdown_sections import patch_note_preamble
+
+    suffix = "## First\n\nBody.\n"
+
+    assert patch_note_preamble(suffix, "Added.") == f"Added.\n\n{suffix}"
+    assert patch_note_preamble(f"Old.\n\n{suffix}", " \t\r\n ") == suffix
+
+
+def test_patch_note_preamble_refuses_body_without_recognized_atx_heading() -> None:
+    from datacron.core.markdown_sections import patch_note_preamble
+
+    with pytest.raises(
+        ValueError,
+        match=r"^no ATX heading found; refusing to replace the entire note body$",
+    ):
+        patch_note_preamble("Preamble only.\n", "Replacement.")
+
+
+def test_patch_note_preamble_refuses_identical_rendering() -> None:
+    from datacron.core.markdown_sections import patch_note_preamble
+
+    with pytest.raises(
+        ValueError,
+        match=r"^preamble is unchanged; nothing to patch$",
+    ):
+        patch_note_preamble("Same.\n\n# Root\n", "\nSame.\n")
+
+    with pytest.raises(
+        ValueError,
+        match=r"^preamble is unchanged; nothing to patch$",
+    ):
+        patch_note_preamble("Same.\r\n\r\n# Root\r\n", "Same.")
+
+
 def test_rename_atx_heading_line_preserves_prefix_level_separator_and_eol() -> None:
     from datacron.core.markdown_sections import rename_atx_heading_line
 

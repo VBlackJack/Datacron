@@ -145,6 +145,8 @@ def _build_read_only_app(vault: Path) -> tuple[DatacronApp, SQLiteFTS5Store]:
 
 async def test_prop_read_only_blocks_writes(tmp_path: Path) -> None:
     """Certified mode removes mutators and leaves notes plus sidecar byte-identical."""
+    from datacron.mcp.tools import _patch_note_preamble_impl
+
     vault = tmp_path / "vault"
     vault.mkdir()
     _write_note(
@@ -185,6 +187,12 @@ async def test_prop_read_only_blocks_writes(tmp_path: Path) -> None:
                 rel_path="note.md",
                 heading="Journal",
                 new_content="Denied patch.",
+            ),
+            await _patch_note_preamble_impl(
+                app,
+                rel_path="note.md",
+                new_content="Denied preamble.",
+                expected_hash="0" * 64,
             ),
             await _delete_note_section_impl(
                 app,

@@ -407,6 +407,20 @@ class SetFrontmatterOutput(TypedDict):
     indexed: bool
 
 
+class PatchedPreambleOutput(TypedDict):
+    """Note selected by a successful preamble patch."""
+
+    rel_path: str
+
+
+class PatchNotePreambleOutput(TypedDict):
+    """Successful ``patch_note_preamble`` payload."""
+
+    patched: PatchedPreambleOutput
+    content_hash: str
+    indexed: bool
+
+
 class PatchedSectionOutput(TypedDict):
     """Section selected by a successful patch."""
 
