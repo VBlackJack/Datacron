@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -2783,6 +2784,247 @@ class TestPatchNoteSection:
         assert target.read_text(encoding="utf-8") == original_raw
 
 
+class TestDeleteNoteSection:
+    @pytest.mark.asyncio
+    async def test_deletes_h2_subtree_preserves_siblings_and_reindexes(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from datacron.mcp.tools import (
+            _delete_note_section_impl,
+            _search_text_impl,
+        )
+
+        rel_path = "_memory/facts/delete-section.md"
+        removed_marker = "deleted-section-exclusive-marker"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            (
+                "Preamble.\n\n"
+                "# Root\n\n"
+                "Intro.\n\n"
+                "## Target\n\n"
+                f"{removed_marker}.\n\n"
+                "### Child\n\n"
+                "Nested content.\n\n"
+                "## Sibling\n\n"
+                "Sibling content.\n\n"
+                "# Tail\n\n"
+                "Tail content.\n"
+            ),
+        )
+        before_search = await _search_text_impl(
+            writable_app,
+            query=removed_marker,
+            limit=5,
+        )
+        assert any(item["note_rel_path"] == rel_path for item in before_search["results"])
+        caplog.clear()
+        caplog.set_level(logging.INFO, logger="datacron.mcp.tools")
+
+        result = await _delete_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Target",
+            expected_hash=hash_text(original_raw),
+            heading_level=2,
+            actor="delete-test-client",
+        )
+
+        assert result == {
+            "deleted": {"rel_path": rel_path, "heading": "Target", "level": 2},
+            "content_hash": hashlib.sha256(target.read_bytes()).hexdigest(),
+            "indexed": True,
+        }
+        _metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        assert new_body == (
+            "Preamble.\n\n"
+            "# Root\n\n"
+            "Intro.\n\n"
+            "## Sibling\n\n"
+            "Sibling content.\n\n"
+            "# Tail\n\n"
+            "Tail content."
+        )
+        history = tmp_vault / ".datacron" / "history" / hash_text(original_raw)
+        assert history.read_text(encoding="utf-8") == original_raw
+        records = await writable_app.vault_writer.list_operations()
+        record = records[-1]
+        assert record.op == "delete_section"
+        assert record.tool == "delete_note_section"
+        assert record.actor == "delete-test-client"
+        assert record.parameters == {"heading": "Target", "heading_level": 2}
+        raw_oplog = (tmp_vault / ".datacron" / "oplog" / "operations.jsonl").read_text(
+            encoding="ascii"
+        )
+        assert removed_marker not in raw_oplog
+        delete_audits = [
+            record.message
+            for record in caplog.records
+            if "tool=delete_note_section" in record.message
+        ]
+        assert delete_audits
+        assert all(removed_marker not in message for message in delete_audits)
+
+        after_search = await _search_text_impl(
+            writable_app,
+            query=removed_marker,
+            limit=5,
+        )
+        assert all(item["note_rel_path"] != rel_path for item in after_search["results"])
+
+    @pytest.mark.asyncio
+    async def test_deletes_h3_to_eof_preserving_parent_and_sibling(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _delete_note_section_impl
+
+        rel_path = "_memory/facts/delete-h3-eof.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            ("# Root\n\n## Parent\n\n### Sibling\n\nKeep.\n\n### Target\n\nDelete to EOF.\n"),
+        )
+
+        result = await _delete_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Target",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["deleted"]["level"] == 3
+        _metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        assert new_body == "# Root\n\n## Parent\n\n### Sibling\n\nKeep."
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("heading_level", [1, None])
+    async def test_h1_is_rejected_without_durable_mutation(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        heading_level: int | None,
+    ) -> None:
+        from datacron.mcp.tools import _delete_note_section_impl
+
+        rel_path = "_memory/facts/delete-h1.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Target\n\nStandalone body.\n",
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _delete_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Target",
+            expected_hash=hash_text(original_raw),
+            heading_level=heading_level,
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["message"] == (
+            "delete_note_section only supports heading levels 2 through 6; level 1 is refused"
+        )
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    async def test_duplicate_heading_is_rejected_without_durable_mutation(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _delete_note_section_impl
+
+        rel_path = "_memory/facts/delete-duplicate.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Root\n\n## Target\n\nFirst.\n\n## Target\n\nSecond.\n",
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _delete_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Target",
+            expected_hash=hash_text(original_raw),
+            heading_level=2,
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["message"] == (
+            "heading is ambiguous (2 matches); pass heading_level"
+        )
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    async def test_hash_mismatch_is_rejected_without_durable_mutation(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _delete_note_section_impl
+
+        rel_path = "_memory/facts/delete-stale.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Root\n\n## Target\n\nProtected.\n",
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _delete_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Target",
+            expected_hash="0" * 64,
+        )
+
+        assert result["error"]["type"] == "WriteConflictError"
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    async def test_external_change_is_rejected_without_durable_mutation(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import (
+            _append_journal_impl,
+            _delete_note_section_impl,
+        )
+
+        rel_path = "_memory/facts/delete-external.md"
+        target, _original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Root\n\n## Target\n\nProtected.\n\n## Journal\n\nStart.\n",
+        )
+        committed = await _append_journal_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Journal",
+            entry="Committed entry.",
+        )
+        assert "error" not in committed
+        external_bytes = target.read_bytes().replace(b"Protected.", b"External edit.")
+        target.write_bytes(external_bytes)
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _delete_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Target",
+        )
+
+        assert result["error"]["type"] == "WriteConflictError"
+        assert "outside Datacron" in result["error"]["message"]
+        assert target.read_bytes() == external_bytes
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+
 class TestRecoveryRequiredMapping:
     async def test_create_note_ai_returns_recovery_required(
         self,
@@ -2876,6 +3118,29 @@ class TestRecoveryRequiredMapping:
             rel_path="patch.md",
             heading="Target",
             new_content="New.",
+        )
+
+        _assert_recovery_required(result)
+
+    async def test_delete_note_section_returns_recovery_required(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datacron.mcp.tools import _delete_note_section_impl
+
+        _write_memory_note(tmp_vault, "delete.md", "# Note\n\n## Target\n\nOld.\n")
+        monkeypatch.setattr(
+            writable_app.vault_writer,
+            "mutate_note_atomic",
+            _raise_recovery_required,
+        )
+
+        result = await _delete_note_section_impl(
+            writable_app,
+            rel_path="delete.md",
+            heading="Target",
         )
 
         _assert_recovery_required(result)

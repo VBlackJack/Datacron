@@ -33,6 +33,7 @@ MCP_TOOL_CAPABILITIES: Final[MappingProxyType[str, ToolCapabilities]] = MappingP
         "append_journal": frozenset({"confined_vault_write"}),
         "set_frontmatter": frozenset({"confined_vault_write"}),
         "patch_note_section": frozenset({"confined_vault_write"}),
+        "delete_note_section": frozenset({"confined_vault_write"}),
         "revert_note": frozenset({"confined_vault_write", "history_restore"}),
         "get_note_history": frozenset({"audit_metadata_read"}),
         "audit_query": frozenset({"audit_metadata_read"}),
@@ -45,6 +46,7 @@ MUTATING_TOOL_NAMES: Final[frozenset[str]] = frozenset(
         "append_journal",
         "set_frontmatter",
         "patch_note_section",
+        "delete_note_section",
         "revert_note",
     }
 )

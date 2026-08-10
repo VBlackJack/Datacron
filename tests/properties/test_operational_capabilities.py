@@ -36,6 +36,7 @@ from datacron.mcp.server import DatacronApp, build_app, create_server
 from datacron.mcp.tools import (
     _append_journal_impl,
     _create_note_ai_impl,
+    _delete_note_section_impl,
     _get_health_impl,
     _patch_note_section_impl,
     _revert_note_impl,
@@ -183,6 +184,11 @@ async def test_prop_read_only_blocks_writes(tmp_path: Path) -> None:
                 rel_path="note.md",
                 heading="Journal",
                 new_content="Denied patch.",
+            ),
+            await _delete_note_section_impl(
+                app,
+                rel_path="note.md",
+                heading="Journal",
             ),
             await _revert_note_impl(app, note="note.md", to_hash="0" * 64),
         ]

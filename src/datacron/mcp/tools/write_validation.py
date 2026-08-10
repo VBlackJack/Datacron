@@ -281,6 +281,35 @@ def _validate_patch_note_section_request(
     )
 
 
+def _validate_delete_note_section_request(
+    *,
+    rel_path: str,
+    heading: str,
+    expected_hash: str | None,
+    heading_level: int | None,
+) -> tuple[str, str, str | None, int | None]:
+    cleaned_rel_path = rel_path.strip()
+    cleaned_heading = heading.strip()
+    cleaned_expected_hash = _validate_expected_hash(expected_hash)
+
+    if not cleaned_rel_path.endswith(".md"):
+        raise ValueError("rel_path must end with .md")
+    if not cleaned_heading:
+        raise ValueError("heading must not be empty")
+    if heading_level is not None and heading_level not in range(1, 7):
+        raise ValueError("heading_level must be between 1 and 6")
+    if heading_level == 1:
+        raise ValueError(
+            "delete_note_section only supports heading levels 2 through 6; level 1 is refused"
+        )
+    return (
+        cleaned_rel_path,
+        cleaned_heading,
+        cleaned_expected_hash,
+        heading_level,
+    )
+
+
 def _validate_expected_hash(expected_hash: str | None) -> str | None:
     if expected_hash is None:
         return None

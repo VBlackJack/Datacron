@@ -27,6 +27,7 @@ from datacron.mcp.tool_contract import (
     ContradictionScanMode,
     ContradictionScanOutput,
     CreateNoteOutput,
+    DeleteNoteSectionOutput,
     GetHealthOutput,
     GetNoteFormat,
     GetNoteOutput,
@@ -46,6 +47,7 @@ from datacron.mcp.tools.search import _get_backlinks_impl, _search_regex_impl, _
 from datacron.mcp.tools.write import (
     _append_journal_impl,
     _create_note_ai_impl,
+    _delete_note_section_impl,
     _patch_note_section_impl,
     _revert_note_impl,
     _set_frontmatter_impl,
@@ -414,6 +416,37 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
                 rel_path=rel_path,
                 heading=heading,
                 new_content=new_content,
+                expected_hash=expected_hash,
+                heading_level=heading_level,
+                actor=app.identity_provider.identify(ctx).actor,
+            ),
+        )
+
+    @server.tool(
+        name="delete_note_section",
+        title="Delete note section",
+        description=(
+            "Use this only to remove an explicitly obsolete H2-H6 Markdown section "
+            "and all of its subordinate headings. Prefer lifecycle invalidation with "
+            "set_frontmatter when the fact must remain queryable. Pass the note's "
+            "current content_hash as expected_hash for CAS. The operation stores exact "
+            "prior history, writes atomically, and refuses every level-1 heading."
+        ),
+        annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
+    )
+    async def delete_note_section(
+        rel_path: str,
+        heading: str,
+        ctx: Context[Any, Any, Any],
+        expected_hash: str | None = None,
+        heading_level: int | None = None,
+    ) -> DeleteNoteSectionOutput:
+        return cast(
+            "DeleteNoteSectionOutput",
+            await _delete_note_section_impl(
+                app,
+                rel_path=rel_path,
+                heading=heading,
                 expected_hash=expected_hash,
                 heading_level=heading_level,
                 actor=app.identity_provider.identify(ctx).actor,

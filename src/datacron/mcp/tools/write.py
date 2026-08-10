@@ -53,6 +53,7 @@ from datacron.mcp.tools.write_validation import (
     _parse_preserving_bom,
     _serialize_preserving_bom,
     _validate_append_journal_request,
+    _validate_delete_note_section_request,
     _validate_expected_hash,
     _validate_memory_frontmatter,
     _validate_patch_note_section_request,
@@ -619,6 +620,117 @@ async def _patch_note_section_impl(
 
     return await _execute_write_tool(
         "patch_note_section",
+        started,
+        action,
+        app=app,
+        audit_fields=audit_fields,
+        expected=(
+            DurabilityUnavailableError,
+            ReadOnlyModeError,
+            FileNotFoundError,
+            FrontmatterError,
+            ValueError,
+        ),
+        expected_audit_fields=expected_audit_fields,
+    )
+
+
+async def _delete_note_section_impl(
+    app: DatacronApp,
+    *,
+    rel_path: str,
+    heading: str,
+    expected_hash: str | None = None,
+    heading_level: int | None = None,
+    actor: str = "direct-call",
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    audit_fields = {"rel_path": rel_path, "heading": heading}
+
+    async def action() -> dict[str, Any]:
+        app.write_policy.ensure_writable()
+        (
+            cleaned_rel_path,
+            cleaned_heading,
+            cleaned_expected_hash,
+            cleaned_heading_level,
+        ) = _validate_delete_note_section_request(
+            rel_path=rel_path,
+            heading=heading,
+            expected_hash=expected_hash,
+            heading_level=heading_level,
+        )
+        matched_level = 0
+        matched_text = ""
+
+        def mutation(raw: str) -> str:
+            nonlocal matched_level, matched_text
+            metadata, body, has_bom = _parse_preserving_bom(raw)
+            lines = body.splitlines(keepends=True)
+            content_start, content_end = find_section_span(
+                lines,
+                cleaned_heading,
+                cleaned_heading_level,
+            )
+            heading_index = content_start - 1
+            matched_heading = parse_heading_line(lines[heading_index])
+            if matched_heading is None:
+                raise RuntimeError("section span does not follow a heading")
+            matched_level, matched_text = matched_heading
+            if matched_level == 1:
+                raise ValueError(
+                    "delete_note_section only supports heading levels 2 through 6; "
+                    "level 1 is refused"
+                )
+            prefix = "".join(lines[:heading_index])
+            suffix = "".join(lines[content_end:])
+            new_body = f"{prefix}{suffix}"
+            metadata["updated"] = datetime.now(tz=UTC).isoformat()
+            return _serialize_preserving_bom(metadata, new_body, has_bom=has_bom)
+
+        content_hash = await app.vault_writer.mutate_note_atomic(
+            cleaned_rel_path,
+            mutation,
+            expected_hash=cleaned_expected_hash,
+            operation=OperationContext(
+                op="delete_section",
+                tool="delete_note_section",
+                actor=actor,
+                parameters={
+                    "heading": cleaned_heading,
+                    "heading_level": cleaned_heading_level,
+                },
+            ),
+        )
+        index_stats = await _reconcile_serialized(app)
+        await _invalidate_alias_cache_if_index_changed(app, index_stats)
+        payload: dict[str, Any] = {
+            "deleted": {
+                "rel_path": cleaned_rel_path,
+                "heading": matched_text,
+                "level": matched_level,
+            },
+            "content_hash": content_hash,
+            "indexed": True,
+        }
+        _audit(
+            "delete_note_section",
+            started,
+            rel_path=cleaned_rel_path,
+            heading=cleaned_heading,
+            heading_level=matched_level,
+            reindexed_notes=index_stats["reindexed_notes"],
+            deleted_notes=index_stats["deleted_notes"],
+        )
+        return payload
+
+    def expected_audit_fields(exc: BaseException) -> dict[str, Any]:
+        if isinstance(exc, (DurabilityUnavailableError, ReadOnlyModeError)):
+            return {"rel_path": rel_path}
+        return audit_fields
+
+    return await _execute_write_tool(
+        "delete_note_section",
         started,
         action,
         app=app,

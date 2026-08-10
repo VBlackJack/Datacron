@@ -423,6 +423,22 @@ class PatchNoteSectionOutput(TypedDict):
     indexed: bool
 
 
+class DeletedSectionOutput(TypedDict):
+    """Section selected by a successful deletion."""
+
+    rel_path: str
+    heading: str
+    level: int
+
+
+class DeleteNoteSectionOutput(TypedDict):
+    """Successful ``delete_note_section`` payload."""
+
+    deleted: DeletedSectionOutput
+    content_hash: str
+    indexed: bool
+
+
 class RevertedNoteOutput(TypedDict):
     """Identity and history target of a successful revert."""
 

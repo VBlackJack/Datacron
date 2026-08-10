@@ -84,6 +84,7 @@ class TestMcpE2E:
             assert {
                 "list_notes",
                 "get_note",
+                "delete_note_section",
                 "revert_note",
                 "get_note_history",
                 "audit_query",

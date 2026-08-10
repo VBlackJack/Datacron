@@ -27,6 +27,7 @@ from datacron.mcp.tools.search import (
 from datacron.mcp.tools.write import (
     _append_journal_impl,
     _create_note_ai_impl,
+    _delete_note_section_impl,
     _patch_note_section_impl,
     _revert_note_impl,
     _set_frontmatter_impl,
@@ -39,6 +40,7 @@ __all__ = [
     "_audit_query_impl",
     "_contradiction_scan_impl",
     "_create_note_ai_impl",
+    "_delete_note_section_impl",
     "_get_backlinks_impl",
     "_get_health_impl",
     "_get_note_history_impl",
