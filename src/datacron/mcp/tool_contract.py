@@ -24,6 +24,7 @@ MemoryOrigin: TypeAlias = Literal["ai", "human", "merged"]
 MemoryConfidence: TypeAlias = Literal["high", "medium", "low", "needs_verification"]
 ContradictionScanMode: TypeAlias = Literal["scan", "confirm"]
 ContradictionScanDetail: TypeAlias = Literal["summary", "full"]
+HealthDetail: TypeAlias = Literal["summary", "full"]
 ContradictionClassName: TypeAlias = Literal[
     "CONTRADICTION",
     "RAFFINEMENT",
@@ -277,15 +278,47 @@ class HealthIndexOutput(TypedDict):
     staleness_seconds: float | None
 
 
-class HealthIntegrityOutput(TypedDict):
-    """Vault integrity counters included in operational health."""
+class HealthViolationOutput(TypedDict, total=False):
+    """One finding with an addressable path and an opaque baseline fingerprint."""
 
-    notes_count: int
-    id_mismatches: int
-    broken_wikilinks: int
-    mixed_eol_notes: int
-    supersedes_cycles: int
-    frontmatter_parse_errors: int
+    kind: Required[str]
+    key: Required[str]
+    fingerprint: Required[str]
+    rel_path: Required[str]
+    target: str
+    classification: str
+    details: dict[str, str]
+
+
+class HealthFlaggedPathsOutput(TypedDict):
+    """Raw mixed-EOL paths and sanitized frontmatter parse-error descriptions."""
+
+    mixed_eol_notes: list[str]
+    frontmatter_parse_errors: list[str]
+
+
+class HealthFindingsOutput(TypedDict):
+    """Bounded detailed reliability findings."""
+
+    violations: list[HealthViolationOutput]
+    flagged_paths: HealthFlaggedPathsOutput
+    total: int
+    returned: int
+    limit_applied: int
+    truncated: bool
+
+
+class HealthIntegrityOutput(TypedDict, total=False):
+    """Vault integrity counters and optional detailed findings."""
+
+    notes_count: Required[int]
+    id_mismatches: Required[int]
+    broken_wikilinks: Required[int]
+    mixed_eol_notes: Required[int]
+    supersedes_cycles: Required[int]
+    frontmatter_parse_errors: Required[int]
+    detail: Required[HealthDetail]
+    findings: HealthFindingsOutput
 
 
 class HealthChecksumOutput(TypedDict):

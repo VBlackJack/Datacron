@@ -20,20 +20,17 @@ from typing import TYPE_CHECKING, Any
 
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.logger import get_logger
+from datacron.mcp.bounds import bounded_count as _bounded_count
 from datacron.mcp.sandbox import (
     sanitize_metadata_value,
 )
+
+__all__ = ["_bounded_count"]
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
 _LOGGER = get_logger("datacron.mcp.tools")
-
-
-def _bounded_count(requested: int, ceiling: int) -> int:
-    if requested <= 0:
-        return ceiling
-    return min(requested, ceiling)
 
 
 def _estimate_tokens(text: str) -> int:

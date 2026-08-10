@@ -30,6 +30,7 @@ from datacron.mcp.tool_contract import (
     GetHealthOutput,
     GetNoteFormat,
     GetNoteOutput,
+    HealthDetail,
     ListNotesOutput,
     MemoryConfidence,
     MemoryOrigin,
@@ -241,12 +242,25 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         title="Get operational health",
         description=(
             "Return truthful read-only health for index freshness, vault integrity, "
-            "point-in-time checksum, durability capability, and invariant evidence."
+            "point-in-time checksum, durability capability, and invariant evidence. "
+            "Use detail='full' to include bounded integrity findings. In full mode, "
+            "limit <= 0 selects the server ceiling and positive limits are capped by "
+            "settings.max_result_count. Fingerprints are opaque baseline identifiers "
+            "derived from raw keys, not hashes of sanitized published keys. Only "
+            "top-level violation rel_path and mixed_eol_notes entries preserve "
+            "addressable paths; details such as candidate_paths are sanitized display "
+            "metadata. Findings do not include line numbers."
         ),
         annotations=_READ_ANNOTATIONS,
     )
-    async def get_health() -> GetHealthOutput:
-        return cast("GetHealthOutput", await _get_health_impl(app))
+    async def get_health(
+        detail: HealthDetail = "summary",
+        limit: int = 0,
+    ) -> GetHealthOutput:
+        return cast(
+            "GetHealthOutput",
+            await _get_health_impl(app, detail=detail, limit=limit),
+        )
 
     @server.tool(
         name="create_note_ai",
