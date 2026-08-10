@@ -258,7 +258,9 @@ def test_latest_record_for_path_uses_exact_path_and_latest_commit(tmp_path: Path
 
     records = journal.read_records()
     assert journal.latest_record_for_path("note.md") == records[-1]
-    assert journal.latest_record_for_path("nested/note.md").operation_id == other.operation_id
+    nested_record = journal.latest_record_for_path("nested/note.md")
+    assert nested_record is not None
+    assert nested_record.operation_id == other.operation_id
     assert journal.latest_record_for_path("missing.md") is None
 
 
