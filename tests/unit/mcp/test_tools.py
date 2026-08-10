@@ -16,7 +16,7 @@ import logging
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -175,6 +175,51 @@ async def _raise_recovery_required(*_args: Any, **_kwargs: Any) -> str:
 def _assert_recovery_required(result: dict[str, Any]) -> None:
     assert result["error"]["type"] == "RecoveryRequiredError"
     assert result["error"]["code"] == "recovery_required"
+
+
+async def _call_heading_occurrence_tool(
+    app: DatacronApp,
+    tool: Literal["patch", "delete", "rename"],
+    *,
+    rel_path: str,
+    heading_occurrence: object,
+    heading_level: int | None,
+    expected_hash: str | None,
+) -> dict[str, Any]:
+    from datacron.mcp.tools import (
+        _delete_note_section_impl,
+        _patch_note_section_impl,
+        _rename_note_section_impl,
+    )
+
+    if tool == "patch":
+        return await _patch_note_section_impl(
+            app,
+            rel_path=rel_path,
+            heading="Same",
+            new_content="Replacement.",
+            expected_hash=expected_hash,
+            heading_level=heading_level,
+            heading_occurrence=heading_occurrence,  # type: ignore[arg-type]
+        )
+    if tool == "delete":
+        return await _delete_note_section_impl(
+            app,
+            rel_path=rel_path,
+            heading="Same",
+            expected_hash=expected_hash,
+            heading_level=heading_level,
+            heading_occurrence=heading_occurrence,  # type: ignore[arg-type]
+        )
+    return await _rename_note_section_impl(
+        app,
+        rel_path=rel_path,
+        heading="Same",
+        new_heading="Renamed",
+        expected_hash=expected_hash,
+        heading_level=heading_level,
+        heading_occurrence=heading_occurrence,  # type: ignore[arg-type]
+    )
 
 
 def _write_adversarial_note(vault_root: Path) -> Path:
@@ -2335,6 +2380,417 @@ class TestSetFrontmatter:
         assert not (tmp_vault / ".datacron" / "history").exists()
 
 
+class TestHeadingOccurrence:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", ["patch", "delete", "rename"])
+    async def test_heading_occurrence_is_absent_from_historical_audit_records(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tool: Literal["patch", "delete", "rename"],
+    ) -> None:
+        from datacron.mcp.tools import (
+            _delete_note_section_impl,
+            _patch_note_section_impl,
+            _rename_note_section_impl,
+        )
+        from datacron.mcp.tools import write as write_tools
+
+        original_audit = write_tools.__dict__["_audit"]
+        captured_audit_fields: list[dict[str, Any]] = []
+
+        def capture_audit(tool_name: str, started: float, **fields: Any) -> None:
+            captured_audit_fields.append(fields.copy())
+            original_audit(tool_name, started, **fields)
+
+        monkeypatch.setattr(write_tools, "_audit", capture_audit)
+
+        caplog.set_level(logging.INFO, logger="datacron.mcp.tools")
+        rel_path = f"_memory/facts/historical-{tool}-audit.md"
+        _target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Root\n\n## Target\n\nBody.\n\n## Sibling\n\nKeep.\n",
+        )
+        expected_hash = hash_text(original_raw)
+        if tool == "patch":
+            result = await _patch_note_section_impl(
+                writable_app,
+                rel_path=rel_path,
+                heading="Target",
+                new_content="Replacement.",
+                expected_hash=expected_hash,
+                heading_level=2,
+            )
+            selected = result["patched"]
+        elif tool == "delete":
+            result = await _delete_note_section_impl(
+                writable_app,
+                rel_path=rel_path,
+                heading="Target",
+                expected_hash=expected_hash,
+                heading_level=2,
+            )
+            selected = result["deleted"]
+        else:
+            result = await _rename_note_section_impl(
+                writable_app,
+                rel_path=rel_path,
+                heading="Target",
+                new_heading="Renamed",
+                expected_hash=expected_hash,
+                heading_level=2,
+            )
+            selected = result["renamed"]
+
+        assert "heading_occurrence" not in selected
+        operations = await writable_app.vault_writer.list_operations()
+        assert "heading_occurrence" not in operations[0].parameters
+        audit = [
+            record.message
+            for record in caplog.records
+            if f"AUDIT tool={tool}_note_section" in record.message
+        ]
+        assert len(audit) == 1
+        assert len(captured_audit_fields) == 1
+        assert "heading_occurrence" not in captured_audit_fields[0]
+        assert "heading_occurrence" not in audit[0]
+
+    @pytest.mark.asyncio
+    async def test_heading_occurrence_patches_only_second_duplicate_and_audits_ordinal(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_section_impl
+
+        caplog.set_level(logging.INFO, logger="datacron.mcp.tools")
+        rel_path = "_memory/facts/occurrence-patch.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            (
+                "# Root\n\n"
+                "## Same\n\nfirstbodytoken\n\n### First child\n\nfirstchildtoken\n\n"
+                "## Same\n\nsecondbodytoken\n\n### Second child\n\nsecondchildtoken\n\n"
+                "## Sibling\n\nsiblingtoken\n"
+            ),
+        )
+
+        result = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Same",
+            new_content="replacementtoken",
+            expected_hash=hash_text(original_raw),
+            heading_level=2,
+            heading_occurrence=2,
+        )
+
+        assert result["patched"] == {
+            "rel_path": rel_path,
+            "heading": "Same",
+            "level": 2,
+            "heading_occurrence": 2,
+        }
+        _metadata, body = parse(target.read_text(encoding="utf-8"))
+        assert "firstbodytoken" in body
+        assert "firstchildtoken" in body
+        assert "replacementtoken" in body
+        assert "secondbodytoken" not in body
+        assert "secondchildtoken" not in body
+        assert "siblingtoken" in body
+        operations = await writable_app.vault_writer.list_operations()
+        assert operations[0].parameters == {
+            "heading": "Same",
+            "heading_level": 2,
+            "new_content_chars": 16,
+            "heading_occurrence": 2,
+        }
+        audit = [
+            record.message
+            for record in caplog.records
+            if "AUDIT tool=patch_note_section" in record.message
+        ]
+        assert len(audit) == 1
+        assert "heading_occurrence=2" in audit[0]
+        assert "firstbodytoken" not in audit[0]
+        assert "secondbodytoken" not in audit[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("heading_occurrence", [1, 2])
+    async def test_heading_occurrence_deletes_only_selected_duplicate_subtree(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        heading_occurrence: int,
+    ) -> None:
+        from datacron.mcp.tools import _delete_note_section_impl
+
+        rel_path = f"_memory/facts/occurrence-delete-{heading_occurrence}.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            (
+                "# Root\n\n"
+                "## Same\n\nfirstbodytoken\n\n### First child\n\nfirstchildtoken\n\n"
+                "## Same\n\nsecondbodytoken\n\n### Second child\n\nsecondchildtoken\n\n"
+                "## Sibling\n\nsiblingtoken\n"
+            ),
+        )
+
+        result = await _delete_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Same",
+            expected_hash=hash_text(original_raw),
+            heading_level=2,
+            heading_occurrence=heading_occurrence,
+        )
+
+        assert result["deleted"]["heading_occurrence"] == heading_occurrence
+        _metadata, body = parse(target.read_text(encoding="utf-8"))
+        deleted_prefix = "first" if heading_occurrence == 1 else "second"
+        retained_prefix = "second" if heading_occurrence == 1 else "first"
+        assert f"{deleted_prefix}bodytoken" not in body
+        assert f"{deleted_prefix}childtoken" not in body
+        assert f"{retained_prefix}bodytoken" in body
+        assert f"{retained_prefix}childtoken" in body
+        assert "siblingtoken" in body
+        operations = await writable_app.vault_writer.list_operations()
+        assert operations[0].parameters == {
+            "heading": "Same",
+            "heading_level": 2,
+            "heading_occurrence": heading_occurrence,
+        }
+
+    @pytest.mark.asyncio
+    async def test_heading_occurrence_renames_second_duplicate_and_preserves_first(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _rename_note_section_impl
+
+        rel_path = "_memory/facts/occurrence-rename.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Root\n\n## Same\n\nfirstbodytoken\n\n## Same\n\nsecondbodytoken\n",
+        )
+
+        result = await _rename_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Same",
+            new_heading="Unique",
+            expected_hash=hash_text(original_raw),
+            heading_level=2,
+            heading_occurrence=2,
+        )
+
+        assert result["renamed"] == {
+            "rel_path": rel_path,
+            "old_heading": "Same",
+            "new_heading": "Unique",
+            "level": 2,
+            "heading_occurrence": 2,
+        }
+        _metadata, body = parse(target.read_text(encoding="utf-8"))
+        assert body.count("## Same\n") == 1
+        assert body.count("## Unique\n") == 1
+        assert "firstbodytoken" in body
+        assert "secondbodytoken" in body
+        operations = await writable_app.vault_writer.list_operations()
+        assert operations[0].parameters == {
+            "old_heading": "Same",
+            "new_heading": "Unique",
+            "heading_level": 2,
+            "heading_occurrence": 2,
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", ["patch", "delete", "rename"])
+    @pytest.mark.parametrize(
+        ("heading_occurrence", "heading_level", "hash_mode", "message"),
+        [
+            (0, 2, "valid", "heading_occurrence must be at least 1"),
+            (-1, 2, "valid", "heading_occurrence must be at least 1"),
+            (True, 2, "valid", "heading_occurrence must be an integer"),
+            (1.5, 2, "valid", "heading_occurrence must be an integer"),
+            ("1", 2, "valid", "heading_occurrence must be an integer"),
+            (1, None, "valid", "heading_occurrence requires heading_level"),
+            (1, 2, "missing", "heading_occurrence requires expected_hash"),
+        ],
+    )
+    async def test_heading_occurrence_validation_is_structured_and_has_zero_mutation(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        tool: Literal["patch", "delete", "rename"],
+        heading_occurrence: object,
+        heading_level: int | None,
+        hash_mode: str,
+        message: str,
+    ) -> None:
+        rel_path = "_memory/facts/occurrence-validation.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Root\n\n## Same\n\nBody.\n"
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+        expected_hash = hash_text(original_raw) if hash_mode == "valid" else None
+
+        result = await _call_heading_occurrence_tool(
+            writable_app,
+            tool,
+            rel_path=rel_path,
+            heading_occurrence=heading_occurrence,
+            heading_level=heading_level,
+            expected_hash=expected_hash,
+        )
+
+        assert result["error"] == {"type": "ValueError", "message": message}
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", ["patch", "delete", "rename"])
+    async def test_heading_occurrence_out_of_range_has_zero_durable_mutation(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        tool: Literal["patch", "delete", "rename"],
+    ) -> None:
+        rel_path = "_memory/facts/occurrence-range.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Root\n\n## Same\n\nFirst.\n\n## Same\n\nSecond.\n",
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _call_heading_occurrence_tool(
+            writable_app,
+            tool,
+            rel_path=rel_path,
+            heading_occurrence=3,
+            heading_level=2,
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["error"] == {
+            "type": "ValueError",
+            "message": "heading_occurrence 3 is out of range for 2 matching headings",
+        }
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", ["patch", "delete", "rename"])
+    async def test_heading_occurrence_zero_matches_reports_out_of_range_without_mutation(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        tool: Literal["patch", "delete", "rename"],
+    ) -> None:
+        rel_path = "_memory/facts/occurrence-zero-matches.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Root\n\n## Present\n\nBody.\n",
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _call_heading_occurrence_tool(
+            writable_app,
+            tool,
+            rel_path=rel_path,
+            heading_occurrence=1,
+            heading_level=2,
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["error"] == {
+            "type": "ValueError",
+            "message": "heading_occurrence 1 is out of range for 0 matching headings",
+        }
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    async def test_heading_occurrence_stale_hash_rejects_reordered_document_before_selection(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_section_impl
+
+        rel_path = "_memory/facts/occurrence-reordered.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Root\n\n## Same\n\nFirst.\n\n## Same\n\nSecond.\n",
+        )
+        reordered_bytes = target.read_bytes().replace(
+            b"# Root\n\n",
+            b"# Root\n\n## Same\n\nInserted before read target.\n\n",
+        )
+        target.write_bytes(reordered_bytes)
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Same",
+            new_content="Replacement.",
+            expected_hash=hash_text(original_raw),
+            heading_level=2,
+            heading_occurrence=2,
+        )
+
+        assert result["error"]["type"] == "WriteConflictError"
+        assert "hash mismatch" in result["error"]["message"]
+        assert target.read_bytes() == reordered_bytes
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool", "message"),
+        [
+            ("patch", "level-1 patching would replace subsections"),
+            ("delete", "delete_note_section only supports heading levels 2 through 6"),
+            ("rename", "rename_note_section only supports ATX heading levels 2 through 6"),
+        ],
+    )
+    async def test_heading_occurrence_does_not_bypass_h1_guards(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        tool: Literal["patch", "delete", "rename"],
+        message: str,
+    ) -> None:
+        rel_path = "_memory/facts/occurrence-h1.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Same\n\n## Child\n\nChild.\n\n# Same\n\nSecond.\n",
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _call_heading_occurrence_tool(
+            writable_app,
+            tool,
+            rel_path=rel_path,
+            heading_occurrence=1,
+            heading_level=1,
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert message in result["error"]["message"]
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+
 class TestPatchNoteSection:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("heading_level", [1, None])
@@ -2629,7 +3085,9 @@ class TestPatchNoteSection:
 
         assert ambiguous["error"]["type"] == "ValueError"
         assert ambiguous["error"]["message"] == (
-            "heading is ambiguous (2 matches); pass heading_level"
+            "heading is ambiguous (2 matches); pass heading_level for inter-level matches, "
+            "or pass heading_level, heading_occurrence, and expected_hash for same-level "
+            "duplicates"
         )
         assert target.read_text(encoding="utf-8") == original_raw
 
@@ -2669,7 +3127,11 @@ class TestPatchNoteSection:
         )
 
         assert result["error"]["type"] == "ValueError"
-        assert result["error"]["message"] == "heading is ambiguous (2 matches); pass heading_level"
+        assert result["error"]["message"] == (
+            "heading is ambiguous (2 matches); pass heading_level for inter-level matches, "
+            "or pass heading_level, heading_occurrence, and expected_hash for same-level "
+            "duplicates"
+        )
         assert target.read_text(encoding="utf-8") == original_raw
 
     @pytest.mark.asyncio
@@ -3260,7 +3722,9 @@ class TestDeleteNoteSection:
 
         assert result["error"]["type"] == "ValueError"
         assert result["error"]["message"] == (
-            "heading is ambiguous (2 matches); pass heading_level"
+            "heading is ambiguous (2 matches); pass heading_level for inter-level matches, "
+            "or pass heading_level, heading_occurrence, and expected_hash for same-level "
+            "duplicates"
         )
         assert target.read_bytes() == original_raw.encode("utf-8")
         assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before

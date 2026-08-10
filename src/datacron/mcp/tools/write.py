@@ -527,6 +527,7 @@ async def _patch_note_section_impl(
     new_content: str,
     expected_hash: str | None = None,
     heading_level: int | None = None,
+    heading_occurrence: int | None = None,
     actor: str = "direct-call",
 ) -> dict[str, Any]:
     started = time.perf_counter()
@@ -540,12 +541,14 @@ async def _patch_note_section_impl(
             cleaned_new_content,
             cleaned_expected_hash,
             cleaned_heading_level,
+            cleaned_heading_occurrence,
         ) = _validate_patch_note_section_request(
             rel_path=rel_path,
             heading=heading,
             new_content=new_content,
             expected_hash=expected_hash,
             heading_level=heading_level,
+            heading_occurrence=heading_occurrence,
         )
         matched_level = 0
         matched_text = ""
@@ -558,6 +561,7 @@ async def _patch_note_section_impl(
                 lines,
                 cleaned_heading,
                 cleaned_heading_level,
+                heading_occurrence=cleaned_heading_occurrence,
             )
             matched_heading = parse_heading_line(lines[content_start - 1])
             if matched_heading is None:
@@ -579,6 +583,13 @@ async def _patch_note_section_impl(
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
             return _serialize_preserving_bom(metadata, new_body, has_bom=has_bom)
 
+        operation_parameters: dict[str, Any] = {
+            "heading": cleaned_heading,
+            "heading_level": cleaned_heading_level,
+            "new_content_chars": len(cleaned_new_content),
+        }
+        if cleaned_heading_occurrence is not None:
+            operation_parameters["heading_occurrence"] = cleaned_heading_occurrence
         content_hash = await app.vault_writer.mutate_note_atomic(
             cleaned_rel_path,
             mutation,
@@ -587,11 +598,7 @@ async def _patch_note_section_impl(
                 op="patch_section",
                 tool="patch_note_section",
                 actor=actor,
-                parameters={
-                    "heading": cleaned_heading,
-                    "heading_level": cleaned_heading_level,
-                    "new_content_chars": len(cleaned_new_content),
-                },
+                parameters=operation_parameters,
             ),
         )
         index_stats = await _reconcile_serialized(app)
@@ -605,15 +612,18 @@ async def _patch_note_section_impl(
             "content_hash": content_hash,
             "indexed": True,
         }
-        _audit(
-            "patch_note_section",
-            started,
-            rel_path=cleaned_rel_path,
-            heading=cleaned_heading,
-            heading_level=matched_level,
-            reindexed_notes=index_stats["reindexed_notes"],
-            deleted_notes=index_stats["deleted_notes"],
-        )
+        if cleaned_heading_occurrence is not None:
+            payload["patched"]["heading_occurrence"] = cleaned_heading_occurrence
+        audit_success_fields: dict[str, Any] = {
+            "rel_path": cleaned_rel_path,
+            "heading": cleaned_heading,
+            "heading_level": matched_level,
+            "reindexed_notes": index_stats["reindexed_notes"],
+            "deleted_notes": index_stats["deleted_notes"],
+        }
+        if cleaned_heading_occurrence is not None:
+            audit_success_fields["heading_occurrence"] = cleaned_heading_occurrence
+        _audit("patch_note_section", started, **audit_success_fields)
         return payload
 
     def expected_audit_fields(exc: BaseException) -> dict[str, Any]:
@@ -646,6 +656,7 @@ async def _rename_note_section_impl(
     new_heading: str,
     expected_hash: str | None = None,
     heading_level: int | None = None,
+    heading_occurrence: int | None = None,
     actor: str = "direct-call",
 ) -> dict[str, Any]:
     started = time.perf_counter()
@@ -659,12 +670,14 @@ async def _rename_note_section_impl(
             cleaned_new_heading,
             cleaned_expected_hash,
             cleaned_heading_level,
+            cleaned_heading_occurrence,
         ) = _validate_rename_note_section_request(
             rel_path=rel_path,
             heading=heading,
             new_heading=new_heading,
             expected_hash=expected_hash,
             heading_level=heading_level,
+            heading_occurrence=heading_occurrence,
         )
         matched_level = 0
         matched_text = ""
@@ -673,6 +686,8 @@ async def _rename_note_section_impl(
             "new_heading": cleaned_new_heading,
             "heading_level": cleaned_heading_level,
         }
+        if cleaned_heading_occurrence is not None:
+            operation_parameters["heading_occurrence"] = cleaned_heading_occurrence
 
         def mutation(raw: str) -> str:
             nonlocal matched_level, matched_text
@@ -683,6 +698,7 @@ async def _rename_note_section_impl(
                     lines,
                     cleaned_heading,
                     cleaned_heading_level,
+                    heading_occurrence=cleaned_heading_occurrence,
                 )
             except ValueError as exc:
                 if str(exc) == "heading not found; nothing to patch":
@@ -741,16 +757,19 @@ async def _rename_note_section_impl(
             "content_hash": content_hash,
             "indexed": True,
         }
-        _audit(
-            "rename_note_section",
-            started,
-            rel_path=cleaned_rel_path,
-            heading_level=matched_level,
-            old_heading_chars=len(matched_text),
-            new_heading_chars=len(cleaned_new_heading),
-            reindexed_notes=index_stats["reindexed_notes"],
-            deleted_notes=index_stats["deleted_notes"],
-        )
+        if cleaned_heading_occurrence is not None:
+            payload["renamed"]["heading_occurrence"] = cleaned_heading_occurrence
+        audit_success_fields: dict[str, Any] = {
+            "rel_path": cleaned_rel_path,
+            "heading_level": matched_level,
+            "old_heading_chars": len(matched_text),
+            "new_heading_chars": len(cleaned_new_heading),
+            "reindexed_notes": index_stats["reindexed_notes"],
+            "deleted_notes": index_stats["deleted_notes"],
+        }
+        if cleaned_heading_occurrence is not None:
+            audit_success_fields["heading_occurrence"] = cleaned_heading_occurrence
+        _audit("rename_note_section", started, **audit_success_fields)
         return payload
 
     return await _execute_write_tool(
@@ -776,6 +795,7 @@ async def _delete_note_section_impl(
     heading: str,
     expected_hash: str | None = None,
     heading_level: int | None = None,
+    heading_occurrence: int | None = None,
     actor: str = "direct-call",
 ) -> dict[str, Any]:
     started = time.perf_counter()
@@ -788,11 +808,13 @@ async def _delete_note_section_impl(
             cleaned_heading,
             cleaned_expected_hash,
             cleaned_heading_level,
+            cleaned_heading_occurrence,
         ) = _validate_delete_note_section_request(
             rel_path=rel_path,
             heading=heading,
             expected_hash=expected_hash,
             heading_level=heading_level,
+            heading_occurrence=heading_occurrence,
         )
         matched_level = 0
         matched_text = ""
@@ -805,6 +827,7 @@ async def _delete_note_section_impl(
                 lines,
                 cleaned_heading,
                 cleaned_heading_level,
+                heading_occurrence=cleaned_heading_occurrence,
             )
             heading_index = content_start - 1
             matched_heading = parse_heading_line(lines[heading_index])
@@ -822,6 +845,12 @@ async def _delete_note_section_impl(
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
             return _serialize_preserving_bom(metadata, new_body, has_bom=has_bom)
 
+        operation_parameters: dict[str, Any] = {
+            "heading": cleaned_heading,
+            "heading_level": cleaned_heading_level,
+        }
+        if cleaned_heading_occurrence is not None:
+            operation_parameters["heading_occurrence"] = cleaned_heading_occurrence
         content_hash = await app.vault_writer.mutate_note_atomic(
             cleaned_rel_path,
             mutation,
@@ -830,10 +859,7 @@ async def _delete_note_section_impl(
                 op="delete_section",
                 tool="delete_note_section",
                 actor=actor,
-                parameters={
-                    "heading": cleaned_heading,
-                    "heading_level": cleaned_heading_level,
-                },
+                parameters=operation_parameters,
             ),
         )
         index_stats = await _reconcile_serialized(app)
@@ -847,15 +873,18 @@ async def _delete_note_section_impl(
             "content_hash": content_hash,
             "indexed": True,
         }
-        _audit(
-            "delete_note_section",
-            started,
-            rel_path=cleaned_rel_path,
-            heading=cleaned_heading,
-            heading_level=matched_level,
-            reindexed_notes=index_stats["reindexed_notes"],
-            deleted_notes=index_stats["deleted_notes"],
-        )
+        if cleaned_heading_occurrence is not None:
+            payload["deleted"]["heading_occurrence"] = cleaned_heading_occurrence
+        audit_success_fields: dict[str, Any] = {
+            "rel_path": cleaned_rel_path,
+            "heading": cleaned_heading,
+            "heading_level": matched_level,
+            "reindexed_notes": index_stats["reindexed_notes"],
+            "deleted_notes": index_stats["deleted_notes"],
+        }
+        if cleaned_heading_occurrence is not None:
+            audit_success_fields["heading_occurrence"] = cleaned_heading_occurrence
+        _audit("delete_note_section", started, **audit_success_fields)
         return payload
 
     def expected_audit_fields(exc: BaseException) -> dict[str, Any]:

@@ -49,6 +49,8 @@ def find_section_span(
     lines: list[str],
     heading: str,
     heading_level: int | None,
+    *,
+    heading_occurrence: int | None = None,
 ) -> tuple[int, int]:
     """Return the content span for one unambiguous matching heading."""
     matches: list[tuple[int, int]] = []
@@ -63,12 +65,7 @@ def find_section_span(
             continue
         matches.append((index, level))
 
-    if not matches:
-        raise ValueError("heading not found; nothing to patch")
-    if len(matches) > 1:
-        raise ValueError(f"heading is ambiguous ({len(matches)} matches); pass heading_level")
-
-    heading_index, level = matches[0]
+    heading_index, level = _select_heading_match(matches, heading_occurrence)
     content_start = heading_index + 1
     content_end = len(lines)
     for next_index in range(content_start, len(lines)):
@@ -77,6 +74,32 @@ def find_section_span(
             content_end = next_index
             break
     return content_start, content_end
+
+
+def _select_heading_match(
+    matches: list[tuple[int, int]],
+    heading_occurrence: int | None,
+) -> tuple[int, int]:
+    if heading_occurrence is None:
+        if not matches:
+            raise ValueError("heading not found; nothing to patch")
+        if len(matches) > 1:
+            raise ValueError(
+                f"heading is ambiguous ({len(matches)} matches); pass heading_level for "
+                "inter-level matches, or pass heading_level, heading_occurrence, and "
+                "expected_hash for same-level duplicates"
+            )
+        return matches[0]
+    if isinstance(heading_occurrence, bool) or not isinstance(heading_occurrence, int):
+        raise ValueError("heading_occurrence must be an integer")
+    if heading_occurrence < 1:
+        raise ValueError("heading_occurrence must be at least 1")
+    if heading_occurrence > len(matches):
+        raise ValueError(
+            f"heading_occurrence {heading_occurrence} is out of range for "
+            f"{len(matches)} matching headings"
+        )
+    return matches[heading_occurrence - 1]
 
 
 def parse_heading_line(line: str) -> tuple[int, str] | None:

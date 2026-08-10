@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Required, TypeAlias
+from typing import Any, Literal, NotRequired, Required, TypeAlias
 
 from typing_extensions import TypedDict
 
@@ -413,6 +413,7 @@ class PatchedSectionOutput(TypedDict):
     rel_path: str
     heading: str
     level: int
+    heading_occurrence: NotRequired[int]
 
 
 class PatchNoteSectionOutput(TypedDict):
@@ -429,6 +430,7 @@ class DeletedSectionOutput(TypedDict):
     rel_path: str
     heading: str
     level: int
+    heading_occurrence: NotRequired[int]
 
 
 class DeleteNoteSectionOutput(TypedDict):
@@ -446,6 +448,7 @@ class RenamedSectionOutput(TypedDict):
     old_heading: str
     new_heading: str
     level: int
+    heading_occurrence: NotRequired[int]
 
 
 class RenameNoteSectionOutput(TypedDict):

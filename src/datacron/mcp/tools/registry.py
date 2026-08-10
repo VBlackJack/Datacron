@@ -399,7 +399,10 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "note's current content_hash as expected_hash for CAS. The operation "
             "preserves the heading line and non-target sections, stores exact prior "
             "history, and writes atomically. It refuses a level-1 heading that contains "
-            "subsections; patch a lower-level heading instead."
+            "subsections; patch a lower-level heading instead. For duplicate titles, "
+            "pass 1-based heading_occurrence with heading_level and the exact "
+            "expected_hash; the ordinal follows document order for those hashed bytes. "
+            "Do not use chunk_id."
         ),
         annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
     )
@@ -410,6 +413,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         ctx: Context[Any, Any, Any],
         expected_hash: str | None = None,
         heading_level: int | None = None,
+        heading_occurrence: int | None = None,
     ) -> PatchNoteSectionOutput:
         return cast(
             "PatchNoteSectionOutput",
@@ -420,6 +424,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
                 new_content=new_content,
                 expected_hash=expected_hash,
                 heading_level=heading_level,
+                heading_occurrence=heading_occurrence,
                 actor=app.identity_provider.identify(ctx).actor,
             ),
         )
@@ -435,6 +440,9 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "synchronization is outside this tool and refuses collisions recognized by "
             "the same selector. Setext headings and heading-like lines in fenced code "
             "are outside the supported guarantee."
+            " For duplicate titles, pass 1-based heading_occurrence with heading_level "
+            "and the exact expected_hash; the ordinal follows document order for those "
+            "hashed bytes. Do not use chunk_id."
         ),
         annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
     )
@@ -445,6 +453,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         ctx: Context[Any, Any, Any],
         expected_hash: str | None = None,
         heading_level: int | None = None,
+        heading_occurrence: int | None = None,
     ) -> RenameNoteSectionOutput:
         return cast(
             "RenameNoteSectionOutput",
@@ -455,6 +464,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
                 new_heading=new_heading,
                 expected_hash=expected_hash,
                 heading_level=heading_level,
+                heading_occurrence=heading_occurrence,
                 actor=app.identity_provider.identify(ctx).actor,
             ),
         )
@@ -468,6 +478,9 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "set_frontmatter when the fact must remain queryable. Pass the note's "
             "current content_hash as expected_hash for CAS. The operation stores exact "
             "prior history, writes atomically, and refuses every level-1 heading."
+            " For duplicate titles, pass 1-based heading_occurrence with heading_level "
+            "and the exact expected_hash; the ordinal follows document order for those "
+            "hashed bytes. Do not use chunk_id."
         ),
         annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
     )
@@ -477,6 +490,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         ctx: Context[Any, Any, Any],
         expected_hash: str | None = None,
         heading_level: int | None = None,
+        heading_occurrence: int | None = None,
     ) -> DeleteNoteSectionOutput:
         return cast(
             "DeleteNoteSectionOutput",
@@ -486,6 +500,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
                 heading=heading,
                 expected_hash=expected_hash,
                 heading_level=heading_level,
+                heading_occurrence=heading_occurrence,
                 actor=app.identity_provider.identify(ctx).actor,
             ),
         )
