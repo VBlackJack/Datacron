@@ -39,6 +39,7 @@ from datacron.mcp.server import (
 
 def test_server_instructions_include_memory_protocol() -> None:
     assert "create_note_ai" in SERVER_INSTRUCTIONS
+    assert "delete_note_section" in SERVER_INSTRUCTIONS
     assert "INIT.md" in SERVER_INSTRUCTIONS
     assert "sandbox-wrapped" in SERVER_INSTRUCTIONS
 
@@ -83,7 +84,7 @@ async def test_tool_annotations_describe_local_effects(tmp_path: Path) -> None:
             "idempotentHint": False,
             "openWorldHint": False,
         }
-    for name in ("set_frontmatter", "patch_note_section"):
+    for name in ("set_frontmatter", "patch_note_section", "delete_note_section"):
         assert annotations[name] == {
             "readOnlyHint": False,
             "destructiveHint": True,
@@ -119,6 +120,7 @@ async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
         "append_journal",
         "set_frontmatter",
         "patch_note_section",
+        "delete_note_section",
         "revert_note",
     }
 
@@ -160,6 +162,39 @@ async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
     assert "candidate_paths are sanitized display metadata" in health_description
     assert "Findings do not include line numbers" in health_description
     assert "actionable" not in health_description
+    delete_tool = tools["delete_note_section"]
+    assert len(tools) == 15
+    assert set(delete_tool.inputSchema["properties"]) == {
+        "rel_path",
+        "heading",
+        "expected_hash",
+        "heading_level",
+    }
+    assert delete_tool.inputSchema["required"] == ["rel_path", "heading"]
+    assert delete_tool.inputSchema["properties"]["rel_path"]["type"] == "string"
+    assert delete_tool.inputSchema["properties"]["heading"]["type"] == "string"
+    assert delete_tool.inputSchema["properties"]["expected_hash"]["default"] is None
+    assert delete_tool.inputSchema["properties"]["heading_level"]["default"] is None
+    delete_output_schema = delete_tool.outputSchema
+    patch_output_schema = tools["patch_note_section"].outputSchema
+    assert delete_output_schema is not None
+    assert patch_output_schema is not None
+    assert set(delete_output_schema["properties"]) == {
+        "deleted",
+        "content_hash",
+        "indexed",
+    }
+    assert delete_output_schema["required"] == ["deleted", "content_hash", "indexed"]
+    assert tools["patch_note_section"].inputSchema["required"] == [
+        "rel_path",
+        "heading",
+        "new_content",
+    ]
+    assert patch_output_schema["required"] == [
+        "patched",
+        "content_hash",
+        "indexed",
+    ]
 
 
 @pytest.mark.asyncio
@@ -207,6 +242,10 @@ async def test_write_tool_descriptions_lead_with_usage_trigger(tmp_path: Path) -
     patch_description = descriptions["patch_note_section"]
     assert patch_description is not None
     assert "refuses a level-1 heading that contains subsections" in patch_description
+    delete_description = descriptions["delete_note_section"]
+    assert delete_description is not None
+    assert "H2-H6" in delete_description
+    assert "lifecycle invalidation" in delete_description
 
 
 class TestBuildAppReadPaths:

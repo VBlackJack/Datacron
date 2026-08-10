@@ -73,6 +73,8 @@ PROTOCOL_BLOCK: Final[str] = "\n".join(
         "- Use `create_note_ai` for a new durable topic.",
         "- Use `append_journal` when new information extends an existing topic.",
         "- Use `patch_note_section` only to replace a known outdated section.",
+        "- Use `delete_note_section` only for an explicitly obsolete H2-H6 section; "
+        "prefer lifecycle invalidation when the fact must remain queryable.",
         "- Use `set_frontmatter` for verification, confidence, and fact lifecycle changes.",
         "- Prefer superseding or invalidating outdated facts over deleting history.",
         "- Use `contradiction_scan` to surface contradicting or refining sections across "
