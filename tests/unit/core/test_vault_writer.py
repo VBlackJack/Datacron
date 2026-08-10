@@ -532,6 +532,73 @@ async def test_committed_divergence_uses_distinct_reason_without_mutation(
     assert target.read_bytes() == b"external\n"
 
 
+async def test_inspect_recovery_does_not_reconcile_safe_pending(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    target = vault / "note.md"
+    target.write_bytes(b"before\n")
+    writer = _writer(vault)
+    record = _pending_record(
+        operation_id="operation-safe-but-uncommitted",
+        rel_path="note.md",
+        before=b"before\n",
+        after=b"after\n",
+    )
+    writer._operation_journal.write_pending(record)
+    pending_path = writer._operation_journal.pending_path(record.operation_id)
+    pending_before = pending_path.read_bytes()
+
+    blocked = await writer.inspect_recovery()
+
+    assert blocked == ()
+    assert pending_path.read_bytes() == pending_before
+    assert target.read_bytes() == b"before\n"
+    assert not (vault / ".datacron" / "oplog" / "operations.jsonl").exists()
+
+
+async def test_recovery_finalizes_repair_before_clearing_original_pending(
+    tmp_path: Path,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    target = vault / "note.md"
+    target.write_bytes(b"before\n")
+    writer = _writer(vault)
+    original = _pending_record(
+        operation_id="operation-original-blocked",
+        rel_path="note.md",
+        before=b"before\n",
+        after=b"after\n",
+    )
+    repair = OperationRecord(
+        operation_id="operation-repair-pending",
+        timestamp=_RECOVERY_TIMESTAMP,
+        op="recovery_restore",
+        tool="datacron_ops_repair",
+        note_id=None,
+        rel_path="note.md",
+        before_hash=sha256_bytes(b"external\n"),
+        after_hash=sha256_bytes(b"before\n"),
+        actor="recovery-test",
+        parameters={
+            "action": "restore-before",
+            "resolves_operation_id": original.operation_id,
+        },
+        history_stored=True,
+    )
+    writer._operation_journal.write_pending(original)
+    writer._operation_journal.write_pending(repair)
+
+    recovered = await writer.recover_operations()
+
+    assert recovered == 1
+    assert writer.recovery_blocked == ()
+    assert writer._operation_journal.pending_paths() == []
+    records = writer._operation_journal.read_records()
+    assert [record.operation_id for record in records] == [repair.operation_id]
+    assert target.read_bytes() == b"before\n"
+
+
 @pytest.mark.parametrize("mutation", ["write", "mutate", "revert", "purge"])
 async def test_every_mutation_fails_closed_after_fresh_recovery_scan(
     tmp_path: Path,

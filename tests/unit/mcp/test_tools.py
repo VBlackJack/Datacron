@@ -26,6 +26,11 @@ from datacron.core.hashing import hash_text
 from datacron.core.models import Note
 from datacron.core.operation_log import OperationContext, OperationRecord
 from datacron.core.paths import sidecar_dir
+from datacron.core.recovery import (
+    BlockedOperation,
+    RecoveryRepairAction,
+    RecoveryRepairResult,
+)
 from datacron.core.vault import ULID_SIDECAR_FILENAME
 from datacron.core.vault_writer import FilesystemVaultWriter
 from datacron.indexing.chunker import MarkdownChunker
@@ -169,6 +174,10 @@ class _CountingVaultWriter:
         self._delegate = delegate
         self.calls: list[tuple[str, bool]] = []
 
+    @property
+    def recovery_blocked(self) -> tuple[BlockedOperation, ...]:
+        return self._delegate.recovery_blocked
+
     async def write_note_atomic(
         self,
         rel_path: str,
@@ -223,6 +232,24 @@ class _CountingVaultWriter:
 
     async def recover_operations(self) -> int:
         return await self._delegate.recover_operations()
+
+    async def inspect_recovery(self) -> tuple[BlockedOperation, ...]:
+        return await self._delegate.inspect_recovery()
+
+    async def repair_recovery(
+        self,
+        operation_id: str,
+        action: RecoveryRepairAction,
+        *,
+        expected_disk_hash: str,
+        actor: str,
+    ) -> RecoveryRepairResult:
+        return await self._delegate.repair_recovery(
+            operation_id,
+            action,
+            expected_disk_hash=expected_disk_hash,
+            actor=actor,
+        )
 
     async def list_operations(self) -> list[OperationRecord]:
         return await self._delegate.list_operations()

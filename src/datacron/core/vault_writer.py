@@ -59,6 +59,11 @@ from datacron.core.paths import (
     sidecar_index_db,
 )
 from datacron.core.protocols import VaultWriter
+from datacron.core.recovery import (
+    BlockedOperation,
+    RecoveryRepairAction,
+    RecoveryRepairResult,
+)
 from datacron.core.security import SecretRedactor
 
 __all__ = [
@@ -66,6 +71,7 @@ __all__ = [
     "OPERATION_FAULT_POINTS",
     "FilesystemVaultWriter",
     "OperationRecoveryError",
+    "RecoveryRepairResult",
     "UlidCollisionError",
     "UlidVerificationError",
     "WriteConflictError",
@@ -98,9 +104,12 @@ _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _FRONTMATTER_ID_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?m)^id:[ \t]*['\"]?([0-9A-HJKMNP-TV-Z]{26})['\"]?[ \t]*$"
 )
+_CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{64}$")
+_OPERATION_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _LOCK_RETRY_SECONDS: Final[float] = 0.05
 _REASON_PENDING_DISK_HASH_MISMATCH: Final[str] = "pending_disk_hash_mismatch"
 _REASON_COMMITTED_DISK_HASH_MISMATCH: Final[str] = "committed_disk_hash_mismatch"
+_REASON_REPAIR_DISK_HASH_MISMATCH: Final[str] = "repair_disk_hash_mismatch"
 
 
 class WriteConflictError(ValueError):
@@ -117,18 +126,6 @@ class UlidVerificationError(ValueError):
 
 class OperationRecoveryError(OperationLogError):
     """Raised when a pending operation cannot be reconciled by exact hash."""
-
-
-@dataclass(frozen=True)
-class BlockedOperation:
-    """Sanitized operation evidence that requires explicit operator repair."""
-
-    operation_id: str
-    rel_path: str
-    reason: str
-    expected_before_hash: str | None
-    expected_after_hash: str
-    disk_hash: str | None
 
 
 @dataclass(frozen=True)
@@ -247,6 +244,28 @@ class FilesystemVaultWriter:
         self._write_policy.ensure_writable()
         outcome = await asyncio.to_thread(self._recover_operations_sync)
         return outcome.recovered
+
+    async def inspect_recovery(self) -> tuple[BlockedOperation, ...]:
+        """Inspect blocked operation manifests without changing durable state."""
+        return await asyncio.to_thread(self._inspect_recovery_sync)
+
+    async def repair_recovery(
+        self,
+        operation_id: str,
+        action: RecoveryRepairAction,
+        *,
+        expected_disk_hash: str,
+        actor: str,
+    ) -> RecoveryRepairResult:
+        """Apply one exact-hash recovery repair after explicit CLI confirmation."""
+        self._write_policy.ensure_writable()
+        return await asyncio.to_thread(
+            self._repair_recovery_sync,
+            operation_id,
+            action,
+            expected_disk_hash,
+            actor,
+        )
 
     async def list_operations(self) -> list[OperationRecord]:
         """Return an immutable snapshot of committed operation records."""
@@ -439,7 +458,9 @@ class FilesystemVaultWriter:
     def _recover_operations_sync(self, *, purge_history: bool = True) -> RecoveryOutcome:
         recovered = 0
         blocked: list[BlockedOperation] = []
-        for pending_path in self._operation_journal.pending_paths():
+        pending_paths = self._operation_journal.pending_paths()
+        pending_paths.sort(key=self._recovery_order)
+        for pending_path in pending_paths:
             record = self._operation_journal.read_pending(pending_path)
             candidate = (self._vault_root / record.rel_path).expanduser().resolve()
             safe_rel_path = self._safe_relative_path(candidate)
@@ -453,7 +474,22 @@ class FilesystemVaultWriter:
                 record = self._operation_journal.read_pending(current_path)
                 current_bytes = candidate.read_bytes() if candidate.is_file() else None
                 current_hash = sha256_bytes(current_bytes) if current_bytes is not None else None
-                if self._operation_journal.has_record(record.operation_id):
+                records = self._operation_journal.read_records()
+                resolution = self._resolution_record(records, record.operation_id)
+                if resolution is not None:
+                    if current_hash == resolution.after_hash:
+                        self._operation_journal.remove_pending(record.operation_id)
+                        continue
+                    blocked.append(
+                        self._blocked_operation(
+                            record,
+                            safe_rel_path,
+                            reason=_REASON_REPAIR_DISK_HASH_MISMATCH,
+                            disk_hash=current_hash,
+                        )
+                    )
+                    continue
+                if any(item.operation_id == record.operation_id for item in records):
                     if current_hash != record.after_hash:
                         blocked.append(
                             self._blocked_operation(
@@ -491,6 +527,247 @@ class FilesystemVaultWriter:
                 self._operation_journal.purge_history()
         return outcome
 
+    def _inspect_recovery_sync(self) -> tuple[BlockedOperation, ...]:
+        blocked: list[BlockedOperation] = []
+        records = self._operation_journal.read_records()
+        for pending_path in self._operation_journal.pending_paths():
+            manifest_before = pending_path.read_bytes()
+            record = self._operation_journal.read_pending(pending_path)
+            candidate = (self._vault_root / record.rel_path).expanduser().resolve()
+            safe_rel_path = self._safe_relative_path(candidate)
+            current_bytes = candidate.read_bytes() if candidate.is_file() else None
+            current_hash = sha256_bytes(current_bytes) if current_bytes is not None else None
+            if not pending_path.is_file() or pending_path.read_bytes() != manifest_before:
+                raise VaultLockBusyError(
+                    f"pending operation changed during inspection: {record.operation_id}"
+                )
+            resolution = self._resolution_record(records, record.operation_id)
+            if resolution is not None:
+                if current_hash != resolution.after_hash:
+                    blocked.append(
+                        self._blocked_operation(
+                            record,
+                            safe_rel_path,
+                            reason=_REASON_REPAIR_DISK_HASH_MISMATCH,
+                            disk_hash=current_hash,
+                            log_error=False,
+                        )
+                    )
+                continue
+            if any(item.operation_id == record.operation_id for item in records):
+                if current_hash != record.after_hash:
+                    blocked.append(
+                        self._blocked_operation(
+                            record,
+                            safe_rel_path,
+                            reason=_REASON_COMMITTED_DISK_HASH_MISMATCH,
+                            disk_hash=current_hash,
+                            log_error=False,
+                        )
+                    )
+                continue
+            if current_hash not in {record.before_hash, record.after_hash}:
+                blocked.append(
+                    self._blocked_operation(
+                        record,
+                        safe_rel_path,
+                        reason=_REASON_PENDING_DISK_HASH_MISMATCH,
+                        disk_hash=current_hash,
+                        log_error=False,
+                    )
+                )
+        self._recovery_outcome = RecoveryOutcome(blocked=tuple(blocked))
+        return tuple(blocked)
+
+    def _repair_recovery_sync(
+        self,
+        operation_id: str,
+        action: RecoveryRepairAction,
+        expected_disk_hash: str,
+        actor: str,
+    ) -> RecoveryRepairResult:
+        cleaned_operation_id = self._validate_repair_request(
+            operation_id,
+            action,
+            expected_disk_hash,
+        )
+        pending_path = self._operation_journal.pending_path(cleaned_operation_id)
+        if not pending_path.is_file():
+            raise FileNotFoundError(f"pending operation not found: {cleaned_operation_id}")
+        initial = self._operation_journal.read_pending(pending_path)
+        candidate = (self._vault_root / initial.rel_path).expanduser().resolve()
+        safe_rel_path = self._safe_relative_path(candidate)
+        with (
+            self._advisory_lock(f"note:{self._lock_key(candidate)}"),
+            self._advisory_lock("oplog"),
+        ):
+            original, current_bytes, current_hash, blocked = self._load_repair_state(
+                pending_path,
+                initial,
+                candidate,
+                safe_rel_path,
+                expected_disk_hash,
+            )
+            after_bytes = self._repair_after_bytes(action, original, blocked, current_bytes)
+            repair = self._build_repair_record(
+                action,
+                actor,
+                original,
+                blocked,
+                safe_rel_path,
+                current_hash,
+                after_bytes,
+            )
+            self._commit_repair(
+                action,
+                candidate,
+                current_bytes,
+                after_bytes,
+                repair,
+                original.operation_id,
+            )
+            _LOGGER.warning(
+                "operation recovery repaired id=%s repair_id=%s action=%s rel_path=%s "
+                "before_hash=%s after_hash=%s actor=%s",
+                original.operation_id,
+                repair.operation_id,
+                action,
+                safe_rel_path.as_posix(),
+                current_hash,
+                repair.after_hash,
+                repair.actor,
+            )
+        self._recovery_outcome = RecoveryOutcome()
+        return RecoveryRepairResult(
+            operation_id=cleaned_operation_id,
+            repair_operation_id=repair.operation_id,
+            rel_path=safe_rel_path.as_posix(),
+            action=action,
+            before_hash=current_hash,
+            after_hash=repair.after_hash,
+        )
+
+    @staticmethod
+    def _validate_repair_request(
+        operation_id: str,
+        action: RecoveryRepairAction,
+        expected_disk_hash: str,
+    ) -> str:
+        cleaned_operation_id = operation_id.strip()
+        if not _OPERATION_ID_PATTERN.fullmatch(cleaned_operation_id):
+            raise ValueError("operation_id must be an opaque filename-safe identifier")
+        if action not in {"restore-before", "adopt-disk"}:
+            raise ValueError("action must be restore-before or adopt-disk")
+        if not _CONTENT_HASH_PATTERN.fullmatch(expected_disk_hash):
+            raise ValueError("expected_disk_hash must be a lowercase 64-character SHA-256")
+        return cleaned_operation_id
+
+    def _load_repair_state(
+        self,
+        pending_path: Path,
+        initial: OperationRecord,
+        candidate: Path,
+        safe_rel_path: Path,
+        expected_disk_hash: str,
+    ) -> tuple[OperationRecord, bytes, str, BlockedOperation]:
+        if not pending_path.is_file():
+            raise FileNotFoundError(f"pending operation not found: {initial.operation_id}")
+        original = self._operation_journal.read_pending(pending_path)
+        if original.rel_path != initial.rel_path:
+            raise VaultLockBusyError(
+                f"pending operation changed during repair: {initial.operation_id}"
+            )
+        if not candidate.is_file():
+            raise ValueError("repair requires the target note to exist")
+        current_bytes = candidate.read_bytes()
+        current_hash = sha256_bytes(current_bytes)
+        if current_hash != expected_disk_hash:
+            raise WriteConflictError(
+                "disk hash changed since inspection: "
+                f"expected {expected_disk_hash}, actual {current_hash}"
+            )
+        blocked = self._classify_blocked_operation(
+            original,
+            safe_rel_path,
+            current_hash,
+            self._operation_journal.read_records(),
+            log_error=False,
+        )
+        if blocked is None:
+            raise ValueError(f"operation is no longer blocked: {original.operation_id}")
+        return original, current_bytes, current_hash, blocked
+
+    def _repair_after_bytes(
+        self,
+        action: RecoveryRepairAction,
+        original: OperationRecord,
+        blocked: BlockedOperation,
+        current_bytes: bytes,
+    ) -> bytes:
+        if action == "adopt-disk":
+            if not blocked.adopt_disk_available:
+                raise ValueError("adopt-disk is unavailable because the target is absent")
+            return current_bytes
+        if not blocked.restore_before_available or original.before_hash is None:
+            raise HistoryUnavailableError(
+                "restore-before is unavailable because exact before history is missing"
+            )
+        return self._operation_journal.read_history(original.before_hash)
+
+    def _build_repair_record(
+        self,
+        action: RecoveryRepairAction,
+        actor: str,
+        original: OperationRecord,
+        blocked: BlockedOperation,
+        safe_rel_path: Path,
+        current_hash: str,
+        after_bytes: bytes,
+    ) -> OperationRecord:
+        return OperationRecord(
+            operation_id=uuid4().hex,
+            timestamp=self._operation_journal.next_timestamp(),
+            op="recovery_restore" if action == "restore-before" else "recovery_adopt",
+            tool="datacron_ops_repair",
+            note_id=original.note_id,
+            rel_path=safe_rel_path.as_posix(),
+            before_hash=current_hash,
+            after_hash=sha256_bytes(after_bytes),
+            actor=self._secret_redactor.redact_text(actor.strip()) or "cli:local-operator",
+            parameters={
+                "action": action,
+                "blocked_reason": blocked.reason,
+                "original_after_hash": original.after_hash,
+                "original_before_hash": original.before_hash,
+                "original_op": original.op,
+                "original_tool": original.tool,
+                "resolves_operation_id": original.operation_id,
+            },
+            history_stored=(action == "restore-before" and self._operation_journal.history_enabled),
+        )
+
+    def _commit_repair(
+        self,
+        action: RecoveryRepairAction,
+        candidate: Path,
+        current_bytes: bytes,
+        after_bytes: bytes,
+        repair: OperationRecord,
+        original_operation_id: str,
+    ) -> None:
+        if action == "restore-before":
+            stored_hash = self._operation_journal.store_history(current_bytes)
+            if stored_hash != repair.before_hash:
+                raise OperationLogError("stored repair history differs from disk hash")
+        self._operation_journal.write_pending(repair)
+        if action == "restore-before":
+            written_hash = atomic_durable_write(candidate, after_bytes)
+            if written_hash != repair.after_hash:
+                raise OperationLogError("repair note hash differs from prepared after_hash")
+        self._operation_journal.append_record(repair)
+        self._operation_journal.remove_pending(repair.operation_id)
+        self._operation_journal.remove_pending(original_operation_id)
+
     def _list_operations_sync(self) -> list[OperationRecord]:
         with self._advisory_lock("oplog"):
             return self._operation_journal.read_records()
@@ -501,13 +778,14 @@ class FilesystemVaultWriter:
         with self._advisory_lock("oplog"):
             return self._operation_journal.purge_history()
 
-    @staticmethod
     def _blocked_operation(
+        self,
         record: OperationRecord,
         safe_rel_path: Path,
         *,
         reason: str,
         disk_hash: str | None,
+        log_error: bool = True,
     ) -> BlockedOperation:
         blocked = BlockedOperation(
             operation_id=record.operation_id,
@@ -516,18 +794,85 @@ class FilesystemVaultWriter:
             expected_before_hash=record.before_hash,
             expected_after_hash=record.after_hash,
             disk_hash=disk_hash,
+            restore_before_available=self._history_available(record.before_hash),
+            adopt_disk_available=disk_hash is not None,
         )
-        _LOGGER.error(
-            "operation recovery blocked id=%s rel_path=%s reason=%s "
-            "expected_before_hash=%s expected_after_hash=%s disk_hash=%s",
-            blocked.operation_id,
-            blocked.rel_path,
-            blocked.reason,
-            blocked.expected_before_hash,
-            blocked.expected_after_hash,
-            blocked.disk_hash,
-        )
+        if log_error:
+            _LOGGER.error(
+                "operation recovery blocked id=%s rel_path=%s reason=%s "
+                "expected_before_hash=%s expected_after_hash=%s disk_hash=%s",
+                blocked.operation_id,
+                blocked.rel_path,
+                blocked.reason,
+                blocked.expected_before_hash,
+                blocked.expected_after_hash,
+                blocked.disk_hash,
+            )
         return blocked
+
+    def _classify_blocked_operation(
+        self,
+        record: OperationRecord,
+        safe_rel_path: Path,
+        disk_hash: str | None,
+        records: list[OperationRecord],
+        *,
+        log_error: bool = True,
+    ) -> BlockedOperation | None:
+        resolution = self._resolution_record(records, record.operation_id)
+        if resolution is not None:
+            if disk_hash == resolution.after_hash:
+                return None
+            return self._blocked_operation(
+                record,
+                safe_rel_path,
+                reason=_REASON_REPAIR_DISK_HASH_MISMATCH,
+                disk_hash=disk_hash,
+                log_error=log_error,
+            )
+        if any(item.operation_id == record.operation_id for item in records):
+            if disk_hash == record.after_hash:
+                return None
+            return self._blocked_operation(
+                record,
+                safe_rel_path,
+                reason=_REASON_COMMITTED_DISK_HASH_MISMATCH,
+                disk_hash=disk_hash,
+                log_error=log_error,
+            )
+        if disk_hash in {record.before_hash, record.after_hash}:
+            return None
+        return self._blocked_operation(
+            record,
+            safe_rel_path,
+            reason=_REASON_PENDING_DISK_HASH_MISMATCH,
+            disk_hash=disk_hash,
+            log_error=log_error,
+        )
+
+    def _history_available(self, content_hash: str | None) -> bool:
+        if content_hash is None:
+            return False
+        try:
+            self._operation_journal.read_history(content_hash)
+        except HistoryUnavailableError:
+            return False
+        return True
+
+    @staticmethod
+    def _resolution_record(
+        records: list[OperationRecord],
+        operation_id: str,
+    ) -> OperationRecord | None:
+        for record in reversed(records):
+            if record.parameters.get("resolves_operation_id") == operation_id:
+                return record
+        return None
+
+    def _recovery_order(self, pending_path: Path) -> tuple[int, str]:
+        record = self._operation_journal.read_pending(pending_path)
+        resolves = record.parameters.get("resolves_operation_id")
+        return (0 if isinstance(resolves, str) and resolves else 1, pending_path.name)
 
     @staticmethod
     def _raise_if_recovery_blocked(outcome: RecoveryOutcome) -> None:

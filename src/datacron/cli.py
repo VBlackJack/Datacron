@@ -50,6 +50,7 @@ from datacron.core.config import (
 from datacron.core.durability import WritePolicy, probe_directory_durability
 from datacron.core.logger import configure_logging, get_logger
 from datacron.core.models import EvalPipeline, EvalTransport
+from datacron.core.operation_log import HistoryUnavailableError, OperationLogError
 from datacron.core.paths import (
     sidecar_dir,
     sidecar_index_db,
@@ -57,6 +58,11 @@ from datacron.core.paths import (
 )
 from datacron.core.scope import SingleTenantVaultScope
 from datacron.core.vault import build_configured_reader
+from datacron.core.vault_writer import (
+    FilesystemVaultWriter,
+    VaultLockBusyError,
+    WriteConflictError,
+)
 from datacron.installers.mcp_clients import (
     ALL_CLIENT_IDS,
     SCOPE_PROJECT,
@@ -109,6 +115,13 @@ class _SetupPrompt(StrEnum):
     REPLACE_WRITE_ENV = "replace-write-env"
     READ_ONLY = "read-only"
     PROTOCOL = "protocol"
+
+
+class _OpsRepairAction(StrEnum):
+    """Explicit operator choices for one blocked operation."""
+
+    RESTORE_BEFORE = "restore-before"
+    ADOPT_DISK = "adopt-disk"
 
 
 _SETUP_PROMPT_EXPLANATIONS: Final[dict[_SetupPrompt, tuple[str, ...]]] = {
@@ -189,8 +202,15 @@ protocol_app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+ops_app = typer.Typer(
+    name="ops",
+    help="Inspect or explicitly repair blocked operation recovery.",
+    no_args_is_help=True,
+    add_completion=False,
+)
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(protocol_app, name="protocol")
+app.add_typer(ops_app, name="ops")
 
 
 def _version_callback(value: bool) -> None:
@@ -364,6 +384,118 @@ def status(
     _print(f"  index:      {index_status} ({db_path})")
     _print(f"  log file:   {log_dir / today_log}")
     _log_completion("status", started)
+
+
+def _ops_writer(vault_root: Path, settings: Settings) -> FilesystemVaultWriter:
+    """Build a vault-confined writer for explicit local maintenance."""
+    maintenance_settings = settings.model_copy(update={"write_paths": [vault_root]})
+    return FilesystemVaultWriter(
+        vault_root,
+        maintenance_settings,
+        _load_vault_yaml(vault_root) or VaultConfig(),
+    )
+
+
+@ops_app.command(name="inspect")
+def ops_inspect(
+    vault: Path | None = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Vault root. Defaults to DATACRON_VAULT_ROOT or current directory.",
+    ),
+) -> None:
+    """Inspect blocked operation manifests without changing durable state."""
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    started = _log_invocation("ops.inspect", vault=str(vault_root))
+    try:
+        blocked = asyncio.run(_ops_writer(vault_root, settings).inspect_recovery())
+    except (OSError, OperationLogError, ValueError, VaultLockBusyError) as exc:
+        _error(f"Recovery inspection failed: {exc}")
+    if not blocked:
+        _print("Recovery inspection: no blocked operations.")
+        _print("No changes made.")
+        _log_completion("ops.inspect", started)
+        return
+    noun = "operation" if len(blocked) == 1 else "operations"
+    _print(f"Recovery inspection: {len(blocked)} blocked {noun}")
+    for item in blocked:
+        _print(f"  operation_id: {item.operation_id}")
+        _print(f"  rel_path: {item.rel_path}")
+        _print(f"  reason: {item.reason}")
+        _print(f"  expected_before_hash: {item.expected_before_hash or '<absent>'}")
+        _print(f"  expected_after_hash: {item.expected_after_hash}")
+        _print(f"  disk_hash: {item.disk_hash or '<absent>'}")
+        restore_status = "available" if item.restore_before_available else "unavailable"
+        adopt_status = "available" if item.adopt_disk_available else "unavailable"
+        _print(f"  restore-before: {restore_status}")
+        _print(f"  adopt-disk: {adopt_status}")
+    _print("No changes made.")
+    _log_completion("ops.inspect", started)
+
+
+@ops_app.command(name="repair")
+def ops_repair(
+    operation_id: str = typer.Option(..., "--operation-id", help="Blocked operation ID."),
+    action: _OpsRepairAction = typer.Option(..., "--action", help="Exact repair action."),
+    expected_disk_hash: str = typer.Option(
+        ...,
+        "--expected-disk-hash",
+        help="Exact disk SHA-256 copied from `datacron ops inspect`.",
+    ),
+    confirm: str | None = typer.Option(
+        None,
+        "--confirm",
+        help="Repeat the exact operation ID to authorize the repair.",
+    ),
+    vault: Path | None = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Vault root. Defaults to DATACRON_VAULT_ROOT or current directory.",
+    ),
+) -> None:
+    """Repair one blocked operation under exact ID and disk-hash confirmation."""
+    if confirm != operation_id:
+        _error(f"Repair not confirmed. Pass --confirm {operation_id}")
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    started = _log_invocation(
+        "ops.repair",
+        vault=str(vault_root),
+        operation_id=operation_id,
+        action=action.value,
+    )
+    try:
+        repaired = asyncio.run(
+            _ops_writer(vault_root, settings).repair_recovery(
+                operation_id,
+                action.value,
+                expected_disk_hash=expected_disk_hash,
+                actor="cli:local-operator",
+            )
+        )
+    except (
+        FileNotFoundError,
+        HistoryUnavailableError,
+        OSError,
+        OperationLogError,
+        ValueError,
+        VaultLockBusyError,
+        WriteConflictError,
+    ) as exc:
+        _error(f"Recovery repair refused: {exc}")
+    if repaired.action == "restore-before":
+        _print("Repair complete: restored exact before bytes.")
+    else:
+        _print("Repair complete: adopted current disk bytes.")
+    _print(f"  operation_id: {repaired.operation_id}")
+    _print(f"  repair_operation_id: {repaired.repair_operation_id}")
+    _print(f"  rel_path: {repaired.rel_path}")
+    _print(f"  before_hash: {repaired.before_hash}")
+    _print(f"  after_hash: {repaired.after_hash}")
+    _log_completion("ops.repair", started)
 
 
 async def _index_status_label(db_path: Path) -> str:

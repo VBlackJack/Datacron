@@ -104,7 +104,7 @@ async def build_health(
     )
     scrubber_anomaly_count = scrubber["anomalies_count"]
     scrubber_critical = isinstance(scrubber_anomaly_count, int) and scrubber_anomaly_count > 0
-    recovery_blocked = _recovery_blocked(app.vault_writer)
+    recovery_blocked = app.vault_writer.recovery_blocked
     healthy = (
         not stale_paths
         and not scan.parse_errors
@@ -159,13 +159,6 @@ async def build_health(
             "scope_notes": evidence.get("scope_notes", {}),
         },
     }
-
-
-def _recovery_blocked(writer: object) -> tuple[Any, ...]:
-    """Read concrete recovery state through the scope wrapper."""
-    delegate = getattr(writer, "_delegate", writer)
-    blocked = delegate.__getattribute__("recovery_blocked")
-    return blocked if isinstance(blocked, tuple) else ()
 
 
 def _build_recovery(
