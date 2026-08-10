@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
@@ -23,8 +24,10 @@ from mcp.shared.exceptions import McpError
 from mcp.types import INVALID_PARAMS
 
 from datacron.core.config import Settings
+from datacron.core.hashing import sha256_bytes
+from datacron.core.operation_log import OperationRecord
 from datacron.core.paths import PathConfinementError, sidecar_index_db, sidecar_vault_config
-from datacron.core.vault_writer import OperationRecoveryError, VaultLockBusyError
+from datacron.core.vault_writer import FilesystemVaultWriter, VaultLockBusyError
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
 from datacron.mcp.server import (
     SERVER_INSTRUCTIONS,
@@ -299,10 +302,44 @@ class TestStartupRecovery:
         app = build_app(settings=settings, vault_root=vault)
 
         async def _broken_recover() -> int:
-            raise OperationRecoveryError("history is corrupt")
+            raise OSError("unexpected disk failure")
 
         monkeypatch.setattr(app.vault_writer, "recover_operations", _broken_recover)
 
-        # Only lock contention is downgraded; genuine recovery failures still abort.
-        with pytest.raises(OperationRecoveryError):
+        # Only classified recovery blocks and lock contention are downgraded.
+        with pytest.raises(OSError, match="unexpected disk failure"):
             await _startup_recover_operations(app)
+
+    @pytest.mark.asyncio
+    async def test_irreconcilable_pending_does_not_abort_startup(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        settings = Settings(read_paths=[vault], write_paths=[vault], vault_root=vault)
+        app = build_app(settings=settings, vault_root=vault)
+        writer = cast(
+            "FilesystemVaultWriter",
+            vars(app.vault_writer)["_delegate"],
+        )
+        record = OperationRecord(
+            operation_id="startup-blocked-operation",
+            timestamp="2026-08-10T00:00:00+00:00",
+            op="patch_section",
+            tool="patch_note_section",
+            note_id=None,
+            rel_path="missing.md",
+            before_hash=sha256_bytes(b"before\n"),
+            after_hash=sha256_bytes(b"after\n"),
+            actor="startup-test",
+            parameters={},
+            history_stored=True,
+        )
+        writer._operation_journal.write_pending(record)
+
+        await _startup_recover_operations(app)
+
+        assert writer.recovery_blocked[0].operation_id == record.operation_id
+        assert "Startup operation-log recovery blocked" in caplog.text

@@ -22,7 +22,11 @@ from typing import TYPE_CHECKING, Any, Final
 
 from ulid import ULID
 
-from datacron.core.durability import DurabilityUnavailableError, ReadOnlyModeError
+from datacron.core.durability import (
+    DurabilityUnavailableError,
+    ReadOnlyModeError,
+    RecoveryRequiredError,
+)
 from datacron.core.frontmatter import FrontmatterError, serialize
 from datacron.core.markdown_sections import (
     append_entry_to_heading,
@@ -82,6 +86,8 @@ async def _execute_write_tool(
             writes_configured=bool(app.settings.write_paths),
         )
         return _error_response(tool, mapped, started, **audit_fields)
+    except RecoveryRequiredError as exc:
+        return _error_response(tool, exc, started, **audit_fields)
     except expected as exc:
         final = remap(exc) if remap is not None else exc
         fields = expected_audit_fields(exc) if expected_audit_fields is not None else audit_fields

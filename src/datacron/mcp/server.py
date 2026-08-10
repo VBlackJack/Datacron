@@ -79,7 +79,7 @@ from datacron.core.scope import (
 )
 from datacron.core.security import SecretRedactor
 from datacron.core.vault import build_configured_reader
-from datacron.core.vault_writer import VaultLockBusyError
+from datacron.core.vault_writer import OperationRecoveryError, VaultLockBusyError
 from datacron.mcp.identity import CallerIdentityProvider, StdioCallerIdentityProvider
 
 __all__ = [
@@ -318,7 +318,7 @@ async def _startup_recover_operations(app: DatacronApp) -> None:
     it -- must not stall the MCP lifespan: if it did, ``initialize`` would never
     be answered and the client would drop the server with zero tools registered.
     On lock contention we log a warning and defer recovery (retried on the next
-    write). Every other error still propagates and aborts startup.
+    write). Residual operation recovery errors are degraded; all other errors abort startup.
     """
     try:
         recovered = await app.vault_writer.recover_operations()
@@ -329,8 +329,25 @@ async def _startup_recover_operations(app: DatacronApp) -> None:
             exc,
         )
         return
+    except OperationRecoveryError as exc:
+        _LOGGER.error(
+            "Startup operation-log recovery blocked by a residual recovery error: %s; "
+            "tools will register and reads remain available",
+            exc,
+        )
+        return
     if recovered:
         _LOGGER.warning("Recovered %d committed operation-log entries", recovered)
+    delegate = getattr(app.vault_writer, "_delegate", app.vault_writer)
+    observed = delegate.__getattribute__("recovery_blocked")
+    blocked = observed if isinstance(observed, tuple) else ()
+    if blocked:
+        _LOGGER.error(
+            "Startup operation-log recovery blocked count=%d first_operation_id=%s; "
+            "tools will register and reads remain available",
+            len(blocked),
+            blocked[0].operation_id,
+        )
 
 
 def create_server(app: DatacronApp) -> FastMCP[DatacronApp]:
