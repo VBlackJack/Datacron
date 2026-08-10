@@ -29,6 +29,7 @@ from datacron.mcp.tools.write import (
     _create_note_ai_impl,
     _delete_note_section_impl,
     _patch_note_section_impl,
+    _rename_note_section_impl,
     _revert_note_impl,
     _set_frontmatter_impl,
 )
@@ -47,6 +48,7 @@ __all__ = [
     "_get_note_impl",
     "_list_notes_impl",
     "_patch_note_section_impl",
+    "_rename_note_section_impl",
     "_repair_index_on_read",
     "_revert_note_impl",
     "_search_regex_impl",

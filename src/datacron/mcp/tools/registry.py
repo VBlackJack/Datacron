@@ -36,6 +36,7 @@ from datacron.mcp.tool_contract import (
     MemoryConfidence,
     MemoryOrigin,
     PatchNoteSectionOutput,
+    RenameNoteSectionOutput,
     RevertNoteOutput,
     SearchTextOutput,
     SetFrontmatterOutput,
@@ -49,6 +50,7 @@ from datacron.mcp.tools.write import (
     _create_note_ai_impl,
     _delete_note_section_impl,
     _patch_note_section_impl,
+    _rename_note_section_impl,
     _revert_note_impl,
     _set_frontmatter_impl,
 )
@@ -416,6 +418,41 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
                 rel_path=rel_path,
                 heading=heading,
                 new_content=new_content,
+                expected_hash=expected_hash,
+                heading_level=heading_level,
+                actor=app.identity_provider.identify(ctx).actor,
+            ),
+        )
+
+    @server.tool(
+        name="rename_note_section",
+        title="Rename note section",
+        description=(
+            "Use this only to rename an outdated ATX H2-H6 Markdown section title "
+            "recognized by the current write selector, without changing its level, "
+            "content, or subordinate headings. Pass the note's current content_hash as "
+            "expected_hash for CAS. It refuses H1 because frontmatter title "
+            "synchronization is outside this tool and refuses collisions recognized by "
+            "the same selector. Setext headings and heading-like lines in fenced code "
+            "are outside the supported guarantee."
+        ),
+        annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
+    )
+    async def rename_note_section(
+        rel_path: str,
+        heading: str,
+        new_heading: str,
+        ctx: Context[Any, Any, Any],
+        expected_hash: str | None = None,
+        heading_level: int | None = None,
+    ) -> RenameNoteSectionOutput:
+        return cast(
+            "RenameNoteSectionOutput",
+            await _rename_note_section_impl(
+                app,
+                rel_path=rel_path,
+                heading=heading,
+                new_heading=new_heading,
                 expected_hash=expected_hash,
                 heading_level=heading_level,
                 actor=app.identity_provider.identify(ctx).actor,

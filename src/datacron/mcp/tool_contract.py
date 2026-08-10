@@ -439,6 +439,23 @@ class DeleteNoteSectionOutput(TypedDict):
     indexed: bool
 
 
+class RenamedSectionOutput(TypedDict):
+    """Section title changed by a successful rename."""
+
+    rel_path: str
+    old_heading: str
+    new_heading: str
+    level: int
+
+
+class RenameNoteSectionOutput(TypedDict):
+    """Successful ``rename_note_section`` payload."""
+
+    renamed: RenamedSectionOutput
+    content_hash: str
+    indexed: bool
+
+
 class RevertedNoteOutput(TypedDict):
     """Identity and history target of a successful revert."""
 

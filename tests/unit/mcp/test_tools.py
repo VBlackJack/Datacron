@@ -2784,6 +2784,309 @@ class TestPatchNoteSection:
         assert target.read_text(encoding="utf-8") == original_raw
 
 
+class TestRenameNoteSection:
+    @pytest.mark.asyncio
+    async def test_rename_note_section_preserves_subtree_history_audit_and_index(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from datacron.mcp.tools import _rename_note_section_impl, _search_text_impl
+
+        caplog.set_level(logging.INFO, logger="datacron.mcp.tools")
+        rel_path = "_memory/facts/rename-section.md"
+        body = (
+            "Preamble block.\n\n"
+            "# Root\n\n"
+            "Intro block.\n\n"
+            "  ##\tlegacyheadingtoken\n\n"
+            "bodypreservedtoken\n\n"
+            "### Child\n\n"
+            "childpreservedtoken\n\n"
+            "## Sibling\n\n"
+            "Sibling block.\n"
+        )
+        target, original_raw = _write_memory_note(tmp_vault, rel_path, body)
+
+        result = await _rename_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="legacyheadingtoken",
+            new_heading="currentheadingtoken",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result == {
+            "renamed": {
+                "rel_path": rel_path,
+                "old_heading": "legacyheadingtoken",
+                "new_heading": "currentheadingtoken",
+                "level": 2,
+            },
+            "content_hash": hashlib.sha256(target.read_bytes()).hexdigest(),
+            "indexed": True,
+        }
+        metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        assert metadata["title"] == "Journaled memory"
+        assert new_body == body.replace("legacyheadingtoken", "currentheadingtoken").rstrip()
+
+        operations = await writable_app.vault_writer.list_operations()
+        assert len(operations) == 1
+        record = operations[0]
+        assert record.op == "rename_section"
+        assert record.tool == "rename_note_section"
+        assert record.parameters == {
+            "old_heading": "legacyheadingtoken",
+            "new_heading": "currentheadingtoken",
+            "heading_level": 2,
+        }
+        assert record.before_hash is not None
+        history = tmp_vault / ".datacron" / "history" / record.before_hash
+        assert history.read_bytes() == original_raw.encode("utf-8")
+
+        old_search = await _search_text_impl(writable_app, query="legacyheadingtoken", limit=5)
+        new_search = await _search_text_impl(writable_app, query="currentheadingtoken", limit=5)
+        body_search = await _search_text_impl(writable_app, query="bodypreservedtoken", limit=5)
+        assert old_search["results"] == []
+        assert any(item["note_rel_path"] == rel_path for item in new_search["results"])
+        assert any(item["note_rel_path"] == rel_path for item in body_search["results"])
+
+        audit_messages = [
+            record.message
+            for record in caplog.records
+            if "AUDIT tool=rename_note_section" in record.message
+        ]
+        assert len(audit_messages) == 1
+        assert "old_heading_chars=18" in audit_messages[0]
+        assert "new_heading_chars=19" in audit_messages[0]
+        assert "legacyheadingtoken" not in audit_messages[0]
+        assert "currentheadingtoken" not in audit_messages[0]
+        assert "bodypreservedtoken" not in audit_messages[0]
+
+    @pytest.mark.asyncio
+    async def test_rename_note_section_renames_h6_at_eof(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _rename_note_section_impl
+
+        rel_path = "_memory/facts/rename-h6.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Root\n\n##### Parent\n\n###### Tail\n\nTail body.\n",
+        )
+
+        result = await _rename_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Tail",
+            new_heading="Renamed tail",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["renamed"]["level"] == 6
+        _metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        assert new_body == "# Root\n\n##### Parent\n\n###### Renamed tail\n\nTail body."
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("heading_level", [1, None])
+    async def test_rename_note_section_rejects_h1_without_durable_mutation(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        heading_level: int | None,
+    ) -> None:
+        from datacron.mcp.tools import _rename_note_section_impl
+
+        rel_path = "_memory/facts/rename-h1.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Root\n\nBody.\n\n## Child\n\nChild body.\n"
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _rename_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Root",
+            new_heading="Renamed root",
+            expected_hash=hash_text(original_raw),
+            heading_level=heading_level,
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert "only supports ATX heading levels 2 through 6" in result["error"]["message"]
+        assert "frontmatter title" in result["error"]["message"]
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("collision_level", range(1, 7))
+    async def test_rename_note_section_rejects_new_heading_collision_at_any_level(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        collision_level: int,
+    ) -> None:
+        from datacron.mcp.tools import _rename_note_section_impl
+
+        rel_path = f"_memory/facts/rename-collision-{collision_level}.md"
+        collision = "#" * collision_level
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            f"# Root\n\n## Target\n\nBody.\n\n{collision} Reserved\n\nOther.\n",
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _rename_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Target",
+            new_heading="Reserved",
+            expected_hash=hash_text(original_raw),
+            heading_level=2,
+        )
+
+        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["message"] == (
+            "new_heading already exists in the note; refusing to create an ambiguous heading"
+        )
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    async def test_rename_note_section_handles_same_and_interlevel_duplicates(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _rename_note_section_impl
+
+        same_path = "_memory/facts/rename-same-level.md"
+        same_target, same_raw = _write_memory_note(
+            tmp_vault,
+            same_path,
+            "# Root\n\n## Old\n\nFirst.\n\n## Old\n\nSecond.\n",
+        )
+        ambiguous = await _rename_note_section_impl(
+            writable_app,
+            rel_path=same_path,
+            heading="Old",
+            new_heading="New",
+            expected_hash=hash_text(same_raw),
+            heading_level=2,
+        )
+        assert ambiguous["error"]["type"] == "ValueError"
+        assert "heading is ambiguous (2 matches)" in ambiguous["error"]["message"]
+        assert same_target.read_bytes() == same_raw.encode("utf-8")
+
+        inter_path = "_memory/facts/rename-interlevel.md"
+        inter_target, inter_raw = _write_memory_note(
+            tmp_vault,
+            inter_path,
+            "# Root\n\n## Old\n\nOuter.\n\n### Old\n\nInner.\n",
+            metadata_overrides={"id": "01HQXR7K9YZ8M2N3PQRSTV4WXA"},
+        )
+        renamed = await _rename_note_section_impl(
+            writable_app,
+            rel_path=inter_path,
+            heading="Old",
+            new_heading="Inner renamed",
+            expected_hash=hash_text(inter_raw),
+            heading_level=3,
+        )
+        assert renamed["renamed"]["level"] == 3
+        _metadata, inter_body = parse(inter_target.read_text(encoding="utf-8"))
+        assert "## Old\n" in inter_body
+        assert "### Inner renamed\n" in inter_body
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("new_heading", "message"),
+        [
+            ("   ", "new_heading must not be empty"),
+            ("two\nlines", "new_heading must be a single line"),
+            ("# Marked", "new_heading must contain text only, without Markdown heading markers"),
+            ("Target", "new_heading must differ from the current heading"),
+        ],
+    )
+    async def test_rename_note_section_rejects_invalid_or_unchanged_new_heading(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        new_heading: str,
+        message: str,
+    ) -> None:
+        from datacron.mcp.tools import _rename_note_section_impl
+
+        rel_path = "_memory/facts/rename-invalid.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Root\n\n## Target\n\nBody.\n"
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _rename_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Target",
+            new_heading=new_heading,
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["error"] == {"type": "ValueError", "message": message}
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    async def test_rename_note_section_rejects_stale_hash_and_external_change(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _append_journal_impl, _rename_note_section_impl
+
+        stale_path = "_memory/facts/rename-stale.md"
+        stale_target, stale_raw = _write_memory_note(
+            tmp_vault, stale_path, "# Root\n\n## Target\n\nBody.\n"
+        )
+        stale_before = _non_lock_durable_artifacts(tmp_vault)
+        stale = await _rename_note_section_impl(
+            writable_app,
+            rel_path=stale_path,
+            heading="Target",
+            new_heading="Renamed",
+            expected_hash="0" * 64,
+        )
+        assert stale["error"]["type"] == "WriteConflictError"
+        assert stale_target.read_bytes() == stale_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == stale_before
+
+        external_path = "_memory/facts/rename-external.md"
+        external_target, _external_raw = _write_memory_note(
+            tmp_vault,
+            external_path,
+            "# Root\n\n## Target\n\nProtected.\n\n## Journal\n\nStart.\n",
+            metadata_overrides={"id": "01HQXR7K9YZ8M2N3PQRSTV4WXB"},
+        )
+        committed = await _append_journal_impl(
+            writable_app,
+            rel_path=external_path,
+            heading="Journal",
+            entry="Committed entry.",
+        )
+        assert "error" not in committed
+        external_bytes = external_target.read_bytes().replace(b"Protected.", b"External edit.")
+        external_target.write_bytes(external_bytes)
+        external_before = _non_lock_durable_artifacts(tmp_vault)
+        external = await _rename_note_section_impl(
+            writable_app,
+            rel_path=external_path,
+            heading="Target",
+            new_heading="Renamed",
+        )
+        assert external["error"]["type"] == "WriteConflictError"
+        assert "outside Datacron" in external["error"]["message"]
+        assert external_target.read_bytes() == external_bytes
+        assert _non_lock_durable_artifacts(tmp_vault) == external_before
+
+
 class TestDeleteNoteSection:
     @pytest.mark.asyncio
     async def test_deletes_h2_subtree_preserves_siblings_and_reindexes(
@@ -3144,6 +3447,35 @@ class TestRecoveryRequiredMapping:
         )
 
         _assert_recovery_required(result)
+
+    async def test_rename_note_section_returns_recovery_required(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datacron.mcp.tools import _rename_note_section_impl
+
+        target, original_raw = _write_memory_note(
+            tmp_vault, "rename.md", "# Note\n\n## Target\n\nOld.\n"
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+        monkeypatch.setattr(
+            writable_app.vault_writer,
+            "mutate_note_atomic",
+            _raise_recovery_required,
+        )
+
+        result = await _rename_note_section_impl(
+            writable_app,
+            rel_path="rename.md",
+            heading="Target",
+            new_heading="Renamed",
+        )
+
+        _assert_recovery_required(result)
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
 
     async def test_revert_note_returns_recovery_required(
         self,

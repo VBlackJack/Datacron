@@ -38,6 +38,7 @@ from datacron.mcp.tools import (
     _delete_note_section_impl,
     _get_note_history_impl,
     _patch_note_section_impl,
+    _rename_note_section_impl,
     _revert_note_impl,
     _set_frontmatter_impl,
 )
@@ -122,11 +123,19 @@ async def test_prop_oplog_completeness(
             expected_hash=created["content_hash"],
             actor="property-client",
         )
+        renamed = await _rename_note_section_impl(
+            app,
+            rel_path=rel_path,
+            heading="Target",
+            new_heading="Renamed target",
+            expected_hash=patched["content_hash"],
+            actor="property-client",
+        )
         frontmatter = await _set_frontmatter_impl(
             app,
             rel_path=rel_path,
             confidence="medium",
-            expected_hash=patched["content_hash"],
+            expected_hash=renamed["content_hash"],
             actor="property-client",
         )
         appended = await _append_journal_impl(
@@ -149,17 +158,20 @@ async def test_prop_oplog_completeness(
         await store.close()
 
     assert all(
-        "error" not in result for result in (created, patched, frontmatter, appended, deleted)
+        "error" not in result
+        for result in (created, patched, renamed, frontmatter, appended, deleted)
     )
     assert [record.tool for record in records] == [
         "create_note_ai",
         "patch_note_section",
+        "rename_note_section",
         "set_frontmatter",
         "append_journal",
         "delete_note_section",
     ]
     assert records[-1].op == "delete_section"
-    assert len({record.operation_id for record in records}) == 5
+    assert records[2].op == "rename_section"
+    assert len({record.operation_id for record in records}) == 6
     assert records[0].before_hash is None
     for previous, current in pairwise(records):
         assert current.before_hash == previous.after_hash
@@ -177,7 +189,7 @@ async def test_prop_oplog_completeness(
         assert sha256_bytes(history.read_bytes()) == record.before_hash
 
     raw_log = (vault / ".datacron" / "oplog" / "operations.jsonl").read_text(encoding="ascii")
-    assert len(raw_log.splitlines()) == 5
+    assert len(raw_log.splitlines()) == 6
     assert f"secret-initial-{initial}" not in raw_log
     assert f"secret-replacement-{replacement}" not in raw_log
     assert f"secret-journal-{journal_entry}" not in raw_log
