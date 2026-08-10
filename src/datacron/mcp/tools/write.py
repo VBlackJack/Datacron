@@ -495,6 +495,26 @@ def _set_changed_frontmatter_field(
     metadata[field] = value
 
 
+def _reject_destructive_h1_patch(
+    lines: list[str],
+    *,
+    matched_level: int,
+    content_start: int,
+    content_end: int,
+) -> None:
+    if matched_level != 1:
+        return
+    if any(
+        parsed_heading is not None and parsed_heading[0] > matched_level
+        for parsed_heading in (
+            parse_heading_line(line) for line in lines[content_start:content_end]
+        )
+    ):
+        raise ValueError(
+            "level-1 patching would replace subsections; patch a lower-level heading instead"
+        )
+
+
 async def _patch_note_section_impl(
     app: DatacronApp,
     *,
@@ -539,6 +559,12 @@ async def _patch_note_section_impl(
             if matched_heading is None:
                 raise RuntimeError("section span does not follow a heading")
             matched_level, matched_text = matched_heading
+            _reject_destructive_h1_patch(
+                lines,
+                matched_level=matched_level,
+                content_start=content_start,
+                content_end=content_end,
+            )
             prefix = "".join(lines[:content_start])
             suffix = "".join(lines[content_end:])
             new_body = (

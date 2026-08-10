@@ -394,7 +394,8 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "a note. Replace the content under one existing Markdown heading. Pass the "
             "note's current content_hash as expected_hash for CAS. The operation "
             "preserves the heading line and non-target sections, stores exact prior "
-            "history, and writes atomically."
+            "history, and writes atomically. It refuses a level-1 heading that contains "
+            "subsections; patch a lower-level heading instead."
         ),
         annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
     )
