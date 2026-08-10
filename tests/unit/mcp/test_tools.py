@@ -2791,6 +2791,389 @@ class TestHeadingOccurrence:
         assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
 
 
+class TestPatchNotePreamble:
+    @pytest.mark.parametrize("delimiter", ["---", "----"])
+    def test_parse_preserving_body_eols_ignores_indented_yaml_scalar_delimiters(
+        self,
+        delimiter: str,
+    ) -> None:
+        from datacron.mcp.tools.write_validation import (
+            _parse_preserving_bom_and_body_eols,
+        )
+
+        body = "Same preamble.\r\n\r\n# Root\r\n\r\nBody.\r\n"
+        raw = (
+            f"{delimiter}\t\n"
+            "detail: |\n"
+            "  ---\n"
+            "  retained scalar text\n"
+            "tags:\n"
+            "- regression\n"
+            f"{delimiter}  \n"
+            f"{body}"
+        )
+
+        canonical_metadata, canonical_body = parse(raw)
+        metadata, exact_body, has_bom = _parse_preserving_bom_and_body_eols(raw)
+
+        assert canonical_metadata["detail"] == "---\nretained scalar text\n"
+        assert canonical_body == body.replace("\r\n", "\n").rstrip("\n")
+        assert metadata == canonical_metadata
+        assert exact_body == body
+        assert has_bom is False
+
+    @pytest.mark.asyncio
+    async def test_patch_note_preamble_yaml_scalar_noop_has_zero_durable_mutation(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_preamble_impl
+
+        rel_path = "_memory/facts/patch-preamble-yaml-scalar.md"
+        target, _serialized = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "placeholder\n\n# Root\n\nBody.\n",
+        )
+        original_raw = (
+            "---\n"
+            "id: 01J00000000000000000000001\n"
+            "title: Preamble scalar regression\n"
+            "created: '2026-01-01T00:00:00+00:00'\n"
+            "updated: '2026-01-01T00:00:00+00:00'\n"
+            "origin: human\n"
+            "confidence: high\n"
+            "last_verified: '2026-01-01'\n"
+            "supersedes: []\n"
+            "detail: |\n"
+            "  ---\n"
+            "  retained scalar text\n"
+            "tags:\n"
+            "- regression\n"
+            "---\n"
+            "Same preamble.\n\n"
+            "# Root\n\n"
+            "Body.\n"
+        )
+        target.write_text(original_raw, encoding="utf-8", newline="")
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _patch_note_preamble_impl(
+            writable_app,
+            rel_path=rel_path,
+            new_content="Same preamble.",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["error"] == {
+            "type": "ValueError",
+            "message": "preamble is unchanged; nothing to patch",
+        }
+        assert target.read_text(encoding="utf-8") == original_raw
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    async def test_patch_note_preamble_replaces_h1_preamble_with_history_oplog_audit_and_index(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_preamble_impl, _search_text_impl
+
+        caplog.set_level(logging.INFO, logger="datacron.mcp.tools")
+        rel_path = "_memory/facts/patch-preamble.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            (
+                "oldpreambletoken\n\n"
+                "# Root\n\nbodypreservedtoken\n\n## Child\n\nchildpreservedtoken\n"
+            ),
+        )
+        replacement = "newpreambletoken\nsecond line"
+
+        result = await _patch_note_preamble_impl(
+            writable_app,
+            rel_path=rel_path,
+            new_content=replacement,
+            expected_hash=hash_text(original_raw),
+            actor="preamble-test-client",
+        )
+
+        assert result == {
+            "patched": {"rel_path": rel_path},
+            "content_hash": hashlib.sha256(target.read_bytes()).hexdigest(),
+            "indexed": True,
+        }
+        _metadata, body = parse(target.read_text(encoding="utf-8"))
+        assert body == (
+            "newpreambletoken\nsecond line\n\n"
+            "# Root\n\nbodypreservedtoken\n\n## Child\n\nchildpreservedtoken"
+        )
+        operations = await writable_app.vault_writer.list_operations()
+        assert len(operations) == 1
+        record = operations[0]
+        assert record.op == "patch_preamble"
+        assert record.tool == "patch_note_preamble"
+        assert record.actor == "preamble-test-client"
+        assert record.parameters == {"new_content_chars": len(replacement)}
+        assert record.before_hash == hash_text(original_raw)
+        history = tmp_vault / ".datacron" / "history" / record.before_hash
+        assert history.read_bytes() == original_raw.encode("utf-8")
+        old_search = await _search_text_impl(writable_app, query="oldpreambletoken", limit=5)
+        new_search = await _search_text_impl(writable_app, query="newpreambletoken", limit=5)
+        body_search = await _search_text_impl(writable_app, query="bodypreservedtoken", limit=5)
+        assert old_search["results"] == []
+        assert any(item["note_rel_path"] == rel_path for item in new_search["results"])
+        assert any(item["note_rel_path"] == rel_path for item in body_search["results"])
+        audit = [
+            record.message
+            for record in caplog.records
+            if "AUDIT tool=patch_note_preamble" in record.message
+        ]
+        assert len(audit) == 1
+        assert f"preamble_chars={len(replacement)}" in audit[0]
+        assert "newpreambletoken" not in audit[0]
+        assert "bodypreservedtoken" not in audit[0]
+
+    @pytest.mark.asyncio
+    async def test_patch_note_preamble_supports_first_h2_and_empty_removal(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_preamble_impl
+
+        rel_path = "_memory/facts/patch-preamble-h2.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "Remove this preamble.\n\n## First\n\nBody.\n",
+        )
+
+        result = await _patch_note_preamble_impl(
+            writable_app,
+            rel_path=rel_path,
+            new_content=" \t\r\n ",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert "error" not in result
+        _metadata, body = parse(target.read_text(encoding="utf-8"))
+        assert body == "## First\n\nBody."
+        operations = await writable_app.vault_writer.list_operations()
+        assert operations[0].parameters == {"new_content_chars": 0}
+
+    @pytest.mark.asyncio
+    async def test_patch_note_preamble_preserves_uniform_crlf_heading_suffix_exactly(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_preamble_impl
+
+        rel_path = "_memory/facts/patch-preamble-crlf.md"
+        target, serialized = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "placeholder\n\n# Root\n\nBody.\n## Child\nChild.\n",
+        )
+        body_start = serialized.index("placeholder")
+        crlf_body = "old preamble\r\n\r\n# Root\r\n\r\nBody.\r\n## Child\r\nChild.\r\n"
+        crlf_frontmatter = serialized[:body_start].replace("\n", "\r\n")
+        original_raw = f"\ufeff{crlf_frontmatter}{crlf_body}"
+        target.write_bytes(original_raw.encode("utf-8"))
+        original_bytes = target.read_bytes()
+        original_suffix = original_bytes[original_bytes.index(b"# Root\r\n") :]
+
+        result = await _patch_note_preamble_impl(
+            writable_app,
+            rel_path=rel_path,
+            new_content="\r\nnew preamble\r\nsecond\r\n",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert "error" not in result
+        final_bytes = target.read_bytes()
+        assert final_bytes.startswith(b"\xef\xbb\xbf")
+        assert final_bytes[final_bytes.index(b"# Root\r\n") :] == original_suffix
+        assert b"new preamble\r\nsecond\r\n\r\n# Root\r\n" in final_bytes
+        history = tmp_vault / ".datacron" / "history" / hash_text(original_raw)
+        assert history.read_bytes() == original_bytes
+
+    @pytest.mark.asyncio
+    async def test_patch_note_preamble_normalizes_mixed_eols_to_dominant_lf(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_preamble_impl
+
+        rel_path = "_memory/facts/patch-preamble-mixed-eol.md"
+        target, serialized = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "placeholder\n\n# Root\n\nBody.\n## Child\nChild.\n",
+        )
+        body_start = serialized.index("placeholder")
+        crlf_body = "old preamble\r\n\r\n# Root\r\n\r\nBody.\r\n## Child\r\nChild.\r\n"
+        original_raw = f"\ufeff{serialized[:body_start]}{crlf_body}"
+        target.write_bytes(original_raw.encode("utf-8"))
+        original_bytes = target.read_bytes()
+        original_metadata, _original_body = parse(original_raw.removeprefix("\ufeff"))
+
+        result = await _patch_note_preamble_impl(
+            writable_app,
+            rel_path=rel_path,
+            new_content="\r\nnew preamble\r\nsecond\r\n",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert "error" not in result
+        final_bytes = target.read_bytes()
+        assert final_bytes.startswith(b"\xef\xbb\xbf")
+        assert b"\r\n" not in final_bytes
+        final_metadata, final_body = parse(final_bytes.decode("utf-8-sig"))
+        original_metadata.pop("updated")
+        final_metadata.pop("updated")
+        assert final_metadata == original_metadata
+        assert final_body == "new preamble\nsecond\n\n# Root\n\nBody.\n## Child\nChild."
+        history = tmp_vault / ".datacron" / "history" / hash_text(original_raw)
+        assert history.read_bytes() == original_bytes
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("body", "new_content", "message"),
+        [
+            (
+                "Preamble only.\n",
+                "Replacement.",
+                "no ATX heading found; refusing to replace the entire note body",
+            ),
+            (
+                "Same.\n\n# Root\n\nBody.\n",
+                "\nSame.\n",
+                "preamble is unchanged; nothing to patch",
+            ),
+        ],
+    )
+    async def test_patch_note_preamble_expected_refusals_have_zero_durable_mutation(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        body: str,
+        new_content: str,
+        message: str,
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_preamble_impl
+
+        rel_path = "_memory/facts/patch-preamble-refusal.md"
+        target, original_raw = _write_memory_note(tmp_vault, rel_path, body)
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _patch_note_preamble_impl(
+            writable_app,
+            rel_path=rel_path,
+            new_content=new_content,
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["error"] == {"type": "ValueError", "message": message}
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("expected_hash", "message"),
+        [
+            (None, "expected_hash is required"),
+            ("BAD", "expected_hash must be a lowercase 64-character SHA-256"),
+        ],
+    )
+    async def test_patch_note_preamble_validates_required_hash_before_mutation(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        expected_hash: str | None,
+        message: str,
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_preamble_impl
+
+        rel_path = "_memory/facts/patch-preamble-hash-validation.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "Old.\n\n# Root\n\nBody.\n",
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _patch_note_preamble_impl(
+            writable_app,
+            rel_path=rel_path,
+            new_content="Replacement.",
+            expected_hash=expected_hash,
+        )
+
+        assert result["error"] == {"type": "ValueError", "message": message}
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    async def test_patch_note_preamble_stale_hash_has_zero_durable_mutation(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_preamble_impl
+
+        rel_path = "_memory/facts/patch-preamble-stale.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "Old.\n\n# Root\n\nBody.\n",
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _patch_note_preamble_impl(
+            writable_app,
+            rel_path=rel_path,
+            new_content="Replacement.",
+            expected_hash="0" * 64,
+        )
+
+        assert result["error"]["type"] == "WriteConflictError"
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+    @pytest.mark.asyncio
+    async def test_patch_note_preamble_external_change_has_zero_durable_mutation(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _append_journal_impl, _patch_note_preamble_impl
+
+        rel_path = "_memory/facts/patch-preamble-external.md"
+        target, _original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "Old.\n\n# Root\n\n## Journal\n\nStart.\n",
+        )
+        committed = await _append_journal_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Journal",
+            entry="Committed entry.",
+        )
+        assert "error" not in committed
+        external_bytes = target.read_bytes().replace(b"Old.", b"External.")
+        target.write_bytes(external_bytes)
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+
+        result = await _patch_note_preamble_impl(
+            writable_app,
+            rel_path=rel_path,
+            new_content="Replacement.",
+            expected_hash=committed["content_hash"],
+        )
+
+        assert result["error"]["type"] == "WriteConflictError"
+        assert target.read_bytes() == external_bytes
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
+
 class TestPatchNoteSection:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("heading_level", [1, None])
@@ -3793,6 +4176,37 @@ class TestDeleteNoteSection:
 
 
 class TestRecoveryRequiredMapping:
+    async def test_patch_note_preamble_returns_recovery_required(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datacron.mcp.tools import _patch_note_preamble_impl
+
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            "preamble.md",
+            "Old.\n\n# Note\n\nBody.\n",
+        )
+        artifacts_before = _non_lock_durable_artifacts(tmp_vault)
+        monkeypatch.setattr(
+            writable_app.vault_writer,
+            "mutate_note_atomic",
+            _raise_recovery_required,
+        )
+
+        result = await _patch_note_preamble_impl(
+            writable_app,
+            rel_path="preamble.md",
+            new_content="New.",
+            expected_hash=hash_text(original_raw),
+        )
+
+        _assert_recovery_required(result)
+        assert target.read_bytes() == original_raw.encode("utf-8")
+        assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
+
     async def test_create_note_ai_returns_recovery_required(
         self,
         writable_app: DatacronApp,

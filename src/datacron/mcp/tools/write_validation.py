@@ -30,6 +30,7 @@ _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
     {"high", "medium", "low", "needs_verification"}
 )
 _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
+_FRONTMATTER_BOUNDARY_PATTERN: Final[re.Pattern[str]] = re.compile(r"-{3,}[ \t]*(?:\r\n|[\r\n])?")
 _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
 _REJECTED_ENTRY_SEPARATOR: Final[str] = " -- "
 _MAX_REJECTED_ENTRIES: Final[int] = 16
@@ -290,6 +291,47 @@ def _validate_patch_note_section_request(
         heading_level,
         cleaned_heading_occurrence,
     )
+
+
+def _validate_patch_note_preamble_request(
+    *,
+    rel_path: str,
+    new_content: str,
+    expected_hash: str | None,
+) -> tuple[str, str, str]:
+    cleaned_rel_path = rel_path.strip()
+    cleaned_expected_hash = _validate_expected_hash(expected_hash)
+
+    if not cleaned_rel_path.endswith(".md"):
+        raise ValueError("rel_path must end with .md")
+    if cleaned_expected_hash is None:
+        raise ValueError("expected_hash is required")
+
+    normalized_content = new_content.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+    if not normalized_content.strip():
+        normalized_content = ""
+    return cleaned_rel_path, normalized_content, cleaned_expected_hash
+
+
+def _parse_preserving_bom_and_body_eols(raw: str) -> tuple[dict[str, Any], str, bool]:
+    """Parse frontmatter while preserving the body's existing line endings."""
+    metadata, parsed_body, has_bom = _parse_preserving_bom(raw)
+    parseable = raw[1:] if has_bom else raw
+    lines = parseable.splitlines(keepends=True)
+    opening = next((index for index, line in enumerate(lines) if line.strip()), None)
+    if opening is None or _FRONTMATTER_BOUNDARY_PATTERN.fullmatch(lines[opening]) is None:
+        return metadata, parsed_body, has_bom
+    closing = next(
+        (
+            index
+            for index, line in enumerate(lines[opening + 1 :], start=opening + 1)
+            if _FRONTMATTER_BOUNDARY_PATTERN.fullmatch(line) is not None
+        ),
+        None,
+    )
+    if closing is None:
+        return metadata, parsed_body, has_bom
+    return metadata, "".join(lines[closing + 1 :]), has_bom
 
 
 def _validate_delete_note_section_request(

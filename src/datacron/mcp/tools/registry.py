@@ -35,6 +35,7 @@ from datacron.mcp.tool_contract import (
     ListNotesOutput,
     MemoryConfidence,
     MemoryOrigin,
+    PatchNotePreambleOutput,
     PatchNoteSectionOutput,
     RenameNoteSectionOutput,
     RevertNoteOutput,
@@ -49,6 +50,7 @@ from datacron.mcp.tools.write import (
     _append_journal_impl,
     _create_note_ai_impl,
     _delete_note_section_impl,
+    _patch_note_preamble_impl,
     _patch_note_section_impl,
     _rename_note_section_impl,
     _revert_note_impl,
@@ -385,6 +387,38 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
                 valid_from=valid_from,
                 invalid_at=invalid_at,
                 invalidated_by=invalidated_by,
+                expected_hash=expected_hash,
+                actor=app.identity_provider.identify(ctx).actor,
+            ),
+        )
+
+    @server.tool(
+        name="patch_note_preamble",
+        title="Patch note preamble",
+        description=(
+            "Use this to replace or remove content strictly before the first ATX heading "
+            "recognized by the current write selector. Pass the note's exact expected_hash "
+            "for CAS. Empty or whitespace-only new_content removes the preamble. The first "
+            "heading and all following content preserve exact bytes when the file uses "
+            "uniform line endings; mixed-EOL files follow the existing global dominant-EOL "
+            "normalization. Notes without a recognized ATX heading are refused fail-closed. "
+            "Setext headings, heading-like lines in fenced code, and closing-ATX "
+            "normalization are outside the supported guarantee."
+        ),
+        annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
+    )
+    async def patch_note_preamble(
+        rel_path: str,
+        new_content: str,
+        expected_hash: str,
+        ctx: Context[Any, Any, Any],
+    ) -> PatchNotePreambleOutput:
+        return cast(
+            "PatchNotePreambleOutput",
+            await _patch_note_preamble_impl(
+                app,
+                rel_path=rel_path,
+                new_content=new_content,
                 expected_hash=expected_hash,
                 actor=app.identity_provider.identify(ctx).actor,
             ),

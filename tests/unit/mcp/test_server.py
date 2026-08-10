@@ -41,12 +41,17 @@ def test_server_instructions_include_memory_protocol() -> None:
     assert "create_note_ai" in SERVER_INSTRUCTIONS
     assert "delete_note_section" in SERVER_INSTRUCTIONS
     assert "rename_note_section" in SERVER_INSTRUCTIONS
+    assert "patch_note_preamble" in SERVER_INSTRUCTIONS
     assert "current write selector" in SERVER_INSTRUCTIONS
     assert "heading-like lines in fenced code" in SERVER_INSTRUCTIONS
     assert "1-based heading_occurrence" in SERVER_INSTRUCTIONS
     assert "exact expected_hash" in SERVER_INSTRUCTIONS
     assert "document order" in SERVER_INSTRUCTIONS
     assert "chunk_id" in SERVER_INSTRUCTIONS
+    assert "Setext" in SERVER_INSTRUCTIONS
+    assert "heading-like lines in fenced code" in SERVER_INSTRUCTIONS
+    assert "closing-ATX" in SERVER_INSTRUCTIONS
+    assert "dominant-EOL" in SERVER_INSTRUCTIONS
     assert "INIT.md" in SERVER_INSTRUCTIONS
     assert "sandbox-wrapped" in SERVER_INSTRUCTIONS
 
@@ -95,6 +100,7 @@ async def test_rename_note_section_tool_annotations_describe_local_effects(
         }
     for name in (
         "set_frontmatter",
+        "patch_note_preamble",
         "patch_note_section",
         "delete_note_section",
         "rename_note_section",
@@ -134,6 +140,7 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         "append_journal",
         "set_frontmatter",
         "patch_note_section",
+        "patch_note_preamble",
         "delete_note_section",
         "rename_note_section",
         "revert_note",
@@ -179,7 +186,31 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     assert "actionable" not in health_description
     delete_tool = tools["delete_note_section"]
     rename_tool = tools["rename_note_section"]
-    assert len(tools) == 16
+    assert len(tools) == 17
+    preamble_tool = tools["patch_note_preamble"]
+    assert set(preamble_tool.inputSchema["properties"]) == {
+        "rel_path",
+        "new_content",
+        "expected_hash",
+    }
+    assert preamble_tool.inputSchema["required"] == [
+        "rel_path",
+        "new_content",
+        "expected_hash",
+    ]
+    assert preamble_tool.inputSchema["properties"]["rel_path"]["type"] == "string"
+    assert preamble_tool.inputSchema["properties"]["new_content"]["type"] == "string"
+    assert preamble_tool.inputSchema["properties"]["expected_hash"]["type"] == "string"
+    preamble_output_schema = preamble_tool.outputSchema
+    assert preamble_output_schema is not None
+    assert set(preamble_output_schema["properties"]) == {
+        "patched",
+        "content_hash",
+        "indexed",
+    }
+    assert preamble_output_schema["required"] == ["patched", "content_hash", "indexed"]
+    preamble_ref = preamble_output_schema["properties"]["patched"]["$ref"].split("/")[-1]
+    assert preamble_output_schema["$defs"][preamble_ref]["required"] == ["rel_path"]
     assert set(delete_tool.inputSchema["properties"]) == {
         "rel_path",
         "heading",
@@ -321,6 +352,15 @@ async def test_rename_note_section_write_descriptions_lead_with_usage_trigger(
     patch_description = descriptions["patch_note_section"]
     assert patch_description is not None
     assert "refuses a level-1 heading that contains subsections" in patch_description
+    preamble_description = descriptions["patch_note_preamble"]
+    assert preamble_description is not None
+    assert "strictly before the first ATX heading" in preamble_description
+    assert "current write selector" in preamble_description
+    assert "Setext" in preamble_description
+    assert "heading-like lines in fenced code" in preamble_description
+    assert "closing-ATX" in preamble_description
+    assert "dominant-EOL" in preamble_description
+    assert "exact expected_hash" in preamble_description
     delete_description = descriptions["delete_note_section"]
     assert delete_description is not None
     assert "H2-H6" in delete_description

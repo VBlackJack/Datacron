@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
 from datacron.core.config import Settings
@@ -286,6 +286,8 @@ async def test_prop_10_supersedes_acyclic_triggers_on_set_frontmatter_cycle(
 
 
 async def _call_all_path_tools(app: DatacronApp, rel_path: str) -> dict[str, dict[str, Any]]:
+    from datacron.mcp.tools import _patch_note_preamble_impl
+
     return {
         "get_note": await _get_note_impl(app, id_or_path=rel_path, fmt="full"),
         "create_note_ai": await _create_note_ai_impl(
@@ -303,6 +305,12 @@ async def _call_all_path_tools(app: DatacronApp, rel_path: str) -> dict[str, dic
             heading="Journal",
             new_content="Must not escape.",
         ),
+        "patch_note_preamble": await _patch_note_preamble_impl(
+            app,
+            rel_path=rel_path,
+            new_content="Must not escape.",
+            expected_hash="0" * 64,
+        ),
         "set_frontmatter": await _set_frontmatter_impl(
             app,
             rel_path=rel_path,
@@ -315,6 +323,46 @@ async def _call_all_path_tools(app: DatacronApp, rel_path: str) -> dict[str, dic
             entry="- must not escape",
         ),
     }
+
+
+@settings(max_examples=12, deadline=None, suppress_health_check=_SUPPRESS_FIXTURE_CHECK)
+@given(preamble=_INLINE_TEXT, replacement=_INLINE_TEXT, suffix=_INLINE_TEXT)
+async def test_prop_02_patch_note_preamble_preserves_heading_suffix(
+    tmp_path: Path,
+    preamble: str,
+    replacement: str,
+    suffix: str,
+) -> None:
+    assume(replacement != preamble)
+    from datacron.mcp.tools import _patch_note_preamble_impl
+    from datacron.mcp.tools.write_validation import _parse_preserving_bom_and_body_eols
+
+    vault = _fresh_vault(tmp_path)
+    rel_path = "_memory/facts/preamble-property.md"
+    heading_suffix = f"# Preamble property\n\n{suffix}\n"
+    target, original_raw = _write_note(
+        vault,
+        rel_path,
+        _NOTE_ID_A,
+        "Preamble property",
+        f"{preamble}\n\n{heading_suffix}",
+    )
+    app, store = await _open_writable_app(vault)
+    try:
+        result = await _patch_note_preamble_impl(
+            app,
+            rel_path=rel_path,
+            new_content=replacement,
+            expected_hash=hash_text(original_raw),
+        )
+    finally:
+        await store.close()
+
+    assert "error" not in result
+    _metadata, final_body, _has_bom = _parse_preserving_bom_and_body_eols(
+        target.read_text(encoding="utf-8")
+    )
+    assert final_body == f"{replacement}\n\n{heading_suffix}"
 
 
 @pytest.mark.parametrize("path_kind", ["traversal", "absolute"])
