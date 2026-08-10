@@ -23,7 +23,7 @@ import datacron.core.vault_writer as vault_writer_module
 from datacron.core.config import Settings, VaultConfig
 from datacron.core.durability import RecoveryRequiredError
 from datacron.core.hashing import sha256_bytes
-from datacron.core.operation_log import OperationContext, OperationRecord
+from datacron.core.operation_log import OperationContext, OperationLogError, OperationRecord
 from datacron.core.paths import PathConfinementError, sidecar_dir, sidecar_index_db
 from datacron.core.vault_writer import (
     FilesystemVaultWriter,
@@ -98,6 +98,49 @@ def _patch_lock_primitive(monkeypatch: pytest.MonkeyPatch, *, busy: bool) -> Non
 
 def _writer(vault: Path) -> FilesystemVaultWriter:
     return FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
+
+
+def _operation_context() -> OperationContext:
+    return OperationContext(
+        op="patch_section",
+        tool="patch_note_section",
+        actor="external-change-test",
+        parameters={},
+    )
+
+
+def _operation_artifacts(vault: Path) -> dict[str, bytes]:
+    sidecar = vault / ".datacron"
+    roots = (sidecar / "history", sidecar / "oplog" / "pending")
+    artifacts = {
+        path.relative_to(sidecar).as_posix(): path.read_bytes()
+        for root in roots
+        if root.is_dir()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    operations_path = sidecar / "oplog" / "operations.jsonl"
+    if operations_path.is_file():
+        artifacts["oplog/operations.jsonl"] = operations_path.read_bytes()
+    return artifacts
+
+
+def _commit_baseline(
+    writer: FilesystemVaultWriter,
+    *,
+    operation_id: str,
+    rel_path: str,
+    before: bytes | None,
+    after: bytes,
+) -> None:
+    writer._operation_journal.append_record(
+        _pending_record(
+            operation_id=operation_id,
+            rel_path=rel_path,
+            before=before,
+            after=after,
+        )
+    )
 
 
 def _create_ulid_index(vault: Path, note_id: str | None = None) -> None:
@@ -200,6 +243,353 @@ async def test_write_new_file_inside_write_path_succeeds(tmp_path: Path) -> None
     await writer.write_note_atomic("folder/new.md", "# New\n", overwrite=False)
 
     assert (vault / "folder" / "new.md").read_text(encoding="utf-8") == "# New\n"
+
+
+async def test_mutation_refuses_external_change_before_callback_or_artifacts(
+    tmp_path: Path,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    target = vault / "note.md"
+    target.write_bytes(b"committed\n")
+    writer = _writer(vault)
+    unreferenced_hash = writer._operation_journal.store_history(b"unreferenced-history\n")
+    _commit_baseline(
+        writer,
+        operation_id="committed-baseline",
+        rel_path="note.md",
+        before=b"before\n",
+        after=b"committed\n",
+    )
+    target.write_bytes(b"external\n")
+    artifacts_before = _operation_artifacts(vault)
+    callback_invoked = False
+
+    def mutation(current: str) -> str:
+        nonlocal callback_invoked
+        callback_invoked = True
+        return f"{current}changed\n"
+
+    with pytest.raises(WriteConflictError, match="outside Datacron"):
+        await writer.mutate_note_atomic(
+            "note.md",
+            mutation,
+            expected_hash=None,
+            operation=_operation_context(),
+        )
+
+    assert callback_invoked is False
+    assert target.read_bytes() == b"external\n"
+    assert (vault / ".datacron" / "history" / unreferenced_hash).is_file()
+    assert _operation_artifacts(vault) == artifacts_before
+
+
+async def test_overwrite_refuses_external_change_without_expected_hash(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    target = vault / "note.md"
+    target.write_bytes(b"external\n")
+    writer = _writer(vault)
+    _commit_baseline(
+        writer,
+        operation_id="overwrite-baseline",
+        rel_path="note.md",
+        before=b"before\n",
+        after=b"committed\n",
+    )
+    artifacts_before = _operation_artifacts(vault)
+
+    with pytest.raises(WriteConflictError, match="outside Datacron"):
+        await writer.write_note_atomic(
+            "note.md",
+            "replacement\n",
+            overwrite=True,
+            expected_hash=None,
+            operation=_operation_context(),
+        )
+
+    assert target.read_bytes() == b"external\n"
+    assert _operation_artifacts(vault) == artifacts_before
+
+
+async def test_revert_refuses_external_change_without_expected_hash(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    target = vault / "note.md"
+    target.write_bytes(b"external\n")
+    writer = _writer(vault)
+    history_hash = writer._operation_journal.store_history(b"before\n")
+    _commit_baseline(
+        writer,
+        operation_id="revert-baseline",
+        rel_path="note.md",
+        before=b"before\n",
+        after=b"committed\n",
+    )
+    artifacts_before = _operation_artifacts(vault)
+
+    with pytest.raises(WriteConflictError, match="outside Datacron"):
+        await writer.revert_note_atomic(
+            "note.md",
+            history_hash,
+            expected_hash=None,
+            operation=_operation_context(),
+        )
+
+    assert target.read_bytes() == b"external\n"
+    assert _operation_artifacts(vault) == artifacts_before
+
+
+async def test_missing_tracked_target_is_refused_without_recreation(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    writer = _writer(vault)
+    _commit_baseline(
+        writer,
+        operation_id="deleted-note-baseline",
+        rel_path="deleted.md",
+        before=b"before\n",
+        after=b"committed\n",
+    )
+    artifacts_before = _operation_artifacts(vault)
+
+    with pytest.raises(WriteConflictError, match="outside Datacron"):
+        await writer.write_note_atomic(
+            "deleted.md",
+            "replacement\n",
+            overwrite=True,
+            expected_hash=None,
+            operation=_operation_context(),
+        )
+
+    assert not (vault / "deleted.md").exists()
+    assert _operation_artifacts(vault) == artifacts_before
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows path identity regression")
+async def test_missing_mixed_case_tracked_target_is_refused_on_windows(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    writer = _writer(vault)
+    _commit_baseline(
+        writer,
+        operation_id="deleted-mixed-case-baseline",
+        rel_path="Note.md",
+        before=b"before\n",
+        after=b"committed\n",
+    )
+    artifacts_before = _operation_artifacts(vault)
+
+    with pytest.raises(WriteConflictError, match="outside Datacron"):
+        await writer.write_note_atomic(
+            "note.md",
+            "replacement\n",
+            overwrite=True,
+            expected_hash=None,
+            operation=_operation_context(),
+        )
+
+    assert not (vault / "note.md").exists()
+    assert _operation_artifacts(vault) == artifacts_before
+
+
+async def test_matching_latest_baseline_succeeds_without_expected_hash(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    target = vault / "note.md"
+    target.write_bytes(b"latest\n")
+    writer = _writer(vault)
+    _commit_baseline(
+        writer,
+        operation_id="old-note-record",
+        rel_path="note.md",
+        before=b"initial\n",
+        after=b"old\n",
+    )
+    _commit_baseline(
+        writer,
+        operation_id="other-path-record",
+        rel_path="nested/note.md",
+        before=b"other-before\n",
+        after=b"other-after\n",
+    )
+    _commit_baseline(
+        writer,
+        operation_id="latest-note-record",
+        rel_path="note.md",
+        before=b"old\n",
+        after=b"latest\n",
+    )
+
+    result = await writer.mutate_note_atomic(
+        "note.md",
+        lambda _current: "next\n",
+        expected_hash=None,
+        operation=_operation_context(),
+    )
+
+    assert target.read_bytes() == b"next\n"
+    assert result == sha256_bytes(b"next\n")
+
+
+async def test_matching_explicit_hash_reanchors_external_change(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    target = vault / "note.md"
+    target.write_bytes(b"external\n")
+    writer = _writer(vault)
+    _commit_baseline(
+        writer,
+        operation_id="explicit-cas-baseline",
+        rel_path="note.md",
+        before=b"before\n",
+        after=b"committed\n",
+    )
+
+    result = await writer.mutate_note_atomic(
+        "note.md",
+        lambda _current: "reanchored\n",
+        expected_hash=sha256_bytes(b"external\n"),
+        operation=_operation_context(),
+    )
+
+    records = await writer.list_operations()
+    assert target.read_bytes() == b"reanchored\n"
+    assert result == sha256_bytes(b"reanchored\n")
+    assert records[-1].before_hash == sha256_bytes(b"external\n")
+    assert records[-1].after_hash == sha256_bytes(b"reanchored\n")
+
+
+async def test_stale_explicit_hash_keeps_existing_conflict_semantics(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    target = vault / "note.md"
+    target.write_bytes(b"external\n")
+    writer = _writer(vault)
+    _commit_baseline(
+        writer,
+        operation_id="stale-cas-baseline",
+        rel_path="note.md",
+        before=b"before\n",
+        after=b"committed\n",
+    )
+
+    with pytest.raises(
+        WriteConflictError,
+        match=r"note changed since read \(hash mismatch\); re-read and retry",
+    ):
+        await writer.mutate_note_atomic(
+            "note.md",
+            lambda _current: "must-not-write\n",
+            expected_hash=sha256_bytes(b"stale\n"),
+            operation=_operation_context(),
+        )
+
+    assert target.read_bytes() == b"external\n"
+
+
+async def test_successful_content_mutation_still_purges_unreferenced_history(
+    tmp_path: Path,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    target = vault / "note.md"
+    target.write_bytes(b"committed\n")
+    writer = _writer(vault)
+    unreferenced_hash = writer._operation_journal.store_history(b"unreferenced-history\n")
+    _commit_baseline(
+        writer,
+        operation_id="purge-success-baseline",
+        rel_path="note.md",
+        before=b"before\n",
+        after=b"committed\n",
+    )
+
+    await writer.mutate_note_atomic(
+        "note.md",
+        lambda _current: "next\n",
+        expected_hash=None,
+        operation=_operation_context(),
+    )
+
+    assert target.read_bytes() == b"next\n"
+    assert not (vault / ".datacron" / "history" / unreferenced_hash).exists()
+
+
+async def test_successful_unlogged_mutation_purges_old_history_and_keeps_backup(
+    tmp_path: Path,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    target = vault / "legacy.md"
+    target.write_bytes(b"before\n")
+    writer = _writer(vault)
+    unreferenced_hash = writer._operation_journal.store_history(b"unreferenced-history\n")
+
+    await writer.mutate_note_atomic(
+        "legacy.md",
+        lambda _current: "after\n",
+        expected_hash=None,
+        operation=None,
+    )
+
+    history = vault / ".datacron" / "history"
+    assert target.read_bytes() == b"after\n"
+    assert not (history / unreferenced_hash).exists()
+    assert (history / sha256_bytes(b"before\n")).read_bytes() == b"before\n"
+
+
+async def test_unlogged_mutation_purge_failure_leaves_target_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    target = vault / "legacy.md"
+    target.write_bytes(b"before\n")
+    writer = _writer(vault)
+
+    def fail_purge(*_args: object, **_kwargs: object) -> list[str]:
+        raise OperationLogError("purge failed")
+
+    monkeypatch.setattr(writer._operation_journal, "purge_history", fail_purge)
+
+    with pytest.raises(OperationLogError, match="purge failed"):
+        await writer.mutate_note_atomic(
+            "legacy.md",
+            lambda _current: "after\n",
+            expected_hash=None,
+            operation=None,
+        )
+
+    assert target.read_bytes() == b"before\n"
+    backup = vault / ".datacron" / "history" / sha256_bytes(b"before\n")
+    assert backup.read_bytes() == b"before\n"
+
+
+async def test_untracked_existing_and_new_notes_remain_writable(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    existing = vault / "legacy.md"
+    existing.write_bytes(b"legacy\n")
+    writer = _writer(vault)
+
+    await writer.mutate_note_atomic(
+        "legacy.md",
+        lambda _current: "updated\n",
+        expected_hash=None,
+        operation=_operation_context(),
+    )
+    await writer.write_note_atomic(
+        "new.md",
+        "created\n",
+        overwrite=False,
+        expected_hash=None,
+        operation=_operation_context(),
+    )
+
+    assert existing.read_bytes() == b"updated\n"
+    assert (vault / "new.md").read_bytes() == b"created\n"
 
 
 async def test_mutation_cas_uses_exact_disk_bytes(tmp_path: Path) -> None:

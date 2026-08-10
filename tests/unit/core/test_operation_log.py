@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 import json
+import os
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock
@@ -225,6 +227,64 @@ def test_monotonic_timestamp_advances_when_wall_clock_moves_back(tmp_path: Path)
     )
 
     assert timestamp == future + timedelta(microseconds=1)
+
+
+def test_latest_record_for_path_uses_exact_path_and_latest_commit(tmp_path: Path) -> None:
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    now = datetime(2026, 7, 10, tzinfo=UTC)
+    first = _record(
+        "first-note-operation",
+        now,
+        sha256_bytes(b"before-first"),
+        sha256_bytes(b"after-first"),
+    )
+    other = replace(
+        _record(
+            "other-note-operation",
+            now + timedelta(seconds=1),
+            sha256_bytes(b"before-other"),
+            sha256_bytes(b"after-other"),
+        ),
+        rel_path="nested/note.md",
+    )
+    latest = _record(
+        "latest-note-operation",
+        now + timedelta(seconds=2),
+        sha256_bytes(b"before-latest"),
+        sha256_bytes(b"after-latest"),
+    )
+    for record in (first, other, latest):
+        journal.append_record(record)
+
+    records = journal.read_records()
+    assert journal.latest_record_for_path("note.md") == records[-1]
+    assert journal.latest_record_for_path("nested/note.md").operation_id == other.operation_id
+    assert journal.latest_record_for_path("missing.md") is None
+
+
+def test_latest_record_for_path_uses_platform_path_identity(tmp_path: Path) -> None:
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    record = replace(
+        _record(
+            "mixed-case-operation",
+            datetime(2026, 7, 10, tzinfo=UTC),
+            sha256_bytes(b"before"),
+            sha256_bytes(b"after"),
+        ),
+        rel_path="Folder/Note.md",
+    )
+    journal.append_record(record)
+
+    separator_variant = journal.latest_record_for_path(r"Folder\Note.md")
+    case_variant = journal.latest_record_for_path("folder/note.md")
+    if os.name == "nt":
+        assert separator_variant is not None
+        assert separator_variant.operation_id == record.operation_id
+        assert case_variant is not None
+        assert case_variant.operation_id == record.operation_id
+    else:
+        assert separator_variant is None
+        assert case_variant is None
 
 
 def test_full_read_detects_corruption_in_middle_of_hash_chain(tmp_path: Path) -> None:
