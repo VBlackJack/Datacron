@@ -204,6 +204,9 @@ async def test_write_tool_descriptions_lead_with_usage_trigger(tmp_path: Path) -
     )
     for name in ("create_note_ai", "set_frontmatter"):
         assert "'option -- reason'" in (descriptions[name] or "")
+    patch_description = descriptions["patch_note_section"]
+    assert patch_description is not None
+    assert "refuses a level-1 heading that contains subsections" in patch_description
 
 
 class TestBuildAppReadPaths:
