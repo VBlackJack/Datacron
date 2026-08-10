@@ -26,10 +26,16 @@ _IMPORT_COMMAND = (
 _CONFIGURE_LOGGING_COMMAND = (
     "from datacron.core.logger import configure_logging; configure_logging()"
 )
+_HEALTH_IMPORT_COMMAND = (
+    "import sys; import datacron.mcp.health; assert 'datacron.mcp.tools' not in sys.modules"
+)
 
 
 def _run_import(
-    tmp_path: Path, *, log_level: str | None = None
+    tmp_path: Path,
+    *,
+    command: str = _IMPORT_COMMAND,
+    log_level: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     home = tmp_path / "home"
     working_directory = tmp_path / "work"
@@ -49,7 +55,7 @@ def _run_import(
         environment["DATACRON_LOG_LEVEL"] = log_level
 
     completed = subprocess.run(
-        [sys.executable, "-c", _IMPORT_COMMAND],
+        [sys.executable, "-c", command],
         cwd=working_directory,
         env=environment,
         capture_output=True,
@@ -99,3 +105,8 @@ def test_imports_do_not_parse_invalid_logging_environment(tmp_path: Path) -> Non
 
     assert completed.returncode != 0
     assert "Invalid DATACRON_LOG_LEVEL" in completed.stderr
+
+
+def test_health_import_does_not_initialize_tool_registry(tmp_path: Path) -> None:
+    """Health assembly remains independent from the FastMCP tool package."""
+    _run_import(tmp_path, command=_HEALTH_IMPORT_COMMAND)

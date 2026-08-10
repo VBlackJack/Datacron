@@ -87,6 +87,7 @@ def _settings(
     read_only: bool = False,
     durability: str = "best-effort",
     log_dir: Path | None = None,
+    max_result_count: int = 100,
 ) -> Settings:
     return Settings(
         read_paths=[vault],
@@ -95,7 +96,7 @@ def _settings(
         read_only=read_only,
         durability=durability,
         log_dir=log_dir or vault.parent / "logs",
-        max_result_count=100,
+        max_result_count=max_result_count,
         max_result_tokens=100_000,
     )
 
@@ -216,7 +217,7 @@ async def test_prop_health_reports_truth(tmp_path: Path) -> None:
     store = SQLiteFTS5Store()
     await store.open(db_path, read_only=True)
     app = build_app(
-        settings=_settings(vault, read_only=True),
+        settings=_settings(vault, read_only=True, max_result_count=1),
         vault_root=vault,
         store=store,
         durability_status=_SUPPORTED,
@@ -224,6 +225,8 @@ async def test_prop_health_reports_truth(tmp_path: Path) -> None:
     before = _snapshot(vault)
     try:
         health = await _get_health_impl(app)
+        detailed_health = await _get_health_impl(app, detail="full", limit=99)
+        repeated_detailed_health = await _get_health_impl(app, detail="full", limit=99)
         scan = scan_vault_read_only(vault)
         notes = await app.vault_reader.list_notes()
         indexed = await app.store.list_indexed_notes()
@@ -263,9 +266,25 @@ async def test_prop_health_reports_truth(tmp_path: Path) -> None:
         "mixed_eol_notes": len(scan.mixed_eol_notes),
         "supersedes_cycles": len(scan.supersedes_cycles),
         "frontmatter_parse_errors": len(scan.parse_errors),
+        "detail": "summary",
     }
     assert health["integrity"]["broken_wikilinks"] == 1
     assert health["integrity"]["mixed_eol_notes"] == 1
+    assert detailed_health["integrity"]["findings"] == {
+        "violations": [],
+        "flagged_paths": {
+            "mixed_eol_notes": ["a.md"],
+            "frontmatter_parse_errors": [],
+        },
+        "total": 2,
+        "returned": 1,
+        "limit_applied": 1,
+        "truncated": True,
+    }
+    assert (
+        repeated_detailed_health["integrity"]["findings"]
+        == detailed_health["integrity"]["findings"]
+    )
     assert health["vault_checksum"]["value"] == expected_vault_digest.hexdigest()
     assert health["scrubber"] == {
         "status": "not_run",

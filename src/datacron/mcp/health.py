@@ -24,22 +24,35 @@ from typing import TYPE_CHECKING, Any, Final
 
 from datacron import __version__
 from datacron.core.hashing import index_generation_hash
+from datacron.mcp.bounds import bounded_count
+from datacron.mcp.sandbox import sanitize_metadata_value, sanitize_payload_strings
 from datacron.reliability import scan_vault_read_only
 from datacron.scrubber import read_scrubber_health
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
+    from datacron.mcp.tool_contract import HealthDetail
+    from datacron.reliability import ReliabilityScan, ReliabilityViolation
 
 __all__ = ["build_health", "index_generation", "vault_checksum"]
 
 _EVIDENCE_RESOURCE: Final[str] = "reliability_evidence.json"
+_INVALID_DETAIL_MESSAGE: Final[str] = "detail must be 'summary' or 'full'"
 _VALID_INVARIANT_STATUSES: Final[frozenset[str]] = frozenset(
     {"PROVEN", "BASELINE-TRACKED", "DEFERRED"}
 )
 
 
-async def build_health(app: DatacronApp) -> dict[str, Any]:
+async def build_health(
+    app: DatacronApp,
+    *,
+    detail: HealthDetail = "summary",
+    limit: int = 0,
+) -> dict[str, Any]:
     """Return live operational truth without modifying notes or sidecars."""
+    if detail not in {"summary", "full"}:
+        raise ValueError(_INVALID_DETAIL_MESSAGE)
+    bounded_limit = bounded_count(limit, app.settings.max_result_count) if detail == "full" else 0
     root = app.scope.authorize_path(app.vault_root, "read")
     scan_task = asyncio.to_thread(scan_vault_read_only, root)
     notes_task = app.vault_reader.list_notes()
@@ -100,6 +113,7 @@ async def build_health(app: DatacronApp) -> dict[str, Any]:
         and not scan.supersedes_cycles
         and (app.settings.durability != "strict" or app.durability_status.directory_flush_supported)
     )
+    integrity = _build_integrity(scan, detail=detail, limit=bounded_limit)
     return {
         "status": "critical" if scrubber_critical else ("healthy" if healthy else "degraded"),
         "server_version": __version__,
@@ -118,14 +132,7 @@ async def build_health(app: DatacronApp) -> dict[str, Any]:
             "hash_divergences": len(hash_divergences),
             "staleness_seconds": staleness_seconds,
         },
-        "integrity": {
-            "notes_count": scan.notes_count,
-            "id_mismatches": len(scan.id_violations),
-            "broken_wikilinks": len(scan.broken_wikilinks),
-            "mixed_eol_notes": len(scan.mixed_eol_notes),
-            "supersedes_cycles": len(scan.supersedes_cycles),
-            "frontmatter_parse_errors": len(scan.parse_errors),
-        },
+        "integrity": integrity,
         "vault_checksum": {
             "algorithm": "sha256-path-content-hash-rollup-v1",
             "value": vault_checksum(dict(scan.content_hashes)),
@@ -145,6 +152,94 @@ async def build_health(app: DatacronApp) -> dict[str, Any]:
             "scope_notes": evidence.get("scope_notes", {}),
         },
     }
+
+
+def _build_integrity(
+    scan: ReliabilityScan,
+    *,
+    detail: HealthDetail,
+    limit: int,
+) -> dict[str, Any]:
+    """Build integrity counters and optional bounded reliability findings."""
+    integrity: dict[str, Any] = {
+        "notes_count": scan.notes_count,
+        "id_mismatches": len(scan.id_violations),
+        "broken_wikilinks": len(scan.broken_wikilinks),
+        "mixed_eol_notes": len(scan.mixed_eol_notes),
+        "supersedes_cycles": len(scan.supersedes_cycles),
+        "frontmatter_parse_errors": len(scan.parse_errors),
+        "detail": detail,
+    }
+    if detail == "full":
+        integrity["findings"] = _build_findings(scan, limit=limit)
+    return integrity
+
+
+def _build_findings(scan: ReliabilityScan, *, limit: int) -> dict[str, Any]:
+    """Return findings in deterministic severity order within one global budget."""
+    total = (
+        len(scan.parse_errors)
+        + len(scan.id_violations)
+        + len(scan.supersedes_cycles)
+        + len(scan.mixed_eol_notes)
+        + len(scan.broken_wikilinks)
+    )
+    remaining = limit
+    violations: list[dict[str, Any]] = []
+    flagged_paths: dict[str, list[str]] = {
+        "mixed_eol_notes": [],
+        "frontmatter_parse_errors": [],
+    }
+
+    parse_errors = scan.parse_errors[:remaining]
+    flagged_paths["frontmatter_parse_errors"].extend(
+        sanitize_metadata_value(value) for value in parse_errors
+    )
+    remaining -= len(parse_errors)
+
+    remaining = _append_violations(violations, scan.id_violations, remaining)
+    remaining = _append_violations(violations, scan.supersedes_cycles, remaining)
+
+    mixed_eol_notes = scan.mixed_eol_notes[:remaining]
+    flagged_paths["mixed_eol_notes"].extend(mixed_eol_notes)
+    remaining -= len(mixed_eol_notes)
+
+    remaining = _append_violations(violations, scan.broken_wikilinks, remaining)
+    returned = limit - remaining
+    return {
+        "violations": violations,
+        "flagged_paths": flagged_paths,
+        "total": total,
+        "returned": returned,
+        "limit_applied": limit,
+        "truncated": returned < total,
+    }
+
+
+def _append_violations(
+    destination: list[dict[str, Any]],
+    source: tuple[ReliabilityViolation, ...],
+    remaining: int,
+) -> int:
+    """Append sanitized violations without exceeding the remaining budget."""
+    selected = source[:remaining]
+    destination.extend(_serialize_violation(item) for item in selected)
+    return remaining - len(selected)
+
+
+def _serialize_violation(violation: ReliabilityViolation) -> dict[str, Any]:
+    """Sanitize display values while preserving address and baseline identities.
+
+    ``rel_path`` remains byte-for-byte addressable. ``fingerprint`` remains the
+    opaque hash of the raw key and is not recomputable from the sanitized key.
+    """
+    payload = violation.to_dict()
+    payload["key"] = sanitize_metadata_value(violation.key)
+    if violation.target is not None:
+        payload["target"] = sanitize_metadata_value(violation.target)
+    if violation.details:
+        payload["details"] = sanitize_payload_strings(dict(violation.details))
+    return payload
 
 
 def vault_checksum(content_hashes: dict[str, str]) -> str:

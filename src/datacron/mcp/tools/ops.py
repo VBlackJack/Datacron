@@ -27,26 +27,40 @@ from datacron.mcp.tools.payloads import _LOGGER, _audit, _bounded_count, _error_
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
+    from datacron.mcp.tool_contract import HealthDetail
 
 
-async def _get_health_impl(app: DatacronApp) -> dict[str, Any]:
+async def _get_health_impl(
+    app: DatacronApp,
+    *,
+    detail: HealthDetail = "summary",
+    limit: int = 0,
+) -> dict[str, Any]:
     started = time.perf_counter()
     try:
         from datacron.mcp.health import build_health  # noqa: PLC0415
 
-        payload = await build_health(app)
+        payload = await build_health(app, detail=detail, limit=limit)
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         return _error_response("get_health", exc, started)
     except Exception:
         _LOGGER.exception("get_health failed")
         return _error_response("get_health", RuntimeError("internal error"), started)
+    audit_fields: dict[str, Any] = {
+        "status": payload["status"],
+        "read_only": payload["read_only"],
+        "notes_count": payload["index"]["vault_notes_count"],
+        "stale_entries": payload["index"]["stale_entries"],
+        "detail": detail,
+    }
+    if detail == "full":
+        findings = payload["integrity"]["findings"]
+        audit_fields["returned"] = findings["returned"]
+        audit_fields["truncated"] = findings["truncated"]
     _audit(
         "get_health",
         started,
-        status=payload["status"],
-        read_only=payload["read_only"],
-        notes_count=payload["index"]["vault_notes_count"],
-        stale_entries=payload["index"]["stale_entries"],
+        **audit_fields,
     )
     return payload
 

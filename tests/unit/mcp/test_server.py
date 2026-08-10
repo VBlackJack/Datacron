@@ -145,6 +145,18 @@ async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
     contradiction_properties = tools["contradiction_scan"].inputSchema["properties"]
     assert contradiction_properties["mode"]["enum"] == ["scan", "confirm"]
     assert contradiction_properties["detail"]["enum"] == ["summary", "full"]
+    health_properties = tools["get_health"].inputSchema["properties"]
+    assert health_properties["detail"]["enum"] == ["summary", "full"]
+    assert health_properties["detail"]["default"] == "summary"
+    assert health_properties["limit"]["default"] == 0
+    health_description = tools["get_health"].description or ""
+    assert "limit <= 0 selects the server ceiling" in health_description
+    assert "settings.max_result_count" in health_description
+    assert "opaque baseline identifiers derived from raw keys" in health_description
+    assert "not hashes of sanitized published keys" in health_description
+    assert "candidate_paths are sanitized display metadata" in health_description
+    assert "Findings do not include line numbers" in health_description
+    assert "actionable" not in health_description
 
 
 @pytest.mark.asyncio
