@@ -286,22 +286,24 @@ class FilesystemVaultWriter:
         operation: OperationContext | None,
     ) -> str:
         self._write_policy.ensure_writable()
-        recovery = self._recover_operations_sync()
+        recovery = self._recover_operations_sync(purge_history=False)
         self._raise_if_recovery_blocked(recovery)
         target, safe_rel_path = self._resolve_target(rel_path)
         if note_id is not None and not _ULID_PATTERN.fullmatch(note_id):
             raise ValueError("note_id must be a canonical 26-character ULID")
 
-        target.parent.mkdir(parents=True, exist_ok=True)
         identity_lock = self._advisory_lock("identity") if note_id is not None else nullcontext()
         with identity_lock, self._advisory_lock(f"note:{self._lock_key(target)}"):
             current_bytes = target.read_bytes() if target.exists() else None
             _check_expected_hash(expected_hash, current_bytes)
             if current_bytes is not None and not overwrite:
                 raise FileExistsError(f"{safe_rel_path} already exists.")
+            if expected_hash is None:
+                self._check_committed_baseline(safe_rel_path, current_bytes)
             if note_id is not None and self._ulid_exists(note_id):
                 raise UlidCollisionError(f"ULID collision: {note_id} already exists")
 
+            target.parent.mkdir(parents=True, exist_ok=True)
             emitted = self._encode_with_eol_policy(content, current_bytes)
             if operation is not None:
                 with self._advisory_lock("oplog"):
@@ -313,9 +315,7 @@ class FilesystemVaultWriter:
                         note_id,
                         operation,
                     )
-            if current_bytes is not None:
-                self._operation_journal.store_history(current_bytes)
-            return atomic_durable_write(target, emitted)
+            return self._write_without_operation_sync(target, current_bytes, emitted)
 
     def _mutate_note_atomic_sync(
         self,
@@ -325,16 +325,18 @@ class FilesystemVaultWriter:
         operation: OperationContext | None,
     ) -> str:
         self._write_policy.ensure_writable()
-        recovery = self._recover_operations_sync()
+        recovery = self._recover_operations_sync(purge_history=False)
         self._raise_if_recovery_blocked(recovery)
         target, safe_rel_path = self._resolve_target(rel_path)
         with self._advisory_lock(f"note:{self._lock_key(target)}"):
-            if not target.is_file():
+            current_bytes = target.read_bytes() if target.is_file() else None
+            _check_expected_hash(expected_hash, current_bytes)
+            if expected_hash is None:
+                self._check_committed_baseline(safe_rel_path, current_bytes)
+            if current_bytes is None:
                 raise FileNotFoundError(
                     f"note not found at {safe_rel_path.as_posix()}; use create_note_ai"
                 )
-            current_bytes = target.read_bytes()
-            _check_expected_hash(expected_hash, current_bytes)
             current = current_bytes.decode("utf-8", errors="strict")
             content = mutation(current)
             emitted = self._encode_with_eol_policy(content, current_bytes)
@@ -348,8 +350,7 @@ class FilesystemVaultWriter:
                         None,
                         operation,
                     )
-            self._operation_journal.store_history(current_bytes)
-            return atomic_durable_write(target, emitted)
+            return self._write_without_operation_sync(target, current_bytes, emitted)
 
     def _revert_note_atomic_sync(
         self,
@@ -359,14 +360,16 @@ class FilesystemVaultWriter:
         operation: OperationContext,
     ) -> str:
         self._write_policy.ensure_writable()
-        recovery = self._recover_operations_sync()
+        recovery = self._recover_operations_sync(purge_history=False)
         self._raise_if_recovery_blocked(recovery)
         target, safe_rel_path = self._resolve_target(rel_path)
         with self._advisory_lock(f"note:{self._lock_key(target)}"):
-            if not target.is_file():
-                raise FileNotFoundError(f"note not found at {safe_rel_path.as_posix()}")
-            current_bytes = target.read_bytes()
+            current_bytes = target.read_bytes() if target.is_file() else None
             _check_expected_hash(expected_hash, current_bytes)
+            if expected_hash is None:
+                self._check_committed_baseline(safe_rel_path, current_bytes)
+            if current_bytes is None:
+                raise FileNotFoundError(f"note not found at {safe_rel_path.as_posix()}")
             with self._advisory_lock("oplog"):
                 belongs_to_note = any(
                     record.rel_path == safe_rel_path.as_posix()
@@ -388,6 +391,37 @@ class FilesystemVaultWriter:
                     None,
                     operation,
                 )
+
+    def _check_committed_baseline(
+        self,
+        safe_rel_path: Path,
+        current_bytes: bytes | None,
+    ) -> None:
+        """Fail closed when disk diverges from the latest committed path state."""
+        with self._advisory_lock("oplog"):
+            baseline = self._operation_journal.latest_record_for_path(safe_rel_path.as_posix())
+        if baseline is None:
+            return
+        current_hash = sha256_bytes(current_bytes) if current_bytes is not None else None
+        if current_hash != baseline.after_hash:
+            raise WriteConflictError(
+                "note changed outside Datacron since the last committed operation; "
+                "re-read and retry with exact expected_hash"
+            )
+
+    def _write_without_operation_sync(
+        self,
+        target: Path,
+        before_bytes: bytes | None,
+        after_bytes: bytes,
+    ) -> str:
+        """Write unlogged content, then apply retention without deleting its backup."""
+        preserved: set[str] = set()
+        if before_bytes is not None:
+            preserved.add(self._operation_journal.store_history(before_bytes))
+        with self._advisory_lock("oplog"):
+            self._operation_journal.purge_history(preserve_hashes=preserved)
+        return atomic_durable_write(target, after_bytes)
 
     def _commit_operation_sync(
         self,

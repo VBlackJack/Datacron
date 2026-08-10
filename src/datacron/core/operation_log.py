@@ -297,6 +297,22 @@ class OperationJournal:
         self._ensure_tail_state()
         return _parse_records(self._operations_path.read_bytes(), verify_chain=True)
 
+    def latest_record_for_path(self, rel_path: str) -> OperationRecord | None:
+        """Return the latest committed record for one exact vault-relative path."""
+        if not self._operations_path.is_file():
+            return None
+        self._ensure_tail_state()
+        records = _parse_records(self._operations_path.read_bytes(), verify_chain=True)
+        path_identity = _relative_path_identity(rel_path)
+        return next(
+            (
+                record
+                for record in reversed(records)
+                if _relative_path_identity(record.rel_path) == path_identity
+            ),
+            None,
+        )
+
     def has_record(self, operation_id: str) -> bool:
         # Recovery queries are outside the append hot path, so a full verified scan
         # preserves idempotence without maintaining a second durable index.
@@ -352,7 +368,12 @@ class OperationJournal:
         self._tail_hash = previous_hash
         self._tail_loaded = True
 
-    def purge_history(self, now: datetime | None = None) -> list[str]:
+    def purge_history(
+        self,
+        now: datetime | None = None,
+        *,
+        preserve_hashes: set[str] | None = None,
+    ) -> list[str]:
         purge_at = (now or datetime.now(tz=UTC)).astimezone(UTC)
         if (
             self.history_enabled
@@ -362,7 +383,7 @@ class OperationJournal:
             return []
         if not self._history_dir.is_dir():
             return []
-        retained: set[str] = set()
+        retained = set(preserve_hashes or ())
         if self.history_enabled:
             cutoff = purge_at - timedelta(days=self._retention_days)
             for record in self.read_records():
@@ -384,6 +405,10 @@ class OperationJournal:
             _durable_flush_directory(self._history_dir)
         self._last_purge_at = purge_at
         return removed
+
+
+def _relative_path_identity(rel_path: str) -> str:
+    return os.path.normcase(rel_path)
 
 
 def _record_line(record: OperationRecord) -> bytes:
