@@ -9,13 +9,92 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0811.00] - 2026-08-11
+
+### Added
+
+- Three confined write tools bring the MCP surface from 14 to 17 tools, and the write surface
+  from five to eight. `patch_note_preamble` replaces or removes the content placed strictly
+  before the first recognized ATX heading; it always requires `expected_hash`, an empty or
+  whitespace-only `new_content` removes the preamble, and a note without a recognized ATX
+  heading is refused instead of being rewritten whole. `rename_note_section` changes only the
+  title of an ATX H2-H6 section, without touching its level, its content, or its subtree, and
+  refuses a colliding title. `delete_note_section` removes an ATX H2-H6 section and its
+  subtree. All three refuse level-1 headings, are annotated as destructive, store the exact
+  prior bytes in history, write atomically, and disappear from the surface under
+  `DATACRON_READ_ONLY=true`.
+- `patch_note_section`, `rename_note_section`, and `delete_note_section` accept a 1-based
+  `heading_occurrence` selector for notes that repeat the same section title. The ordinal
+  follows document order and requires both `heading_level` and the exact `expected_hash`.
+  Without it an ambiguous heading is still refused rather than guessed, and the refusal
+  message now names the selector to pass.
+- `get_health` accepts `detail` (`summary` by default, or `full`) and `limit`. In `full` mode
+  `integrity.findings` returns bounded, sanitized reliability findings in deterministic
+  severity order with `total`, `returned`, `limit_applied`, and `truncated`; `limit <= 0`
+  selects the server ceiling and a positive limit is capped by the configured maximum result
+  count. Findings carry no line numbers, and `integrity.detail` always reports the mode used.
+- `get_health` reports a `recovery` block with `required` and `blocked_operations`, plus the
+  bounded blocked operations themselves in `full` mode. Any blocked operation makes the
+  reported status `degraded`.
+- `datacron ops inspect` lists blocked operation manifests with their reason, expected hashes,
+  on-disk hash, and available repair actions, without changing durable state.
+  `datacron ops repair` then repairs exactly one of them under
+  `--action restore-before|adopt-disk`, the exact `--expected-disk-hash` copied from the
+  inspection, and a `--confirm` repeat of the operation ID. The repair is itself journaled.
+- A verified guide for driving Datacron from Ollama through an explicit MCP bridge, with the
+  evidence level stated per path: `mcpo` was tested end to end against the local server (17
+  routes discovered, then real `get_health`, `search_text`, and `get_note` calls), while
+  `ollmcp` and Open WebUI are verified against official documentation only.
+
+### Changed
+
+- The stdio transport now runs on the Python MCP SDK v2. Datacron requires `mcp>=2,<3` (locked
+  at 2.0.0) and can no longer be installed into an environment pinned to `mcp` 1.x. Nothing
+  else changes for a client: the same server answers the final `2026-07-28` protocol revision
+  and stays compatible with the legacy `2025-11-25` revision without a separate flag, no new
+  environment variable or configuration entry is required, no HTTP listener is opened, and the
+  supported Python range is unchanged (3.11, 3.12, 3.13).
+- Push elicitation is used only on a legacy `2025-11-25` session that offers a back-channel.
+  On a `2026-07-28` session `contradiction_scan` no longer prompts: it returns its normal scan
+  result and leaves confirmation to a later explicit call with the proposal token.
+- Structured tool errors can carry a machine-readable `code` beside `type` and `message` when
+  the underlying error defines one; `recovery_required` is the first such code.
+- Error mapping is unchanged on the wire and is now stated in the specification: an unknown
+  tool and an absent resource return JSON-RPC `-32602`, an internal resource failure is
+  sanitized to `-32603`, a validation error on a known tool stays a tool result flagged as an
+  error, and a Datacron business error keeps its stable `{"error": {...}}` text payload.
+- The English and French user guide, specification, architecture document, operational-health
+  page, and security boundary were re-verified against the running server on 2026-08-11 and
+  now state the exact tested environment.
+
 ### Fixed
 
-- The architecture documentation no longer claims that Cowork is remote-MCP-only; ADR-009
-  is superseded by the 2026-07-21 production validation of local stdio MCP in Cowork desktop.
+- A note modified outside Datacron since its last committed operation is no longer
+  overwritten. When `expected_hash` is omitted, a write now compares the current bytes with
+  the last committed operation recorded for that exact path and refuses with a write conflict
+  asking the caller to re-read and retry with an exact `expected_hash`. Callers that relied on
+  hash-free writes must pass `expected_hash` or handle the refusal. Notes that Datacron has
+  never written are unaffected.
+- `patch_note_section` refuses a level-1 heading whose span contains subsections instead of
+  replacing them; patch a lower-level heading instead.
+- Unresolvable operation evidence now fails closed instead of raising an opaque error. Every
+  mutation is refused with a `recovery_required` error until the blocked operations are
+  repaired with `datacron ops repair`, history purge is held back while any operation stays
+  blocked, and startup no longer aborts: tools still register and reads stay available while
+  the blocked count is logged and reported by `get_health`.
 - Windows installer compilation now fails closed when `dist/datacron.exe` is missing or its
   reported version differs from `AppVersion`; local and CI builds share the same validated
   wrapper, and direct ISCC compilation is rejected.
+- The architecture documentation no longer claims that Cowork is remote-MCP-only; ADR-009 is
+  superseded by the 2026-07-21 production validation of local stdio MCP in Cowork desktop.
+
+### Dependencies
+
+- `mcp` moves from `>=1.2` to `>=2,<3`, locked at 2.0.0. The resolved transitive set changes
+  with it: `httpx2` and `httpcore2` replace `httpx`, `httpcore`, `httpx-sse`, and `certifi`,
+  while `mcp-types` and `opentelemetry-api` are added. Datacron declares no HTTP client of its
+  own and the server still opens no network connection.
+- The locked `cryptography` moves to 50.0.0 so the dependency-audit gate passes again.
 
 ## [2026.0721.01] - 2026-07-21
 
