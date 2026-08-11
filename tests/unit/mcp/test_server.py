@@ -17,12 +17,15 @@ from __future__ import annotations
 
 import inspect
 import tomllib
+from importlib.metadata import version
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
-from mcp.shared.exceptions import McpError
+from mcp import MCPError
+from mcp.client import Client
+from mcp.server import MCPServer
 from mcp.types import INVALID_PARAMS
 
 from datacron.core.config import Settings
@@ -33,22 +36,60 @@ from datacron.core.vault_writer import FilesystemVaultWriter, VaultLockBusyError
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
 from datacron.mcp.server import (
     SERVER_INSTRUCTIONS,
-    DatacronFastMCP,
+    DatacronMCPServer,
     _startup_recover_operations,
     build_app,
     create_server,
 )
 
 
-def test_mcp_v1_dependency_is_explicitly_bounded() -> None:
+def test_mcp_v2_dependency_and_public_surface_are_explicit() -> None:
     pyproject_path = Path(__file__).parents[3] / "pyproject.toml"
     pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
 
-    assert "mcp>=1.28.1,<2" in pyproject["project"]["dependencies"]
+    assert "mcp>=2,<3" in pyproject["project"]["dependencies"]
+    assert version("mcp").startswith("2.")
+
+    from mcp.client import Client
+    from mcp.server import MCPServer
+
+    assert Client is not None
+    assert MCPServer is not None
 
 
-def test_datacron_fastmcp_uses_no_sdk_private_manager_or_context_access() -> None:
-    source = inspect.getsource(DatacronFastMCP)
+def test_mcp_transport_sources_use_no_v1_or_private_sdk_surface() -> None:
+    repository_root = Path(__file__).parents[3]
+    production_paths = (
+        "src/datacron/mcp/server.py",
+        "src/datacron/mcp/identity.py",
+        "src/datacron/mcp/resources.py",
+        "src/datacron/mcp/tools/registry.py",
+        "src/datacron/mcp/tools/advisory.py",
+        "src/datacron/eval/transport.py",
+    )
+    forbidden_fragments = (
+        "mcp.server.fastmcp",
+        "mcp.client.session",
+        ".isError",
+        ".structuredContent",
+        ".inputSchema",
+        ".outputSchema",
+    )
+
+    for relative_path in production_paths:
+        source = (repository_root / relative_path).read_text(encoding="utf-8")
+        for forbidden_fragment in forbidden_fragments:
+            assert forbidden_fragment not in source, relative_path
+
+    private_server_name = "_mcp" + "_server"
+    property_source = (
+        repository_root / "tests/properties/test_operational_capabilities.py"
+    ).read_text(encoding="utf-8")
+    assert private_server_name not in property_source
+
+
+def test_datacron_mcp_server_uses_no_sdk_private_manager_or_context_access() -> None:
+    source = inspect.getsource(DatacronMCPServer)
 
     for forbidden_access in ("_tool_manager", "_resource_manager", "get_context"):
         assert forbidden_access not in source
@@ -85,7 +126,7 @@ async def test_rename_note_section_tool_annotations_describe_local_effects(
     )
 
     annotations = {
-        tool.name: tool.annotations.model_dump(exclude_none=True)
+        tool.name: tool.annotations.model_dump(exclude_none=True, by_alias=True)
         for tool in await create_server(app).list_tools()
         if tool.annotations is not None
     }
@@ -164,19 +205,19 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     }
 
     for name in structured_names:
-        schema = tools[name].outputSchema
+        schema = tools[name].output_schema
         assert schema is not None
         assert schema.get("additionalProperties") is not True
         assert schema.get("properties")
         Draft202012Validator.check_schema(schema)
 
-    assert tools["get_note"].inputSchema["properties"]["format"]["enum"] == [
+    assert tools["get_note"].input_schema["properties"]["format"]["enum"] == [
         "full",
         "map",
         "chunk",
     ]
-    create_properties = tools["create_note_ai"].inputSchema["properties"]
-    set_frontmatter_properties = tools["set_frontmatter"].inputSchema["properties"]
+    create_properties = tools["create_note_ai"].input_schema["properties"]
+    set_frontmatter_properties = tools["set_frontmatter"].input_schema["properties"]
     assert set(create_properties["origin"]["enum"]) == {"ai", "human", "merged"}
     assert set(create_properties["confidence"]["enum"]) == {
         "high",
@@ -186,10 +227,10 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     }
     assert "rejected" in create_properties
     assert "rejected" in set_frontmatter_properties
-    contradiction_properties = tools["contradiction_scan"].inputSchema["properties"]
+    contradiction_properties = tools["contradiction_scan"].input_schema["properties"]
     assert contradiction_properties["mode"]["enum"] == ["scan", "confirm"]
     assert contradiction_properties["detail"]["enum"] == ["summary", "full"]
-    health_properties = tools["get_health"].inputSchema["properties"]
+    health_properties = tools["get_health"].input_schema["properties"]
     assert health_properties["detail"]["enum"] == ["summary", "full"]
     assert health_properties["detail"]["default"] == "summary"
     assert health_properties["limit"]["default"] == 0
@@ -205,20 +246,20 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     rename_tool = tools["rename_note_section"]
     assert len(tools) == 17
     preamble_tool = tools["patch_note_preamble"]
-    assert set(preamble_tool.inputSchema["properties"]) == {
+    assert set(preamble_tool.input_schema["properties"]) == {
         "rel_path",
         "new_content",
         "expected_hash",
     }
-    assert preamble_tool.inputSchema["required"] == [
+    assert preamble_tool.input_schema["required"] == [
         "rel_path",
         "new_content",
         "expected_hash",
     ]
-    assert preamble_tool.inputSchema["properties"]["rel_path"]["type"] == "string"
-    assert preamble_tool.inputSchema["properties"]["new_content"]["type"] == "string"
-    assert preamble_tool.inputSchema["properties"]["expected_hash"]["type"] == "string"
-    preamble_output_schema = preamble_tool.outputSchema
+    assert preamble_tool.input_schema["properties"]["rel_path"]["type"] == "string"
+    assert preamble_tool.input_schema["properties"]["new_content"]["type"] == "string"
+    assert preamble_tool.input_schema["properties"]["expected_hash"]["type"] == "string"
+    preamble_output_schema = preamble_tool.output_schema
     assert preamble_output_schema is not None
     assert set(preamble_output_schema["properties"]) == {
         "patched",
@@ -228,21 +269,21 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     assert preamble_output_schema["required"] == ["patched", "content_hash", "indexed"]
     preamble_ref = preamble_output_schema["properties"]["patched"]["$ref"].split("/")[-1]
     assert preamble_output_schema["$defs"][preamble_ref]["required"] == ["rel_path"]
-    assert set(delete_tool.inputSchema["properties"]) == {
+    assert set(delete_tool.input_schema["properties"]) == {
         "rel_path",
         "heading",
         "expected_hash",
         "heading_level",
         "heading_occurrence",
     }
-    assert delete_tool.inputSchema["required"] == ["rel_path", "heading"]
-    assert delete_tool.inputSchema["properties"]["rel_path"]["type"] == "string"
-    assert delete_tool.inputSchema["properties"]["heading"]["type"] == "string"
-    assert delete_tool.inputSchema["properties"]["expected_hash"]["default"] is None
-    assert delete_tool.inputSchema["properties"]["heading_level"]["default"] is None
-    assert delete_tool.inputSchema["properties"]["heading_occurrence"]["default"] is None
-    delete_output_schema = delete_tool.outputSchema
-    patch_output_schema = tools["patch_note_section"].outputSchema
+    assert delete_tool.input_schema["required"] == ["rel_path", "heading"]
+    assert delete_tool.input_schema["properties"]["rel_path"]["type"] == "string"
+    assert delete_tool.input_schema["properties"]["heading"]["type"] == "string"
+    assert delete_tool.input_schema["properties"]["expected_hash"]["default"] is None
+    assert delete_tool.input_schema["properties"]["heading_level"]["default"] is None
+    assert delete_tool.input_schema["properties"]["heading_occurrence"]["default"] is None
+    delete_output_schema = delete_tool.output_schema
+    patch_output_schema = tools["patch_note_section"].output_schema
     assert delete_output_schema is not None
     assert patch_output_schema is not None
     assert set(delete_output_schema["properties"]) == {
@@ -252,7 +293,7 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     }
     assert delete_output_schema["required"] == ["deleted", "content_hash", "indexed"]
     patch_tool = tools["patch_note_section"]
-    assert set(patch_tool.inputSchema["properties"]) == {
+    assert set(patch_tool.input_schema["properties"]) == {
         "rel_path",
         "heading",
         "new_content",
@@ -260,7 +301,7 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         "heading_level",
         "heading_occurrence",
     }
-    assert patch_tool.inputSchema["required"] == [
+    assert patch_tool.input_schema["required"] == [
         "rel_path",
         "heading",
         "new_content",
@@ -270,7 +311,7 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         "content_hash",
         "indexed",
     ]
-    assert set(rename_tool.inputSchema["properties"]) == {
+    assert set(rename_tool.input_schema["properties"]) == {
         "rel_path",
         "heading",
         "new_heading",
@@ -278,14 +319,14 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         "heading_level",
         "heading_occurrence",
     }
-    assert rename_tool.inputSchema["required"] == ["rel_path", "heading", "new_heading"]
-    assert rename_tool.inputSchema["properties"]["rel_path"]["type"] == "string"
-    assert rename_tool.inputSchema["properties"]["heading"]["type"] == "string"
-    assert rename_tool.inputSchema["properties"]["new_heading"]["type"] == "string"
-    assert rename_tool.inputSchema["properties"]["expected_hash"]["default"] is None
-    assert rename_tool.inputSchema["properties"]["heading_level"]["default"] is None
-    assert rename_tool.inputSchema["properties"]["heading_occurrence"]["default"] is None
-    rename_output_schema = rename_tool.outputSchema
+    assert rename_tool.input_schema["required"] == ["rel_path", "heading", "new_heading"]
+    assert rename_tool.input_schema["properties"]["rel_path"]["type"] == "string"
+    assert rename_tool.input_schema["properties"]["heading"]["type"] == "string"
+    assert rename_tool.input_schema["properties"]["new_heading"]["type"] == "string"
+    assert rename_tool.input_schema["properties"]["expected_hash"]["default"] is None
+    assert rename_tool.input_schema["properties"]["heading_level"]["default"] is None
+    assert rename_tool.input_schema["properties"]["heading_occurrence"]["default"] is None
+    rename_output_schema = rename_tool.output_schema
     assert rename_output_schema is not None
     assert set(rename_output_schema["properties"]) == {
         "renamed",
@@ -311,10 +352,10 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         ),
     ):
         tool = tools[tool_name]
-        occurrence_schema = tool.inputSchema["properties"]["heading_occurrence"]
+        occurrence_schema = tool.input_schema["properties"]["heading_occurrence"]
         assert occurrence_schema["default"] is None
         assert occurrence_schema["anyOf"] == [{"type": "integer"}, {"type": "null"}]
-        output_schema = tool.outputSchema
+        output_schema = tool.output_schema
         assert output_schema is not None
         reference = output_schema["properties"][output_name]["$ref"].split("/")[-1]
         selected_schema = output_schema["$defs"][reference]
@@ -331,10 +372,64 @@ async def test_missing_resource_uses_invalid_params(tmp_path: Path) -> None:
         vault_root=vault,
     )
 
-    with pytest.raises(McpError) as error:
+    with pytest.raises(MCPError) as error:
         await create_server(app).read_resource("datacron://vault/missing")
 
     assert error.value.error.code == INVALID_PARAMS
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_uses_invalid_params_without_private_manager(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    app = build_app(
+        settings=Settings(read_paths=[vault], vault_root=vault),
+        vault_root=vault,
+    )
+
+    with pytest.raises(MCPError) as error:
+        await create_server(app).call_tool("missing_tool", {})
+
+    assert error.value.error.code == INVALID_PARAMS
+
+
+@pytest.mark.asyncio
+async def test_tool_removed_after_public_listing_still_uses_invalid_params(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A public remove between list and lookup must not become a tool result."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    app = build_app(
+        settings=Settings(read_paths=[vault], vault_root=vault),
+        vault_root=vault,
+    )
+    server = create_server(app)
+
+    async def transient_tool() -> dict[str, bool]:
+        return {"called": True}
+
+    server.add_tool(transient_tool, name="transient_tool")
+    listed = await server.list_tools()
+    assert "transient_tool" in {tool.name for tool in listed}
+    sdk_call_tool = MCPServer.call_tool
+
+    async def remove_then_lookup(
+        current_server: MCPServer[Any],
+        name: str,
+        arguments: dict[str, Any],
+        context: Any = None,
+    ) -> Any:
+        current_server.remove_tool(name)
+        return await sdk_call_tool(current_server, name, arguments, context)
+
+    monkeypatch.setattr(MCPServer, "call_tool", remove_then_lookup)
+    async with Client(server, mode="auto") as client:
+        with pytest.raises(MCPError) as error:
+            await client.call_tool("transient_tool", {})
+
+    assert error.value.code == INVALID_PARAMS
 
 
 @pytest.mark.asyncio

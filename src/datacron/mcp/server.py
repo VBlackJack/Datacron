@@ -11,13 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""FastMCP stdio server entry point for Datacron.
+"""MCPServer stdio entry point for Datacron.
 
 Construction is split in two so tests and the CLI can share the wiring:
 
 - :func:`build_app` -- given a :class:`Settings`, a vault root, and the
   Protocol-typed dependencies, returns a :class:`DatacronApp` bundle.
-- :func:`create_server` -- wraps the app in a configured :class:`FastMCP`
+- :func:`create_server` -- wraps the app in a configured :class:`MCPServer`
   instance with tools and resources registered. Adds a lifespan that
   logs startup and shutdown.
 - :func:`run_stdio` -- top-level coroutine the CLI awaits. Configures
@@ -26,8 +26,8 @@ Construction is split in two so tests and the CLI can share the wiring:
 
 Tool error handling: every tool catches broad exceptions, logs a full
 traceback via :func:`datacron.core.logger.get_logger`, and returns a
-structured ``{"error": ...}`` payload. :class:`DatacronFastMCP` maps that
-payload to an MCP tool result with ``isError=true`` while keeping the JSON
+structured ``{"error": ...}`` payload. :class:`DatacronMCPServer` maps that
+payload to an MCP tool result with ``is_error=true`` while keeping the JSON
 payload intact in text content.
 """
 
@@ -35,25 +35,25 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable, Iterable, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import wraps
 from inspect import isawaitable
 from pathlib import Path
-from typing import Any, Final, cast, final
+from typing import Any, Final, TypeVar, final
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ResourceError, ToolError
+from mcp import MCPError
+from mcp.server import MCPServer
 from mcp.server.lowlevel.helper_types import ReadResourceContents
-from mcp.shared.exceptions import McpError
+from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.exceptions import ResourceError, ResourceNotFoundError, ToolError
 from mcp.types import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
     CallToolResult,
-    ContentBlock,
-    ErrorData,
     Icon,
+    InputRequiredResult,
     TextContent,
     ToolAnnotations,
 )
@@ -85,6 +85,8 @@ from datacron.core.security import SecretRedactor
 from datacron.core.vault import build_configured_reader
 from datacron.core.vault_writer import OperationRecoveryError, VaultLockBusyError
 from datacron.mcp.identity import CallerIdentityProvider, StdioCallerIdentityProvider
+
+_ToolCallable = TypeVar("_ToolCallable", bound=Callable[..., Any])
 
 __all__ = [
     "DatacronApp",
@@ -136,7 +138,7 @@ class RepairState:
 class DatacronApp:
     """Bundle of resolved dependencies shared by tools and resources.
 
-    Built once at startup and held in the FastMCP lifespan context so each
+    Built once at startup and held in the MCPServer lifespan context so each
     tool invocation can read the same VaultReader, chunker, store, ripgrep
     wrapper, and Settings.
 
@@ -163,7 +165,7 @@ class DatacronApp:
 
 @final
 class _StructuredToolPayloadError(Exception):
-    """Carry a Datacron error payload across FastMCP's public call boundary."""
+    """Carry a Datacron error payload across MCPServer's public call boundary."""
 
     def __init__(self, payload: dict[str, Any]) -> None:
         super().__init__("Datacron structured tool error")
@@ -171,8 +173,8 @@ class _StructuredToolPayloadError(Exception):
 
 
 @final
-class DatacronFastMCP(FastMCP[DatacronApp]):
-    """FastMCP boundary preserving Datacron's public error contracts."""
+class DatacronMCPServer(MCPServer[DatacronApp]):
+    """MCPServer boundary preserving Datacron's public error contracts."""
 
     def tool(
         self,
@@ -183,8 +185,8 @@ class DatacronFastMCP(FastMCP[DatacronApp]):
         icons: list[Icon] | None = None,
         meta: dict[str, Any] | None = None,
         structured_output: bool | None = None,
-    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-        """Register a tool through FastMCP's public decorator with error wrapping."""
+    ) -> Callable[[_ToolCallable], _ToolCallable]:
+        """Register a tool through MCPServer's public decorator with error wrapping."""
         register = super().tool(
             name=name,
             title=title,
@@ -195,7 +197,7 @@ class DatacronFastMCP(FastMCP[DatacronApp]):
             structured_output=structured_output,
         )
 
-        def decorator(function: Callable[..., Any]) -> Callable[..., Any]:
+        def decorator(function: _ToolCallable) -> _ToolCallable:
             @wraps(function)
             async def wrapped(*args: Any, **kwargs: Any) -> Any:
                 pending = function(*args, **kwargs)
@@ -213,39 +215,41 @@ class DatacronFastMCP(FastMCP[DatacronApp]):
         self,
         name: str,
         arguments: dict[str, Any],
-    ) -> Sequence[ContentBlock] | dict[str, Any]:
+        context: Context[DatacronApp, Any] | None = None,
+    ) -> CallToolResult | InputRequiredResult:
         """Delegate publicly while preserving stable structured tool errors."""
         try:
-            return await super().call_tool(name, arguments)
+            return await super().call_tool(name, arguments, context)
         except ToolError as exc:
             cause = exc.__cause__
-            if not isinstance(cause, _StructuredToolPayloadError):
-                raise
-            error_result = CallToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=json.dumps(cause.payload, ensure_ascii=True, sort_keys=True),
-                    )
-                ],
-                isError=True,
-            )
-            # FastMCP's public return annotation predates its low-level support
-            # for returning CallToolResult directly. The runtime accepts it.
-            return cast("Sequence[ContentBlock] | dict[str, Any]", error_result)
+            if isinstance(cause, _StructuredToolPayloadError):
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=json.dumps(cause.payload, ensure_ascii=True, sort_keys=True),
+                        )
+                    ],
+                    is_error=True,
+                )
+            if cause is None:
+                raise MCPError(INVALID_PARAMS, f"Unknown tool: {name}") from exc
+            raise
 
-    async def read_resource(self, uri: AnyUrl | str) -> Iterable[ReadResourceContents]:
-        """Map public FastMCP resource errors to stable JSON-RPC codes."""
+    async def read_resource(
+        self,
+        uri: AnyUrl | str,
+        context: Context[DatacronApp, Any] | None = None,
+    ) -> Iterable[ReadResourceContents] | InputRequiredResult:
+        """Map public MCPServer resource errors to stable JSON-RPC codes."""
         try:
-            return await super().read_resource(uri)
-        except ValueError as exc:
-            raise McpError(
-                ErrorData(code=INVALID_PARAMS, message=f"Unknown resource: {uri}")
-            ) from exc
+            return await super().read_resource(uri, context)
+        except ResourceNotFoundError as exc:
+            raise MCPError(INVALID_PARAMS, f"Unknown resource: {uri}") from exc
         except ResourceError as exc:
-            raise McpError(ErrorData(code=INTERNAL_ERROR, message="Resource read failed")) from exc
+            raise MCPError(INTERNAL_ERROR, "Resource read failed") from exc
         except Exception as exc:
-            raise McpError(ErrorData(code=INTERNAL_ERROR, message="Resource read failed")) from exc
+            raise MCPError(INTERNAL_ERROR, "Resource read failed") from exc
 
 
 def _is_structured_tool_error(result: object) -> bool:
@@ -391,13 +395,13 @@ async def _startup_recover_operations(app: DatacronApp) -> None:
         )
 
 
-def create_server(app: DatacronApp) -> FastMCP[DatacronApp]:
-    """Return a fully-wired :class:`FastMCP` server bound to ``app``."""
+def create_server(app: DatacronApp) -> MCPServer[DatacronApp]:
+    """Return a fully-wired :class:`MCPServer` bound to ``app``."""
     from datacron.mcp.resources import register_resources  # noqa: PLC0415
     from datacron.mcp.tools import register_tools  # noqa: PLC0415
 
     @asynccontextmanager
-    async def _lifespan(server: FastMCP[DatacronApp]) -> AsyncIterator[DatacronApp]:
+    async def _lifespan(server: MCPServer[DatacronApp]) -> AsyncIterator[DatacronApp]:
         _LOGGER.info(
             "datacron-mcp v%s starting (vault_root=%s)",
             __version__,
@@ -426,8 +430,9 @@ def create_server(app: DatacronApp) -> FastMCP[DatacronApp]:
             finally:
                 _LOGGER.info("datacron-mcp v%s shutting down", __version__)
 
-    server: FastMCP[DatacronApp] = DatacronFastMCP(
+    server: MCPServer[DatacronApp] = DatacronMCPServer(
         name=SERVER_NAME,
+        version=__version__,
         instructions=SERVER_INSTRUCTIONS,
         lifespan=_lifespan,
     )

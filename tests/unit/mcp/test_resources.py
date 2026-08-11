@@ -13,8 +13,8 @@ import json
 from pathlib import Path
 
 import pytest
-from mcp.shared.exceptions import McpError
-from mcp.types import INTERNAL_ERROR
+from mcp import MCPError
+from mcp.types import INTERNAL_ERROR, InputRequiredResult
 
 from datacron import __version__
 from datacron.core.config import Settings
@@ -30,7 +30,7 @@ from datacron.mcp.resources import (
     _build_vault_map,
     _truncate_to_token_budget,
 )
-from datacron.mcp.server import DatacronApp, DatacronFastMCP, build_app, create_server
+from datacron.mcp.server import DatacronApp, DatacronMCPServer, build_app, create_server
 
 
 @pytest.fixture
@@ -46,13 +46,13 @@ def app(tmp_vault: Path) -> DatacronApp:
 
 @pytest.mark.asyncio
 async def test_resource_failure_is_sanitized_as_internal_error() -> None:
-    server = DatacronFastMCP(name="resource-error-test")
+    server = DatacronMCPServer(name="resource-error-test", version="test")
 
     @server.resource("datacron://test/failure")
     async def failing_resource() -> str:
         raise RuntimeError("sensitive resource detail")
 
-    with pytest.raises(McpError) as error:
+    with pytest.raises(MCPError) as error:
         await server.read_resource("datacron://test/failure")
 
     assert error.value.error.code == INTERNAL_ERROR
@@ -176,6 +176,7 @@ class TestPolicyActive:
         writable_app = build_app(settings=settings, vault_root=tmp_vault)
 
         contents = await create_server(writable_app).read_resource(URI_POLICY_ACTIVE)
+        assert not isinstance(contents, InputRequiredResult)
         rendered = next(iter(contents)).content
         assert isinstance(rendered, str)
         policy = json.loads(rendered)

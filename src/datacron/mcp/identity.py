@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Final, Protocol, final, runtime_checkable
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 __all__ = [
     "CallerIdentity",
@@ -43,7 +43,7 @@ class CallerIdentity:
 class CallerIdentityProvider(Protocol):
     """Resolve a caller at the single transport authentication point."""
 
-    def identify(self, context: Context[Any, Any, Any]) -> CallerIdentity:
+    def identify(self, context: Context[Any, Any]) -> CallerIdentity:
         """Return transport-derived identity and assurance metadata."""
         ...
 
@@ -57,17 +57,13 @@ class StdioCallerIdentityProvider:
     assurance for the current single-user deployment.
     """
 
-    def identify(self, context: Context[Any, Any, Any]) -> CallerIdentity:
+    def identify(self, context: Context[Any, Any]) -> CallerIdentity:
         actor = "mcp-client:unidentified"
         try:
-            client_id = context.client_id
-            if client_id:
-                actor = f"mcp-client:{client_id}"
-            else:
-                client_params = context.session.client_params
-                if client_params is not None:
-                    info = client_params.clientInfo
-                    actor = f"mcp-client:{info.name}/{info.version}"
+            client_params = context.session.client_params
+            if client_params is not None:
+                info = client_params.client_info
+                actor = f"mcp-client:{info.name}/{info.version}"
         except (AttributeError, ValueError):
             pass
         return CallerIdentity(

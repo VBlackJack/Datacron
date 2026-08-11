@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
+from mcp.client import Client
+from mcp.types import Implementation
 
 from datacron import __version__
 from datacron.core.config import Settings
@@ -162,9 +163,13 @@ async def test_prop_read_only_blocks_writes(tmp_path: Path) -> None:
     before = _snapshot(vault)
     app, _store = _build_read_only_app(vault)
     server = create_server(app)
-    low_level = cast("Any", server)._mcp_server
-    async with low_level.lifespan(low_level):
-        live_tools = {tool.name for tool in await server.list_tools()}
+    async with Client(
+        server,
+        mode="auto",
+        client_info=Implementation(name="operational-tests", version="2.0"),
+    ) as client:
+        listed_tools = await client.list_tools()
+        live_tools = {tool.name for tool in listed_tools.tools}
         results = [
             await _create_note_ai_impl(
                 app,
