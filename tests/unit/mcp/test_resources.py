@@ -13,6 +13,8 @@ import json
 from pathlib import Path
 
 import pytest
+from mcp.shared.exceptions import McpError
+from mcp.types import INTERNAL_ERROR
 
 from datacron import __version__
 from datacron.core.config import Settings
@@ -28,7 +30,7 @@ from datacron.mcp.resources import (
     _build_vault_map,
     _truncate_to_token_budget,
 )
-from datacron.mcp.server import DatacronApp, build_app, create_server
+from datacron.mcp.server import DatacronApp, DatacronFastMCP, build_app, create_server
 
 
 @pytest.fixture
@@ -40,6 +42,22 @@ def app(tmp_vault: Path) -> DatacronApp:
         max_result_tokens=8000,
     )
     return build_app(settings=settings, vault_root=tmp_vault, chunker=MarkdownChunker())
+
+
+@pytest.mark.asyncio
+async def test_resource_failure_is_sanitized_as_internal_error() -> None:
+    server = DatacronFastMCP(name="resource-error-test")
+
+    @server.resource("datacron://test/failure")
+    async def failing_resource() -> str:
+        raise RuntimeError("sensitive resource detail")
+
+    with pytest.raises(McpError) as error:
+        await server.read_resource("datacron://test/failure")
+
+    assert error.value.error.code == INTERNAL_ERROR
+    assert error.value.error.message == "Resource read failed"
+    assert "sensitive resource detail" not in str(error.value)
 
 
 class TestVaultMap:
