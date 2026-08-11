@@ -1509,7 +1509,7 @@ def _render_protocol_outcomes(
 def mcp_serve(
     vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
 ) -> None:
-    """Run the FastMCP stdio server.
+    """Run the MCPServer stdio server.
 
     Reads MCP JSON-RPC messages from stdin and replies on stdout. The
     server exposes the registered read, write, and operational tools plus

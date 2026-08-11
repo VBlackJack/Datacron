@@ -1,3 +1,9 @@
+---
+title: Frontière de sécurité locale de Datacron
+verified: 2026-08-11
+tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
+---
+
 # Frontière de sécurité locale de Datacron
 
 **Français** | [English](../en/security-boundary.md)
@@ -97,7 +103,12 @@ frontières.
 ## Capacités d'outils auditées
 
 Le manifeste fermé est `datacron.mcp.security_manifest.MCP_TOOL_CAPABILITIES`. La propriété
-bloquante sur la surface d'injection le compare au registre FastMCP vivant. La seule capacité
+bloquante sur la surface d'injection le compare au registre `MCPServer` vivant. La seule capacité
 adossée à un processus est `search_regex`, qui démarre l'exécutable ripgrep configuré avec des
 arguments de motif et de glob fournis explicitement par l'appelant. Aucun outil MCP ne fournit
 d'accès réseau, d'exécution de processus arbitraire, d'`eval` ni de dispatch dynamique d'outil.
+
+La frontière serveur n'accède à aucun gestionnaire privé du SDK. Elle délègue à l'API publique
+`MCPServer.call_tool` puis traduit un nom d'outil inconnu en erreur JSON-RPC `-32602`. Une
+ressource absente utilise également `-32602`, tandis qu'une panne interne de lecture de ressource
+est assainie en `-32603` sans exposer le détail de l'exception.
