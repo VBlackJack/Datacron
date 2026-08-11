@@ -1,10 +1,16 @@
+---
+title: Datacron - Public Vault and MCP Server Contract
+verified: 2026-08-11
+tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
+---
+
 # Datacron - Public Vault and MCP Server Contract
 
 **English** | [Français](../fr/spec.md)
 
 > **Status**: Spec v2.0 - normative, synchronized with `main`
 > **Author**: Julien Bombled
-> **Date**: 2026-07-21
+> **Date**: 2026-08-11
 > **Replaces**: v1.1 (2026-05-17)
 > **License**: [Apache 2.0](../../LICENSE)
 > **Scope**: This document defines Datacron's observable formats, invariants, and surfaces.
@@ -197,10 +203,11 @@ finish or reconcile without duplicating an already committed record.
 
 ---
 
-## 9. Surface of 14 MCP tools
+## 9. MCP tool surface
 
-In standard mode, the server registers 14 tools. In certified read-only mode
-(`DATACRON_READ_ONLY=true`), the five mutating tools are removed and nine tools remain exposed.
+In standard mode, the server registers exactly the closed manifest described below. In
+certified read-only mode (`DATACRON_READ_ONLY=true`), every mutating tool is removed and only
+read, advisory, and operational tools remain exposed.
 
 | Category | Tool | Observable contract |
 |---|---|---|
@@ -214,7 +221,10 @@ In standard mode, the server registers 14 tools. In certified read-only mode
 | Write | `create_note_ai` | Creates a memory note without overwrite |
 | Write | `append_journal` | Appends an entry under a heading in an existing note |
 | Write | `set_frontmatter` | Changes only allowed lifecycle fields and `updated` |
+| Write | `patch_note_preamble` | Replaces or removes the preamble before the first recognized ATX heading |
 | Write | `patch_note_section` | Replaces content under an existing heading while preserving its heading line |
+| Write | `delete_note_section` | Explicitly deletes an ATX H2-H6 section and its subtree |
+| Write | `rename_note_section` | Renames an ATX H2-H6 heading without changing its content |
 | Write | `revert_note` | Restores exact bytes from a content-addressed history version |
 | Operational | `get_note_history` | Lists committed operation metadata for a note without reading prior bytes |
 | Operational | `audit_query` | Filters the committed journal by time, tool, or note without changing it |
@@ -227,7 +237,7 @@ metadata are sanitized and redacted according to the same policy.
 
 ## 10. Write tools, allowlist, CAS, and history
 
-The five write tools are opt-in at the effect level:
+Write tools are opt-in at the effect level:
 
 - `DATACRON_READ_ONLY=true` removes them from the MCP surface;
 - otherwise they are registered, but an empty `DATACRON_WRITE_PATHS` allowlist makes every
@@ -235,9 +245,10 @@ The five write tools are opt-in at the effect level:
 - each target must be inside the vault and below at least one allowlisted root;
 - the durability mode must permit the write.
 
-Each write tool accepts an optional `expected_hash`. When supplied, the write fails unless the
-SHA-256 of the current bytes matches: this is compare-and-swap (CAS). Creation always refuses to
-overwrite an existing file.
+Every note mutation supports compare-and-swap (CAS) through `expected_hash`.
+`patch_note_preamble` always requires that hash; the other tools make it optional unless their
+occurrence selector requires it. When supplied, a mismatching SHA-256 of the current bytes
+rejects the write. Creation always refuses to overwrite an existing file.
 
 When a mutation targets an existing note, it stores the prior bytes by SHA-256 in
 `history_mode=full`. Every committed mutation writes a pending manifest, atomically replaces or
@@ -297,13 +308,31 @@ excluded from `datacron protocol install` because no global instruction file is 
 ## 13. stdio transport
 
 The exposed server transport is MCP over stdio. `datacron mcp serve` and the `datacron-mcp`
-entry point start the FastMCP stdio loop and stop when the client disconnects or the process is
-interrupted.
+entry point start the Python MCP SDK v2 `MCPServer` loop (`mcp>=2,<3`) and stop when the client
+disconnects or the process is interrupted.
 
 The server opens no network listener, and the current CLI exposes no HTTP transport. A Python
 installation configures the `datacron-mcp` executable without arguments; a frozen binary
 configures its own executable with `mcp`, `serve` arguments. Both forms pass the vault
 environment variables.
+
+The same stdio server supports the final modern `2026-07-28` protocol and legacy
+`2025-11-25` mode, with no separate installer flag. Real stdio tests cover both modes.
+Datacron enables none of the SDK's HTTP transports.
+
+An unknown tool and an absent resource return JSON-RPC error `-32602`. The server preserves
+that tool contract by translating after the public `MCPServer.call_tool` lookup, without a
+private manager. An internal resource failure is sanitized to `-32603`. Validation errors for a
+known tool remain a tool result with the wire field `isError=true`. Only Datacron business
+exceptions transformed by the wrapper preserve the stable text payload
+`{"error": {"type": ..., "message": ...}}`. SDK/protocol errors remain distinct.
+
+Push elicitation through `ctx.elicit()` requires a legacy `2025-11-25` session with a
+back-channel. On `2026-07-28`, `contradiction_scan` does not attempt that push: it returns its
+normal scan and leaves confirmation to a later explicit call.
+
+Official references: [final MCP 2026-07-28 release](https://blog.modelcontextprotocol.io/posts/2026-07-28/)
+and [what is new in the MCP Python SDK v2](https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/whats-new.md).
 
 ---
 

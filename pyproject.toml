@@ -47,7 +47,7 @@ dependencies = [
     "truststore>=0.10.4",
     "typer>=0.12",
     # MCP server (Phase 0 Sem 2)
-    "mcp>=1.2",
+    "mcp>=2,<3",
     # Indexing (Phase 0 Sem 2-3)
     "aiosqlite>=0.20",
     "mistletoe>=1.3",

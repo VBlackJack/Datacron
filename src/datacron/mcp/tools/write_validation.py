@@ -30,10 +30,15 @@ _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
     {"high", "medium", "low", "needs_verification"}
 )
 _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
+_FRONTMATTER_BOUNDARY_PATTERN: Final[re.Pattern[str]] = re.compile(r"-{3,}[ \t]*(?:\r\n|[\r\n])?")
 _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
 _REJECTED_ENTRY_SEPARATOR: Final[str] = " -- "
 _MAX_REJECTED_ENTRIES: Final[int] = 16
 _MAX_REJECTED_ENTRY_CHARS: Final[int] = 300
+_RENAME_H1_REFUSAL_MESSAGE: Final[str] = (
+    "rename_note_section only supports ATX heading levels 2 through 6; "
+    "level 1 is refused because frontmatter title synchronization is outside this tool"
+)
 
 
 def _map_write_path_error(
@@ -257,7 +262,8 @@ def _validate_patch_note_section_request(
     new_content: str,
     expected_hash: str | None,
     heading_level: int | None,
-) -> tuple[str, str, str, str | None, int | None]:
+    heading_occurrence: int | None,
+) -> tuple[str, str, str, str | None, int | None, int | None]:
     cleaned_rel_path = rel_path.strip()
     cleaned_heading = heading.strip()
     cleaned_expected_hash = _validate_expected_hash(expected_hash)
@@ -270,6 +276,11 @@ def _validate_patch_note_section_request(
         raise ValueError("new_content must not be empty")
     if heading_level is not None and heading_level not in range(1, 7):
         raise ValueError("heading_level must be between 1 and 6")
+    cleaned_heading_occurrence = _validate_heading_occurrence(
+        heading_occurrence,
+        heading_level=heading_level,
+        expected_hash=cleaned_expected_hash,
+    )
 
     normalized_content = new_content.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
     return (
@@ -278,7 +289,147 @@ def _validate_patch_note_section_request(
         normalized_content,
         cleaned_expected_hash,
         heading_level,
+        cleaned_heading_occurrence,
     )
+
+
+def _validate_patch_note_preamble_request(
+    *,
+    rel_path: str,
+    new_content: str,
+    expected_hash: str | None,
+) -> tuple[str, str, str]:
+    cleaned_rel_path = rel_path.strip()
+    cleaned_expected_hash = _validate_expected_hash(expected_hash)
+
+    if not cleaned_rel_path.endswith(".md"):
+        raise ValueError("rel_path must end with .md")
+    if cleaned_expected_hash is None:
+        raise ValueError("expected_hash is required")
+
+    normalized_content = new_content.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+    if not normalized_content.strip():
+        normalized_content = ""
+    return cleaned_rel_path, normalized_content, cleaned_expected_hash
+
+
+def _parse_preserving_bom_and_body_eols(raw: str) -> tuple[dict[str, Any], str, bool]:
+    """Parse frontmatter while preserving the body's existing line endings."""
+    metadata, parsed_body, has_bom = _parse_preserving_bom(raw)
+    parseable = raw[1:] if has_bom else raw
+    lines = parseable.splitlines(keepends=True)
+    opening = next((index for index, line in enumerate(lines) if line.strip()), None)
+    if opening is None or _FRONTMATTER_BOUNDARY_PATTERN.fullmatch(lines[opening]) is None:
+        return metadata, parsed_body, has_bom
+    closing = next(
+        (
+            index
+            for index, line in enumerate(lines[opening + 1 :], start=opening + 1)
+            if _FRONTMATTER_BOUNDARY_PATTERN.fullmatch(line) is not None
+        ),
+        None,
+    )
+    if closing is None:
+        return metadata, parsed_body, has_bom
+    return metadata, "".join(lines[closing + 1 :]), has_bom
+
+
+def _validate_delete_note_section_request(
+    *,
+    rel_path: str,
+    heading: str,
+    expected_hash: str | None,
+    heading_level: int | None,
+    heading_occurrence: int | None,
+) -> tuple[str, str, str | None, int | None, int | None]:
+    cleaned_rel_path = rel_path.strip()
+    cleaned_heading = heading.strip()
+    cleaned_expected_hash = _validate_expected_hash(expected_hash)
+
+    if not cleaned_rel_path.endswith(".md"):
+        raise ValueError("rel_path must end with .md")
+    if not cleaned_heading:
+        raise ValueError("heading must not be empty")
+    if heading_level is not None and heading_level not in range(1, 7):
+        raise ValueError("heading_level must be between 1 and 6")
+    if heading_level == 1:
+        raise ValueError(
+            "delete_note_section only supports heading levels 2 through 6; level 1 is refused"
+        )
+    cleaned_heading_occurrence = _validate_heading_occurrence(
+        heading_occurrence,
+        heading_level=heading_level,
+        expected_hash=cleaned_expected_hash,
+    )
+    return (
+        cleaned_rel_path,
+        cleaned_heading,
+        cleaned_expected_hash,
+        heading_level,
+        cleaned_heading_occurrence,
+    )
+
+
+def _validate_rename_note_section_request(
+    *,
+    rel_path: str,
+    heading: str,
+    new_heading: str,
+    expected_hash: str | None,
+    heading_level: int | None,
+    heading_occurrence: int | None,
+) -> tuple[str, str, str, str | None, int | None, int | None]:
+    cleaned_rel_path = rel_path.strip()
+    cleaned_heading = heading.strip()
+    cleaned_new_heading = new_heading.strip()
+    cleaned_expected_hash = _validate_expected_hash(expected_hash)
+
+    if not cleaned_rel_path.endswith(".md"):
+        raise ValueError("rel_path must end with .md")
+    if not cleaned_heading:
+        raise ValueError("heading must not be empty")
+    if not cleaned_new_heading:
+        raise ValueError("new_heading must not be empty")
+    if "\r" in new_heading or "\n" in new_heading:
+        raise ValueError("new_heading must be a single line")
+    if cleaned_new_heading.startswith("#"):
+        raise ValueError("new_heading must contain text only, without Markdown heading markers")
+    if heading_level is not None and heading_level not in range(1, 7):
+        raise ValueError("heading_level must be between 1 and 6")
+    if heading_level == 1:
+        raise ValueError(_RENAME_H1_REFUSAL_MESSAGE)
+    cleaned_heading_occurrence = _validate_heading_occurrence(
+        heading_occurrence,
+        heading_level=heading_level,
+        expected_hash=cleaned_expected_hash,
+    )
+    return (
+        cleaned_rel_path,
+        cleaned_heading,
+        cleaned_new_heading,
+        cleaned_expected_hash,
+        heading_level,
+        cleaned_heading_occurrence,
+    )
+
+
+def _validate_heading_occurrence(
+    heading_occurrence: int | None,
+    *,
+    heading_level: int | None,
+    expected_hash: str | None,
+) -> int | None:
+    if heading_occurrence is None:
+        return None
+    if isinstance(heading_occurrence, bool) or not isinstance(heading_occurrence, int):
+        raise ValueError("heading_occurrence must be an integer")
+    if heading_occurrence < 1:
+        raise ValueError("heading_occurrence must be at least 1")
+    if heading_level is None:
+        raise ValueError("heading_occurrence requires heading_level")
+    if expected_hash is None:
+        raise ValueError("heading_occurrence requires expected_hash")
+    return heading_occurrence
 
 
 def _validate_expected_hash(expected_hash: str | None) -> str | None:

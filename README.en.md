@@ -24,7 +24,8 @@ ULIDs, history, and the operation journal.
 | Vault reading | `list_notes`, `get_note`, resources `datacron://vault/map`, `vault/info`, `policy/active` |
 | Search | SQLite FTS5/BM25, FR↔EN query expansion, temporal re-rank, `ripgrep` via `search_regex` |
 | Local graph | Wikilinks and backlinks via `get_backlinks` |
-| Writing | 5 confined, reversible tools, disabled by default without `DATACRON_WRITE_PATHS` |
+| Writing | 8 confined, reversible tools, disabled by default without `DATACRON_WRITE_PATHS` |
+| MCP transport | Python MCP SDK v2 through `MCPServer`, local stdio only; modern `2026-07-28` protocol and legacy `2025-11-25` compatibility, with no HTTP listener |
 | Index | `datacron index` incremental, `datacron reindex` full, automatic repair on read |
 | Evaluation | `datacron eval` over the real MCP pipeline: recall@k, MRR, nDCG, freshness, latency, and payload tokens |
 | Guided setup | `datacron setup`: init + index + MCP registration in one command |
@@ -212,7 +213,10 @@ Available write tools:
 - `create_note_ai`: creates a typed Markdown note, without overwrite.
 - `append_journal`: adds an entry under a heading of an existing note.
 - `set_frontmatter`: updates lifecycle fields and the `rejected` options list without modifying the Markdown body.
+- `patch_note_preamble`: replaces or removes the Markdown preamble before the first ATX heading, with mandatory CAS control.
 - `patch_note_section`: replaces the content under an existing heading with CAS control.
+- `delete_note_section`: explicitly deletes an ATX H2-H6 section and its subtree.
+- `rename_note_section`: renames only the title of an ATX H2-H6 section.
 - `revert_note`: restores the exact bytes of a version kept in history.
 
 Guarantees:
@@ -245,7 +249,10 @@ vault.
 | `create_note_ai` | creates a new typed `_memory` note, confined to allowed paths, without overwrite and with a durable journal |
 | `append_journal` | adds a Markdown entry under a heading, with confinement, exact history, and atomic write |
 | `set_frontmatter` | updates only the lifecycle fields, the `rejected` list, and the `updated` date, preserving the Markdown body |
+| `patch_note_preamble` | replaces or removes the preamble before the first ATX heading, with mandatory CAS and suffix preservation |
 | `patch_note_section` | replaces the content of an existing heading with CAS, exact history, and preservation of other sections |
+| `delete_note_section` | explicitly deletes an ATX H2-H6 section and its subtree, with optional CAS and exact history |
+| `rename_note_section` | renames an ATX H2-H6 section title without modifying its content or subtree |
 | `revert_note` | restores a note from its content-addressed history; the operation stays durable, reversible, and audited |
 
 ### Operational
@@ -334,6 +341,7 @@ Full index: [docs/en/index.md](docs/en/index.md) | [Index français](docs/fr/ind
 To get started:
 
 - [Installation and configuration guide](docs/en/setup.md)
+- [Use Datacron with Ollama](docs/en/ollama.md)
 - [Frequently asked questions](docs/en/faq.md)
 - [User guide](docs/en/user-guide.md)
 

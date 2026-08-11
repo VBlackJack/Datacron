@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from mcp.client.session import ClientSession
+from mcp.client import Client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import TextContent
 
@@ -40,18 +40,14 @@ async def e2e_search_transport(
 ) -> AsyncIterator[ToolSearch]:
     """Yield a ``search_text`` callback backed by one initialized stdio session."""
     params = _server_parameters(vault_root, settings)
-    async with (
-        stdio_client(params) as (read_stream, write_stream),
-        ClientSession(read_stream, write_stream) as session,
-    ):
-        await session.initialize()
+    async with Client(stdio_client(params), mode="auto") as session:
 
         async def _search(query: str, limit: int) -> dict[str, Any]:
             response = await session.call_tool(
                 "search_text",
                 {"query": query, "limit": limit},
             )
-            if response.isError:
+            if response.is_error:
                 raise RuntimeError(f"MCP search_text failed: {_response_text(response.content)}")
             payload = json.loads(_response_text(response.content))
             if not isinstance(payload, dict):
@@ -86,7 +82,7 @@ def _server_parameters(vault_root: Path, settings: Settings) -> StdioServerParam
 
 
 def _response_text(content: list[Any]) -> str:
-    """Extract the JSON text block emitted by a FastMCP dictionary result."""
+    """Extract the JSON text block emitted by an MCPServer dictionary result."""
     for block in content:
         if isinstance(block, TextContent):
             return block.text

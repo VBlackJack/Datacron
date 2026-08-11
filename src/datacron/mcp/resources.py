@@ -26,7 +26,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 from datacron import __version__
 from datacron.core.config import (
@@ -54,7 +54,7 @@ _TRUNCATION_MARKER: Final[str] = "[...vault map truncated to fit token budget...
 _VAULT_MAP_TAG_LIMIT: Final[int] = 5
 
 
-def register_resources(server: FastMCP[DatacronApp], app: DatacronApp) -> None:
+def register_resources(server: MCPServer[DatacronApp], app: DatacronApp) -> None:
     """Attach the three Datacron resources to ``server``."""
 
     @server.resource(

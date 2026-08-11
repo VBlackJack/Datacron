@@ -1,10 +1,16 @@
+---
+title: Datacron - Architecture and technical specification
+verified: 2026-08-11
+tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
+---
+
 # Datacron - Architecture & technical spec
 
 **English** | [Français](../fr/architecture.md)
 
 > **Status**: v2.2 - Living spec synced with `main`
 > **Author**: Julien Bombled
-> **Date**: 2026-07-12
+> **Date**: 2026-08-11
 > **Sources**:
 > - Current source code and regression tests
 > - Production validation (2026-07-21): Cowork desktop runs Datacron through local stdio MCP; claude.ai in the browser remains remote-only
@@ -25,12 +31,12 @@ The delivered foundation stays deliberately **minimalist**:
 
 1. **Vault layer** - Any folder of Markdown files. No migration required.
 2. **`.datacron/` layer** - Invisible sidecar (SQLite FTS5, ULID side-table, logs, history, and operation journal).
-3. **MCP server layer** - Custom Python FastMCP, stdio. Read/search tools, client-approved write tools, 3 resources.
+3. **MCP server layer** - Python MCP SDK v2 `MCPServer`, stdio. Read/search tools, client-approved write tools, 3 resources.
 4. **Client layer** - Nine setup client IDs through user and, where available, project config.
 
 **Delivered on `main` after the Phase 0 foundation**:
 - Static FR↔EN query expansion at search time, configured by `VAULT.yaml`.
-- Write tools: `create_note_ai`, `append_journal`, `set_frontmatter`, `patch_note_section`, and `revert_note`, disabled by default without `DATACRON_WRITE_PATHS`, confined, atomic, and journaled.
+- Write tools: `create_note_ai`, `append_journal`, `set_frontmatter`, `patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`, and `revert_note`, disabled by default without `DATACRON_WRITE_PATHS`, confined, atomic, and journaled.
 - Conservative temporal re-ranking: explicit demotion of superseded notes and a light confidence penalty.
 
 **Still out of scope**:
@@ -93,7 +99,7 @@ flowchart TB
         CLIENT[9 setup client IDs]
     end
 
-    subgraph SERVER["Datacron MCP server (Python, FastMCP, stdio)"]
+    subgraph SERVER["Datacron MCP server (Python MCPServer v2, stdio)"]
         TOOLS[Read/search tools + approved write tools]
         RES[3 resources]
         SBX[Content sandboxing]
@@ -127,9 +133,9 @@ flowchart TB
 
 ---
 
-## 5. MCP v1 catalog
+## 5. MCP catalog
 
-### 5.1 Tools (14)
+### 5.1 Tools
 
 | Group | Tool | Description | Implementation |
 |---|---|---|---|
@@ -141,7 +147,10 @@ flowchart TB
 | Write | `create_note_ai` | Confined creation of a `_memory` note, without overwrite and with a durable journal. | VaultWriter + operation log |
 | Write | `append_journal` | Append under a heading with exact history and atomic write. | VaultWriter + operation log |
 | Write | `set_frontmatter` | Update lifecycle fields while preserving the Markdown body. | VaultWriter + frontmatter parser |
+| Write | `patch_note_preamble` | CAS replacement of the preamble before the first recognized ATX heading. | VaultWriter + operation log |
 | Write | `patch_note_section` | CAS replacement of a section while preserving other sections. | VaultWriter + operation log |
+| Write | `delete_note_section` | Explicit deletion of an ATX H2-H6 section and its subtree. | VaultWriter + operation log |
+| Write | `rename_note_section` | Rename an ATX H2-H6 heading while preserving its content. | VaultWriter + operation log |
 | Write | `revert_note` | Durable, reversible restore from content-addressed history. | History store + VaultWriter |
 | Operational | `get_health` | Freshness, integrity, checksum, durability, and invariant evidence. | Read-only health scanner |
 | Operational | `get_note_history` | Committed operation metadata for a note, without reading historical content. | Operation journal |
@@ -169,6 +178,30 @@ flowchart TB
   ```
 - **NDJSON audit log** on every call.
 
+### 5.4 MCP protocol compatibility matrix
+
+Verified on 2026-08-11 over the real stdio transport with the Python MCP SDK v2
+(`mcp>=2,<3`). The server exposes no HTTP listener.
+
+| Revision | Datacron status | Verification |
+|---|---|---|
+| `2026-07-28` | Modern, final | The v2 client in auto mode discovers tools, preserves public schemas, and calls `get_health`, `get_note`, and `search_text` over stdio. |
+| `2025-11-25` | Legacy compatible | The same stdio server accepts legacy initialization and preserves client identity, without a separate flag or deployment. |
+
+A malformed request, unknown tool, or absent resource is a JSON-RPC error. Datacron translates
+an unknown tool to `-32602` after the public `MCPServer.call_tool` lookup, without a private
+manager. An absent resource also returns `-32602`; an internal resource failure is sanitized to
+`-32603`. Validation errors for a known tool remain a tool result with the wire field
+`isError=true`. Only Datacron business exceptions transformed by the wrapper preserve the stable
+text payload `{"error": {"type": ..., "message": ...}}`. SDK/protocol errors remain distinct.
+
+Push elicitation through `ctx.elicit()` is used only on a legacy `2025-11-25` session with a
+back-channel. In modern `2026-07-28` mode, `contradiction_scan` returns its normal scan without
+attempting that push.
+
+Official references: [final MCP `2026-07-28` release](https://blog.modelcontextprotocol.io/posts/2026-07-28/)
+and [what is new in the MCP Python SDK v2](https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/whats-new.md).
+
 ---
 
 ## 6. Architecture Decision Records (summaries)
@@ -178,7 +211,7 @@ Datacron reads any vault without migration. Side-metadata in `.datacron/`.
 Rejected: a normative DVS spec forcing frontmatter migration (adoption must be zero-friction);
 a database as source of truth (the vault must stay readable without Datacron).
 
-### ADR-002 - Custom FastMCP server
+### ADR-002 - Custom MCPServer-based server
 Gemini ✅ + ChatGPT ✅ convergence. Direct FS, audit, strict confinement.
 Rejected: Obsidian REST API plugin (requires the app running); generic filesystem MCP servers
 (no audit, no confinement, no vault semantics).
@@ -223,7 +256,6 @@ Supersession evidence: a Cowork desktop production session ran Datacron through 
 MCP on 2026-07-21, without a tunnel or remote server. This does not apply to claude.ai in the
 browser, which remains remote-only.
 
-v1 = Claude Desktop + Code only. Cowork via HTTPS tunnel in v1.x.
 Rejected: promising Cowork/claude.ai support in v1 (remote-only brokering, empirically
 verified).
 
@@ -332,8 +364,8 @@ datacron/                              # GitHub: VBlackJack/Datacron
 │   │   ├── temporal.py                # Temporal retrieval re-ranking
 │   │   └── vault_writer.py            # Confined note transactions
 │   ├── mcp/
-│   │   ├── server.py                  # FastMCP entry (`datacron mcp serve`)
-│   │   ├── tools/                     # 14 tools (read/write/ops/advisory), split by concern
+│   │   ├── server.py                  # MCPServer entry (`datacron mcp serve`)
+│   │   ├── tools/                     # Read/write/ops/advisory tools, split by concern
 │   │   ├── resources.py               # 3 resources
 │   │   ├── health.py                  # Operational health payload
 │   │   ├── security_manifest.py      # Closed tool-capability manifest
@@ -411,40 +443,18 @@ sequenceDiagram
 
 ---
 
-## 10. MVP roadmap (4 weeks)
+## 10. Phase 0 foundation delivery state
 
-### Phase 0 - Week 1: Bootstrap & core
-- [ ] Repo init, `pyproject.toml`, Apache 2.0 headers, Python FileLogger.
-- [ ] `datacron.core`: config (pydantic-settings), path confinement, hashing, ULID, frontmatter parser.
-- [ ] `datacron init <path>`: creates `.datacron/`, writes `VAULT.yaml`.
-- [ ] `datacron status`: print vault state.
+The original four-week checklist is closed and no longer acts as a live backlog. Current state
+is verified in source and regression gates:
 
-### Phase 0 - Week 2: MCP server + read tools
-- [ ] FastMCP stdio server (`datacron mcp serve`).
-- [ ] Tools `list_notes`, `get_note` (with `format=map`).
-- [ ] Resource `datacron://vault/map`, `vault/info`.
-- [ ] Sandboxing wrap + escape.
-- [ ] `datacron mcp install --client claude-desktop` (writes JSON config).
-- [ ] E2E test: add to Claude Desktop, ask "list my notes".
+- vault core, configuration, confinement, hashing, ULIDs, and frontmatter;
+- stdio `MCPServer`, public catalog, resources, sandboxing, and installers;
+- Markdown chunker, SQLite FTS5 index, text/regex search, and backlinks;
+- evaluation harness, invariants, CI, and bilingual documentation.
 
-### Phase 0 - Week 3: Indexer + search tools
-- [ ] AST Markdown chunker.
-- [ ] SQLite FTS5 indexer.
-- [ ] `search_text` tool.
-- [ ] ripgrep wrapper + `search_regex` tool.
-- [ ] Wikilinks parser + `get_backlinks` tool.
-- [ ] `datacron index` / `datacron reindex` commands.
-
-### Phase 0 - Week 4: Eval + dogfood + release
-- [ ] Eval harness: 30 Julien questions, recall@k, citation precision, latency, tokens.
-- [ ] Intensive dogfooding on Julien's personal vault.
-- [ ] Polish: `--help`, error messages, verified README quickstart.
-- [ ] GitHub Actions CI: ruff + mypy --strict + pytest + shellcheck.
-- [ ] Publish the first `datacron` release on PyPI (CalVer versioning, see CHANGELOG).
-
-**Success criterion**: real questions from Claude Desktop beat folder-dump on quality, latency,
-and token cost. Current measurement on golden Julien: recall@5 0.89, recall@10 0.95, recall@20
-0.95, precision 0.32.
+Historical measurements and external publications remain in evaluation reports, the CHANGELOG,
+and releases; this section publishes no unmeasured remote status or counter.
 
 ---
 
@@ -497,5 +507,5 @@ and token cost. Current measurement on golden Julien: recall@5 0.89, recall@10 0
 
 ---
 
-*v2.2 document synced on 2026-07-12 with `main`. The research reports and v2.1 decisions remain
+*v2.2 document synced on 2026-08-11 with `main`. The research reports and v2.1 decisions remain
 arbitration archives.*
