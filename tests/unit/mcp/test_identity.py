@@ -18,21 +18,30 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, cast
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from datacron.mcp.identity import StdioCallerIdentityProvider
 
 
-def test_stdio_identity_uses_transport_context_only() -> None:
-    context = cast("Context[Any, Any, Any]", SimpleNamespace(client_id="client-42"))
+def test_stdio_identity_uses_v2_client_info_from_public_session() -> None:
+    context = cast(
+        "Context[Any, Any]",
+        SimpleNamespace(
+            session=SimpleNamespace(
+                client_params=SimpleNamespace(
+                    client_info=SimpleNamespace(name="client-42", version="2.0")
+                )
+            )
+        ),
+    )
     identity = StdioCallerIdentityProvider().identify(context)
-    assert identity.actor == "mcp-client:client-42"
+    assert identity.actor == "mcp-client:client-42/2.0"
     assert identity.transport == "stdio"
     assert identity.assurance == "local-process"
     assert identity.credential_verified is False
 
 
 def test_stdio_identity_has_explicit_unidentified_fallback() -> None:
-    context = cast("Context[Any, Any, Any]", SimpleNamespace())
+    context = cast("Context[Any, Any]", SimpleNamespace())
     identity = StdioCallerIdentityProvider().identify(context)
     assert identity.actor == "mcp-client:unidentified"

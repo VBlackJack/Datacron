@@ -19,7 +19,7 @@ import time
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 from pydantic import BaseModel, ConfigDict
 
 from datacron.contradictions import (
@@ -57,7 +57,7 @@ async def _contradiction_scan_impl(
     mode: ScanMode = "scan",
     detail: ScanDetail = "summary",
     proposal_token: str | None = None,
-    ctx: Context[Any, Any, Any] | None = None,
+    ctx: Context[Any, Any] | None = None,
     today: date | None = None,
 ) -> dict[str, Any]:
     """Scan or confirm without ever invoking a mutating tool."""
@@ -138,7 +138,7 @@ async def _contradiction_scan_impl(
 async def _elicit_first_candidate(
     app: DatacronApp,
     *,
-    ctx: Context[Any, Any, Any] | None,
+    ctx: Context[Any, Any] | None,
     candidates: list[Candidate],
     today: date | None,
 ) -> dict[str, Any] | None:
@@ -170,11 +170,13 @@ async def _elicit_first_candidate(
     return await confirm_proposal(app, proposal.token)
 
 
-def _client_supports_form_elicitation(ctx: Context[Any, Any, Any] | None) -> bool:
+def _client_supports_form_elicitation(ctx: Context[Any, Any] | None) -> bool:
     """Return whether the initialized client declared form elicitation."""
     if ctx is None:
         return False
-    client_params = ctx.request_context.session.client_params
+    if not ctx.session.can_send_request:
+        return False
+    client_params = ctx.session.client_params
     if client_params is None or client_params.capabilities.elicitation is None:
         return False
     return client_params.capabilities.elicitation.form is not None

@@ -11,13 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""FastMCP registration for the Datacron tool surface."""
+"""MCPServer registration for the Datacron tool surface."""
 
 from __future__ import annotations
 
 from typing import Any, Final, cast
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
@@ -58,32 +59,32 @@ from datacron.mcp.tools.write import (
 )
 
 _READ_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
-    readOnlyHint=True,
-    destructiveHint=False,
-    idempotentHint=False,
-    openWorldHint=False,
+    read_only_hint=True,
+    destructive_hint=False,
+    idempotent_hint=False,
+    open_world_hint=False,
 )
 _ADDITIVE_WRITE_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=False,
-    idempotentHint=False,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=False,
+    open_world_hint=False,
 )
 _DESTRUCTIVE_WRITE_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=False,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=False,
+    open_world_hint=False,
 )
 _REVERT_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=True,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=True,
+    open_world_hint=False,
 )
 
 
-def register_tools(server: FastMCP[Any], app: Any) -> None:
+def register_tools(server: MCPServer[Any], app: Any) -> None:
     """Attach the Sem-2 tools to ``server``.
 
     ``app`` is the :class:`DatacronApp` bundle; typed loosely to avoid a
@@ -227,7 +228,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         annotations=_READ_ANNOTATIONS,
     )
     async def contradiction_scan(
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         mode: ContradictionScanMode = "scan",
         detail: ContradictionScanDetail = "summary",
         proposal_token: str | None = None,
@@ -290,7 +291,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         origin: MemoryOrigin,
         confidence: MemoryConfidence,
         tags: list[str],
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         supersedes: list[str] | None = None,
         rejected: list[str] | None = None,
         last_verified: str | None = None,
@@ -330,7 +331,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         rel_path: str,
         heading: str,
         entry: str,
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         expected_hash: str | None = None,
     ) -> AppendJournalOutput:
         return cast(
@@ -363,7 +364,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
     )
     async def set_frontmatter(
         rel_path: str,
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         confidence: str | None = None,
         last_verified: str | None = None,
         supersedes: list[str] | None = None,
@@ -411,7 +412,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         rel_path: str,
         new_content: str,
         expected_hash: str,
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
     ) -> PatchNotePreambleOutput:
         return cast(
             "PatchNotePreambleOutput",
@@ -444,7 +445,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         rel_path: str,
         heading: str,
         new_content: str,
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         expected_hash: str | None = None,
         heading_level: int | None = None,
         heading_occurrence: int | None = None,
@@ -484,7 +485,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         rel_path: str,
         heading: str,
         new_heading: str,
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         expected_hash: str | None = None,
         heading_level: int | None = None,
         heading_occurrence: int | None = None,
@@ -521,7 +522,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
     async def delete_note_section(
         rel_path: str,
         heading: str,
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         expected_hash: str | None = None,
         heading_level: int | None = None,
         heading_occurrence: int | None = None,
@@ -553,7 +554,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
     async def revert_note(
         note: str,
         to_hash: str,
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         expected_hash: str | None = None,
     ) -> RevertNoteOutput:
         return cast(

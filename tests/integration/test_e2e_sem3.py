@@ -191,7 +191,7 @@ class TestSem3E2E:
     async def test_vault_map_resource(self, indexed_vault: Path, tmp_path: Path) -> None:
         session, streams = await _open_session(indexed_vault, tmp_path)
         try:
-            resource = await session.read_resource("datacron://vault/map")  # type: ignore[arg-type]
+            resource = await session.read_resource("datacron://vault/map")
         finally:
             await _close_session(session, streams)
         body = _resource_text(resource)
@@ -203,7 +203,7 @@ class TestSem3E2E:
     ) -> None:
         session, streams = await _open_session(indexed_vault, tmp_path)
         try:
-            resource = await session.read_resource("datacron://vault/info")  # type: ignore[arg-type]
+            resource = await session.read_resource("datacron://vault/info")
         finally:
             await _close_session(session, streams)
         info = json.loads(_resource_text(resource))
