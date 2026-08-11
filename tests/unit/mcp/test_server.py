@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import inspect
+import tomllib
 from pathlib import Path
 from typing import cast
 
@@ -31,10 +33,25 @@ from datacron.core.vault_writer import FilesystemVaultWriter, VaultLockBusyError
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
 from datacron.mcp.server import (
     SERVER_INSTRUCTIONS,
+    DatacronFastMCP,
     _startup_recover_operations,
     build_app,
     create_server,
 )
+
+
+def test_mcp_v1_dependency_is_explicitly_bounded() -> None:
+    pyproject_path = Path(__file__).parents[3] / "pyproject.toml"
+    pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+
+    assert "mcp>=1.28.1,<2" in pyproject["project"]["dependencies"]
+
+
+def test_datacron_fastmcp_uses_no_sdk_private_manager_or_context_access() -> None:
+    source = inspect.getsource(DatacronFastMCP)
+
+    for forbidden_access in ("_tool_manager", "_resource_manager", "get_context"):
+        assert forbidden_access not in source
 
 
 def test_server_instructions_include_memory_protocol() -> None:

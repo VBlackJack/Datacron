@@ -14,6 +14,7 @@ so the unit-test run stays fast; CI runs both suites.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -28,6 +29,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
 _DEMO_VAULT = Path(__file__).parents[1] / "fixtures" / "demo-vault"
+_GET_NOTE_OUTPUT_SCHEMA_SHA256 = "dd235cf4bbb29547d0f6a294334f065422422e3d3aac10e44d7454a0544279d3"
 
 
 @pytest.fixture
@@ -81,6 +83,7 @@ class TestMcpE2E:
         try:
             response = await session.list_tools()
             tool_names = {t.name for t in response.tools}
+            assert len(response.tools) == 17
             assert {
                 "list_notes",
                 "get_note",
@@ -92,6 +95,15 @@ class TestMcpE2E:
                 "audit_query",
                 "contradiction_scan",
             } <= tool_names
+            get_note = next(tool for tool in response.tools if tool.name == "get_note")
+            assert get_note.outputSchema is not None
+            encoded_schema = json.dumps(
+                get_note.outputSchema,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            assert hashlib.sha256(encoded_schema).hexdigest() == _GET_NOTE_OUTPUT_SCHEMA_SHA256
         finally:
             await _close_session(session, streams)
 
@@ -365,9 +377,14 @@ class TestMcpE2E:
                 "get_note", {"id_or_path": "nope.md", "format": "full"}
             )
             assert result.isError is True
+            assert result.structuredContent is None
             payload = json.loads(result.content[0].text)  # type: ignore[union-attr]
-            assert set(payload) == {"error"}
-            assert set(payload["error"]) == {"message", "type"}
+            assert payload == {
+                "error": {
+                    "message": f"Note not found: {vault / 'nope.md'}",
+                    "type": "FileNotFoundError",
+                }
+            }
         finally:
             await _close_session(session, streams)
 

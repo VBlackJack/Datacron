@@ -35,9 +35,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import wraps
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Final, cast, final
 
@@ -51,7 +53,9 @@ from mcp.types import (
     CallToolResult,
     ContentBlock,
     ErrorData,
+    Icon,
     TextContent,
+    ToolAnnotations,
 )
 from pydantic import AnyUrl
 
@@ -158,27 +162,70 @@ class DatacronApp:
 
 
 @final
+class _StructuredToolPayloadError(Exception):
+    """Carry a Datacron error payload across FastMCP's public call boundary."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        super().__init__("Datacron structured tool error")
+        self.payload = payload
+
+
+@final
 class DatacronFastMCP(FastMCP[DatacronApp]):
-    """FastMCP boundary preserving Datacron's structured tool errors."""
+    """FastMCP boundary preserving Datacron's public error contracts."""
+
+    def tool(
+        self,
+        name: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        annotations: ToolAnnotations | None = None,
+        icons: list[Icon] | None = None,
+        meta: dict[str, Any] | None = None,
+        structured_output: bool | None = None,
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a tool through FastMCP's public decorator with error wrapping."""
+        register = super().tool(
+            name=name,
+            title=title,
+            description=description,
+            annotations=annotations,
+            icons=icons,
+            meta=meta,
+            structured_output=structured_output,
+        )
+
+        def decorator(function: Callable[..., Any]) -> Callable[..., Any]:
+            @wraps(function)
+            async def wrapped(*args: Any, **kwargs: Any) -> Any:
+                pending = function(*args, **kwargs)
+                result = await pending if isawaitable(pending) else pending
+                if _is_structured_tool_error(result):
+                    raise _StructuredToolPayloadError(result)
+                return result
+
+            register(wrapped)
+            return function
+
+        return decorator
 
     async def call_tool(
         self,
         name: str,
         arguments: dict[str, Any],
     ) -> Sequence[ContentBlock] | dict[str, Any]:
-        """Validate success schemas and preserve JSON errors on failure."""
-        context = self.get_context()
-        tool = self._tool_manager.get_tool(name)
-        if tool is None:
-            raise ToolError(f"Unknown tool: {name}")
-
-        result = await tool.run(arguments, context=context, convert_result=False)
-        if _is_structured_tool_error(result):
+        """Delegate publicly while preserving stable structured tool errors."""
+        try:
+            return await super().call_tool(name, arguments)
+        except ToolError as exc:
+            cause = exc.__cause__
+            if not isinstance(cause, _StructuredToolPayloadError):
+                raise
             error_result = CallToolResult(
                 content=[
                     TextContent(
                         type="text",
-                        text=json.dumps(result, ensure_ascii=True, sort_keys=True),
+                        text=json.dumps(cause.payload, ensure_ascii=True, sort_keys=True),
                     )
                 ],
                 isError=True,
@@ -186,34 +233,19 @@ class DatacronFastMCP(FastMCP[DatacronApp]):
             # FastMCP's public return annotation predates its low-level support
             # for returning CallToolResult directly. The runtime accepts it.
             return cast("Sequence[ContentBlock] | dict[str, Any]", error_result)
-        return cast(
-            "Sequence[ContentBlock] | dict[str, Any]",
-            tool.fn_metadata.convert_result(result),
-        )
 
     async def read_resource(self, uri: AnyUrl | str) -> Iterable[ReadResourceContents]:
-        """Use standard JSON-RPC codes for missing and failed resources."""
+        """Map public FastMCP resource errors to stable JSON-RPC codes."""
         try:
-            resource = await self._resource_manager.get_resource(uri, context=self.get_context())
+            return await super().read_resource(uri)
         except ValueError as exc:
             raise McpError(
                 ErrorData(code=INVALID_PARAMS, message=f"Unknown resource: {uri}")
             ) from exc
-        if resource is None:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"Unknown resource: {uri}"))
-        try:
-            content = await resource.read()
         except ResourceError as exc:
             raise McpError(ErrorData(code=INTERNAL_ERROR, message="Resource read failed")) from exc
         except Exception as exc:
             raise McpError(ErrorData(code=INTERNAL_ERROR, message="Resource read failed")) from exc
-        return [
-            ReadResourceContents(
-                content=content,
-                mime_type=resource.mime_type,
-                meta=resource.meta,
-            )
-        ]
 
 
 def _is_structured_tool_error(result: object) -> bool:
