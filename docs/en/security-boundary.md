@@ -1,3 +1,9 @@
+---
+title: Datacron local security boundary
+verified: 2026-08-11
+tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
+---
+
 # Datacron local security boundary
 
 **English** | [Français](../fr/security-boundary.md)
@@ -95,8 +101,13 @@ boundaries.
 ## Audited tool capabilities
 
 The closed manifest is `datacron.mcp.security_manifest.MCP_TOOL_CAPABILITIES`.
-The blocking injection-surface property compares it with the live FastMCP registry.
+The blocking injection-surface property compares it with the live `MCPServer` registry.
 The only process-backed capability is `search_regex`, which starts the configured
 ripgrep executable with explicit caller-provided pattern and glob arguments. No MCP
 tool provides network access, arbitrary process execution, eval, or dynamic tool
 dispatch.
+
+The server boundary accesses no private SDK manager. It delegates to the public
+`MCPServer.call_tool` API, then translates an unknown tool name to JSON-RPC error `-32602`.
+An absent resource also uses `-32602`, while an internal resource-read failure is sanitized to
+`-32603` without exposing exception details.

@@ -108,5 +108,5 @@ def test_imports_do_not_parse_invalid_logging_environment(tmp_path: Path) -> Non
 
 
 def test_health_import_does_not_initialize_tool_registry(tmp_path: Path) -> None:
-    """Health assembly remains independent from the FastMCP tool package."""
+    """Health assembly remains independent from the MCPServer tool package."""
     _run_import(tmp_path, command=_HEALTH_IMPORT_COMMAND)

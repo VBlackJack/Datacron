@@ -1,3 +1,9 @@
+---
+title: Santé opérationnelle, mode lecture seule certifié et politique de durabilité
+verified: 2026-08-11
+tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
+---
+
 # Santé opérationnelle, mode lecture seule certifié et politique de durabilité
 
 **Français** | [English](../en/operational-health.md)
@@ -89,8 +95,8 @@ DATACRON_READ_ONLY=true
 ```
 
 Le registre MCP vivant omet alors `create_note_ai`, `append_journal`, `set_frontmatter`,
-`patch_note_section` et `revert_note`. Les appels directs échouent aussi avec
-`ReadOnlyModeError`.
+`patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section` et
+`revert_note`. Les appels directs échouent aussi avec `ReadOnlyModeError`.
 
 La garantie inclut le sidecar `.datacron` : la récupération au démarrage est sautée, l'index
 SQLite préconstruit s'ouvre avec `mode=ro&immutable=1`, et la réparation à la lecture de la
