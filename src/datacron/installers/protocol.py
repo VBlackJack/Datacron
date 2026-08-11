@@ -72,7 +72,20 @@ PROTOCOL_BLOCK: Final[str] = "\n".join(
         "- Persist durable confirmed facts, decisions, and user preferences proactively.",
         "- Use `create_note_ai` for a new durable topic.",
         "- Use `append_journal` when new information extends an existing topic.",
+        "- Use `patch_note_preamble` only for content strictly before the first ATX heading; "
+        "pass the exact expected_hash. The current write selector does not fully model "
+        "Setext headings, heading-like lines in fenced code, or closing-ATX normalization. "
+        "Uniform-EOL suffix bytes stay exact; mixed-EOL notes follow dominant-EOL policy.",
         "- Use `patch_note_section` only to replace a known outdated section.",
+        "- Use `rename_note_section` only for an outdated ATX H2-H6 section title; "
+        "selection and collision checks follow the current write selector; Setext "
+        "headings, heading-like lines in fenced code, and H1/note title renames are "
+        "outside the supported guarantee.",
+        "- Use `delete_note_section` only for an explicitly obsolete H2-H6 section; "
+        "prefer lifecycle invalidation when the fact must remain queryable.",
+        "- To select a duplicate section title, pass 1-based `heading_occurrence` with "
+        "`heading_level` and the exact expected_hash; the ordinal follows document "
+        "order for those hashed bytes. Do not use `chunk_id`.",
         "- Use `set_frontmatter` for verification, confidence, and fact lifecycle changes.",
         "- Prefer superseding or invalidating outdated facts over deleting history.",
         "- Use `contradiction_scan` to surface contradicting or refining sections across "

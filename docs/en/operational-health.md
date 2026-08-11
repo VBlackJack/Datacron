@@ -1,3 +1,9 @@
+---
+title: Operational health, certified read-only mode, and durability policy
+verified: 2026-08-11
+tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
+---
+
 # Operational health, certified read-only mode, and durability policy
 
 **English** | [Français](../fr/operational-health.md)
@@ -85,9 +91,9 @@ Set:
 DATACRON_READ_ONLY=true
 ```
 
-The live MCP registry then omits `create_note_ai`, `append_journal`,
-`set_frontmatter`, `patch_note_section`, and `revert_note`. Direct calls also fail
-with `ReadOnlyModeError`.
+The live MCP registry then omits `create_note_ai`, `append_journal`, `set_frontmatter`,
+`patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`, and
+`revert_note`. Direct calls also fail with `ReadOnlyModeError`.
 
 The guarantee includes the `.datacron` sidecar: startup recovery is skipped, the
 prebuilt SQLite index opens with `mode=ro&immutable=1`, and search read-repair is

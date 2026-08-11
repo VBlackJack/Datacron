@@ -1,3 +1,9 @@
+---
+title: User guide
+verified: 2026-08-11
+tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
+---
+
 # User guide
 
 **English** | [Français](../fr/user-guide.md)
@@ -45,7 +51,10 @@ versioned, and audited.
 | `create_note_ai` | Creates a new typed note without overwriting any existing file. |
 | `append_journal` | Adds an entry under an existing heading of a note. |
 | `set_frontmatter` | Updates lifecycle fields without touching the Markdown body. |
+| `patch_note_preamble` | Replaces or removes the preamble before the first ATX heading, with version control. |
 | `patch_note_section` | Replaces the content under an existing heading, with compare-and-set (CAS). |
+| `delete_note_section` | Explicitly removes an ATX H2-H6 section and its subtree. |
+| `rename_note_section` | Renames an ATX H2-H6 section heading without changing its content. |
 | `revert_note` | Restores the exact bytes of a version kept in history. |
 
 ### Supervise
@@ -55,6 +64,7 @@ versioned, and audited.
 | `get_health` | Real state: index freshness, integrity, checksum, durability, invariants. |
 | `get_note_history` | Metadata of a note's committed operations, without reading historical content. |
 | `audit_query` | Queries the operation journal by period, tool, or note, read-only. |
+| `contradiction_scan` | Scans for contradictions and proposes an explicit update without ever executing it. |
 
 Three MCP resources round out these tools: `datacron://vault/map` (vault map),
 `datacron://vault/info` (metadata), and `datacron://policy/active` (active policy).

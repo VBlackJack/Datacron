@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
+from mcp.client import Client
+from mcp.types import Implementation
 
 from datacron import __version__
 from datacron.core.config import Settings
@@ -36,8 +37,10 @@ from datacron.mcp.server import DatacronApp, build_app, create_server
 from datacron.mcp.tools import (
     _append_journal_impl,
     _create_note_ai_impl,
+    _delete_note_section_impl,
     _get_health_impl,
     _patch_note_section_impl,
+    _rename_note_section_impl,
     _revert_note_impl,
     _search_text_impl,
     _set_frontmatter_impl,
@@ -143,6 +146,8 @@ def _build_read_only_app(vault: Path) -> tuple[DatacronApp, SQLiteFTS5Store]:
 
 async def test_prop_read_only_blocks_writes(tmp_path: Path) -> None:
     """Certified mode removes mutators and leaves notes plus sidecar byte-identical."""
+    from datacron.mcp.tools import _patch_note_preamble_impl
+
     vault = tmp_path / "vault"
     vault.mkdir()
     _write_note(
@@ -158,9 +163,13 @@ async def test_prop_read_only_blocks_writes(tmp_path: Path) -> None:
     before = _snapshot(vault)
     app, _store = _build_read_only_app(vault)
     server = create_server(app)
-    low_level = cast("Any", server)._mcp_server
-    async with low_level.lifespan(low_level):
-        live_tools = {tool.name for tool in await server.list_tools()}
+    async with Client(
+        server,
+        mode="auto",
+        client_info=Implementation(name="operational-tests", version="2.0"),
+    ) as client:
+        listed_tools = await client.list_tools()
+        live_tools = {tool.name for tool in listed_tools.tools}
         results = [
             await _create_note_ai_impl(
                 app,
@@ -183,6 +192,23 @@ async def test_prop_read_only_blocks_writes(tmp_path: Path) -> None:
                 rel_path="note.md",
                 heading="Journal",
                 new_content="Denied patch.",
+            ),
+            await _patch_note_preamble_impl(
+                app,
+                rel_path="note.md",
+                new_content="Denied preamble.",
+                expected_hash="0" * 64,
+            ),
+            await _delete_note_section_impl(
+                app,
+                rel_path="note.md",
+                heading="Journal",
+            ),
+            await _rename_note_section_impl(
+                app,
+                rel_path="note.md",
+                heading="Journal",
+                new_heading="Renamed journal",
             ),
             await _revert_note_impl(app, note="note.md", to_hash="0" * 64),
         ]

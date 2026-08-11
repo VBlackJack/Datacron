@@ -35,8 +35,10 @@ from datacron.mcp.tools import (
     _append_journal_impl,
     _audit_query_impl,
     _create_note_ai_impl,
+    _delete_note_section_impl,
     _get_note_history_impl,
     _patch_note_section_impl,
+    _rename_note_section_impl,
     _revert_note_impl,
     _set_frontmatter_impl,
 )
@@ -95,9 +97,14 @@ async def test_prop_oplog_completeness(
     journal_entry: str,
 ) -> None:
     """Every acknowledged tool mutation has one exact, content-free audit line."""
+    from datacron.mcp.tools import _patch_note_preamble_impl
+
     vault = _fresh_vault(tmp_path)
     rel_path = "_memory/facts/oplog-completeness.md"
-    body = f"# Audit property\n\n## Target\n\nsecret-initial-{initial}\n\n## Journal\n\nStart.\n"
+    body = (
+        f"# Audit property\n\n## Target\n\nsecret-initial-{initial}\n\n"
+        f"## Journal\n\nStart.\n\n## Obsolete\n\nsecret-deleted-{journal_entry}\n"
+    )
     app, store = await _open_app(vault)
     try:
         created = await _create_note_ai_impl(
@@ -110,19 +117,34 @@ async def test_prop_oplog_completeness(
             tags=["audit"],
             actor="property-client",
         )
+        preamble = await _patch_note_preamble_impl(
+            app,
+            rel_path=rel_path,
+            new_content=f"secret-preamble-{initial}",
+            expected_hash=created["content_hash"],
+            actor="property-client",
+        )
         patched = await _patch_note_section_impl(
             app,
             rel_path=rel_path,
             heading="Target",
             new_content=f"secret-replacement-{replacement}",
-            expected_hash=created["content_hash"],
+            expected_hash=preamble["content_hash"],
+            actor="property-client",
+        )
+        renamed = await _rename_note_section_impl(
+            app,
+            rel_path=rel_path,
+            heading="Target",
+            new_heading="Renamed target",
+            expected_hash=patched["content_hash"],
             actor="property-client",
         )
         frontmatter = await _set_frontmatter_impl(
             app,
             rel_path=rel_path,
             confidence="medium",
-            expected_hash=patched["content_hash"],
+            expected_hash=renamed["content_hash"],
             actor="property-client",
         )
         appended = await _append_journal_impl(
@@ -133,23 +155,39 @@ async def test_prop_oplog_completeness(
             expected_hash=frontmatter["content_hash"],
             actor="property-client",
         )
+        deleted = await _delete_note_section_impl(
+            app,
+            rel_path=rel_path,
+            heading="Obsolete",
+            expected_hash=appended["content_hash"],
+            actor="property-client",
+        )
         records = await app.vault_writer.list_operations()
     finally:
         await store.close()
 
-    assert all("error" not in result for result in (created, patched, frontmatter, appended))
+    assert all(
+        "error" not in result
+        for result in (created, preamble, patched, renamed, frontmatter, appended, deleted)
+    )
     assert [record.tool for record in records] == [
         "create_note_ai",
+        "patch_note_preamble",
         "patch_note_section",
+        "rename_note_section",
         "set_frontmatter",
         "append_journal",
+        "delete_note_section",
     ]
-    assert len({record.operation_id for record in records}) == 4
+    assert records[-1].op == "delete_section"
+    assert records[1].op == "patch_preamble"
+    assert records[3].op == "rename_section"
+    assert len({record.operation_id for record in records}) == 7
     assert records[0].before_hash is None
     for previous, current in pairwise(records):
         assert current.before_hash == previous.after_hash
     final_bytes = (vault / rel_path).read_bytes()
-    assert records[-1].after_hash == sha256_bytes(final_bytes) == appended["content_hash"]
+    assert records[-1].after_hash == sha256_bytes(final_bytes) == deleted["content_hash"]
     assert [record.timestamp for record in records] == sorted(
         record.timestamp for record in records
     )
@@ -162,10 +200,12 @@ async def test_prop_oplog_completeness(
         assert sha256_bytes(history.read_bytes()) == record.before_hash
 
     raw_log = (vault / ".datacron" / "oplog" / "operations.jsonl").read_text(encoding="ascii")
-    assert len(raw_log.splitlines()) == 4
+    assert len(raw_log.splitlines()) == 7
+    assert f"secret-preamble-{initial}" not in raw_log
     assert f"secret-initial-{initial}" not in raw_log
     assert f"secret-replacement-{replacement}" not in raw_log
     assert f"secret-journal-{journal_entry}" not in raw_log
+    assert f"secret-deleted-{journal_entry}" not in raw_log
     assert all(json.loads(line) for line in raw_log.splitlines())
 
 

@@ -15,33 +15,109 @@
 
 from __future__ import annotations
 
+import inspect
+import tomllib
+from importlib.metadata import version
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
-from mcp.shared.exceptions import McpError
+from mcp import MCPError
+from mcp.client import Client
+from mcp.server import MCPServer
 from mcp.types import INVALID_PARAMS
 
 from datacron.core.config import Settings
+from datacron.core.hashing import sha256_bytes
+from datacron.core.operation_log import OperationRecord
 from datacron.core.paths import PathConfinementError, sidecar_index_db, sidecar_vault_config
-from datacron.core.vault_writer import OperationRecoveryError, VaultLockBusyError
+from datacron.core.vault_writer import FilesystemVaultWriter, VaultLockBusyError
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
 from datacron.mcp.server import (
     SERVER_INSTRUCTIONS,
+    DatacronMCPServer,
     _startup_recover_operations,
     build_app,
     create_server,
 )
 
 
+def test_mcp_v2_dependency_and_public_surface_are_explicit() -> None:
+    pyproject_path = Path(__file__).parents[3] / "pyproject.toml"
+    pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+
+    assert "mcp>=2,<3" in pyproject["project"]["dependencies"]
+    assert version("mcp").startswith("2.")
+
+    from mcp.client import Client
+    from mcp.server import MCPServer
+
+    assert Client is not None
+    assert MCPServer is not None
+
+
+def test_mcp_transport_sources_use_no_v1_or_private_sdk_surface() -> None:
+    repository_root = Path(__file__).parents[3]
+    production_paths = (
+        "src/datacron/mcp/server.py",
+        "src/datacron/mcp/identity.py",
+        "src/datacron/mcp/resources.py",
+        "src/datacron/mcp/tools/registry.py",
+        "src/datacron/mcp/tools/advisory.py",
+        "src/datacron/eval/transport.py",
+    )
+    forbidden_fragments = (
+        "mcp.server.fastmcp",
+        "mcp.client.session",
+        ".isError",
+        ".structuredContent",
+        ".inputSchema",
+        ".outputSchema",
+    )
+
+    for relative_path in production_paths:
+        source = (repository_root / relative_path).read_text(encoding="utf-8")
+        for forbidden_fragment in forbidden_fragments:
+            assert forbidden_fragment not in source, relative_path
+
+    private_server_name = "_mcp" + "_server"
+    property_source = (
+        repository_root / "tests/properties/test_operational_capabilities.py"
+    ).read_text(encoding="utf-8")
+    assert private_server_name not in property_source
+
+
+def test_datacron_mcp_server_uses_no_sdk_private_manager_or_context_access() -> None:
+    source = inspect.getsource(DatacronMCPServer)
+
+    for forbidden_access in ("_tool_manager", "_resource_manager", "get_context"):
+        assert forbidden_access not in source
+
+
 def test_server_instructions_include_memory_protocol() -> None:
     assert "create_note_ai" in SERVER_INSTRUCTIONS
+    assert "delete_note_section" in SERVER_INSTRUCTIONS
+    assert "rename_note_section" in SERVER_INSTRUCTIONS
+    assert "patch_note_preamble" in SERVER_INSTRUCTIONS
+    assert "current write selector" in SERVER_INSTRUCTIONS
+    assert "heading-like lines in fenced code" in SERVER_INSTRUCTIONS
+    assert "1-based heading_occurrence" in SERVER_INSTRUCTIONS
+    assert "exact expected_hash" in SERVER_INSTRUCTIONS
+    assert "document order" in SERVER_INSTRUCTIONS
+    assert "chunk_id" in SERVER_INSTRUCTIONS
+    assert "Setext" in SERVER_INSTRUCTIONS
+    assert "heading-like lines in fenced code" in SERVER_INSTRUCTIONS
+    assert "closing-ATX" in SERVER_INSTRUCTIONS
+    assert "dominant-EOL" in SERVER_INSTRUCTIONS
     assert "INIT.md" in SERVER_INSTRUCTIONS
     assert "sandbox-wrapped" in SERVER_INSTRUCTIONS
 
 
 @pytest.mark.asyncio
-async def test_tool_annotations_describe_local_effects(tmp_path: Path) -> None:
+async def test_rename_note_section_tool_annotations_describe_local_effects(
+    tmp_path: Path,
+) -> None:
     vault = tmp_path / "vault"
     vault.mkdir()
     app = build_app(
@@ -50,7 +126,7 @@ async def test_tool_annotations_describe_local_effects(tmp_path: Path) -> None:
     )
 
     annotations = {
-        tool.name: tool.annotations.model_dump(exclude_none=True)
+        tool.name: tool.annotations.model_dump(exclude_none=True, by_alias=True)
         for tool in await create_server(app).list_tools()
         if tool.annotations is not None
     }
@@ -80,7 +156,13 @@ async def test_tool_annotations_describe_local_effects(tmp_path: Path) -> None:
             "idempotentHint": False,
             "openWorldHint": False,
         }
-    for name in ("set_frontmatter", "patch_note_section"):
+    for name in (
+        "set_frontmatter",
+        "patch_note_preamble",
+        "patch_note_section",
+        "delete_note_section",
+        "rename_note_section",
+    ):
         assert annotations[name] == {
             "readOnlyHint": False,
             "destructiveHint": True,
@@ -96,7 +178,7 @@ async def test_tool_annotations_describe_local_effects(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
+async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compatible(
     tmp_path: Path,
 ) -> None:
     vault = tmp_path / "vault"
@@ -116,23 +198,26 @@ async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
         "append_journal",
         "set_frontmatter",
         "patch_note_section",
+        "patch_note_preamble",
+        "delete_note_section",
+        "rename_note_section",
         "revert_note",
     }
 
     for name in structured_names:
-        schema = tools[name].outputSchema
+        schema = tools[name].output_schema
         assert schema is not None
         assert schema.get("additionalProperties") is not True
         assert schema.get("properties")
         Draft202012Validator.check_schema(schema)
 
-    assert tools["get_note"].inputSchema["properties"]["format"]["enum"] == [
+    assert tools["get_note"].input_schema["properties"]["format"]["enum"] == [
         "full",
         "map",
         "chunk",
     ]
-    create_properties = tools["create_note_ai"].inputSchema["properties"]
-    set_frontmatter_properties = tools["set_frontmatter"].inputSchema["properties"]
+    create_properties = tools["create_note_ai"].input_schema["properties"]
+    set_frontmatter_properties = tools["set_frontmatter"].input_schema["properties"]
     assert set(create_properties["origin"]["enum"]) == {"ai", "human", "merged"}
     assert set(create_properties["confidence"]["enum"]) == {
         "high",
@@ -142,10 +227,10 @@ async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
     }
     assert "rejected" in create_properties
     assert "rejected" in set_frontmatter_properties
-    contradiction_properties = tools["contradiction_scan"].inputSchema["properties"]
+    contradiction_properties = tools["contradiction_scan"].input_schema["properties"]
     assert contradiction_properties["mode"]["enum"] == ["scan", "confirm"]
     assert contradiction_properties["detail"]["enum"] == ["summary", "full"]
-    health_properties = tools["get_health"].inputSchema["properties"]
+    health_properties = tools["get_health"].input_schema["properties"]
     assert health_properties["detail"]["enum"] == ["summary", "full"]
     assert health_properties["detail"]["default"] == "summary"
     assert health_properties["limit"]["default"] == 0
@@ -157,6 +242,125 @@ async def test_structured_tool_schemas_are_json_schema_2020_12_compatible(
     assert "candidate_paths are sanitized display metadata" in health_description
     assert "Findings do not include line numbers" in health_description
     assert "actionable" not in health_description
+    delete_tool = tools["delete_note_section"]
+    rename_tool = tools["rename_note_section"]
+    assert len(tools) == 17
+    preamble_tool = tools["patch_note_preamble"]
+    assert set(preamble_tool.input_schema["properties"]) == {
+        "rel_path",
+        "new_content",
+        "expected_hash",
+    }
+    assert preamble_tool.input_schema["required"] == [
+        "rel_path",
+        "new_content",
+        "expected_hash",
+    ]
+    assert preamble_tool.input_schema["properties"]["rel_path"]["type"] == "string"
+    assert preamble_tool.input_schema["properties"]["new_content"]["type"] == "string"
+    assert preamble_tool.input_schema["properties"]["expected_hash"]["type"] == "string"
+    preamble_output_schema = preamble_tool.output_schema
+    assert preamble_output_schema is not None
+    assert set(preamble_output_schema["properties"]) == {
+        "patched",
+        "content_hash",
+        "indexed",
+    }
+    assert preamble_output_schema["required"] == ["patched", "content_hash", "indexed"]
+    preamble_ref = preamble_output_schema["properties"]["patched"]["$ref"].split("/")[-1]
+    assert preamble_output_schema["$defs"][preamble_ref]["required"] == ["rel_path"]
+    assert set(delete_tool.input_schema["properties"]) == {
+        "rel_path",
+        "heading",
+        "expected_hash",
+        "heading_level",
+        "heading_occurrence",
+    }
+    assert delete_tool.input_schema["required"] == ["rel_path", "heading"]
+    assert delete_tool.input_schema["properties"]["rel_path"]["type"] == "string"
+    assert delete_tool.input_schema["properties"]["heading"]["type"] == "string"
+    assert delete_tool.input_schema["properties"]["expected_hash"]["default"] is None
+    assert delete_tool.input_schema["properties"]["heading_level"]["default"] is None
+    assert delete_tool.input_schema["properties"]["heading_occurrence"]["default"] is None
+    delete_output_schema = delete_tool.output_schema
+    patch_output_schema = tools["patch_note_section"].output_schema
+    assert delete_output_schema is not None
+    assert patch_output_schema is not None
+    assert set(delete_output_schema["properties"]) == {
+        "deleted",
+        "content_hash",
+        "indexed",
+    }
+    assert delete_output_schema["required"] == ["deleted", "content_hash", "indexed"]
+    patch_tool = tools["patch_note_section"]
+    assert set(patch_tool.input_schema["properties"]) == {
+        "rel_path",
+        "heading",
+        "new_content",
+        "expected_hash",
+        "heading_level",
+        "heading_occurrence",
+    }
+    assert patch_tool.input_schema["required"] == [
+        "rel_path",
+        "heading",
+        "new_content",
+    ]
+    assert patch_output_schema["required"] == [
+        "patched",
+        "content_hash",
+        "indexed",
+    ]
+    assert set(rename_tool.input_schema["properties"]) == {
+        "rel_path",
+        "heading",
+        "new_heading",
+        "expected_hash",
+        "heading_level",
+        "heading_occurrence",
+    }
+    assert rename_tool.input_schema["required"] == ["rel_path", "heading", "new_heading"]
+    assert rename_tool.input_schema["properties"]["rel_path"]["type"] == "string"
+    assert rename_tool.input_schema["properties"]["heading"]["type"] == "string"
+    assert rename_tool.input_schema["properties"]["new_heading"]["type"] == "string"
+    assert rename_tool.input_schema["properties"]["expected_hash"]["default"] is None
+    assert rename_tool.input_schema["properties"]["heading_level"]["default"] is None
+    assert rename_tool.input_schema["properties"]["heading_occurrence"]["default"] is None
+    rename_output_schema = rename_tool.output_schema
+    assert rename_output_schema is not None
+    assert set(rename_output_schema["properties"]) == {
+        "renamed",
+        "content_hash",
+        "indexed",
+    }
+    assert rename_output_schema["required"] == ["renamed", "content_hash", "indexed"]
+    for tool_name, output_name, required in (
+        (
+            "patch_note_section",
+            "patched",
+            ["rel_path", "heading", "level"],
+        ),
+        (
+            "delete_note_section",
+            "deleted",
+            ["rel_path", "heading", "level"],
+        ),
+        (
+            "rename_note_section",
+            "renamed",
+            ["rel_path", "old_heading", "new_heading", "level"],
+        ),
+    ):
+        tool = tools[tool_name]
+        occurrence_schema = tool.input_schema["properties"]["heading_occurrence"]
+        assert occurrence_schema["default"] is None
+        assert occurrence_schema["anyOf"] == [{"type": "integer"}, {"type": "null"}]
+        output_schema = tool.output_schema
+        assert output_schema is not None
+        reference = output_schema["properties"][output_name]["$ref"].split("/")[-1]
+        selected_schema = output_schema["$defs"][reference]
+        assert selected_schema["properties"]["heading_occurrence"]["type"] == "integer"
+        assert selected_schema["required"] == required
 
 
 @pytest.mark.asyncio
@@ -168,14 +372,70 @@ async def test_missing_resource_uses_invalid_params(tmp_path: Path) -> None:
         vault_root=vault,
     )
 
-    with pytest.raises(McpError) as error:
+    with pytest.raises(MCPError) as error:
         await create_server(app).read_resource("datacron://vault/missing")
 
     assert error.value.error.code == INVALID_PARAMS
 
 
 @pytest.mark.asyncio
-async def test_write_tool_descriptions_lead_with_usage_trigger(tmp_path: Path) -> None:
+async def test_unknown_tool_uses_invalid_params_without_private_manager(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    app = build_app(
+        settings=Settings(read_paths=[vault], vault_root=vault),
+        vault_root=vault,
+    )
+
+    with pytest.raises(MCPError) as error:
+        await create_server(app).call_tool("missing_tool", {})
+
+    assert error.value.error.code == INVALID_PARAMS
+
+
+@pytest.mark.asyncio
+async def test_tool_removed_after_public_listing_still_uses_invalid_params(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A public remove between list and lookup must not become a tool result."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    app = build_app(
+        settings=Settings(read_paths=[vault], vault_root=vault),
+        vault_root=vault,
+    )
+    server = create_server(app)
+
+    async def transient_tool() -> dict[str, bool]:
+        return {"called": True}
+
+    server.add_tool(transient_tool, name="transient_tool")
+    listed = await server.list_tools()
+    assert "transient_tool" in {tool.name for tool in listed}
+    sdk_call_tool = MCPServer.call_tool
+
+    async def remove_then_lookup(
+        current_server: MCPServer[Any],
+        name: str,
+        arguments: dict[str, Any],
+        context: Any = None,
+    ) -> Any:
+        current_server.remove_tool(name)
+        return await sdk_call_tool(current_server, name, arguments, context)
+
+    monkeypatch.setattr(MCPServer, "call_tool", remove_then_lookup)
+    async with Client(server, mode="auto") as client:
+        with pytest.raises(MCPError) as error:
+            await client.call_tool("transient_tool", {})
+
+    assert error.value.code == INVALID_PARAMS
+
+
+@pytest.mark.asyncio
+async def test_rename_note_section_write_descriptions_lead_with_usage_trigger(
+    tmp_path: Path,
+) -> None:
     vault = tmp_path / "vault"
     vault.mkdir()
     app = build_app(
@@ -201,6 +461,36 @@ async def test_write_tool_descriptions_lead_with_usage_trigger(tmp_path: Path) -
     )
     for name in ("create_note_ai", "set_frontmatter"):
         assert "'option -- reason'" in (descriptions[name] or "")
+    patch_description = descriptions["patch_note_section"]
+    assert patch_description is not None
+    assert "refuses a level-1 heading that contains subsections" in patch_description
+    preamble_description = descriptions["patch_note_preamble"]
+    assert preamble_description is not None
+    assert "strictly before the first ATX heading" in preamble_description
+    assert "current write selector" in preamble_description
+    assert "Setext" in preamble_description
+    assert "heading-like lines in fenced code" in preamble_description
+    assert "closing-ATX" in preamble_description
+    assert "dominant-EOL" in preamble_description
+    assert "exact expected_hash" in preamble_description
+    delete_description = descriptions["delete_note_section"]
+    assert delete_description is not None
+    assert "H2-H6" in delete_description
+    assert "lifecycle invalidation" in delete_description
+    rename_description = descriptions["rename_note_section"]
+    assert rename_description is not None
+    assert "ATX H2-H6" in rename_description
+    assert "Setext" in rename_description
+    assert "frontmatter title" in rename_description
+    assert "current write selector" in rename_description
+    assert "collisions recognized by the same selector" in rename_description
+    assert "heading-like lines in fenced code" in rename_description
+    for description in (patch_description, delete_description, rename_description):
+        assert "1-based heading_occurrence" in description
+        assert "heading_level" in description
+        assert "exact expected_hash" in description
+        assert "document order" in description
+        assert "chunk_id" in description
 
 
 class TestBuildAppReadPaths:
@@ -299,10 +589,44 @@ class TestStartupRecovery:
         app = build_app(settings=settings, vault_root=vault)
 
         async def _broken_recover() -> int:
-            raise OperationRecoveryError("history is corrupt")
+            raise OSError("unexpected disk failure")
 
         monkeypatch.setattr(app.vault_writer, "recover_operations", _broken_recover)
 
-        # Only lock contention is downgraded; genuine recovery failures still abort.
-        with pytest.raises(OperationRecoveryError):
+        # Only classified recovery blocks and lock contention are downgraded.
+        with pytest.raises(OSError, match="unexpected disk failure"):
             await _startup_recover_operations(app)
+
+    @pytest.mark.asyncio
+    async def test_irreconcilable_pending_does_not_abort_startup(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        settings = Settings(read_paths=[vault], write_paths=[vault], vault_root=vault)
+        app = build_app(settings=settings, vault_root=vault)
+        writer = cast(
+            "FilesystemVaultWriter",
+            vars(app.vault_writer)["_delegate"],
+        )
+        record = OperationRecord(
+            operation_id="startup-blocked-operation",
+            timestamp="2026-08-10T00:00:00+00:00",
+            op="patch_section",
+            tool="patch_note_section",
+            note_id=None,
+            rel_path="missing.md",
+            before_hash=sha256_bytes(b"before\n"),
+            after_hash=sha256_bytes(b"after\n"),
+            actor="startup-test",
+            parameters={},
+            history_stored=True,
+        )
+        writer._operation_journal.write_pending(record)
+
+        await _startup_recover_operations(app)
+
+        assert writer.recovery_blocked[0].operation_id == record.operation_id
+        assert "Startup operation-log recovery blocked" in caplog.text

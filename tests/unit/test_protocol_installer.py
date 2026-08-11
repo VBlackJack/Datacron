@@ -748,9 +748,28 @@ def test_protocol_block_has_single_marked_source() -> None:
 
     assert lines[0] == PROTOCOL_MARKER_BEGIN
     assert lines[-1] == PROTOCOL_MARKER_END
-    assert 14 <= len(lines) <= 18
+    assert 14 <= len(lines) <= 21
     assert "search_text" in PROTOCOL_BLOCK
     assert "create_note_ai" in PROTOCOL_BLOCK
     assert "contradiction_scan" in PROTOCOL_BLOCK
+    assert "delete_note_section" in PROTOCOL_BLOCK
+    assert "rename_note_section" in PROTOCOL_BLOCK
+    assert "patch_note_preamble" in PROTOCOL_BLOCK
+    assert "H2-H6" in PROTOCOL_BLOCK
+    assert "ATX" in PROTOCOL_BLOCK
+    assert "Setext" in PROTOCOL_BLOCK
+    assert "note title" in PROTOCOL_BLOCK
+    assert "current write selector" in PROTOCOL_BLOCK
+    assert "heading-like lines in fenced code" in PROTOCOL_BLOCK
+    assert "closing-ATX" in PROTOCOL_BLOCK
+    assert "dominant-EOL" in PROTOCOL_BLOCK
+    assert "strictly before the first ATX heading" in PROTOCOL_BLOCK
+    assert "heading_occurrence" in PROTOCOL_BLOCK
+    assert "1-based" in PROTOCOL_BLOCK
+    assert "heading_level" in PROTOCOL_BLOCK
+    assert "exact expected_hash" in PROTOCOL_BLOCK
+    assert "document order" in PROTOCOL_BLOCK
+    assert "chunk_id" in PROTOCOL_BLOCK
+    assert "lifecycle invalidation" in PROTOCOL_BLOCK
     assert "indexed: true" in PROTOCOL_BLOCK
     assert "datacron reindex" in PROTOCOL_BLOCK

@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Required, TypeAlias
+from typing import Any, Literal, NotRequired, Required, TypeAlias
 
 from typing_extensions import TypedDict
 
@@ -407,18 +407,68 @@ class SetFrontmatterOutput(TypedDict):
     indexed: bool
 
 
+class PatchedPreambleOutput(TypedDict):
+    """Note selected by a successful preamble patch."""
+
+    rel_path: str
+
+
+class PatchNotePreambleOutput(TypedDict):
+    """Successful ``patch_note_preamble`` payload."""
+
+    patched: PatchedPreambleOutput
+    content_hash: str
+    indexed: bool
+
+
 class PatchedSectionOutput(TypedDict):
     """Section selected by a successful patch."""
 
     rel_path: str
     heading: str
     level: int
+    heading_occurrence: NotRequired[int]
 
 
 class PatchNoteSectionOutput(TypedDict):
     """Successful ``patch_note_section`` payload."""
 
     patched: PatchedSectionOutput
+    content_hash: str
+    indexed: bool
+
+
+class DeletedSectionOutput(TypedDict):
+    """Section selected by a successful deletion."""
+
+    rel_path: str
+    heading: str
+    level: int
+    heading_occurrence: NotRequired[int]
+
+
+class DeleteNoteSectionOutput(TypedDict):
+    """Successful ``delete_note_section`` payload."""
+
+    deleted: DeletedSectionOutput
+    content_hash: str
+    indexed: bool
+
+
+class RenamedSectionOutput(TypedDict):
+    """Section title changed by a successful rename."""
+
+    rel_path: str
+    old_heading: str
+    new_heading: str
+    level: int
+    heading_occurrence: NotRequired[int]
+
+
+class RenameNoteSectionOutput(TypedDict):
+    """Successful ``rename_note_section`` payload."""
+
+    renamed: RenamedSectionOutput
     content_hash: str
     indexed: bool
 

@@ -1,10 +1,16 @@
+---
+title: Datacron - Contrat public du vault et du serveur MCP
+verified: 2026-08-11
+tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
+---
+
 # Datacron - Contrat public du vault et du serveur MCP
 
 **Français** | [English](../en/spec.md)
 
 > **Statut** : Spec v2.0 - normative, synchronisée avec `main`
 > **Auteur** : Julien Bombled
-> **Date** : 2026-07-21
+> **Date** : 2026-08-11
 > **Remplace** : v1.1 (2026-05-17)
 > **Licence** : [Apache 2.0](../../LICENSE)
 > **Portée** : Ce document définit les formats, invariants et surfaces observables de
@@ -203,11 +209,11 @@ réconcilier une opération interrompue sans dupliquer un enregistrement déjà 
 
 ---
 
-## 9. Surface des 14 tools MCP
+## 9. Surface des tools MCP
 
-En mode standard, le serveur enregistre 14 tools. En mode certifié read-only
-(`DATACRON_READ_ONLY=true`), les cinq tools mutateurs sont retirés et neuf tools restent
-exposés.
+En mode standard, le serveur enregistre exactement le manifeste fermé décrit ci-dessous. En
+mode certifié read-only (`DATACRON_READ_ONLY=true`), tous les tools mutateurs sont retirés et
+seuls les tools de lecture, advisory et opérationnels restent exposés.
 
 | Catégorie | Tool | Contrat observable |
 |---|---|---|
@@ -221,7 +227,10 @@ exposés.
 | Écriture | `create_note_ai` | Crée une note mémoire sans overwrite |
 | Écriture | `append_journal` | Ajoute une entrée sous un heading d'une note existante |
 | Écriture | `set_frontmatter` | Modifie uniquement les champs de cycle de vie autorisés et `updated` |
+| Écriture | `patch_note_preamble` | Remplace ou supprime le préambule avant le premier titre ATX reconnu |
 | Écriture | `patch_note_section` | Remplace le contenu sous un heading existant en conservant la ligne du heading |
+| Écriture | `delete_note_section` | Supprime explicitement une section ATX H2-H6 et son sous-arbre |
+| Écriture | `rename_note_section` | Renomme un titre ATX H2-H6 sans modifier son contenu |
 | Écriture | `revert_note` | Restaure les octets exacts d'une version d'historique adressée par hash |
 | Opérationnel | `get_note_history` | Liste les métadonnées d'opérations validées d'une note sans lire les anciens octets |
 | Opérationnel | `audit_query` | Filtre le journal validé par période, tool ou note sans le modifier |
@@ -234,7 +243,7 @@ de récupération sont assainis et expurgés selon la même politique.
 
 ## 10. Write tools, allowlist, CAS et historique
 
-Les cinq write tools sont opt-in au niveau des effets:
+Les write tools sont opt-in au niveau des effets:
 
 - `DATACRON_READ_ONLY=true` les retire de la surface MCP;
 - sinon ils sont enregistrés, mais une allowlist `DATACRON_WRITE_PATHS` vide rend toute cible
@@ -242,9 +251,10 @@ Les cinq write tools sont opt-in au niveau des effets:
 - chaque cible doit être dans le vault et sous au moins une racine de l'allowlist;
 - le mode de durabilité doit autoriser l'écriture.
 
-Chaque write tool accepte un `expected_hash` optionnel. Lorsqu'il est fourni, l'écriture échoue
-si le SHA-256 des octets courants diffère: c'est le compare-and-swap (CAS). Une création refuse
-toujours d'écraser un fichier existant.
+Chaque mutation de note prend en charge le compare-and-swap (CAS) par `expected_hash`.
+`patch_note_preamble` exige toujours ce hash ; les autres tools le rendent optionnel sauf quand
+leur sélecteur d'occurrence l'exige. Lorsque le hash est fourni, l'écriture échoue si le SHA-256
+des octets courants diffère. Une création refuse toujours d'écraser un fichier existant.
 
 Lorsqu'une mutation cible une note existante, elle stocke les octets antérieurs par SHA-256 en
 mode `history_mode=full`. Toute mutation validée écrit un manifeste pending, remplace ou crée
@@ -306,13 +316,32 @@ est exclu de `datacron protocol install`, car aucun fichier d'instructions globa
 ## 13. Transport stdio
 
 Le transport serveur exposé est MCP sur stdio. `datacron mcp serve` et le point d'entrée
-`datacron-mcp` lancent la boucle FastMCP stdio et s'arrêtent lorsque le client se déconnecte ou
-que le processus est interrompu.
+`datacron-mcp` lancent la boucle `MCPServer` du SDK Python MCP v2 (`mcp>=2,<3`) et s'arrêtent
+lorsque le client se déconnecte ou que le processus est interrompu.
 
 Le serveur n'ouvre aucun listener réseau et la CLI actuelle n'expose pas de transport HTTP.
 Une installation Python configure l'exécutable `datacron-mcp` sans argument; un binaire frozen
 configure son propre exécutable avec les arguments `mcp`, `serve`. Les deux formes transmettent
 les variables d'environnement du vault.
+
+Le même serveur stdio prend en charge le protocole moderne final `2026-07-28` et le mode legacy
+`2025-11-25`, sans flag installateur distinct. Les tests stdio réels couvrent les deux modes.
+Datacron n'active aucun transport HTTP du SDK.
+
+Un outil inconnu et une ressource absente renvoient l'erreur JSON-RPC `-32602`. Le serveur
+préserve ce contrat pour les outils par une traduction après le lookup public
+`MCPServer.call_tool`, sans gestionnaire privé. Une panne interne de ressource est assainie en
+`-32603`. Les erreurs de validation d'un outil connu restent un résultat d'outil avec le champ
+wire `isError=true`. Seules les exceptions métier Datacron transformées par le wrapper
+conservent le payload texte stable `{"error": {"type": ..., "message": ...}}`. Les erreurs
+SDK/protocole restent distinctes.
+
+L'elicitation push via `ctx.elicit()` exige une session legacy `2025-11-25` dotée d'un
+back-channel. Sur `2026-07-28`, `contradiction_scan` ne tente pas ce push : il retourne son scan
+normal et laisse toute confirmation à un appel explicite ultérieur.
+
+Références officielles : [publication finale MCP 2026-07-28](https://blog.modelcontextprotocol.io/posts/2026-07-28/)
+et [nouveautés du SDK Python MCP v2](https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/whats-new.md).
 
 ---
 

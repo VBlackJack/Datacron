@@ -582,16 +582,26 @@ async def test_target_change_before_confirmation_refuses_without_write(
 
 
 class _FakeContext:
-    def __init__(self, action: str, *, form_capability: bool = True) -> None:
+    def __init__(
+        self,
+        action: str,
+        *,
+        form_capability: bool = True,
+        can_send_request: bool = True,
+        protocol_version: str = "2025-11-25",
+    ) -> None:
         form = object() if form_capability else None
-        self.request_context = SimpleNamespace(
-            session=SimpleNamespace(
-                client_params=SimpleNamespace(
-                    capabilities=SimpleNamespace(
-                        elicitation=SimpleNamespace(form=form),
-                    )
+        self.session = SimpleNamespace(
+            can_send_request=can_send_request,
+            protocol_version=protocol_version,
+            client_params=SimpleNamespace(
+                capabilities=SimpleNamespace(
+                    elicitation=SimpleNamespace(form=form),
                 )
-            )
+            ),
+        )
+        self.request_context = SimpleNamespace(
+            session=self.session,
         )
         self.action = action
         self.calls = 0
@@ -604,6 +614,54 @@ class _FakeContext:
         else:
             data = None
         return SimpleNamespace(action=self.action, data=data)
+
+
+async def test_modern_auto_context_without_back_channel_skips_elicitation(
+    contradiction_app: tuple[DatacronApp, Path],
+) -> None:
+    app, vault = contradiction_app
+    _write_candidate_pair(
+        vault,
+        source_content=(
+            "CORRECTION: The Windows engineering employer is Worldline and replaces "
+            "the old Magellan statement for the platform team."
+        ),
+    )
+    baseline = await _contradiction_scan_impl(app, today=_TODAY)
+    ctx = _FakeContext(
+        "accept",
+        can_send_request=False,
+        protocol_version="2026-07-28",
+    )
+
+    result = await _contradiction_scan_impl(app, ctx=cast("Any", ctx), today=_TODAY)
+
+    assert result["mode"] == "scan"
+    assert result["candidates"] == baseline["candidates"]
+    assert ctx.calls == 0
+
+
+async def test_legacy_context_with_back_channel_preserves_elicitation(
+    contradiction_app: tuple[DatacronApp, Path],
+) -> None:
+    app, vault = contradiction_app
+    _write_candidate_pair(
+        vault,
+        source_content=(
+            "CORRECTION: The Windows engineering employer is Worldline and replaces "
+            "the old Magellan statement for the platform team."
+        ),
+    )
+    ctx = _FakeContext(
+        "decline",
+        can_send_request=True,
+        protocol_version="2025-11-25",
+    )
+
+    result = await _contradiction_scan_impl(app, ctx=cast("Any", ctx), today=_TODAY)
+
+    assert result["elicitation_action"] == "decline"
+    assert ctx.calls == 1
 
 
 @pytest.mark.parametrize("action", ["decline", "cancel"])

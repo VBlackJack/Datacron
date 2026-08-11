@@ -11,13 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""FastMCP registration for the Datacron tool surface."""
+"""MCPServer registration for the Datacron tool surface."""
 
 from __future__ import annotations
 
 from typing import Any, Final, cast
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
@@ -27,6 +28,7 @@ from datacron.mcp.tool_contract import (
     ContradictionScanMode,
     ContradictionScanOutput,
     CreateNoteOutput,
+    DeleteNoteSectionOutput,
     GetHealthOutput,
     GetNoteFormat,
     GetNoteOutput,
@@ -34,7 +36,9 @@ from datacron.mcp.tool_contract import (
     ListNotesOutput,
     MemoryConfidence,
     MemoryOrigin,
+    PatchNotePreambleOutput,
     PatchNoteSectionOutput,
+    RenameNoteSectionOutput,
     RevertNoteOutput,
     SearchTextOutput,
     SetFrontmatterOutput,
@@ -46,38 +50,41 @@ from datacron.mcp.tools.search import _get_backlinks_impl, _search_regex_impl, _
 from datacron.mcp.tools.write import (
     _append_journal_impl,
     _create_note_ai_impl,
+    _delete_note_section_impl,
+    _patch_note_preamble_impl,
     _patch_note_section_impl,
+    _rename_note_section_impl,
     _revert_note_impl,
     _set_frontmatter_impl,
 )
 
 _READ_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
-    readOnlyHint=True,
-    destructiveHint=False,
-    idempotentHint=False,
-    openWorldHint=False,
+    read_only_hint=True,
+    destructive_hint=False,
+    idempotent_hint=False,
+    open_world_hint=False,
 )
 _ADDITIVE_WRITE_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=False,
-    idempotentHint=False,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=False,
+    open_world_hint=False,
 )
 _DESTRUCTIVE_WRITE_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=False,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=False,
+    open_world_hint=False,
 )
 _REVERT_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=True,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=True,
+    open_world_hint=False,
 )
 
 
-def register_tools(server: FastMCP[Any], app: Any) -> None:
+def register_tools(server: MCPServer[Any], app: Any) -> None:
     """Attach the Sem-2 tools to ``server``.
 
     ``app`` is the :class:`DatacronApp` bundle; typed loosely to avoid a
@@ -221,7 +228,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         annotations=_READ_ANNOTATIONS,
     )
     async def contradiction_scan(
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         mode: ContradictionScanMode = "scan",
         detail: ContradictionScanDetail = "summary",
         proposal_token: str | None = None,
@@ -284,7 +291,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         origin: MemoryOrigin,
         confidence: MemoryConfidence,
         tags: list[str],
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         supersedes: list[str] | None = None,
         rejected: list[str] | None = None,
         last_verified: str | None = None,
@@ -324,7 +331,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         rel_path: str,
         heading: str,
         entry: str,
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         expected_hash: str | None = None,
     ) -> AppendJournalOutput:
         return cast(
@@ -357,7 +364,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
     )
     async def set_frontmatter(
         rel_path: str,
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         confidence: str | None = None,
         last_verified: str | None = None,
         supersedes: list[str] | None = None,
@@ -387,6 +394,38 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         )
 
     @server.tool(
+        name="patch_note_preamble",
+        title="Patch note preamble",
+        description=(
+            "Use this to replace or remove content strictly before the first ATX heading "
+            "recognized by the current write selector. Pass the note's exact expected_hash "
+            "for CAS. Empty or whitespace-only new_content removes the preamble. The first "
+            "heading and all following content preserve exact bytes when the file uses "
+            "uniform line endings; mixed-EOL files follow the existing global dominant-EOL "
+            "normalization. Notes without a recognized ATX heading are refused fail-closed. "
+            "Setext headings, heading-like lines in fenced code, and closing-ATX "
+            "normalization are outside the supported guarantee."
+        ),
+        annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
+    )
+    async def patch_note_preamble(
+        rel_path: str,
+        new_content: str,
+        expected_hash: str,
+        ctx: Context[Any, Any],
+    ) -> PatchNotePreambleOutput:
+        return cast(
+            "PatchNotePreambleOutput",
+            await _patch_note_preamble_impl(
+                app,
+                rel_path=rel_path,
+                new_content=new_content,
+                expected_hash=expected_hash,
+                actor=app.identity_provider.identify(ctx).actor,
+            ),
+        )
+
+    @server.tool(
         name="patch_note_section",
         title="Patch note section",
         description=(
@@ -394,7 +433,11 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
             "a note. Replace the content under one existing Markdown heading. Pass the "
             "note's current content_hash as expected_hash for CAS. The operation "
             "preserves the heading line and non-target sections, stores exact prior "
-            "history, and writes atomically."
+            "history, and writes atomically. It refuses a level-1 heading that contains "
+            "subsections; patch a lower-level heading instead. For duplicate titles, "
+            "pass 1-based heading_occurrence with heading_level and the exact "
+            "expected_hash; the ordinal follows document order for those hashed bytes. "
+            "Do not use chunk_id."
         ),
         annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
     )
@@ -402,9 +445,10 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
         rel_path: str,
         heading: str,
         new_content: str,
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         expected_hash: str | None = None,
         heading_level: int | None = None,
+        heading_occurrence: int | None = None,
     ) -> PatchNoteSectionOutput:
         return cast(
             "PatchNoteSectionOutput",
@@ -415,6 +459,83 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
                 new_content=new_content,
                 expected_hash=expected_hash,
                 heading_level=heading_level,
+                heading_occurrence=heading_occurrence,
+                actor=app.identity_provider.identify(ctx).actor,
+            ),
+        )
+
+    @server.tool(
+        name="rename_note_section",
+        title="Rename note section",
+        description=(
+            "Use this only to rename an outdated ATX H2-H6 Markdown section title "
+            "recognized by the current write selector, without changing its level, "
+            "content, or subordinate headings. Pass the note's current content_hash as "
+            "expected_hash for CAS. It refuses H1 because frontmatter title "
+            "synchronization is outside this tool and refuses collisions recognized by "
+            "the same selector. Setext headings and heading-like lines in fenced code "
+            "are outside the supported guarantee."
+            " For duplicate titles, pass 1-based heading_occurrence with heading_level "
+            "and the exact expected_hash; the ordinal follows document order for those "
+            "hashed bytes. Do not use chunk_id."
+        ),
+        annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
+    )
+    async def rename_note_section(
+        rel_path: str,
+        heading: str,
+        new_heading: str,
+        ctx: Context[Any, Any],
+        expected_hash: str | None = None,
+        heading_level: int | None = None,
+        heading_occurrence: int | None = None,
+    ) -> RenameNoteSectionOutput:
+        return cast(
+            "RenameNoteSectionOutput",
+            await _rename_note_section_impl(
+                app,
+                rel_path=rel_path,
+                heading=heading,
+                new_heading=new_heading,
+                expected_hash=expected_hash,
+                heading_level=heading_level,
+                heading_occurrence=heading_occurrence,
+                actor=app.identity_provider.identify(ctx).actor,
+            ),
+        )
+
+    @server.tool(
+        name="delete_note_section",
+        title="Delete note section",
+        description=(
+            "Use this only to remove an explicitly obsolete H2-H6 Markdown section "
+            "and all of its subordinate headings. Prefer lifecycle invalidation with "
+            "set_frontmatter when the fact must remain queryable. Pass the note's "
+            "current content_hash as expected_hash for CAS. The operation stores exact "
+            "prior history, writes atomically, and refuses every level-1 heading."
+            " For duplicate titles, pass 1-based heading_occurrence with heading_level "
+            "and the exact expected_hash; the ordinal follows document order for those "
+            "hashed bytes. Do not use chunk_id."
+        ),
+        annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
+    )
+    async def delete_note_section(
+        rel_path: str,
+        heading: str,
+        ctx: Context[Any, Any],
+        expected_hash: str | None = None,
+        heading_level: int | None = None,
+        heading_occurrence: int | None = None,
+    ) -> DeleteNoteSectionOutput:
+        return cast(
+            "DeleteNoteSectionOutput",
+            await _delete_note_section_impl(
+                app,
+                rel_path=rel_path,
+                heading=heading,
+                expected_hash=expected_hash,
+                heading_level=heading_level,
+                heading_occurrence=heading_occurrence,
                 actor=app.identity_provider.identify(ctx).actor,
             ),
         )
@@ -433,7 +554,7 @@ def register_tools(server: FastMCP[Any], app: Any) -> None:
     async def revert_note(
         note: str,
         to_hash: str,
-        ctx: Context[Any, Any, Any],
+        ctx: Context[Any, Any],
         expected_hash: str | None = None,
     ) -> RevertNoteOutput:
         return cast(

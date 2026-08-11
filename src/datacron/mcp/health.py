@@ -104,6 +104,7 @@ async def build_health(
     )
     scrubber_anomaly_count = scrubber["anomalies_count"]
     scrubber_critical = isinstance(scrubber_anomaly_count, int) and scrubber_anomaly_count > 0
+    recovery_blocked = app.vault_writer.recovery_blocked
     healthy = (
         not stale_paths
         and not scan.parse_errors
@@ -111,6 +112,7 @@ async def build_health(
         and not scan.broken_wikilinks
         and not scan.mixed_eol_notes
         and not scan.supersedes_cycles
+        and not recovery_blocked
         and (app.settings.durability != "strict" or app.durability_status.directory_flush_supported)
     )
     integrity = _build_integrity(scan, detail=detail, limit=bounded_limit)
@@ -141,6 +143,11 @@ async def build_health(
             "claim": "point-in-time Markdown byte integrity; not future durability",
         },
         "durability": durability,
+        "recovery": _build_recovery(
+            recovery_blocked,
+            detail=detail,
+            limit=bounded_limit,
+        ),
         "scrubber": scrubber,
         "invariants": {
             "summary": {
@@ -151,6 +158,31 @@ async def build_health(
             "statuses": statuses,
             "scope_notes": evidence.get("scope_notes", {}),
         },
+    }
+
+
+def _build_recovery(
+    blocked: tuple[Any, ...],
+    *,
+    detail: HealthDetail,
+    limit: int,
+) -> dict[str, Any]:
+    """Build bounded, content-free recovery evidence for health consumers."""
+    selected = blocked[:limit] if detail == "full" else ()
+    return {
+        "required": bool(blocked),
+        "blocked_operations": len(blocked),
+        "operations": [
+            {
+                "operation_id": item.operation_id,
+                "rel_path": sanitize_metadata_value(item.rel_path),
+                "reason": item.reason,
+                "expected_before_hash": item.expected_before_hash,
+                "expected_after_hash": item.expected_after_hash,
+                "disk_hash": item.disk_hash,
+            }
+            for item in selected
+        ],
     }
 
 

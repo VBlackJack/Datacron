@@ -34,9 +34,11 @@ from datacron.core.hashing import sha256_bytes
 from datacron.core.logger import get_logger
 
 __all__ = [
+    "RECOVERY_REQUIRED_CODE",
     "DurabilityStatus",
     "DurabilityUnavailableError",
     "ReadOnlyModeError",
+    "RecoveryRequiredError",
     "WritePolicy",
     "atomic_durable_write",
     "durable_flush_directory",
@@ -50,6 +52,7 @@ _WINDOWS_REPLACE_TRANSIENT_ERRORS: Final[frozenset[int]] = frozenset({5, 32, 33}
 _REPLACE_RETRY_MAX_ATTEMPTS: Final[int] = 10
 _REPLACE_RETRY_INITIAL_SLEEP_SECONDS: Final[float] = 0.005
 _REPLACE_RETRY_MAX_SLEEP_SECONDS: Final[float] = 0.1
+RECOVERY_REQUIRED_CODE: Final[str] = "recovery_required"
 FaultInjector = Callable[[str], None]
 
 
@@ -59,6 +62,12 @@ class ReadOnlyModeError(PermissionError):
 
 class DurabilityUnavailableError(PermissionError):
     """Raised when strict mode cannot prove directory-entry durability."""
+
+
+class RecoveryRequiredError(PermissionError):
+    """Raised when quarantined operation evidence blocks every mutation."""
+
+    code: Final[str] = RECOVERY_REQUIRED_CODE
 
 
 def atomic_durable_write(
