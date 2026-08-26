@@ -428,7 +428,14 @@ async def _scan_candidate_models(
 
 async def _collect_sections(app: DatacronApp, *, limit: int) -> list[SectionAssertion]:
     builders: dict[tuple[str, str], _SectionBuilder] = {}
+    admission_cache: dict[str, bool] = {}
     async for chunk in app.store.iter_all_chunks():
+        admitted = admission_cache.get(chunk.note_rel_path)
+        if admitted is None:
+            admitted = app.scope.allows_note_rel_path(chunk.note_rel_path)
+            admission_cache[chunk.note_rel_path] = admitted
+        if not admitted:
+            continue
         if chunk.chunk_type in {ChunkType.FRONTMATTER, ChunkType.HEADING, ChunkType.CODE}:
             continue
         key = (chunk.note_id, chunk.header_path)
@@ -982,7 +989,7 @@ async def _cached_note(
 
 
 async def _read_note(app: DatacronApp, rel_path: str) -> Note:
-    path = app.scope.authorize_rel_path(rel_path, "read")
+    path = app.scope.authorize_note_rel_path(rel_path)
     return await app.vault_reader.read_note(path)
 
 

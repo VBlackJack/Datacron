@@ -79,11 +79,7 @@ async def _search_text_impl(
         timings_ms["temporal_metadata"] = _elapsed_ms(stage_started)
 
         stage_started = time.perf_counter()
-        raw_results = [
-            result
-            for result in raw_results
-            if app.scope.allows_rel_path(result.chunk.note_rel_path, "read")
-        ]
+        raw_results = _filter_admitted_results(app, raw_results)
         raw_results = rerank_temporal(
             raw_results,
             temporal_meta,
@@ -181,11 +177,7 @@ async def _search_regex_impl(
             fallback_max_pattern_length=app.settings.regex_fallback_max_pattern_length,
             fallback_timeout_seconds=app.settings.regex_fallback_timeout_seconds,
         )
-        raw_results = [
-            result
-            for result in raw_results
-            if app.scope.allows_rel_path(result.chunk.note_rel_path, "read")
-        ]
+        raw_results = _filter_admitted_results(app, raw_results)
     except (FileNotFoundError, RegexFallbackError) as exc:
         mapped_exc = ValueError(str(exc)) if isinstance(exc, RegexFallbackError) else exc
         return _error_response("search_regex", mapped_exc, started, pattern=pattern, glob=glob)
@@ -436,11 +428,16 @@ async def _find_backlink_sources(
     """
     target_alias_lower = target_alias.strip().lower()
     alias_cache: dict[str, str | None] = {target_alias_lower: target_note_id}
+    admission_cache: dict[str, bool] = {}
     seen_chunk_ids: set[str] = set()
     sources: list[dict[str, Any]] = []
 
     for chunk in await app.store.list_chunks_with_wikilinks():
-        if not app.scope.allows_rel_path(chunk.note_rel_path, "read"):
+        admitted = admission_cache.get(chunk.note_rel_path)
+        if admitted is None:
+            admitted = app.scope.allows_note_rel_path(chunk.note_rel_path)
+            admission_cache[chunk.note_rel_path] = admitted
+        if not admitted:
             continue
         if chunk.note_id == target_note_id:
             continue
@@ -461,6 +458,24 @@ async def _find_backlink_sources(
         if len(sources) >= limit:
             return sources
     return sources
+
+
+def _filter_admitted_results(
+    app: DatacronApp,
+    results: list[SearchResult],
+) -> list[SearchResult]:
+    """Filter search results with one live admission decision per note and call."""
+    decisions: dict[str, bool] = {}
+    admitted_results: list[SearchResult] = []
+    for result in results:
+        rel_path = result.chunk.note_rel_path
+        admitted = decisions.get(rel_path)
+        if admitted is None:
+            admitted = app.scope.allows_note_rel_path(rel_path)
+            decisions[rel_path] = admitted
+        if admitted:
+            admitted_results.append(result)
+    return admitted_results
 
 
 async def _chunk_links_to(

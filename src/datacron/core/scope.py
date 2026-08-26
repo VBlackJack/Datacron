@@ -16,10 +16,16 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from pathlib import Path
-from typing import Literal, Protocol, final, runtime_checkable
+from pathlib import Path, PurePosixPath
+from typing import Final, Literal, Protocol, final, runtime_checkable
 
-from datacron.core.config import Settings
+from datacron.core.config import (
+    SIDECAR_DIR_NAME,
+    VAULT_CONFIG_FILENAME,
+    Settings,
+    VaultConfig,
+    load_vault_config,
+)
 from datacron.core.durability import WritePolicy
 from datacron.core.models import Note
 from datacron.core.operation_log import OperationContext, OperationRecord
@@ -30,9 +36,13 @@ from datacron.core.recovery import (
     RecoveryRepairAction,
     RecoveryRepairResult,
 )
+from datacron.core.vault import SKIPPED_FOLDERS, NoteAdmissionPolicy
 
 __all__ = [
     "AccessMode",
+    "ConjunctiveVaultScope",
+    "NoteAdmissionError",
+    "NoteAdmissionPolicy",
     "ScopedVaultReader",
     "ScopedVaultWriter",
     "SingleTenantVaultScope",
@@ -42,6 +52,12 @@ __all__ = [
 AccessMode = Literal["read", "write"]
 NoteMutation = Callable[[str], str]
 NotePathLookup = Callable[[str], Awaitable[str | None]]
+
+
+class NoteAdmissionError(Exception):
+    """Raised when a path is not an admissible live Markdown note."""
+
+    code: Final[str] = "note_not_admitted"
 
 
 @runtime_checkable
@@ -60,14 +76,40 @@ class VaultScope(Protocol):
         """Return whether the relative path belongs to this scope."""
         ...
 
+    def authorize_note_rel_path(self, rel_path: str) -> Path:
+        """Resolve an admissible live Markdown note or raise."""
+        ...
+
+    def allows_note_rel_path(self, rel_path: str) -> bool:
+        """Return whether the relative path identifies an admissible live note."""
+        ...
+
 
 @final
 class SingleTenantVaultScope:
     """Allow one complete local vault, with writes restricted by configuration."""
 
-    def __init__(self, vault_root: Path, settings: Settings) -> None:
+    def __init__(
+        self,
+        vault_root: Path,
+        settings: Settings,
+        admission_policy: NoteAdmissionPolicy | None = None,
+    ) -> None:
         self._vault_root = vault_root.expanduser().resolve()
         self._settings = settings
+        if admission_policy is None:
+            config_path = self._vault_root / SIDECAR_DIR_NAME / VAULT_CONFIG_FILENAME
+            config = load_vault_config(config_path) or VaultConfig()
+            admission_policy = NoteAdmissionPolicy(
+                excluded_folders=SKIPPED_FOLDERS | frozenset(config.excluded_folders),
+                excluded_files=frozenset(config.excluded_files),
+            )
+        self._admission_policy = admission_policy
+
+    @property
+    def admission_policy(self) -> NoteAdmissionPolicy:
+        """Return the immutable note policy enforced by this scope."""
+        return self._admission_policy
 
     def authorize_path(self, path: Path, access: AccessMode) -> Path:
         resolved = assert_within_paths(path, [self._vault_root], kind=access)
@@ -85,6 +127,98 @@ class SingleTenantVaultScope:
             return False
         return True
 
+    def authorize_note_rel_path(self, rel_path: str) -> Path:
+        """Return a confined, admitted, existing Markdown note path."""
+        lexical_parts = PurePosixPath(rel_path.replace("\\", "/")).parts
+        self._assert_admitted_parts(lexical_parts, rel_path=rel_path)
+        try:
+            resolved = self.authorize_rel_path(rel_path, "read")
+        except PathConfinementError as exc:
+            raise NoteAdmissionError(f"Path escapes the admitted vault: {rel_path!r}") from exc
+        canonical_rel_path = resolved.relative_to(self._vault_root)
+        self._assert_admitted_parts(canonical_rel_path.parts, rel_path=rel_path)
+        if not resolved.is_file():
+            raise NoteAdmissionError(f"Path is not a live note: {rel_path!r}")
+        return resolved
+
+    def allows_note_rel_path(self, rel_path: str) -> bool:
+        """Return whether ``rel_path`` passes note admission."""
+        try:
+            self.authorize_note_rel_path(rel_path)
+        except (NoteAdmissionError, PathConfinementError):
+            return False
+        return True
+
+    def _assert_admitted_parts(self, parts: tuple[str, ...], *, rel_path: str) -> None:
+        if not parts or not parts[-1].casefold().endswith(".md"):
+            raise NoteAdmissionError(f"Path is not a Markdown note: {rel_path!r}")
+        parent_parts = parts[:-1]
+        if any(
+            part.startswith(".") or part.casefold() in self._admission_policy.excluded_folders
+            for part in parent_parts
+        ):
+            raise NoteAdmissionError(f"Path has an excluded parent: {rel_path!r}")
+        if parts[-1].casefold() in self._admission_policy.excluded_files:
+            raise NoteAdmissionError(f"Path names an excluded file: {rel_path!r}")
+
+
+@final
+class ConjunctiveVaultScope:
+    """Enforce canonical vault admission plus an injected restriction.
+
+    Dependency-injected scopes may narrow the served vault, but they cannot
+    replace the canonical admission boundary assembled from ``VAULT.yaml``.
+    """
+
+    def __init__(
+        self,
+        canonical: SingleTenantVaultScope,
+        restriction: VaultScope,
+    ) -> None:
+        self._canonical = canonical
+        self._restriction = restriction
+
+    @property
+    def admission_policy(self) -> NoteAdmissionPolicy:
+        """Return the canonical policy shared with the production reader."""
+        return self._canonical.admission_policy
+
+    def authorize_path(self, path: Path, access: AccessMode) -> Path:
+        canonical = self._canonical.authorize_path(path, access)
+        restricted = self._restriction.authorize_path(path, access)
+        self._assert_same_path(canonical, restricted)
+        return canonical
+
+    def authorize_rel_path(self, rel_path: str, access: AccessMode) -> Path:
+        canonical = self._canonical.authorize_rel_path(rel_path, access)
+        restricted = self._restriction.authorize_rel_path(rel_path, access)
+        self._assert_same_path(canonical, restricted)
+        return canonical
+
+    def allows_rel_path(self, rel_path: str, access: AccessMode) -> bool:
+        return self._canonical.allows_rel_path(
+            rel_path,
+            access,
+        ) and self._restriction.allows_rel_path(rel_path, access)
+
+    def authorize_note_rel_path(self, rel_path: str) -> Path:
+        canonical = self._canonical.authorize_note_rel_path(rel_path)
+        restricted = self._restriction.authorize_note_rel_path(rel_path)
+        self._assert_same_path(canonical, restricted)
+        return canonical
+
+    def allows_note_rel_path(self, rel_path: str) -> bool:
+        return self._canonical.allows_note_rel_path(
+            rel_path
+        ) and self._restriction.allows_note_rel_path(rel_path)
+
+    @staticmethod
+    def _assert_same_path(canonical: Path, restricted: Path) -> None:
+        if canonical != restricted:
+            raise PathConfinementError(
+                "Injected scope resolved a path outside the canonical vault scope."
+            )
+
 
 @final
 class ScopedVaultReader:
@@ -95,10 +229,17 @@ class ScopedVaultReader:
         delegate: VaultReader,
         scope: VaultScope,
         note_path_lookup: NotePathLookup | None = None,
+        admission_policy: NoteAdmissionPolicy | None = None,
     ) -> None:
         self._delegate = delegate
         self._scope = scope
         self._note_path_lookup = note_path_lookup
+        self._admission_policy = admission_policy
+
+    @property
+    def admission_policy(self) -> NoteAdmissionPolicy | None:
+        """Return the shared production admission policy, when configured."""
+        return self._admission_policy
 
     def bind_note_path_lookup(self, lookup: NotePathLookup) -> None:
         """Bind the existing index lookup used to authorize resolved note IDs."""
@@ -107,7 +248,10 @@ class ScopedVaultReader:
     async def read_note(self, path: Path) -> Note:
         resolved = self._scope.authorize_path(path, "read")
         note = await self._delegate.read_note(resolved)
-        self._scope.authorize_path(note.path, "read")
+        if not self._matches_note_admission(note, expected_path=resolved):
+            raise NoteAdmissionError(
+                f"Reader returned a path outside note admission: {note.rel_path!r}"
+            )
         return note
 
     async def list_notes(
@@ -117,7 +261,7 @@ class ScopedVaultReader:
     ) -> list[Note]:
         self._scope.authorize_rel_path(folder or "", "read")
         notes = await self._delegate.list_notes(folder=folder)
-        allowed = [note for note in notes if self._scope.allows_rel_path(note.rel_path, "read")]
+        allowed = [note for note in notes if self._matches_note_admission(note)]
         return allowed if limit is None else allowed[:limit]
 
     async def stat_notes(self) -> dict[str, tuple[Path, int]]:
@@ -126,7 +270,7 @@ class ScopedVaultReader:
         return {
             rel_path: value
             for rel_path, value in notes.items()
-            if self._scope.allows_rel_path(rel_path, "read")
+            if self._matches_stat_admission(rel_path, value[0])
         }
 
     async def resolve_alias(self, alias: str) -> str | None:
@@ -136,12 +280,33 @@ class ScopedVaultReader:
         if self._note_path_lookup is not None:
             rel_path = await self._note_path_lookup(resolved_id)
             if rel_path is not None:
-                return resolved_id if self._scope.allows_rel_path(rel_path, "read") else None
+                return resolved_id if self._scope.allows_note_rel_path(rel_path) else None
         notes = await self.list_notes()
         return resolved_id if any(note.id == resolved_id for note in notes) else None
 
     async def invalidate_alias_cache(self) -> None:
         await self._delegate.invalidate_alias_cache()
+
+    def _matches_note_admission(
+        self,
+        note: Note,
+        *,
+        expected_path: Path | None = None,
+    ) -> bool:
+        try:
+            returned = self._scope.authorize_path(note.path, "read")
+            admitted = self._scope.authorize_note_rel_path(note.rel_path)
+        except (NoteAdmissionError, PathConfinementError):
+            return False
+        return returned == admitted and (expected_path is None or returned == expected_path)
+
+    def _matches_stat_admission(self, rel_path: str, path: Path) -> bool:
+        try:
+            returned = self._scope.authorize_path(path, "read")
+            admitted = self._scope.authorize_note_rel_path(rel_path)
+        except (NoteAdmissionError, PathConfinementError):
+            return False
+        return returned == admitted
 
 
 @final

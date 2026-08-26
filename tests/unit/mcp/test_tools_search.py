@@ -9,13 +9,15 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 
 from datacron.core.config import Settings
+from datacron.core.durability import DurabilityStatus
 from datacron.core.frontmatter import serialize
 from datacron.core.models import SearchResult
 from datacron.core.protocols import FTS5Store
@@ -35,6 +37,18 @@ _TEMPORAL_CURRENT_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
 _TEMPORAL_OLD_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX6"
 _TEMPORAL_HIGH_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX7"
 _TEMPORAL_UNCERTAIN_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX8"
+_STALE_TARGET_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WX9"
+_STALE_DELETED_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXA"
+_STALE_EXCLUDED_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXB"
+_STALE_ADMISSION_TERM: Final[str] = "staleadmissionterm"
+_STALE_DELETED_PATH: Final[str] = "deleted-source.md"
+_STALE_EXCLUDED_PATH: Final[str] = "excluded/excluded-source.md"
+_STALE_EXCLUDED_FOLDER: Final[str] = "excluded"
+_REPAIR_THROTTLE_SECONDS: Final[float] = 3600.0
+_SUPPORTED_DURABILITY: Final[DurabilityStatus] = DurabilityStatus(
+    backend="test-supported",
+    directory_flush_supported=True,
+)
 
 
 def _write_temporal_note(
@@ -492,6 +506,100 @@ class _StubRipgrep:
 
 
 @pytest.fixture
+async def stale_admission_app(
+    tmp_path: Path,
+) -> AsyncIterator[tuple[DatacronApp, str, frozenset[str]]]:
+    """Keep deleted and newly excluded notes stale in every search backend."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _write_temporal_note(
+        vault,
+        rel_path="target.md",
+        note_id=_STALE_TARGET_ID,
+        title="Stale admission target",
+        confidence="high",
+        supersedes=[],
+        body="# Stale admission target\n\nLive backlink target.\n",
+    )
+    backlink = f"[[{_STALE_TARGET_ID}]]"
+    _write_temporal_note(
+        vault,
+        rel_path=_STALE_DELETED_PATH,
+        note_id=_STALE_DELETED_ID,
+        title="Deleted source",
+        confidence="high",
+        supersedes=[],
+        body=f"# Deleted source\n\n{backlink} {_STALE_ADMISSION_TERM}.\n",
+    )
+    _write_temporal_note(
+        vault,
+        rel_path=_STALE_EXCLUDED_PATH,
+        note_id=_STALE_EXCLUDED_ID,
+        title="Excluded source",
+        confidence="high",
+        supersedes=[],
+        body=f"# Excluded source\n\n{backlink} {_STALE_ADMISSION_TERM}.\n",
+    )
+    settings = Settings(
+        read_paths=[vault],
+        write_paths=[vault],
+        vault_root=vault,
+        max_result_count=20,
+        max_result_tokens=8000,
+        repair_min_interval_seconds=_REPAIR_THROTTLE_SECONDS,
+    )
+    store = SQLiteFTS5Store()
+    await store.open(vault / ".datacron" / "index" / "datacron.db")
+    try:
+        initial_app = build_app(
+            settings=settings,
+            vault_root=vault,
+            chunker=MarkdownChunker(),
+            store=store,
+            durability_status=_SUPPORTED_DURABILITY,
+        )
+        notes = await initial_app.vault_reader.list_notes()
+        notes_by_path = {note.rel_path: note for note in notes}
+        for note in notes:
+            await store.upsert_note(note, initial_app.chunker.chunk(note))
+
+        stale_results: list[SearchResult] = []
+        stale_paths = frozenset({_STALE_DELETED_PATH, _STALE_EXCLUDED_PATH})
+        for rel_path in sorted(stale_paths):
+            note = notes_by_path[rel_path]
+            chunks = await store.list_chunks_for_note(note.id)
+            chunk = next(item for item in chunks if _STALE_ADMISSION_TERM in item.content)
+            stale_results.append(
+                SearchResult(
+                    chunk=chunk,
+                    score=1.0,
+                    snippet=f"hit **{_STALE_ADMISSION_TERM}**",
+                )
+            )
+
+        (vault / _STALE_DELETED_PATH).unlink()
+        sidecar = vault / ".datacron"
+        sidecar.mkdir(parents=True, exist_ok=True)
+        (sidecar / "VAULT.yaml").write_text(
+            f"excluded_folders:\n  - {_STALE_EXCLUDED_FOLDER}\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        filtered_app = build_app(
+            settings=settings,
+            vault_root=vault,
+            chunker=MarkdownChunker(),
+            store=store,
+            ripgrep=_StubRipgrep(stale_results),
+            durability_status=_SUPPORTED_DURABILITY,
+        )
+        filtered_app.repair_state.last_sweep_completed_at = time.monotonic()
+        yield filtered_app, _STALE_TARGET_ID, stale_paths
+    finally:
+        await store.close()
+
+
+@pytest.fixture
 async def stubbed_app(tmp_vault: Path) -> AsyncIterator[DatacronApp]:
     settings = Settings(
         read_paths=[tmp_vault],
@@ -701,3 +809,57 @@ class TestGetBacklinks:
         )
         for row in result["results"]:
             assert row["source_note_id"] != result["resolved_note_id"]
+
+
+class TestStaleNoteAdmission:
+    @pytest.mark.asyncio
+    async def test_search_text_does_not_publish_deleted_or_excluded_notes(
+        self,
+        stale_admission_app: tuple[DatacronApp, str, frozenset[str]],
+    ) -> None:
+        app, _target_id, stale_paths = stale_admission_app
+        indexed = await app.store.search(_STALE_ADMISSION_TERM, limit=20)
+        assert {result.chunk.note_rel_path for result in indexed} == stale_paths
+
+        result = await _search_text_impl(app, query=_STALE_ADMISSION_TERM, limit=20)
+
+        assert "error" not in result
+        assert result["returned"] == 0
+        assert result["results"] == []
+
+    @pytest.mark.asyncio
+    async def test_search_regex_does_not_publish_deleted_or_excluded_notes(
+        self,
+        stale_admission_app: tuple[DatacronApp, str, frozenset[str]],
+    ) -> None:
+        app, _target_id, stale_paths = stale_admission_app
+        stub = app.ripgrep
+        assert isinstance(stub, _StubRipgrep)
+        assert {result.chunk.note_rel_path for result in stub._results} == stale_paths
+
+        result = await _search_regex_impl(
+            app,
+            pattern=_STALE_ADMISSION_TERM,
+            glob=None,
+            limit=20,
+        )
+
+        assert "error" not in result
+        assert result["returned"] == 0
+        assert result["results"] == []
+
+    @pytest.mark.asyncio
+    async def test_backlinks_do_not_publish_deleted_or_excluded_sources(
+        self,
+        stale_admission_app: tuple[DatacronApp, str, frozenset[str]],
+    ) -> None:
+        app, target_id, stale_paths = stale_admission_app
+        indexed = await app.store.list_chunks_with_wikilinks()
+        assert stale_paths <= {chunk.note_rel_path for chunk in indexed}
+
+        result = await _get_backlinks_impl(app, target=target_id, limit=20)
+
+        assert "error" not in result
+        assert result["resolved_note_id"] == target_id
+        assert result["returned"] == 0
+        assert result["results"] == []

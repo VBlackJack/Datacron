@@ -16,16 +16,18 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 
 from datacron.core.config import Settings
+from datacron.core.durability import DurabilityStatus
 from datacron.core.frontmatter import serialize
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
@@ -39,6 +41,18 @@ _OLD_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
 _NEW_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX6"
 _ONECERT_OLD_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX7"
 _ONECERT_NEW_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX8"
+_DELETED_STALE_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXB"
+_EXCLUDED_STALE_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXC"
+_DELETED_STALE_PATH: Final[str] = "_memory/facts/employer-deleted.md"
+_EXCLUDED_STALE_PATH: Final[str] = "excluded/employer-excluded.md"
+_DELETED_STALE_MARKER: Final[str] = "deleted-stale-evidence"
+_EXCLUDED_STALE_MARKER: Final[str] = "excluded-stale-evidence"
+_STALE_EXCLUDED_FOLDER: Final[str] = "excluded"
+_REPAIR_THROTTLE_SECONDS: Final[float] = 3600.0
+_SUPPORTED_DURABILITY: Final[DurabilityStatus] = DurabilityStatus(
+    backend="test-supported",
+    directory_flush_supported=True,
+)
 
 
 @pytest.fixture
@@ -118,6 +132,89 @@ def _write_candidate_pair(vault: Path, *, source_content: str) -> tuple[Path, Pa
     return old, new
 
 
+@pytest.fixture
+async def stale_contradiction_app(
+    tmp_path: Path,
+) -> AsyncIterator[tuple[DatacronApp, frozenset[str], frozenset[str]]]:
+    """Keep deleted and newly excluded contradiction evidence stale in the index."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _write_candidate_pair(
+        vault,
+        source_content=(
+            "CORRECTION: The Windows engineering employer is Worldline and replaces "
+            "the old Magellan statement for the platform team."
+        ),
+    )
+    _write_note(
+        vault,
+        _DELETED_STALE_PATH,
+        _DELETED_STALE_ID,
+        (
+            "# Employer update\n\n## Employer 2026-07-16\n\n"
+            f"CORRECTION: {_DELETED_STALE_MARKER}. The Windows engineering employer "
+            "is Contoso and replaces the old Magellan statement for the platform team.\n"
+        ),
+    )
+    _write_note(
+        vault,
+        _EXCLUDED_STALE_PATH,
+        _EXCLUDED_STALE_ID,
+        (
+            "# Employer update\n\n## Employer 2026-07-17\n\n"
+            f"CORRECTION: {_EXCLUDED_STALE_MARKER}. The Windows engineering employer "
+            "is Fabrikam and replaces the old Magellan statement for the platform team.\n"
+        ),
+    )
+    settings = Settings(
+        read_paths=[vault],
+        write_paths=[vault],
+        vault_root=vault,
+        repair_min_interval_seconds=_REPAIR_THROTTLE_SECONDS,
+        contradiction_max_pairs=64,
+        contradiction_max_candidates=20,
+        redact_secrets="off",
+    )
+    store = SQLiteFTS5Store()
+    await store.open(vault / ".datacron" / "index" / "datacron.db")
+    try:
+        initial_app = build_app(
+            settings=settings,
+            vault_root=vault,
+            chunker=MarkdownChunker(),
+            store=store,
+            durability_status=_SUPPORTED_DURABILITY,
+        )
+        for note in await initial_app.vault_reader.list_notes():
+            await store.upsert_note(note, initial_app.chunker.chunk(note))
+
+        stale_paths = frozenset({_DELETED_STALE_PATH, _EXCLUDED_STALE_PATH})
+        baseline = await _contradiction_scan_impl(initial_app, detail="full", today=_TODAY)
+        baseline_payload = json.dumps(baseline["candidates"], sort_keys=True)
+        assert all(path in baseline_payload for path in stale_paths)
+
+        (vault / _DELETED_STALE_PATH).unlink()
+        sidecar = vault / ".datacron"
+        sidecar.mkdir(parents=True, exist_ok=True)
+        (sidecar / "VAULT.yaml").write_text(
+            f"excluded_folders:\n  - {_STALE_EXCLUDED_FOLDER}\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        filtered_app = build_app(
+            settings=settings,
+            vault_root=vault,
+            chunker=MarkdownChunker(),
+            store=store,
+            durability_status=_SUPPORTED_DURABILITY,
+        )
+        filtered_app.repair_state.last_sweep_completed_at = time.monotonic()
+        stale_markers = frozenset({_DELETED_STALE_MARKER, _EXCLUDED_STALE_MARKER})
+        yield filtered_app, stale_paths, stale_markers
+    finally:
+        await store.close()
+
+
 def _markdown_snapshot(vault: Path) -> dict[str, bytes]:
     return {
         path.relative_to(vault).as_posix(): path.read_bytes()
@@ -129,6 +226,30 @@ def _suggested_token(scan: dict[str, Any]) -> str:
     candidates = cast("list[dict[str, Any]]", scan["candidates"])
     suggested = cast("dict[str, Any]", candidates[0]["suggested_mutation"])
     return cast("str", suggested["proposal_token"])
+
+
+async def test_scan_never_publishes_deleted_or_excluded_stale_evidence(
+    stale_contradiction_app: tuple[DatacronApp, frozenset[str], frozenset[str]],
+) -> None:
+    app, stale_paths, stale_markers = stale_contradiction_app
+
+    scan = await _contradiction_scan_impl(app, detail="full", today=_TODAY)
+
+    assert "error" not in scan
+    assert scan["candidate_count"] >= 1
+    candidates = cast("list[dict[str, Any]]", scan["candidates"])
+    for candidate in candidates:
+        target = cast("dict[str, Any]", candidate["target"])
+        source = cast("dict[str, Any]", candidate["source"])
+        evidence = cast("dict[str, str]", candidate["evidence"])
+        assert target["note_rel_path"] not in stale_paths
+        assert source["note_rel_path"] not in stale_paths
+        assert all(marker not in evidence["target"] for marker in stale_markers)
+        assert all(marker not in evidence["source"] for marker in stale_markers)
+
+    published = json.dumps(candidates, sort_keys=True)
+    assert all(path not in published for path in stale_paths)
+    assert all(marker not in published for marker in stale_markers)
 
 
 async def test_live_scan_is_deterministic_bounded_and_read_only(
