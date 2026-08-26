@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from datacron.core.hashing import sha256_bytes
-from datacron.core.vault import FilesystemVaultReader, JsonIdStore
+from datacron.core.vault import FilesystemVaultReader, JsonIdStore, build_configured_reader
 
 
 @pytest.mark.asyncio
@@ -296,6 +296,21 @@ class TestIdPersistence:
         assert first.id == second.id
         assert len(first.id) == 26
         assert not sidecar.exists()
+
+    async def test_default_configured_reader_preserves_writable_indexing_contract(
+        self,
+        tmp_vault: Path,
+    ) -> None:
+        sidecar = tmp_vault / ".datacron" / "ulids.json"
+        sidecar.unlink(missing_ok=True)
+        read_only_reader = FilesystemVaultReader(tmp_vault, read_only=True)
+        expected = await read_only_reader.read_note(tmp_vault / "welcome.md")
+
+        writable_reader = build_configured_reader(tmp_vault)
+        persisted = await writable_reader.read_note(tmp_vault / "welcome.md")
+
+        assert persisted.id == expected.id
+        assert json.loads(sidecar.read_text(encoding="utf-8")) == {"welcome.md": expected.id}
 
     async def test_frontmatter_id_honored(self, tmp_vault: Path) -> None:
         fixed_id = "01HQXR7K9YZ8M2N3PQRSTV4WX5"

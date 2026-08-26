@@ -313,7 +313,7 @@ def build_app(
     write_policy = WritePolicy(resolved_settings, resolved_durability)
     base_reader = vault_reader or build_configured_reader(
         resolved_root,
-        read_only=not write_policy.writes_allowed,
+        read_only=True,
     )
     resolved_reader = ScopedVaultReader(base_reader, resolved_scope)
     if chunker is None:
