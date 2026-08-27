@@ -26,11 +26,14 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   content hash to copy, and the action that would repair it. It changes no durable state.
 - `datacron ops repair-id` repairs one such divergence under `--rel-path`, `--action`,
   `--expected-hash`, and a `--confirm` repeating the path. `adopt-index` writes the canonical ID
-  into the frontmatter through the ordinary atomic, journaled write path; `adopt-frontmatter`
+  into the frontmatter through the ordinary atomic, journaled write path, preserving the body
+  byte for byte while re-serializing the frontmatter in canonical key order like every other
+  write tool; `adopt-frontmatter`
   realigns the sidecar and the index instead, and is refused when the frontmatter ID is not a
   canonical 26-character Crockford ULID, so a malformed identity can never be propagated. The
   command generates no ID, accepts none by hand, reports duplicate IDs instead of guessing at
-  them, and realigns the live index without an offline `datacron reindex`. No write tool on the
+  them, refuses to adopt an ID another note already carries, and realigns the live index
+  without an offline `datacron reindex`. No write tool on the
   MCP surface could reach the `id` field, which left a single divergent note pinning `get_health`
   to `degraded` with no sanctioned way out.
 

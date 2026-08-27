@@ -28,6 +28,7 @@ from datacron.core.frontmatter import serialize
 from datacron.core.hashing import sha256_bytes
 from datacron.core.operation_log import OperationRecord
 from datacron.core.vault_writer import FilesystemVaultWriter
+from datacron.mcp.tools.write_validation import is_canonical_ulid
 from datacron.reliability import scan_vault_read_only
 
 _RECOVERY_TIMESTAMP = "2026-08-10T00:00:00+00:00"
@@ -339,11 +340,12 @@ class TestOpsRepair:
 _CANONICAL_ID = "01J00000000000000000000021"
 _OTHER_ID = "01J00000000000000000000022"
 _THIRD_ID = "01J00000000000000000000023"
-_MALFORMED_ID = "01KVMTG0IA2AGENTSCPDC0616"
-_NOTE_BODY = "# Point IA\n\nBody line one.\nBody line two.\n"
+_FOURTH_ID = "01J00000000000000000000024"
+_MALFORMED_ID = "01JIIIIIIIIIIIIIIIIIIIIIII"
+_NOTE_BODY = "# Sample note\n\nBody line one.\nBody line two.\n"
 
 
-def _note_bytes(note_id: str, title: str = "Point IA", body: str = _NOTE_BODY) -> bytes:
+def _note_bytes(note_id: str, title: str = "Sample note", body: str = _NOTE_BODY) -> bytes:
     metadata = {
         "id": note_id,
         "title": title,
@@ -507,6 +509,44 @@ class TestOpsRepairId:
         assert after.endswith(b"Body line two.\n")
         assert not scan_vault_read_only(vault).id_violations
         assert _indexed_note_ids(vault)["note.md"] == _CANONICAL_ID
+
+    def test_adopt_index_preserves_the_body_but_reserializes_the_frontmatter(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """Body bytes are exact; the frontmatter is canonicalized like every write tool.
+
+        The other byte-preservation test starts from a `serialize`-produced note, which is
+        already canonical, so it cannot see this. A hand-written frontmatter comes back with
+        more changed lines than `id` alone, and the documentation says so.
+        """
+        handwritten = (
+            "---\n"
+            f"id: {_CANONICAL_ID}\n"
+            "title: Sample note\n"
+            "created: 2026-06-16T18:00:00+02:00\n"
+            "updated: 2026-06-16T18:00:00+02:00\n"
+            "origin: ai\n"
+            "tags: [alpha, beta, gamma]\n"
+            "---\n"
+        ) + _NOTE_BODY
+        vault = _indexed_vault(runner, tmp_path, {"note.md": handwritten.encode("utf-8")})
+        target = vault / "note.md"
+        target.write_bytes(handwritten.replace(_CANONICAL_ID, _MALFORMED_ID).encode("utf-8"))
+        before = target.read_bytes()
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "note.md", "adopt-index", sha256_bytes(before), "note.md"),
+        )
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        after = target.read_bytes()
+        assert after.split(b"---\n", 2)[2] == before.split(b"---\n", 2)[2]
+        assert f"id: {_CANONICAL_ID}\n".encode() in after
+        assert b"tags:\n- alpha\n" in after
+        assert b"created: 2026-06-16 18:00:00+02:00\n" in after
 
     def test_adopt_index_journals_the_repair(
         self,
@@ -689,3 +729,193 @@ class TestOpsRepairId:
         assert result.exit_code == 1
         assert "migrated sidecar" in result.stderr
         assert target.read_bytes() == before
+
+
+class TestIsCanonicalUlid:
+    """The alphabet check is the only barrier: the reader accepts any 26 characters."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "01J00000000000000000000021",
+            "5H87J7Q43H4S9HE0KHDTH186EX",
+        ],
+    )
+    def test_accepts_canonical_ulids(self, value: str) -> None:
+        assert is_canonical_ulid(value)
+
+    @pytest.mark.parametrize(
+        ("value", "why"),
+        [
+            ("01KVMTG0IA2AGENTSCPDC0616", "25 characters"),
+            ("01J000000000000000000000211", "27 characters"),
+            ("01JIIIIIIIIIIIIIIIIIIIIIII", "I is excluded from Crockford base32"),
+            ("01JLLLLLLLLLLLLLLLLLLLLLLL", "L is excluded"),
+            ("01JOOOOOOOOOOOOOOOOOOOOOOO", "O is excluded"),
+            ("01JUUUUUUUUUUUUUUUUUUUUUUU", "U is excluded"),
+            ("01j00000000000000000000021", "lowercase"),
+            ("", "empty"),
+        ],
+    )
+    def test_rejects_everything_else(self, value: str, why: str) -> None:
+        assert not is_canonical_ulid(value), why
+
+
+class TestOpsRepairIdSafety:
+    """Regressions for defects that damaged unrelated notes."""
+
+    def test_refuses_an_id_another_note_already_carries(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """A note that is duplicate AND mismatched is classified `mismatch`.
+
+        Adopting the contested ID makes the index upsert overwrite the other note's
+        row by `note_id`: it stays on disk but vanishes from search and backlinks.
+        """
+        vault = _indexed_vault(
+            runner,
+            tmp_path,
+            {
+                "a.md": _note_bytes(_CANONICAL_ID, "A"),
+                "b.md": _note_bytes(_OTHER_ID, "B"),
+            },
+        )
+        contested = vault / "b.md"
+        contested.write_bytes(_note_bytes(_CANONICAL_ID, "B"))
+        before = contested.read_bytes()
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "b.md", "adopt-frontmatter", sha256_bytes(before), "b.md"),
+        )
+
+        assert result.exit_code == 1
+        assert "already carried by a.md" in result.stderr
+        assert contested.read_bytes() == before
+        assert _indexed_note_ids(vault) == {"a.md": _CANONICAL_ID, "b.md": _OTHER_ID}
+
+    def test_sidecar_realignment_leaves_other_mappings_alone(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """Loading the sidecar through JsonIdStore merged the migrated file back in.
+
+        Repairing one note then stamped every stale migrated mapping onto unrelated
+        notes, creating divergences the operator never asked about.
+        """
+        vault = _indexed_vault(
+            runner,
+            tmp_path,
+            {
+                "target.md": _note_bytes(_CANONICAL_ID, "Target"),
+                "bystander.md": _note_bytes(_OTHER_ID, "Bystander"),
+            },
+        )
+        sidecar = vault / ".datacron" / "ulids.json"
+        sidecar.write_text(json.dumps({"target.md": _THIRD_ID}), encoding="ascii")
+        migrated = vault / ".datacron" / "ulids.json.migrated"
+        migrated.write_text(json.dumps({"bystander.md": _FOURTH_ID}), encoding="ascii")
+        target = vault / "target.md"
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(
+                vault,
+                "target.md",
+                "adopt-index",
+                sha256_bytes(target.read_bytes()),
+                "target.md",
+            ),
+        )
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        written = json.loads(sidecar.read_text(encoding="utf-8"))
+        assert written == {"target.md": _CANONICAL_ID}
+        assert "bystander.md" not in written
+
+    def test_reports_a_partial_application_instead_of_a_refusal(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Saying "refused" after writing the note sends the operator away misinformed."""
+        vault = _indexed_vault(runner, tmp_path, {"note.md": _note_bytes(_CANONICAL_ID)})
+        target = vault / "note.md"
+        target.write_bytes(_note_bytes(_MALFORMED_ID))
+        sidecar = vault / ".datacron" / "ulids.json"
+        sidecar.write_text(json.dumps({"note.md": _THIRD_ID}), encoding="ascii")
+        before = target.read_bytes()
+
+        def _unavailable(*_args: object, **_kwargs: object) -> None:
+            raise OSError("sidecar unavailable")
+
+        monkeypatch.setattr("datacron.cli._realign_sidecar_entry", _unavailable)
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "note.md", "adopt-index", sha256_bytes(before), "note.md"),
+        )
+
+        assert result.exit_code == 1
+        assert "applied in part" in result.stderr
+        assert "refused" not in result.stderr
+        assert target.read_bytes() != before
+
+    def test_realigns_an_index_row_when_the_note_bytes_never_change(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """The stale row was looked up in `ulid_paths` while reconcile gates on `notes`.
+
+        With no `ulid_paths` mapping the pre-drop was a no-op, the mtime gate skipped
+        the untouched note, and the stale `notes` row survived while the command still
+        reported success.
+        """
+        vault = _indexed_vault(runner, tmp_path, {"note.md": _note_bytes(_CANONICAL_ID)})
+        connection = sqlite3.connect(vault / ".datacron" / "index" / "datacron.db")
+        try:
+            connection.execute(
+                "UPDATE notes SET note_id = ? WHERE rel_path = ?", (_THIRD_ID, "note.md")
+            )
+            connection.execute("DELETE FROM ulid_paths WHERE rel_path = ?", ("note.md",))
+            connection.commit()
+        finally:
+            connection.close()
+        target = vault / "note.md"
+        before = target.read_bytes()
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "note.md", "adopt-frontmatter", sha256_bytes(before), "note.md"),
+        )
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert target.read_bytes() == before
+        assert f"indexed id: {_THIRD_ID} -> {_CANONICAL_ID}" in result.stdout
+        assert _indexed_note_ids(vault)["note.md"] == _CANONICAL_ID
+
+    def test_inspect_id_recommends_the_action_repair_id_accepts(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """A malformed canonical ID must not be recommended for adoption."""
+        vault = _indexed_vault(runner, tmp_path, {"note.md": _note_bytes(_CANONICAL_ID)})
+        connection = sqlite3.connect(vault / ".datacron" / "index" / "datacron.db")
+        try:
+            connection.execute(
+                "UPDATE notes SET note_id = ? WHERE rel_path = ?", (_MALFORMED_ID, "note.md")
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        result = runner.invoke(app, ["ops", "inspect-id", "--vault", str(vault)])
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert "recommended action: adopt-frontmatter" in result.stdout

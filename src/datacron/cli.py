@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -49,6 +50,7 @@ from datacron.core.config import (
     load_vault_config,
 )
 from datacron.core.durability import WritePolicy, probe_directory_durability
+from datacron.core.frontmatter import FrontmatterError
 from datacron.core.logger import configure_logging, get_logger
 from datacron.core.models import EvalPipeline, EvalTransport
 from datacron.core.operation_log import (
@@ -526,19 +528,32 @@ class _IdRepairOutcome:
     content_hash: str
     note_rewritten: bool
     sidecar_realigned: bool
-    index_realigned: bool
+    index_before: str | None
+    index_after: str | None
     mismatches_before: int
     mismatches_after: int
 
 
 def _recommended_id_action(violation: ReliabilityViolation) -> str:
-    """Return the action `ops repair-id` would accept for one divergence."""
+    """Return the action `ops repair-id` would accept for one divergence.
+
+    The canonical-ULID check is replayed here on purpose. Without it the command
+    recommends `adopt-index` for an index that holds a malformed 26-character ID,
+    and then refuses that exact action -- the reader accepts any 26-character
+    string, so a malformed canonical ID is reachable in practice.
+    """
+    from datacron.mcp.tools.write_validation import is_canonical_ulid  # noqa: PLC0415
+
     if violation.classification != "mismatch":
         return "none -- duplicate IDs are reported, never repaired automatically"
     sources = dict(violation.details)
-    if not (sources.get("sqlite") or sources.get("sidecar")):
-        return "none -- no canonical index or sidecar ID to adopt"
-    return "adopt-index"
+    canonical = sources.get("sqlite") or sources.get("sidecar")
+    frontmatter_id = sources.get("frontmatter")
+    if canonical and is_canonical_ulid(canonical):
+        return "adopt-index"
+    if frontmatter_id and is_canonical_ulid(frontmatter_id):
+        return "adopt-frontmatter"
+    return "none -- no source carries a canonical ULID"
 
 
 @ops_app.command(name="inspect-id")
@@ -558,7 +573,7 @@ def ops_inspect_id(
     started = _log_invocation("ops.inspect-id", vault=str(vault_root))
     try:
         scan = scan_vault_read_only(vault_root)
-    except (FileNotFoundError, OSError) as exc:
+    except OSError as exc:
         _error(f"Identity inspection failed: {exc}")
     if not scan.id_violations:
         _print("Identity inspection: no ID divergences.")
@@ -616,15 +631,19 @@ def ops_repair_id(
         outcome = asyncio.run(
             _repair_note_id(vault_root, settings, rel_path, action, expected_hash)
         )
+    except _PartialIdRepairError as exc:
+        # Reached only after durable state has already changed. Calling this a
+        # refusal would send the operator away believing the vault is untouched.
+        _error(f"Identity repair applied in part: {exc}")
     except (
-        FileNotFoundError,
+        FrontmatterError,
         HistoryUnavailableError,
         OSError,
         OperationLogError,
-        PermissionError,
         ValueError,
         VaultLockBusyError,
         WriteConflictError,
+        sqlite3.Error,
     ) as exc:
         _error(f"Identity repair refused: {exc}")
     _print(f"Identity repair complete: adopted the {outcome.action.removeprefix('adopt-')} ID.")
@@ -635,7 +654,9 @@ def ops_repair_id(
     _print(f"  content_hash: {outcome.content_hash}")
     _print(f"  note rewritten: {'yes' if outcome.note_rewritten else 'no'}")
     _print(f"  sidecar realigned: {'yes' if outcome.sidecar_realigned else 'no'}")
-    _print(f"  index realigned: {'yes' if outcome.index_realigned else 'no'}")
+    _print(
+        f"  indexed id: {outcome.index_before or '<absent>'} -> {outcome.index_after or '<absent>'}"
+    )
     _print(f"  id_mismatches: {outcome.mismatches_before} -> {outcome.mismatches_after}")
     if outcome.mismatches_after >= outcome.mismatches_before:
         _error(
@@ -677,12 +698,38 @@ def _canonical_id_for_action(
     return "canonical", target
 
 
+def _assert_id_is_unclaimed(
+    scan: ReliabilityScan,
+    rel_path: str,
+    note_id: str,
+) -> None:
+    """Refuse to adopt an ID another note already carries.
+
+    A note that is both a duplicate and a mismatch is classified ``mismatch``, so
+    the duplicate refusal alone does not catch this. Adopting the ID anyway makes
+    the index upsert overwrite the other note's row by ``note_id``: the collided
+    note stays on disk but vanishes from search, listing and backlinks.
+    """
+    claimants = sorted(
+        other.rel_path
+        for other in scan.id_violations
+        if other.rel_path != rel_path and note_id in dict(other.details).values()
+    )
+    if claimants:
+        raise ValueError(
+            f"{note_id} is already carried by {', '.join(claimants)}; adopting it here "
+            "would evict that note from the index. Resolve the duplicate first."
+        )
+
+
 def _assert_migrated_sidecar_agrees(vault_root: Path, rel_path: str, note_id: str) -> None:
     """Refuse when the migrated sidecar would re-impose the old ID after repair.
 
-    ``ulids.json.migrated`` is merged over ``ulids.json`` by every identity
-    reader, so a stale entry there survives a repair of the primary sidecar and
-    silently restores the divergence.
+    ``JsonIdStore`` merges ``ulids.json.migrated`` over ``ulids.json`` and writes
+    the result back, so a stale entry there can resurface as the effective mapping.
+    The reliability scan and the index migration resolve the other way round, which
+    is exactly why a disagreement between the two files must be settled by a human
+    rather than guessed at here.
     """
     migrated = sidecar_dir(vault_root) / "ulids.json.migrated"
     if not migrated.is_file():
@@ -703,12 +750,46 @@ def _assert_migrated_sidecar_agrees(vault_root: Path, rel_path: str, note_id: st
         )
 
 
-async def _realign_index_identity(vault_root: Path, rel_path: str, note_id: str) -> bool:
-    """Realign the live index with ``note_id`` through the shared reconcile path.
+class _PartialIdRepairError(Exception):
+    """Raised when a step fails after the note or the sidecar was already written."""
 
-    The stale row is dropped first on purpose: reconcile skips a note whose
-    content hash is unchanged, so ``adopt-frontmatter`` -- which never rewrites
-    the note -- would otherwise leave the old ``note_id`` indexed forever.
+
+def _realign_sidecar_entry(vault_root: Path, rel_path: str, note_id: str) -> None:
+    """Rewrite one mapping in ``ulids.json`` and nothing else.
+
+    ``JsonIdStore`` cannot be used here: loading it merges ``ulids.json.migrated``
+    over the primary file and writes the merged result back, so repairing one note
+    would silently stamp every stale migrated mapping onto unrelated notes.
+    """
+    path = sidecar_dir(vault_root) / "ulids.json"
+    payload: dict[str, str] = {}
+    if path.is_file():
+        payload = dict(
+            read_ulid_mappings(path, require_string_pairs=True, invalid_object_is_empty=True)
+        )
+    payload[rel_path] = note_id
+    serialized = json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(serialized, encoding="utf-8")
+    os.replace(temporary, path)
+
+
+async def _realign_index_identity(
+    vault_root: Path,
+    rel_path: str,
+    note_id: str,
+) -> tuple[str | None, str | None]:
+    """Realign the live index and report the indexed ID before and after.
+
+    The stale row is dropped first on purpose: reconcile skips a note whose content
+    hash is unchanged, so ``adopt-frontmatter`` -- which never rewrites the note --
+    would otherwise leave the old ``note_id`` indexed forever. Both identity tables
+    are consulted, because ``notes`` gates reconcile while ``ulid_paths`` can hold a
+    mapping of its own, and dropping only one leaves the other stale.
+
+    Reconcile runs over the whole vault, not just this note: an index that has
+    drifted elsewhere is brought back in the same pass.
     """
     from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
     from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
@@ -716,7 +797,7 @@ async def _realign_index_identity(vault_root: Path, rel_path: str, note_id: str)
 
     db_path = sidecar_index_db(vault_root)
     if not db_path.exists():
-        return False
+        return None, None
     settings = get_settings()
     config = _load_vault_yaml(vault_root) or VaultConfig()
     reader = build_configured_reader(vault_root)
@@ -724,13 +805,19 @@ async def _realign_index_identity(vault_root: Path, rel_path: str, note_id: str)
     store = SQLiteFTS5Store(term_map=config.query_expansion)
     await store.open(db_path)
     try:
-        indexed_id = await store.get_note_id(rel_path)
-        if indexed_id is not None and indexed_id != note_id:
-            await store.delete_note(indexed_id)
+        indexed = await store.list_indexed_notes_with_mtime()
+        entry = indexed.get(rel_path)
+        before = entry[0] if entry is not None else await store.get_note_id(rel_path)
+        for stale in {entry[0] if entry is not None else None, await store.get_note_id(rel_path)}:
+            if stale is not None and stale != note_id:
+                await store.delete_note(stale)
         await reconcile(store, reader, chunker, mtime_gate=True)
+        refreshed = await store.list_indexed_notes_with_mtime()
+        after_entry = refreshed.get(rel_path)
+        after = after_entry[0] if after_entry is not None else await store.get_note_id(rel_path)
     finally:
         await store.close()
-    return True
+    return before, after
 
 
 async def _repair_note_id(
@@ -741,14 +828,17 @@ async def _repair_note_id(
     expected_hash: str,
 ) -> _IdRepairOutcome:
     """Apply one identity repair and report the divergence count it cleared."""
-    from datacron.core.vault import JsonIdStore  # noqa: PLC0415
     from datacron.mcp.tools.write_validation import (  # noqa: PLC0415
+        _validate_expected_hash,
         is_canonical_ulid,
         replace_frontmatter_id,
     )
     from datacron.reliability import scan_vault_read_only  # noqa: PLC0415
 
-    cleaned_hash = expected_hash.strip()
+    cleaned_hash = _validate_expected_hash(expected_hash)
+    if cleaned_hash is None:
+        raise ValueError("--expected-hash is required")
+    rel_path = rel_path.strip().replace("\\", "/")
     scan = scan_vault_read_only(vault_root)
     mismatches_before = len(scan.id_violations)
     _violation, sources = _resolve_id_violation(scan, rel_path)
@@ -758,6 +848,7 @@ async def _repair_note_id(
             f"{label} ID {note_id} is not a canonical 26-character Crockford ULID; "
             "adopting it would propagate a malformed identity"
         )
+    _assert_id_is_unclaimed(scan, rel_path, note_id)
     _assert_migrated_sidecar_agrees(vault_root, rel_path, note_id)
 
     content_hash = dict(scan.content_hashes).get(rel_path)
@@ -781,9 +872,23 @@ async def _repair_note_id(
 
     sidecar_realigned = "sidecar" in sources and sources["sidecar"] != note_id
     if sidecar_realigned:
-        await JsonIdStore(sidecar_dir(vault_root) / "ulids.json").set(rel_path, note_id)
+        try:
+            _realign_sidecar_entry(vault_root, rel_path, note_id)
+        except OSError as exc:
+            raise _PartialIdRepairError(
+                f"the note now carries {note_id}, but the sidecar could not be "
+                f"updated: {exc}. Re-run this command to finish the repair."
+            ) from exc
 
-    index_realigned = await _realign_index_identity(vault_root, rel_path, note_id)
+    try:
+        index_before, index_after = await _realign_index_identity(vault_root, rel_path, note_id)
+    except (OSError, sqlite3.Error) as exc:
+        raise _PartialIdRepairError(
+            f"the note and the sidecar now carry {note_id}, but the index could not "
+            f"be realigned: {exc}. Re-run this command once the index is free, or "
+            "run `datacron reindex` with MCP servers stopped."
+        ) from exc
+
     return _IdRepairOutcome(
         rel_path=rel_path,
         action=action.value,
@@ -792,7 +897,8 @@ async def _repair_note_id(
         content_hash=content_hash,
         note_rewritten=note_rewritten,
         sidecar_realigned=sidecar_realigned,
-        index_realigned=index_realigned,
+        index_before=index_before,
+        index_after=index_after,
         mismatches_before=mismatches_before,
         mismatches_after=len(scan_vault_read_only(vault_root).id_violations),
     )
