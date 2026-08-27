@@ -150,7 +150,8 @@ async def test_prop_14_delete_propagation(tmp_path: Path) -> None:
 
     assert search.get("index_repair", {}).get("deleted_notes") == 1
     assert target_rel not in {item["note_rel_path"] for item in search["results"]}
-    assert fetched["error"]["type"] == "FileNotFoundError"
+    assert fetched["error"]["type"] == "NoteAdmissionError"
+    assert fetched["error"]["code"] == "note_not_admitted"
     assert backlinks["resolved_note_id"] == target_id
     assert source_rel in {item["source_note_rel_path"] for item in backlinks["results"]}
 

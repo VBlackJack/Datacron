@@ -76,13 +76,15 @@ from datacron.core.protocols import (
     VaultWriter,
 )
 from datacron.core.scope import (
+    ConjunctiveVaultScope,
+    NoteAdmissionPolicy,
     ScopedVaultReader,
     ScopedVaultWriter,
     SingleTenantVaultScope,
     VaultScope,
 )
 from datacron.core.security import SecretRedactor
-from datacron.core.vault import build_configured_reader
+from datacron.core.vault import SKIPPED_FOLDERS, build_configured_reader
 from datacron.core.vault_writer import OperationRecoveryError, VaultLockBusyError
 from datacron.mcp.identity import CallerIdentityProvider, StdioCallerIdentityProvider
 
@@ -304,7 +306,19 @@ def build_app(
         # Empty read_paths keeps vault_root as the implicit boundary; an
         # explicit allowlist must contain the served vault root.
         assert_within_read_paths(resolved_root, resolved_settings)
-    resolved_scope = scope or SingleTenantVaultScope(resolved_root, resolved_settings)
+    vault_config = load_vault_config(sidecar_vault_config(resolved_root)) or VaultConfig()
+    admission_policy = NoteAdmissionPolicy(
+        excluded_folders=SKIPPED_FOLDERS | frozenset(vault_config.excluded_folders),
+        excluded_files=frozenset(vault_config.excluded_files),
+    )
+    canonical_scope = SingleTenantVaultScope(
+        resolved_root,
+        resolved_settings,
+        admission_policy,
+    )
+    resolved_scope: VaultScope = (
+        canonical_scope if scope is None else ConjunctiveVaultScope(canonical_scope, scope)
+    )
     resolved_durability = durability_status or (
         probe_directory_durability(resolved_root)
         if resolved_root.is_dir()
@@ -313,14 +327,18 @@ def build_app(
     write_policy = WritePolicy(resolved_settings, resolved_durability)
     base_reader = vault_reader or build_configured_reader(
         resolved_root,
-        read_only=not write_policy.writes_allowed,
+        read_only=True,
+        admission_policy=admission_policy,
     )
-    resolved_reader = ScopedVaultReader(base_reader, resolved_scope)
+    resolved_reader = ScopedVaultReader(
+        base_reader,
+        resolved_scope,
+        admission_policy=admission_policy,
+    )
     if chunker is None:
         from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
 
         chunker = MarkdownChunker(max_tokens=resolved_settings.chunk_max_tokens)
-    vault_config = load_vault_config(sidecar_vault_config(resolved_root)) or VaultConfig()
     if store is None:
         from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
 

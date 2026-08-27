@@ -169,8 +169,9 @@ class TestMcpE2E:
         payload = json.loads(missing.content[0].text)  # type: ignore[union-attr]
         assert payload == {
             "error": {
-                "message": f"Note not found: {vault / 'nope.md'}",
-                "type": "FileNotFoundError",
+                "code": "note_not_admitted",
+                "message": "Path is not a live note: 'nope.md'",
+                "type": "NoteAdmissionError",
             }
         }
         assert resource_error.value.code == INVALID_PARAMS
@@ -496,8 +497,9 @@ class TestMcpE2E:
             payload = json.loads(result.content[0].text)  # type: ignore[union-attr]
             assert payload == {
                 "error": {
-                    "message": f"Note not found: {vault / 'nope.md'}",
-                    "type": "FileNotFoundError",
+                    "code": "note_not_admitted",
+                    "message": "Path is not a live note: 'nope.md'",
+                    "type": "NoteAdmissionError",
                 }
             }
         finally:

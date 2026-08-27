@@ -25,6 +25,7 @@ from datacron.core.frontmatter import matches_frontmatter_filter
 from datacron.core.hashing import FRESHNESS_CONTRACT_ID
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.core.paths import PathConfinementError, read_ulid_mappings, sidecar_dir
+from datacron.core.scope import NoteAdmissionError
 from datacron.core.vault import ULID_SIDECAR_FILENAME
 from datacron.mcp.sandbox import (
     sanitize_payload_strings,
@@ -162,13 +163,22 @@ async def _list_notes_from_index(
     normalized_folder = None if relative_folder.name == "" else relative_folder.as_posix()
     try:
         repair = await _repair_index_on_read(app)
-        rel_paths, total = await app.store.list_note_paths(
+        _, indexed_total = await app.store.list_note_paths(
             folder=normalized_folder,
             tags=tags or [],
             frontmatter=frontmatter,
-            limit=limit,
-            offset=offset,
+            limit=1,
+            offset=0,
         )
+        rel_paths: list[str] = []
+        if indexed_total:
+            rel_paths, _ = await app.store.list_note_paths(
+                folder=normalized_folder,
+                tags=tags or [],
+                frontmatter=frontmatter,
+                limit=indexed_total,
+                offset=0,
+            )
     except RuntimeError:
         return None
 
@@ -177,14 +187,18 @@ async def _list_notes_from_index(
     )
     if repair["checked_notes"] and indexed_after <= 0:
         return None
-    if any(not app.scope.allows_rel_path(rel_path, "read") for rel_path in rel_paths):
-        return None
+    admitted_paths = [
+        rel_path for rel_path in rel_paths if app.scope.allows_note_rel_path(rel_path)
+    ]
+    total = len(admitted_paths)
+    start = min(offset, total)
+    page_paths = admitted_paths[start : start + limit]
 
     notes: list[Note] = []
     try:
-        for rel_path in rel_paths:
+        for rel_path in page_paths:
             notes.append(await _read_note_by_rel_path(app, rel_path))
-    except FileNotFoundError:
+    except (FileNotFoundError, NoteAdmissionError):
         return None
     return notes, total
 
@@ -229,7 +243,7 @@ async def _get_note_impl(
             raise ValueError("format='chunk' requires an indexed chunk_id")
 
         note = await _resolve_note(app, id_or_path)
-    except (FileNotFoundError, ValueError, PathConfinementError) as exc:
+    except (NoteAdmissionError, FileNotFoundError, ValueError, PathConfinementError) as exc:
         return _error_response("get_note", exc, started, id_or_path=id_or_path, fmt=fmt)
     except Exception:
         _LOGGER.exception("get_note failed (id_or_path=%r)", id_or_path)
@@ -415,7 +429,7 @@ async def _try_read_note_by_rel_path(app: DatacronApp, rel_path: str) -> Note | 
 
 
 async def _read_note_by_rel_path(app: DatacronApp, rel_path: str) -> Note:
-    resolved = app.scope.authorize_rel_path(rel_path, "read")
+    resolved = app.scope.authorize_note_rel_path(rel_path)
     return await app.vault_reader.read_note(resolved)
 
 

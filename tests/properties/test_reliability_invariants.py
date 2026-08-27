@@ -325,6 +325,15 @@ async def _call_all_path_tools(app: DatacronApp, rel_path: str) -> dict[str, dic
     }
 
 
+def _assert_path_tools_reject_escape(results: dict[str, dict[str, Any]]) -> None:
+    """Keep the read admission contract distinct from write confinement."""
+    read_error = results["get_note"]["error"]
+    assert read_error["type"] == "NoteAdmissionError"
+    assert read_error["code"] == "note_not_admitted"
+    write_results = (result for name, result in results.items() if name != "get_note")
+    assert all(result["error"]["type"] == "PathConfinementError" for result in write_results)
+
+
 @settings(max_examples=12, deadline=None, suppress_health_check=_SUPPRESS_FIXTURE_CHECK)
 @given(preamble=_INLINE_TEXT, replacement=_INLINE_TEXT, suffix=_INLINE_TEXT)
 async def test_prop_02_patch_note_preamble_preserves_heading_suffix(
@@ -383,7 +392,7 @@ async def test_prop_11_path_containment_read_and_write(
         await store.close()
 
     assert outside.read_text(encoding="utf-8") == outside_raw
-    assert all(result["error"]["type"] == "PathConfinementError" for result in results.values())
+    _assert_path_tools_reject_escape(results)
 
 
 async def test_prop_11_path_containment_rejects_outside_symlink(tmp_path: Path) -> None:
@@ -424,7 +433,7 @@ async def test_prop_11_path_containment_rejects_outside_symlink(tmp_path: Path) 
         await store.close()
 
     assert outside.read_text(encoding="utf-8") == outside_raw
-    assert all(result["error"]["type"] == "PathConfinementError" for result in results.values())
+    _assert_path_tools_reject_escape(results)
 
 
 def test_prop_07_id_uniqueness_baseline_blocks_only_new_debt(tmp_path: Path) -> None:

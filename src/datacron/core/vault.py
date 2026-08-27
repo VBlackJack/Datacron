@@ -27,6 +27,7 @@ import hashlib
 import json
 import os
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, final
@@ -52,7 +53,12 @@ from datacron.core.logger import get_logger
 from datacron.core.models import Note
 from datacron.core.paths import read_ulid_mappings
 
-__all__ = ["FilesystemVaultReader", "JsonIdStore", "build_configured_reader"]
+__all__ = [
+    "FilesystemVaultReader",
+    "JsonIdStore",
+    "NoteAdmissionPolicy",
+    "build_configured_reader",
+]
 
 _LOGGER = get_logger(__name__)
 
@@ -65,22 +71,49 @@ MIGRATED_ULID_SIDECAR_FILENAME: Final[str] = "ulids.json.migrated"
 _H1_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}#\s+(.+?)\s*$", re.MULTILINE)
 
 
+@final
+@dataclass(frozen=True)
+class NoteAdmissionPolicy:
+    """Immutable effective exclusions shared by the vault reader and scope."""
+
+    excluded_folders: frozenset[str]
+    excluded_files: frozenset[str]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "excluded_folders",
+            frozenset(item.casefold() for item in self.excluded_folders),
+        )
+        object.__setattr__(
+            self,
+            "excluded_files",
+            frozenset(item.casefold() for item in self.excluded_files),
+        )
+
+
 def build_configured_reader(
     vault_root: Path,
     *,
     id_store: JsonIdStore | None = None,
     read_only: bool = False,
+    admission_policy: NoteAdmissionPolicy | None = None,
 ) -> FilesystemVaultReader:
     """Build a reader honoring vault exclusions from ``.datacron/VAULT.yaml``."""
     resolved_root = vault_root.expanduser().resolve()
-    config_path = resolved_root / SIDECAR_DIR_NAME / VAULT_CONFIG_FILENAME
-    config = load_vault_config(config_path) or VaultConfig()
+    effective_policy = admission_policy
+    if effective_policy is None:
+        config_path = resolved_root / SIDECAR_DIR_NAME / VAULT_CONFIG_FILENAME
+        config = load_vault_config(config_path) or VaultConfig()
+        effective_policy = NoteAdmissionPolicy(
+            excluded_folders=SKIPPED_FOLDERS | frozenset(config.excluded_folders),
+            excluded_files=frozenset(config.excluded_files),
+        )
     return FilesystemVaultReader(
         resolved_root,
         id_store=id_store,
         read_only=read_only,
-        excluded_folders=frozenset(config.excluded_folders),
-        excluded_files=frozenset(config.excluded_files),
+        admission_policy=effective_policy,
     )
 
 
@@ -212,13 +245,22 @@ class FilesystemVaultReader:
         read_only: bool = False,
         excluded_folders: frozenset[str] | None = None,
         excluded_files: frozenset[str] | None = None,
+        admission_policy: NoteAdmissionPolicy | None = None,
     ) -> None:
         self._vault_root = vault_root.expanduser().resolve()
         sidecar = self._vault_root / SIDECAR_DIR_NAME / ULID_SIDECAR_FILENAME
         self._read_only = read_only
         self._id_store = id_store or JsonIdStore(sidecar, read_only=read_only)
-        self._skipped_folders = SKIPPED_FOLDERS | frozenset(excluded_folders or ())
-        self._skipped_files = frozenset(excluded_files or ())
+        if admission_policy is not None and (
+            excluded_folders is not None or excluded_files is not None
+        ):
+            raise ValueError(
+                "admission_policy cannot be combined with excluded_folders or excluded_files"
+            )
+        self._admission_policy = admission_policy or NoteAdmissionPolicy(
+            excluded_folders=SKIPPED_FOLDERS | frozenset(excluded_folders or ()),
+            excluded_files=frozenset(excluded_files or ()),
+        )
         self._alias_cache: dict[str, str | None] | None = None
         self._alias_lock = asyncio.Lock()
 
@@ -229,6 +271,11 @@ class FilesystemVaultReader:
     @property
     def id_store(self) -> JsonIdStore:
         return self._id_store
+
+    @property
+    def admission_policy(self) -> NoteAdmissionPolicy:
+        """Return the immutable note policy used by filesystem discovery."""
+        return self._admission_policy
 
     # ------------------------------------------------------------------ read
 
@@ -360,10 +407,10 @@ class FilesystemVaultReader:
         return results
 
     def _should_skip_dir(self, name: str) -> bool:
-        return name in self._skipped_folders or name.startswith(".")
+        return name.casefold() in self._admission_policy.excluded_folders or name.startswith(".")
 
     def _should_skip_file(self, name: str) -> bool:
-        return name in self._skipped_files
+        return name.casefold() in self._admission_policy.excluded_files
 
     async def _resolve_id(self, metadata: dict[str, object], rel_path: str) -> str:
         front_id = metadata.get("id")
