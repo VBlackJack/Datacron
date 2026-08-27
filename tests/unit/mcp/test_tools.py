@@ -1265,7 +1265,15 @@ class TestGetNoteFull:
     ) -> None:
         from datacron.mcp.tools import _get_note_impl
 
+        sidecar_note_id = "01KX480DF1BC5EZPZDFH9P1G99"
+        sidecar = sidecar_dir(tmp_vault)
+        sidecar.mkdir(parents=True, exist_ok=True)
+        (sidecar / ULID_SIDECAR_FILENAME).write_text(
+            json.dumps({"welcome.md": sidecar_note_id}),
+            encoding="utf-8",
+        )
         note = await app_with_open_store.vault_reader.read_note(tmp_vault / "welcome.md")
+        assert note.id == sidecar_note_id
         assert await app_with_open_store.store.list_indexed_notes_with_mtime() == {}
         await app_with_open_store.store.delete_note(note.id)
         calls = 0
