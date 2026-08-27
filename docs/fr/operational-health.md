@@ -117,8 +117,13 @@ depuis l'inspection est refusée, pas écrasée.
 
 `--action adopt-index` est le cas nominal. L'ID canonique - SQLite, ou le sidecar quand l'index
 n'en porte aucun - est écrit dans le frontmatter par le chemin d'écriture atomique et journalisé
-ordinaire. Seuls `id` et `updated` changent ; le BOM, le corps et ses fins de ligne survivent
-octet pour octet.
+ordinaire. Le corps et le BOM survivent octet pour octet. Les fins de ligne suivent la
+politique d'EOL dominante deja en vigueur dans le vault : une note qui melange CRLF et LF est
+normalisee exactement comme n'importe quelle autre ecriture la normalise. Le frontmatter, lui,
+est re-serialise dans l'ordre de cles canonique, exactement comme le fait tout autre outil
+d'ecriture : un frontmatter ecrit a la main peut donc revenir avec plus de lignes modifiees que le
+seul `id` - une liste en style flow est re-emise en style bloc, et un horodatage separe par `T`
+revient avec une espace.
 
 `--action adopt-frontmatter` promeut l'ID propre à la note au rang de canonique et réaligne le
 sidecar et l'index à la place. Il ne touche pas à la note, et il est refusé quand l'ID du
@@ -134,7 +139,10 @@ par-dessus le sidecar primaire par tout lecteur d'identité, donc une entrée p�
 silencieusement la divergence.
 
 Après l'écriture, l'index vivant est réaligné par la même réconciliation incrémentale qu'utilise
-la commande `index` : aucun `datacron reindex` hors ligne n'est nécessaire. La commande rescanne
+la commande `index` : aucun `datacron reindex` hors ligne n'est nécessaire. Cette
+réconciliation porte sur tout le vault, pas seulement sur la note réparée : un index qui a
+dérivé ailleurs est remis d'aplomb dans la même passe, et les lignes des notes disparues sont
+supprimées. La commande rescanne
 ensuite le vault et affiche le nombre de divergences qu'elle a résorbées, par exemple
 `id_mismatches: 1 -> 0` ; elle sort en code non nul si ce nombre n'a pas baissé.
 

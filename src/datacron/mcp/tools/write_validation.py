@@ -471,12 +471,16 @@ def is_canonical_ulid(value: str) -> bool:
 
 
 def replace_frontmatter_id(raw: str, note_id: str) -> str:
-    """Return ``raw`` with only its frontmatter ``id`` and ``updated`` replaced.
+    """Return ``raw`` with its frontmatter ``id`` and ``updated`` replaced.
 
-    Everything else survives byte for byte: the BOM, the body, its line endings,
-    and the frontmatter key order. The exact-body parser is deliberate -- the
-    plain one strips the trailing newline, which would turn an identity repair
-    into a silent cosmetic rewrite of the note.
+    The body survives byte for byte, BOM and line endings included: the
+    exact-body parser is deliberate, since the plain one strips the trailing
+    newline and would turn an identity repair into a silent rewrite of the note.
+
+    The frontmatter itself is re-serialized in canonical key order, exactly as
+    every other write tool does, so a hand-written frontmatter can come back with
+    more changed lines than ``id`` alone -- a flow-style list is re-emitted in
+    block style, and a ``T``-separated timestamp comes back with a space.
     """
     metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
     if not metadata:

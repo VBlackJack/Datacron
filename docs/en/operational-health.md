@@ -114,8 +114,12 @@ refused, not overwritten.
 
 `--action adopt-index` is the nominal case. The canonical ID -- SQLite, or the sidecar when the
 index holds none -- is written into the frontmatter through the ordinary atomic, journaled write
-path. Only `id` and `updated` change; the BOM, the body, and its line endings survive byte for
-byte.
+path. The body and the BOM survive byte for byte. Line endings follow the vault's existing
+dominant-EOL policy, so a note that mixes CRLF and LF is normalized exactly as any other write
+normalizes it. The frontmatter itself is
+re-serialized in canonical key order, exactly as every other write tool does, so a hand-written
+frontmatter can come back with more changed lines than `id` alone: a flow-style list is re-emitted
+in block style, and a `T`-separated timestamp comes back with a space.
 
 `--action adopt-frontmatter` promotes the note's own ID to canonical and realigns the sidecar and
 the index instead. It leaves the note untouched, and it is refused when the frontmatter ID is not a
@@ -129,7 +133,9 @@ file is merged over the primary sidecar by every identity reader, so a stale ent
 silently restore the divergence.
 
 After the write, the live index is realigned through the same incremental reconcile the `index`
-command uses, so no offline `datacron reindex` is required. The command then rescans the vault and
+command uses, so no offline `datacron reindex` is required. That reconcile covers the whole vault,
+not just the repaired note: an index that has drifted elsewhere is brought back in the same pass,
+and rows for notes that no longer exist are dropped. The command then rescans the vault and
 prints the divergence count it cleared, for example `id_mismatches: 1 -> 0`; it exits non-zero if
 the count did not fall.
 
