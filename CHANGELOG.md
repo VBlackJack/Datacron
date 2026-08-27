@@ -9,6 +9,25 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0827.00] - 2026-08-27
+
+### Fixed
+
+- Every MCP read payload now uses the same canonical vault sandbox delimiters, including
+  retrieval, search, contradiction, and resource responses.
+- Production read paths no longer create persistent path-to-ULID mappings or restore
+  `ulids.json` from the migrated sidecar. Explicit indexing and write workflows keep their
+  existing identity-persistence contract.
+- Every note lookup route now enforces the same live Markdown admission boundary. Missing,
+  excluded, non-Markdown, and escaping targets fail closed with the stable
+  `note_not_admitted` code instead of being returned through a stale index, sidecar, alias, or
+  chunk reference.
+
+### Dependencies
+
+- The development extra now declares and locks `httpx`, which is required by the BL-0019
+  experiment harness and its regression tests.
+
 ## [2026.0811.00] - 2026-08-11
 
 ### Added
