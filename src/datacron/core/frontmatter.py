@@ -75,8 +75,14 @@ def parse(raw: str) -> tuple[dict[str, Any], str]:
     """Split ``raw`` into a YAML frontmatter mapping and body.
 
     Returns a tuple ``(metadata, body)``. If the file has no frontmatter
-    delimiters the metadata dict is empty and the body is the original text
-    (byte-for-byte; trailing newlines are preserved).
+    delimiters the metadata dict is empty and the body is the original text,
+    byte for byte.
+
+    When frontmatter IS present the body is **not** byte-exact: the underlying
+    parser strips surrounding whitespace, so the blank line after the closing
+    delimiter and the trailing newline are both dropped, and CRLF is normalized
+    to LF. Callers that must round-trip a note without rewriting bytes they did
+    not intend to touch use ``_parse_preserving_bom_and_body_eols`` instead.
     """
     if not raw.lstrip().startswith("---"):
         return {}, raw

@@ -37,6 +37,19 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   MCP surface could reach the `id` field, which left a single divergent note pinning `get_health`
   to `degraded` with no sanctioned way out.
 
+### Fixed
+
+- The write tools no longer eat a note's last byte. `parse()` strips the body it returns, so
+  `set_frontmatter`, `rename_note_section`, and `delete_note_section` silently removed the
+  trailing newline of every note they touched, along with the blank line after the closing
+  frontmatter delimiter; a metadata-only write therefore rewrote the body and moved the note's
+  `content_hash`. `append_journal` and `patch_note_section` shared the same parser and were only
+  masking the loss, because the fragment they insert ends in a newline. All five now use the
+  exact-body parser `patch_note_preamble` already used, which is what the published freshness
+  contract promises: uniform-EOL suffix bytes stay exact. Creating an absent section through
+  `append_journal` still leaves exactly one blank line before the new heading. Existing notes
+  are not rewritten; the fix applies to writes from now on.
+
 ## [2026.0827.01] - 2026-08-27
 
 ### Fixed

@@ -35,9 +35,13 @@ def append_entry_to_heading(body: str, heading: str, entry: str) -> str:
     lines = body.splitlines(keepends=True)
     section = _find_heading_section(lines, heading)
     if section is None:
-        suffix = "" if not body else "\n\n"
+        # The body now arrives with its exact trailing newlines instead of an
+        # rstripped one, so normalize them here: exactly one blank line separates
+        # the existing body from the created section, whatever it ended with.
+        leading = body.rstrip("\n")
+        separator = "" if not leading else "\n\n"
         entry_block = entry if entry.endswith("\n") else f"{entry}\n"
-        return f"{body}{suffix}## {heading}\n\n{entry_block}"
+        return f"{leading}{separator}## {heading}\n\n{entry_block}"
 
     _heading_index, _level, insert_at = section
     prefix = "".join(lines[:insert_at])
