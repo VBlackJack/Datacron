@@ -9,6 +9,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0827.01] - 2026-08-27
+
+### Fixed
+
+- The PyPI trusted-publishing action now supports Core Metadata 2.5 distributions produced by
+  the current build toolchain.
+
 ## [2026.0827.00] - 2026-08-27
 
 ### Fixed
