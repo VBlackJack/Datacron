@@ -41,9 +41,11 @@ from datacron.mcp.server import DatacronApp, build_app
 from datacron.mcp.tools import (
     _append_journal_impl,
     _create_note_ai_impl,
+    _delete_note_section_impl,
     _get_health_impl,
     _get_note_impl,
     _patch_note_section_impl,
+    _rename_note_section_impl,
     _set_frontmatter_impl,
 )
 from datacron.reliability import compare_with_baseline, scan_vault_read_only
@@ -647,3 +649,96 @@ def test_prop_07_id_repair_clears_the_only_divergence(tmp_path: Path) -> None:
         original.decode("utf-8")
     )
     assert after.split(b"---\n", 2)[2] == before.split(b"---\n", 2)[2]
+
+
+_FIDELITY_BODY = "# T\n\n## Alpha\n\nalpha body.\n\n## Beta\n\nbeta body.\n"
+
+
+async def _fidelity_vault(root: Path, label: str) -> tuple[Path, DatacronApp, SQLiteFTS5Store]:
+    vault = root / label
+    vault.mkdir(parents=True)
+    _write_note(vault, "note.md", _NOTE_ID_A, "T", _FIDELITY_BODY)
+    app, store = await _open_writable_app(vault)
+    return vault, app, store
+
+
+def test_prop_02_write_tools_preserve_the_exact_body_bytes(tmp_path: Path) -> None:
+    """PROP-02: an ordinary write no longer eats the note's last byte.
+
+    ``parse()`` strips the body it returns, so every tool built on it silently
+    dropped the trailing newline. A metadata-only ``set_frontmatter`` rewrote the
+    last byte of the file and moved its ``content_hash``. The exact-body parser is
+    what stops that, and the published contract promises exactly this: "Uniform-EOL
+    suffix bytes remain exact".
+    """
+
+    async def scenario() -> dict[str, bytes]:
+        results: dict[str, bytes] = {}
+
+        vault, app, store = await _fidelity_vault(tmp_path, "fm")
+        try:
+            await _set_frontmatter_impl(app, rel_path="note.md", confidence="medium")
+        finally:
+            await store.close()
+        results["set_frontmatter"] = (vault / "note.md").read_bytes()
+
+        vault, app, store = await _fidelity_vault(tmp_path, "rename")
+        try:
+            await _rename_note_section_impl(
+                app, rel_path="note.md", heading="Beta", new_heading="Gamma", heading_level=2
+            )
+        finally:
+            await store.close()
+        results["rename_note_section"] = (vault / "note.md").read_bytes()
+
+        vault, app, store = await _fidelity_vault(tmp_path, "delete")
+        try:
+            await _delete_note_section_impl(
+                app, rel_path="note.md", heading="Alpha", heading_level=2
+            )
+        finally:
+            await store.close()
+        results["delete_note_section"] = (vault / "note.md").read_bytes()
+
+        vault, app, store = await _fidelity_vault(tmp_path, "patch")
+        try:
+            await _patch_note_section_impl(
+                app, rel_path="note.md", heading="Alpha", new_content="replaced.", heading_level=2
+            )
+        finally:
+            await store.close()
+        results["patch_note_section"] = (vault / "note.md").read_bytes()
+
+        vault, app, store = await _fidelity_vault(tmp_path, "append")
+        try:
+            await _append_journal_impl(app, rel_path="note.md", heading="Journal", entry="- one")
+        finally:
+            await store.close()
+        results["append_journal"] = (vault / "note.md").read_bytes()
+
+        return results
+
+    written = asyncio.run(scenario())
+
+    # Every tool leaves the file ending on its newline. This is the byte that was lost.
+    for tool, raw in written.items():
+        assert raw.endswith(b"\n"), f"{tool} dropped the trailing newline"
+
+    # A metadata-only write must not touch the body at all.
+    assert written["set_frontmatter"].endswith(_FIDELITY_BODY.encode("utf-8"))
+
+    # A rename touches its heading line and nothing else, suffix bytes included.
+    assert b"## Gamma\n\nbeta body.\n" in written["rename_note_section"]
+    assert b"## Alpha\n\nalpha body.\n" in written["rename_note_section"]
+
+    # Deleting the first section leaves the suffix of the second exact.
+    assert written["delete_note_section"].endswith(b"## Beta\n\nbeta body.\n")
+
+    # Patching a middle section leaves the following section's bytes exact.
+    assert written["patch_note_section"].endswith(b"## Beta\n\nbeta body.\n")
+
+    # Creating an absent section keeps exactly one blank line before it. The exact
+    # parser hands the append branch a body that still has its trailing newline, so
+    # without normalization there it would grow a stray blank line every time.
+    assert b"beta body.\n\n## Journal\n\n- one\n" in written["append_journal"]
+    assert b"\n\n\n## Journal" not in written["append_journal"]

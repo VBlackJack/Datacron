@@ -53,7 +53,6 @@ from datacron.mcp.tools.write_validation import (
     _RENAME_H1_REFUSAL_MESSAGE,
     _clean_string_list,
     _map_write_path_error,
-    _parse_preserving_bom,
     _parse_preserving_bom_and_body_eols,
     _serialize_preserving_bom,
     _validate_append_journal_request,
@@ -252,7 +251,7 @@ async def _append_journal_impl(
         cleaned_expected_hash = _validate_expected_hash(expected_hash)
 
         def mutation(raw: str) -> str:
-            metadata, current_body, has_bom = _parse_preserving_bom(raw)
+            metadata, current_body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             new_body = append_entry_to_heading(
                 current_body,
                 cleaned_heading,
@@ -373,7 +372,7 @@ async def _set_frontmatter_impl(
         )
 
         def mutation(raw: str) -> str:
-            metadata, body, has_bom = _parse_preserving_bom(raw)
+            metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             if not metadata:
                 raise ValueError("note has no frontmatter")
             if cleaned_confidence is not None:
@@ -629,7 +628,7 @@ async def _patch_note_section_impl(
 
         def mutation(raw: str) -> str:
             nonlocal matched_level, matched_text
-            metadata, body, has_bom = _parse_preserving_bom(raw)
+            metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             lines = body.splitlines(keepends=True)
             content_start, content_end = find_section_span(
                 lines,
@@ -765,7 +764,7 @@ async def _rename_note_section_impl(
 
         def mutation(raw: str) -> str:
             nonlocal matched_level, matched_text
-            metadata, body, has_bom = _parse_preserving_bom(raw)
+            metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             lines = body.splitlines(keepends=True)
             try:
                 content_start, _content_end = find_section_span(
@@ -895,7 +894,7 @@ async def _delete_note_section_impl(
 
         def mutation(raw: str) -> str:
             nonlocal matched_level, matched_text
-            metadata, body, has_bom = _parse_preserving_bom(raw)
+            metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             lines = body.splitlines(keepends=True)
             content_start, content_end = find_section_span(
                 lines,
