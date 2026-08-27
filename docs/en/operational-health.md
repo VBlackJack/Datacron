@@ -77,6 +77,62 @@ it with a trusted earlier value detects alteration. It is not proof of future
 durability, hardware cache behavior, attachment integrity, or protection against
 an attacker who can replace both data and reference evidence.
 
+## Repairing a note identity divergence
+
+A note carries its identity in three places: the frontmatter `id` field, the `.datacron/ulids.json`
+sidecar, and the SQLite index. `get_health` reports every disagreement in `integrity.id_mismatches`,
+and any mismatch keeps `status` at `degraded`.
+
+No MCP write tool can edit the `id` field. `set_frontmatter` writes only lifecycle fields,
+`patch_note_preamble` edits the body placed before the first heading, and `datacron ops repair`
+resolves blocked operations rather than identities. A single divergent note therefore pinned
+`degraded` with no sanctioned way out. Two `ops` commands close that gap.
+
+### `datacron ops inspect-id`
+
+```text
+datacron ops inspect-id --vault PATH
+```
+
+Read-only. It lists every divergence with the value recorded by each of the three sources, the
+`classification`, the exact `content_hash` to copy into the repair, and the action that would
+repair it. Run it first: `ops repair-id` refuses to guess the hash for you.
+
+A `mismatch` is one note whose sources disagree. A `duplicate` is several notes claiming the same
+ID; it is reported and never repaired automatically, because choosing which note keeps the ID is
+an editorial decision.
+
+### `datacron ops repair-id`
+
+```text
+datacron ops repair-id --vault PATH --rel-path NOTE.md --action adopt-index --expected-hash HASH --confirm NOTE.md
+```
+
+Every parameter is mandatory. `--confirm` repeats `--rel-path` exactly, and `--expected-hash` is a
+strict compare-and-swap against the note bytes: a note that changed since the inspection is
+refused, not overwritten.
+
+`--action adopt-index` is the nominal case. The canonical ID -- SQLite, or the sidecar when the
+index holds none -- is written into the frontmatter through the ordinary atomic, journaled write
+path. Only `id` and `updated` change; the BOM, the body, and its line endings survive byte for
+byte.
+
+`--action adopt-frontmatter` promotes the note's own ID to canonical and realigns the sidecar and
+the index instead. It leaves the note untouched, and it is refused when the frontmatter ID is not a
+canonical 26-character Crockford ULID. That refusal is the point: adopting a malformed ID would
+propagate the very defect the command exists to remove.
+
+The command never generates a new ID and never accepts one typed by hand. It also fails closed
+when the note has no frontmatter, when no divergence is recorded for the path, when the divergence
+is a duplicate, and when `.datacron/ulids.json.migrated` still maps the path to another ID -- that
+file is merged over the primary sidecar by every identity reader, so a stale entry there would
+silently restore the divergence.
+
+After the write, the live index is realigned through the same incremental reconcile the `index`
+command uses, so no offline `datacron reindex` is required. The command then rescans the vault and
+prints the divergence count it cleared, for example `id_mismatches: 1 -> 0`; it exits non-zero if
+the count did not fall.
+
 ## Offline atomic reindex
 
 `datacron reindex --vault PATH` builds a complete SQLite database under a unique

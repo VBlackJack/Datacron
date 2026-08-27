@@ -30,6 +30,7 @@ _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
     {"high", "medium", "low", "needs_verification"}
 )
 _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
+_ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _FRONTMATTER_BOUNDARY_PATTERN: Final[re.Pattern[str]] = re.compile(r"-{3,}[ \t]*(?:\r\n|[\r\n])?")
 _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
 _REJECTED_ENTRY_SEPARATOR: Final[str] = " -- "
@@ -456,6 +457,33 @@ def _serialize_preserving_bom(
 ) -> str:
     prefix = "\ufeff" if has_bom else ""
     return f"{prefix}{serialize(metadata, body)}"
+
+
+def is_canonical_ulid(value: str) -> bool:
+    """Report whether ``value`` is a canonical 26-character Crockford ULID.
+
+    Identity repair needs this in its own right: adopting a frontmatter ID that
+    only looks like a ULID would propagate the malformed value to the index and
+    the sidecar, which is how an unrepairable divergence is created rather than
+    fixed.
+    """
+    return _ULID_PATTERN.fullmatch(value) is not None
+
+
+def replace_frontmatter_id(raw: str, note_id: str) -> str:
+    """Return ``raw`` with only its frontmatter ``id`` and ``updated`` replaced.
+
+    Everything else survives byte for byte: the BOM, the body, its line endings,
+    and the frontmatter key order. The exact-body parser is deliberate -- the
+    plain one strips the trailing newline, which would turn an identity repair
+    into a silent cosmetic rewrite of the note.
+    """
+    metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
+    if not metadata:
+        raise ValueError("note has no frontmatter")
+    metadata["id"] = note_id
+    metadata["updated"] = datetime.now(tz=UTC).isoformat()
+    return _serialize_preserving_bom(metadata, body, has_bom=has_bom)
 
 
 def _clean_string_list(values: list[str]) -> list[str]:

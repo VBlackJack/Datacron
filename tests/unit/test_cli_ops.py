@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -22,9 +24,11 @@ from typer.testing import CliRunner
 
 from datacron.cli import app
 from datacron.core.config import Settings, VaultConfig
+from datacron.core.frontmatter import serialize
 from datacron.core.hashing import sha256_bytes
 from datacron.core.operation_log import OperationRecord
 from datacron.core.vault_writer import FilesystemVaultWriter
+from datacron.reliability import scan_vault_read_only
 
 _RECOVERY_TIMESTAMP = "2026-08-10T00:00:00+00:00"
 
@@ -330,3 +334,358 @@ class TestOpsRepair:
         assert len(records) == 2
         assert records[-1].parameters["resolves_operation_id"] == record.operation_id
         assert not writer._operation_journal.pending_path(record.operation_id).exists()
+
+
+_CANONICAL_ID = "01J00000000000000000000021"
+_OTHER_ID = "01J00000000000000000000022"
+_THIRD_ID = "01J00000000000000000000023"
+_MALFORMED_ID = "01KVMTG0IA2AGENTSCPDC0616"
+_NOTE_BODY = "# Point IA\n\nBody line one.\nBody line two.\n"
+
+
+def _note_bytes(note_id: str, title: str = "Point IA", body: str = _NOTE_BODY) -> bytes:
+    metadata = {
+        "id": note_id,
+        "title": title,
+        "created": "2026-01-01T00:00:00+00:00",
+        "updated": "2026-01-01T00:00:00+00:00",
+        "origin": "human",
+        "confidence": "high",
+    }
+    return serialize(metadata, body).encode("utf-8")
+
+
+def _without_updated(raw: bytes) -> bytes:
+    """Drop the frontmatter `updated` line, which every sanctioned write stamps."""
+    return b"\n".join(line for line in raw.split(b"\n") if not line.startswith(b"updated:"))
+
+
+def _indexed_vault(runner: CliRunner, tmp_path: Path, notes: dict[str, bytes]) -> Path:
+    """Build a vault and its real FTS index through the shipped `index` command."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    for rel_path, raw in notes.items():
+        target = vault / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+    result = runner.invoke(app, ["index", "--vault", str(vault)])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    return vault
+
+
+def _mismatched_vault(
+    runner: CliRunner,
+    tmp_path: Path,
+    *,
+    frontmatter_id: str = _MALFORMED_ID,
+) -> tuple[Path, Path, str]:
+    """Index a note under the canonical ID, then diverge only its frontmatter."""
+    vault = _indexed_vault(
+        runner,
+        tmp_path,
+        {"note.md": _note_bytes(_CANONICAL_ID), "other.md": _note_bytes(_OTHER_ID, "Other")},
+    )
+    target = vault / "note.md"
+    target.write_bytes(_note_bytes(frontmatter_id))
+    return vault, target, sha256_bytes(target.read_bytes())
+
+
+def _duplicate_vault(runner: CliRunner, tmp_path: Path) -> Path:
+    return _indexed_vault(
+        runner,
+        tmp_path,
+        {
+            "one.md": _note_bytes(_CANONICAL_ID, "One"),
+            "two.md": _note_bytes(_CANONICAL_ID, "Two"),
+        },
+    )
+
+
+def _indexed_note_ids(vault: Path) -> dict[str, str]:
+    connection = sqlite3.connect(vault / ".datacron" / "index" / "datacron.db")
+    try:
+        rows = connection.execute("SELECT rel_path, note_id FROM notes").fetchall()
+    finally:
+        connection.close()
+    return {str(rel_path): str(note_id) for rel_path, note_id in rows}
+
+
+def _repair_id_argv(
+    vault: Path, rel_path: str, action: str, expected_hash: str, confirm: str
+) -> list[str]:
+    return [
+        "ops",
+        "repair-id",
+        "--vault",
+        str(vault),
+        "--rel-path",
+        rel_path,
+        "--action",
+        action,
+        "--expected-hash",
+        expected_hash,
+        "--confirm",
+        confirm,
+    ]
+
+
+class TestOpsInspectId:
+    """Identity inspection must expose repair evidence without changing it."""
+
+    def test_inspect_id_reports_clean_vault(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        vault = _indexed_vault(runner, tmp_path, {"note.md": _note_bytes(_CANONICAL_ID)})
+
+        result = runner.invoke(app, ["ops", "inspect-id", "--vault", str(vault)])
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert "Identity inspection: no ID divergences." in result.stdout
+        assert "No changes made." in result.stdout
+
+    def test_inspect_id_reports_every_source_and_the_hash_to_copy(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        vault, target, content_hash = _mismatched_vault(runner, tmp_path)
+        before = target.read_bytes()
+
+        result = runner.invoke(app, ["ops", "inspect-id", "--vault", str(vault)])
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert "Identity inspection: 1 ID divergence" in result.stdout
+        assert "rel_path: note.md" in result.stdout
+        assert f"frontmatter: {_MALFORMED_ID}" in result.stdout
+        assert "sidecar: <absent>" in result.stdout
+        assert f"sqlite: {_CANONICAL_ID}" in result.stdout
+        assert "classification: mismatch" in result.stdout
+        assert f"content_hash: {content_hash}" in result.stdout
+        assert "recommended action: adopt-index" in result.stdout
+        assert "No changes made." in result.stdout
+        assert target.read_bytes() == before
+
+    def test_inspect_id_never_recommends_repairing_a_duplicate(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        vault = _duplicate_vault(runner, tmp_path)
+
+        result = runner.invoke(app, ["ops", "inspect-id", "--vault", str(vault)])
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert "classification: duplicate" in result.stdout
+        assert "duplicate IDs are reported, never repaired automatically" in result.stdout
+
+
+class TestOpsRepairId:
+    """Identity repairs require exact operator intent and converge the scan."""
+
+    def test_adopt_index_repairs_and_preserves_every_other_byte(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        vault, target, content_hash = _mismatched_vault(runner, tmp_path)
+        before = target.read_bytes()
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "note.md", "adopt-index", content_hash, "note.md"),
+        )
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert "Identity repair complete: adopted the index ID." in result.stdout
+        assert f"note_id: {_CANONICAL_ID}" in result.stdout
+        assert "id_mismatches: 1 -> 0" in result.stdout
+        after = target.read_bytes()
+        expected = before.replace(_MALFORMED_ID.encode(), _CANONICAL_ID.encode())
+        assert _without_updated(after) == _without_updated(expected)
+        assert after.endswith(b"Body line two.\n")
+        assert not scan_vault_read_only(vault).id_violations
+        assert _indexed_note_ids(vault)["note.md"] == _CANONICAL_ID
+
+    def test_adopt_index_journals_the_repair(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        vault, _target, content_hash = _mismatched_vault(runner, tmp_path)
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "note.md", "adopt-index", content_hash, "note.md"),
+        )
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault]), VaultConfig())
+        records = writer._operation_journal.read_records()
+        assert [record.op for record in records] == ["repair_id"]
+        assert records[0].tool == "datacron_ops_repair_id"
+        assert records[0].rel_path == "note.md"
+        assert records[0].before_hash == content_hash
+        assert records[0].parameters["action"] == "adopt-index"
+        assert records[0].parameters["note_id"] == _CANONICAL_ID
+
+    def test_adopt_frontmatter_realigns_sidecar_and_index_without_touching_the_note(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        vault = _indexed_vault(runner, tmp_path, {"note.md": _note_bytes(_CANONICAL_ID)})
+        target = vault / "note.md"
+        target.write_bytes(_note_bytes(_THIRD_ID))
+        sidecar = vault / ".datacron" / "ulids.json"
+        sidecar.write_text(json.dumps({"note.md": _CANONICAL_ID}), encoding="ascii")
+        before = target.read_bytes()
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(
+                vault,
+                "note.md",
+                "adopt-frontmatter",
+                sha256_bytes(before),
+                "note.md",
+            ),
+        )
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert "Identity repair complete: adopted the frontmatter ID." in result.stdout
+        assert "note rewritten: no" in result.stdout
+        assert "id_mismatches: 1 -> 0" in result.stdout
+        assert target.read_bytes() == before
+        assert json.loads(sidecar.read_text(encoding="utf-8")) == {"note.md": _THIRD_ID}
+        assert _indexed_note_ids(vault)["note.md"] == _THIRD_ID
+        assert not scan_vault_read_only(vault).id_violations
+
+    def test_repair_id_refuses_adopt_frontmatter_for_a_malformed_ulid(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        vault, target, content_hash = _mismatched_vault(runner, tmp_path)
+        before = target.read_bytes()
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "note.md", "adopt-frontmatter", content_hash, "note.md"),
+        )
+
+        assert result.exit_code == 1
+        assert "is not a canonical 26-character Crockford ULID" in result.stderr
+        assert target.read_bytes() == before
+        assert _indexed_note_ids(vault)["note.md"] == _CANONICAL_ID
+
+    def test_repair_id_refuses_a_divergent_expected_hash(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        vault, target, _content_hash = _mismatched_vault(runner, tmp_path)
+        before = target.read_bytes()
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "note.md", "adopt-index", sha256_bytes(b"stale"), "note.md"),
+        )
+
+        assert result.exit_code == 1
+        assert "hash mismatch" in result.stderr
+        assert target.read_bytes() == before
+
+    def test_repair_id_refuses_without_exact_confirmation(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        vault, target, content_hash = _mismatched_vault(runner, tmp_path)
+        before = target.read_bytes()
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "note.md", "adopt-index", content_hash, "other.md"),
+        )
+
+        assert result.exit_code == 1
+        assert "Pass --confirm note.md" in result.stderr
+        assert target.read_bytes() == before
+
+    def test_repair_id_refuses_when_there_is_nothing_to_repair(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        vault, _target, _content_hash = _mismatched_vault(runner, tmp_path)
+        other = vault / "other.md"
+        before = other.read_bytes()
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "other.md", "adopt-index", sha256_bytes(before), "other.md"),
+        )
+
+        assert result.exit_code == 1
+        assert "no ID divergence recorded for other.md" in result.stderr
+        assert other.read_bytes() == before
+
+    def test_repair_id_refuses_a_note_without_frontmatter(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        vault = _indexed_vault(runner, tmp_path, {"note.md": _note_bytes(_CANONICAL_ID)})
+        target = vault / "note.md"
+        target.write_bytes(b"# Plain note\n\nNo frontmatter here.\n")
+        sidecar = vault / ".datacron" / "ulids.json"
+        sidecar.write_text(json.dumps({"note.md": _OTHER_ID}), encoding="ascii")
+        before = target.read_bytes()
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "note.md", "adopt-index", sha256_bytes(before), "note.md"),
+        )
+
+        assert result.exit_code == 1
+        assert "note has no frontmatter" in result.stderr
+        assert target.read_bytes() == before
+
+    def test_repair_id_reports_a_duplicate_instead_of_guessing(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        vault = _duplicate_vault(runner, tmp_path)
+        target = vault / "one.md"
+        before = target.read_bytes()
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "one.md", "adopt-index", sha256_bytes(before), "one.md"),
+        )
+
+        assert result.exit_code == 1
+        assert "carries a duplicate ID, not a mismatch" in result.stderr
+        assert target.read_bytes() == before
+
+    def test_repair_id_refuses_when_the_migrated_sidecar_would_restore_the_old_id(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        vault, target, content_hash = _mismatched_vault(runner, tmp_path)
+        migrated = vault / ".datacron" / "ulids.json.migrated"
+        migrated.write_text(json.dumps({"note.md": _THIRD_ID}), encoding="ascii")
+        before = target.read_bytes()
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "note.md", "adopt-index", content_hash, "note.md"),
+        )
+
+        assert result.exit_code == 1
+        assert "migrated sidecar" in result.stderr
+        assert target.read_bytes() == before

@@ -26,6 +26,7 @@ import os
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -50,8 +51,13 @@ from datacron.core.config import (
 from datacron.core.durability import WritePolicy, probe_directory_durability
 from datacron.core.logger import configure_logging, get_logger
 from datacron.core.models import EvalPipeline, EvalTransport
-from datacron.core.operation_log import HistoryUnavailableError, OperationLogError
+from datacron.core.operation_log import (
+    HistoryUnavailableError,
+    OperationContext,
+    OperationLogError,
+)
 from datacron.core.paths import (
+    read_ulid_mappings,
     sidecar_dir,
     sidecar_index_db,
     sidecar_vault_config,
@@ -95,6 +101,7 @@ from datacron.setup_wizard import (
 
 if TYPE_CHECKING:
     from datacron.eval.baseline import BaselineComparison
+    from datacron.reliability import ReliabilityScan, ReliabilityViolation
 
 __all__ = ["app", "mcp_entry"]
 
@@ -122,6 +129,13 @@ class _OpsRepairAction(StrEnum):
 
     RESTORE_BEFORE = "restore-before"
     ADOPT_DISK = "adopt-disk"
+
+
+class _OpsRepairIdAction(StrEnum):
+    """Explicit operator choices for one divergent note identity."""
+
+    ADOPT_INDEX = "adopt-index"
+    ADOPT_FRONTMATTER = "adopt-frontmatter"
 
 
 _SETUP_PROMPT_EXPLANATIONS: Final[dict[_SetupPrompt, tuple[str, ...]]] = {
@@ -496,6 +510,292 @@ def ops_repair(
     _print(f"  before_hash: {repaired.before_hash}")
     _print(f"  after_hash: {repaired.after_hash}")
     _log_completion("ops.repair", started)
+
+
+_ID_SOURCES: Final[tuple[str, ...]] = ("frontmatter", "sidecar", "sqlite")
+
+
+@dataclass(frozen=True)
+class _IdRepairOutcome:
+    """Durable evidence of one applied note-identity repair."""
+
+    rel_path: str
+    action: str
+    note_id: str
+    previous: tuple[tuple[str, str], ...]
+    content_hash: str
+    note_rewritten: bool
+    sidecar_realigned: bool
+    index_realigned: bool
+    mismatches_before: int
+    mismatches_after: int
+
+
+def _recommended_id_action(violation: ReliabilityViolation) -> str:
+    """Return the action `ops repair-id` would accept for one divergence."""
+    if violation.classification != "mismatch":
+        return "none -- duplicate IDs are reported, never repaired automatically"
+    sources = dict(violation.details)
+    if not (sources.get("sqlite") or sources.get("sidecar")):
+        return "none -- no canonical index or sidecar ID to adopt"
+    return "adopt-index"
+
+
+@ops_app.command(name="inspect-id")
+def ops_inspect_id(
+    vault: Path | None = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Vault root. Defaults to DATACRON_VAULT_ROOT or current directory.",
+    ),
+) -> None:
+    """Inspect note-identity divergences without changing durable state."""
+    from datacron.reliability import scan_vault_read_only  # noqa: PLC0415
+
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    started = _log_invocation("ops.inspect-id", vault=str(vault_root))
+    try:
+        scan = scan_vault_read_only(vault_root)
+    except (FileNotFoundError, OSError) as exc:
+        _error(f"Identity inspection failed: {exc}")
+    if not scan.id_violations:
+        _print("Identity inspection: no ID divergences.")
+        _print("No changes made.")
+        _log_completion("ops.inspect-id", started)
+        return
+    content_hashes = dict(scan.content_hashes)
+    noun = "divergence" if len(scan.id_violations) == 1 else "divergences"
+    _print(f"Identity inspection: {len(scan.id_violations)} ID {noun}")
+    for item in scan.id_violations:
+        sources = dict(item.details)
+        _print(f"  rel_path: {item.rel_path}")
+        for source in _ID_SOURCES:
+            _print(f"  {source}: {sources.get(source, '<absent>')}")
+        _print(f"  classification: {item.classification}")
+        _print(f"  content_hash: {content_hashes.get(item.rel_path, '<absent>')}")
+        _print(f"  recommended action: {_recommended_id_action(item)}")
+    _print("No changes made.")
+    _log_completion("ops.inspect-id", started)
+
+
+@ops_app.command(name="repair-id")
+def ops_repair_id(
+    rel_path: str = typer.Option(..., "--rel-path", help="Vault-relative note path."),
+    action: _OpsRepairIdAction = typer.Option(..., "--action", help="Exact repair action."),
+    expected_hash: str = typer.Option(
+        ...,
+        "--expected-hash",
+        help="Exact note SHA-256 copied from `datacron ops inspect-id`.",
+    ),
+    confirm: str | None = typer.Option(
+        None,
+        "--confirm",
+        help="Repeat the exact note path to authorize the repair.",
+    ),
+    vault: Path | None = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Vault root. Defaults to DATACRON_VAULT_ROOT or current directory.",
+    ),
+) -> None:
+    """Repair one divergent note identity under exact path and hash confirmation."""
+    if confirm != rel_path:
+        _error(f"Repair not confirmed. Pass --confirm {rel_path}")
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    started = _log_invocation(
+        "ops.repair-id",
+        vault=str(vault_root),
+        rel_path=rel_path,
+        action=action.value,
+    )
+    try:
+        outcome = asyncio.run(
+            _repair_note_id(vault_root, settings, rel_path, action, expected_hash)
+        )
+    except (
+        FileNotFoundError,
+        HistoryUnavailableError,
+        OSError,
+        OperationLogError,
+        PermissionError,
+        ValueError,
+        VaultLockBusyError,
+        WriteConflictError,
+    ) as exc:
+        _error(f"Identity repair refused: {exc}")
+    _print(f"Identity repair complete: adopted the {outcome.action.removeprefix('adopt-')} ID.")
+    _print(f"  rel_path: {outcome.rel_path}")
+    _print(f"  note_id: {outcome.note_id}")
+    for source, value in outcome.previous:
+        _print(f"  previous {source}: {value}")
+    _print(f"  content_hash: {outcome.content_hash}")
+    _print(f"  note rewritten: {'yes' if outcome.note_rewritten else 'no'}")
+    _print(f"  sidecar realigned: {'yes' if outcome.sidecar_realigned else 'no'}")
+    _print(f"  index realigned: {'yes' if outcome.index_realigned else 'no'}")
+    _print(f"  id_mismatches: {outcome.mismatches_before} -> {outcome.mismatches_after}")
+    if outcome.mismatches_after >= outcome.mismatches_before:
+        _error(
+            "Identity repair did not clear the divergence; "
+            "re-run `datacron ops inspect-id` before any further write."
+        )
+    _log_completion("ops.repair-id", started)
+
+
+def _resolve_id_violation(
+    scan: ReliabilityScan,
+    rel_path: str,
+) -> tuple[ReliabilityViolation, dict[str, str]]:
+    """Return the divergence recorded for ``rel_path`` or refuse explicitly."""
+    for violation in scan.id_violations:
+        if violation.rel_path == rel_path:
+            if violation.classification != "mismatch":
+                raise ValueError(
+                    f"{rel_path} carries a duplicate ID, not a mismatch; "
+                    "duplicates are reported, never repaired automatically"
+                )
+            return violation, dict(violation.details)
+    raise ValueError(f"no ID divergence recorded for {rel_path}; nothing to repair")
+
+
+def _canonical_id_for_action(
+    action: _OpsRepairIdAction,
+    sources: dict[str, str],
+) -> tuple[str, str]:
+    """Return the source label and the ID the requested action adopts."""
+    if action is _OpsRepairIdAction.ADOPT_FRONTMATTER:
+        target = sources.get("frontmatter")
+        if target is None:
+            raise ValueError("the note carries no frontmatter ID to adopt")
+        return "frontmatter", target
+    target = sources.get("sqlite") or sources.get("sidecar")
+    if target is None:
+        raise ValueError("no canonical index or sidecar ID is available to adopt")
+    return "canonical", target
+
+
+def _assert_migrated_sidecar_agrees(vault_root: Path, rel_path: str, note_id: str) -> None:
+    """Refuse when the migrated sidecar would re-impose the old ID after repair.
+
+    ``ulids.json.migrated`` is merged over ``ulids.json`` by every identity
+    reader, so a stale entry there survives a repair of the primary sidecar and
+    silently restores the divergence.
+    """
+    migrated = sidecar_dir(vault_root) / "ulids.json.migrated"
+    if not migrated.is_file():
+        return
+    try:
+        payload = read_ulid_mappings(
+            migrated,
+            require_string_pairs=True,
+            invalid_object_is_empty=True,
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read migrated ID sidecar {migrated}: {exc}") from exc
+    recorded = payload.get(rel_path)
+    if recorded is not None and recorded != note_id:
+        raise ValueError(
+            f"migrated sidecar {migrated} still maps {rel_path} to {recorded}; "
+            "resolve or remove that entry before repairing the identity"
+        )
+
+
+async def _realign_index_identity(vault_root: Path, rel_path: str, note_id: str) -> bool:
+    """Realign the live index with ``note_id`` through the shared reconcile path.
+
+    The stale row is dropped first on purpose: reconcile skips a note whose
+    content hash is unchanged, so ``adopt-frontmatter`` -- which never rewrites
+    the note -- would otherwise leave the old ``note_id`` indexed forever.
+    """
+    from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
+    from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
+    from datacron.indexing.reconcile import reconcile  # noqa: PLC0415
+
+    db_path = sidecar_index_db(vault_root)
+    if not db_path.exists():
+        return False
+    settings = get_settings()
+    config = _load_vault_yaml(vault_root) or VaultConfig()
+    reader = build_configured_reader(vault_root)
+    chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
+    store = SQLiteFTS5Store(term_map=config.query_expansion)
+    await store.open(db_path)
+    try:
+        indexed_id = await store.get_note_id(rel_path)
+        if indexed_id is not None and indexed_id != note_id:
+            await store.delete_note(indexed_id)
+        await reconcile(store, reader, chunker, mtime_gate=True)
+    finally:
+        await store.close()
+    return True
+
+
+async def _repair_note_id(
+    vault_root: Path,
+    settings: Settings,
+    rel_path: str,
+    action: _OpsRepairIdAction,
+    expected_hash: str,
+) -> _IdRepairOutcome:
+    """Apply one identity repair and report the divergence count it cleared."""
+    from datacron.core.vault import JsonIdStore  # noqa: PLC0415
+    from datacron.mcp.tools.write_validation import (  # noqa: PLC0415
+        is_canonical_ulid,
+        replace_frontmatter_id,
+    )
+    from datacron.reliability import scan_vault_read_only  # noqa: PLC0415
+
+    cleaned_hash = expected_hash.strip()
+    scan = scan_vault_read_only(vault_root)
+    mismatches_before = len(scan.id_violations)
+    _violation, sources = _resolve_id_violation(scan, rel_path)
+    label, note_id = _canonical_id_for_action(action, sources)
+    if not is_canonical_ulid(note_id):
+        raise ValueError(
+            f"{label} ID {note_id} is not a canonical 26-character Crockford ULID; "
+            "adopting it would propagate a malformed identity"
+        )
+    _assert_migrated_sidecar_agrees(vault_root, rel_path, note_id)
+
+    content_hash = dict(scan.content_hashes).get(rel_path)
+    if content_hash != cleaned_hash:
+        raise WriteConflictError("note changed since inspection (hash mismatch); re-read and retry")
+
+    note_rewritten = sources.get("frontmatter") != note_id
+    if note_rewritten:
+        writer = _ops_writer(vault_root, settings)
+        content_hash = await writer.mutate_note_atomic(
+            rel_path,
+            lambda raw: replace_frontmatter_id(raw, note_id),
+            expected_hash=cleaned_hash,
+            operation=OperationContext(
+                op="repair_id",
+                tool="datacron_ops_repair_id",
+                actor="cli:local-operator",
+                parameters={"action": action.value, "note_id": note_id},
+            ),
+        )
+
+    sidecar_realigned = "sidecar" in sources and sources["sidecar"] != note_id
+    if sidecar_realigned:
+        await JsonIdStore(sidecar_dir(vault_root) / "ulids.json").set(rel_path, note_id)
+
+    index_realigned = await _realign_index_identity(vault_root, rel_path, note_id)
+    return _IdRepairOutcome(
+        rel_path=rel_path,
+        action=action.value,
+        note_id=note_id,
+        previous=tuple(sorted(sources.items())),
+        content_hash=content_hash,
+        note_rewritten=note_rewritten,
+        sidecar_realigned=sidecar_realigned,
+        index_realigned=index_realigned,
+        mismatches_before=mismatches_before,
+        mismatches_after=len(scan_vault_read_only(vault_root).id_violations),
+    )
 
 
 async def _index_status_label(db_path: Path) -> str:

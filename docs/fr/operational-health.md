@@ -80,6 +80,64 @@ une valeur antérieure de confiance détecte une altération. Ce n'est pas une p
 future, de comportement du cache matériel, d'intégrité des pièces jointes, ni une protection
 contre un attaquant capable de remplacer à la fois les données et la preuve de référence.
 
+## Réparer une incohérence d'identité de note
+
+Une note porte son identité à trois endroits : le champ `id` du frontmatter, le sidecar
+`.datacron/ulids.json` et l'index SQLite. `get_health` compte chaque désaccord dans
+`integrity.id_mismatches`, et une seule incohérence maintient `status` à `degraded`.
+
+Aucun outil d'écriture MCP ne sait modifier le champ `id`. `set_frontmatter` n'écrit que les
+champs de cycle de vie, `patch_note_preamble` édite le corps situé avant le premier titre, et
+`datacron ops repair` résout des opérations bloquées, pas des identités. Une seule note divergente
+figeait donc `degraded` sans issue sanctionnée. Deux commandes `ops` comblent ce trou.
+
+### `datacron ops inspect-id`
+
+```text
+datacron ops inspect-id --vault CHEMIN
+```
+
+En lecture seule. Elle liste chaque divergence avec la valeur enregistrée par chacune des trois
+sources, la `classification`, le `content_hash` exact à recopier dans la réparation, et l'action
+qui la réparerait. Lance-la d'abord : `ops repair-id` refuse de deviner le hash à ta place.
+
+Un `mismatch` est une note dont les sources se contredisent. Un `duplicate` est plusieurs notes
+revendiquant le même ID ; il est rapporté et jamais réparé automatiquement, parce que choisir
+quelle note garde l'ID est une décision éditoriale.
+
+### `datacron ops repair-id`
+
+```text
+datacron ops repair-id --vault CHEMIN --rel-path NOTE.md --action adopt-index --expected-hash HASH --confirm NOTE.md
+```
+
+Tous les paramètres sont obligatoires. `--confirm` répète `--rel-path` à l'identique, et
+`--expected-hash` est un compare-and-swap strict sur les octets de la note : une note modifiée
+depuis l'inspection est refusée, pas écrasée.
+
+`--action adopt-index` est le cas nominal. L'ID canonique - SQLite, ou le sidecar quand l'index
+n'en porte aucun - est écrit dans le frontmatter par le chemin d'écriture atomique et journalisé
+ordinaire. Seuls `id` et `updated` changent ; le BOM, le corps et ses fins de ligne survivent
+octet pour octet.
+
+`--action adopt-frontmatter` promeut l'ID propre à la note au rang de canonique et réaligne le
+sidecar et l'index à la place. Il ne touche pas à la note, et il est refusé quand l'ID du
+frontmatter n'est pas un ULID Crockford canonique de 26 caractères. Ce refus est le coeur du
+sujet : adopter un ID malformé propagerait exactement le défaut que la commande existe pour
+supprimer.
+
+La commande ne génère jamais d'ID neuf et n'en accepte jamais un saisi à la main. Elle échoue
+aussi en mode fermé quand la note n'a pas de frontmatter, quand aucune divergence n'est
+enregistrée pour ce chemin, quand la divergence est un duplicate, et quand
+`.datacron/ulids.json.migrated` associe encore le chemin à un autre ID - ce fichier est fusionné
+par-dessus le sidecar primaire par tout lecteur d'identité, donc une entrée périmée y restaurerait
+silencieusement la divergence.
+
+Après l'écriture, l'index vivant est réaligné par la même réconciliation incrémentale qu'utilise
+la commande `index` : aucun `datacron reindex` hors ligne n'est nécessaire. La commande rescanne
+ensuite le vault et affiche le nombre de divergences qu'elle a résorbées, par exemple
+`id_mismatches: 1 -> 0` ; elle sort en code non nul si ce nombre n'a pas baissé.
+
 ## Réindex atomique hors ligne
 
 `datacron reindex --vault CHEMIN` construit une base SQLite complète sous un nom temporaire
