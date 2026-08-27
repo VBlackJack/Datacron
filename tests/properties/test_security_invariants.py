@@ -38,6 +38,7 @@ from datacron.mcp.security_manifest import (
 from datacron.mcp.server import DatacronApp, build_app, create_server
 from datacron.mcp.tools import (
     _append_journal_impl,
+    _contradiction_scan_impl,
     _get_backlinks_impl,
     _get_note_history_impl,
     _get_note_impl,
@@ -280,9 +281,22 @@ class _RecordingScope:
         self.events.append((access, rel_path))
         return rel_path not in self.denied and self._delegate.allows_rel_path(rel_path, access)
 
+    def authorize_note_rel_path(self, rel_path: str) -> Path:
+        resolved = self._delegate.authorize_note_rel_path(rel_path)
+        normalized = resolved.relative_to(self._vault).as_posix()
+        normalized = "" if normalized == "." else normalized
+        self.events.append(("read", normalized))
+        if normalized in self.denied:
+            raise PathConfinementError(f"Path {normalized} is outside the active vault scope")
+        return resolved
+
+    def allows_note_rel_path(self, rel_path: str) -> bool:
+        self.events.append(("read", rel_path))
+        return rel_path not in self.denied and self._delegate.allows_note_rel_path(rel_path)
+
 
 async def test_prop_scope_mediation(tmp_path: Path) -> None:
-    """Read, search, write, backlink, chunk, resource, and audit paths hit one scope."""
+    """Read, search, contradiction, write, resource, and audit paths hit one scope."""
     vault = tmp_path / "vault"
     vault.mkdir()
     _write_note(
@@ -323,19 +337,23 @@ async def test_prop_scope_mediation(tmp_path: Path) -> None:
         fetched = await _get_note_impl(
             app, id_or_path="target.md", fmt="full", offset=0, limit=None
         )
-        assert scope.events
+        assert ("read", "target.md") in scope.events
 
         scope.events.clear()
         await _get_note_impl(app, id_or_path=chunks[0].chunk_id, fmt="full", offset=0, limit=None)
-        assert scope.events
+        assert ("read", "target.md") in scope.events
 
         scope.events.clear()
         await _search_text_impl(app, query="scope-anchor", limit=20)
-        assert scope.events
+        assert ("read", "target.md") in scope.events
 
         scope.events.clear()
         await _get_backlinks_impl(app, target=_TRAP_ID, limit=20)
-        assert scope.events
+        assert ("read", "source.md") in scope.events
+
+        scope.events.clear()
+        await _contradiction_scan_impl(app, mode="scan", detail="summary")
+        assert {("read", "target.md"), ("read", "source.md")} <= set(scope.events)
 
         scope.events.clear()
         appended = await _append_journal_impl(

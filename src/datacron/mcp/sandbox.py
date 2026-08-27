@@ -23,7 +23,7 @@ Every MCP tool that returns raw vault text MUST route it through
 2. Escapes suspicious sequences that resemble system-prompt control
    tokens (``<system>``, ``<|im_start|>``) or jailbreak prefixes
    (``Ignore previous instructions``) by replacing them with
-   ``[escaped: <match>]``.
+   ``[escaped: <match>]`` with HTML-special characters made inert.
 
 This is intentionally light-weight: no ML classifier, no streaming
 parsing - just deterministic regex substitution. See
@@ -56,8 +56,8 @@ VAULT_CONTENT_NOTICE: Final[str] = (
 VAULT_CONTENT_CLOSE: Final[str] = "</vault_content>"
 
 # Patterns to neutralize. Each pattern is compiled with re.IGNORECASE; the
-# matched literal is preserved inside the [escaped: ...] envelope so the
-# downstream model can still see what was there without acting on it.
+# matched literal stays visible as inert HTML text inside the [escaped: ...]
+# envelope so the downstream model can see what was there without acting on it.
 #
 # The list mirrors the brief (02-brief-claude-code.md §mcp/sandbox.py) and
 # adds two defensive entries:
@@ -83,7 +83,7 @@ _SUSPICIOUS_PATTERN: Final[re.Pattern[str]] = re.compile(
 
 
 def _escape_suspicious(content: str) -> str:
-    """Replace every suspicious match with ``[escaped: <match>]``."""
+    """Replace every suspicious match with a visible, inert HTML representation."""
     detection_view, index_map = _detection_view(content)
     if not detection_view:
         return content
@@ -96,11 +96,12 @@ def _escape_suspicious(content: str) -> str:
         if start < cursor:
             continue
         matched_literal = content[start:end]
+        inert_literal = _html_escape(matched_literal, quote=False)
         escaped.append(content[cursor:start])
         if _is_already_escaped(content, start, end):
-            escaped.append(matched_literal)
+            escaped.append(inert_literal)
         else:
-            escaped.append(f"{ESCAPE_PREFIX}{matched_literal}{ESCAPE_SUFFIX}")
+            escaped.append(f"{ESCAPE_PREFIX}{inert_literal}{ESCAPE_SUFFIX}")
         cursor = end
     escaped.append(content[cursor:])
     return "".join(escaped)

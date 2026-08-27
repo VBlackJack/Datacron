@@ -29,9 +29,11 @@ from mcp.server import MCPServer
 from mcp.types import INVALID_PARAMS
 
 from datacron.core.config import Settings
+from datacron.core.durability import DurabilityStatus
 from datacron.core.hashing import sha256_bytes
 from datacron.core.operation_log import OperationRecord
 from datacron.core.paths import PathConfinementError, sidecar_index_db, sidecar_vault_config
+from datacron.core.vault import JsonIdStore
 from datacron.core.vault_writer import FilesystemVaultWriter, VaultLockBusyError
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
 from datacron.mcp.server import (
@@ -112,6 +114,51 @@ def test_server_instructions_include_memory_protocol() -> None:
     assert "dominant-EOL" in SERVER_INSTRUCTIONS
     assert "INIT.md" in SERVER_INSTRUCTIONS
     assert "sandbox-wrapped" in SERVER_INSTRUCTIONS
+
+
+@pytest.mark.asyncio
+async def test_default_production_reader_never_persists_ulid_mappings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "generated.md").write_text("# Generated\n", encoding="utf-8")
+    (vault / "migrated.md").write_text("# Migrated\n", encoding="utf-8")
+    sidecar = vault / ".datacron" / "ulids.json"
+    migrated = sidecar.with_name("ulids.json.migrated")
+    migrated.parent.mkdir()
+    migrated_id = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+    migrated.write_text(
+        '{"migrated.md": "01HQXR7K9YZ8M2N3PQRSTV4WX5"}\n',
+        encoding="utf-8",
+    )
+    write_calls: list[dict[str, str]] = []
+
+    def fail_on_write(_store: JsonIdStore, data: dict[str, str]) -> None:
+        write_calls.append(dict(data))
+        raise AssertionError("default MCP reader attempted to persist ULID mappings")
+
+    monkeypatch.setattr(JsonIdStore, "_write_sync", fail_on_write)
+    app = build_app(
+        settings=Settings(read_paths=[vault], write_paths=[vault], vault_root=vault),
+        vault_root=vault,
+        durability_status=DurabilityStatus(
+            backend="test-supported",
+            directory_flush_supported=True,
+        ),
+    )
+
+    generated_first = await app.vault_reader.read_note(vault / "generated.md")
+    generated_second = await app.vault_reader.read_note(vault / "generated.md")
+    migrated_note = await app.vault_reader.read_note(vault / "migrated.md")
+
+    assert app.write_policy.writes_allowed is True
+    assert generated_first.id == generated_second.id
+    assert migrated_note.id == migrated_id
+    assert write_calls == []
+    assert not sidecar.exists()
+    assert not sidecar.with_suffix(".json.tmp").exists()
 
 
 @pytest.mark.asyncio
