@@ -28,11 +28,21 @@ from datacron.core.operation_log import OperationRecord
 from datacron.core.paths import sidecar_index_db
 from datacron.core.vault_writer import FilesystemVaultWriter
 from datacron.mcp import health as health_module
-from datacron.mcp.health import _INVALID_DETAIL_MESSAGE, _build_integrity, build_health
+from datacron.mcp.health import (
+    _INVALID_DETAIL_MESSAGE,
+    _build_integrity,
+    _integrity_is_clean,
+    build_health,
+)
 from datacron.mcp.sandbox import sanitize_metadata_value
 from datacron.mcp.server import _startup_recover_operations, build_app
 from datacron.mcp.tools import ops
-from datacron.reliability import ReliabilityScan, ReliabilityViolation
+from datacron.reliability import (
+    WIKILINK_EXISTING_UNDER_OTHER_TITLE_OR_ALIAS,
+    WIKILINK_NONEXISTENT,
+    ReliabilityScan,
+    ReliabilityViolation,
+)
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -78,6 +88,53 @@ def _scan() -> ReliabilityScan:
     )
 
 
+def _wikilink_scan(*classifications: str) -> ReliabilityScan:
+    """Build a scan whose only findings are broken wikilinks of the given classes."""
+    return ReliabilityScan(
+        notes_count=2,
+        id_violations=(),
+        broken_wikilinks=tuple(
+            ReliabilityViolation(
+                kind="broken_wikilink",
+                key=f"broken_wikilink:source.md:target-{index}:occurrence-1",
+                rel_path="source.md",
+                target=f"target-{index}",
+                classification=classification,
+            )
+            for index, classification in enumerate(classifications, start=1)
+        ),
+        supersedes_cycles=(),
+        mixed_eol_notes=(),
+        content_hashes=(),
+        parse_errors=(),
+    )
+
+
+def test_intent_wikilinks_alone_keep_integrity_clean() -> None:
+    """Links toward notes yet to be written are backlog, so they never block healthy."""
+    scan = _wikilink_scan(WIKILINK_NONEXISTENT, WIKILINK_NONEXISTENT)
+
+    integrity = _build_integrity(scan, detail="summary", limit=0)
+
+    assert _integrity_is_clean(scan) is True
+    assert integrity["broken_wikilinks"] == 2
+    assert integrity["broken_wikilinks_misdirected"] == 0
+
+
+def test_misdirected_wikilink_still_blocks_healthy() -> None:
+    """A link missing a note that exists under another title stays a blocking defect."""
+    scan = _wikilink_scan(
+        WIKILINK_NONEXISTENT,
+        WIKILINK_EXISTING_UNDER_OTHER_TITLE_OR_ALIAS,
+    )
+
+    integrity = _build_integrity(scan, detail="summary", limit=0)
+
+    assert _integrity_is_clean(scan) is False
+    assert integrity["broken_wikilinks"] == 2
+    assert integrity["broken_wikilinks_misdirected"] == 1
+
+
 def test_summary_preserves_counters_without_findings() -> None:
     """Summary mode adds discoverability without returning detailed findings."""
     integrity = _build_integrity(_scan(), detail="summary", limit=0)
@@ -86,6 +143,7 @@ def test_summary_preserves_counters_without_findings() -> None:
         "notes_count": 9,
         "id_mismatches": 2,
         "broken_wikilinks": 1,
+        "broken_wikilinks_misdirected": 0,
         "mixed_eol_notes": 2,
         "supersedes_cycles": 1,
         "frontmatter_parse_errors": 2,

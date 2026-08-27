@@ -107,11 +107,7 @@ async def build_health(
     recovery_blocked = app.vault_writer.recovery_blocked
     healthy = (
         not stale_paths
-        and not scan.parse_errors
-        and not scan.id_violations
-        and not scan.broken_wikilinks
-        and not scan.mixed_eol_notes
-        and not scan.supersedes_cycles
+        and _integrity_is_clean(scan)
         and not recovery_blocked
         and (app.settings.durability != "strict" or app.durability_status.directory_flush_supported)
     )
@@ -186,6 +182,25 @@ def _build_recovery(
     }
 
 
+def _integrity_is_clean(scan: ReliabilityScan) -> bool:
+    """Report whether the live scan found any defect that must block ``healthy``.
+
+    Broken wikilinks are judged by classification rather than by count. A vault may
+    deliberately link a note that has still to be written, so a ``nonexistent`` target
+    is editorial backlog, not a defect; blocking on it would pin ``status`` to
+    ``degraded`` forever and teach readers to ignore the only field meant to alert
+    them. A target that misses a note existing under another title or alias stays
+    blocking, because it is always a mistake.
+    """
+    return not (
+        scan.parse_errors
+        or scan.id_violations
+        or scan.misdirected_wikilinks
+        or scan.mixed_eol_notes
+        or scan.supersedes_cycles
+    )
+
+
 def _build_integrity(
     scan: ReliabilityScan,
     *,
@@ -197,6 +212,7 @@ def _build_integrity(
         "notes_count": scan.notes_count,
         "id_mismatches": len(scan.id_violations),
         "broken_wikilinks": len(scan.broken_wikilinks),
+        "broken_wikilinks_misdirected": len(scan.misdirected_wikilinks),
         "mixed_eol_notes": len(scan.mixed_eol_notes),
         "supersedes_cycles": len(scan.supersedes_cycles),
         "frontmatter_parse_errors": len(scan.parse_errors),

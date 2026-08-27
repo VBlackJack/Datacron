@@ -494,6 +494,24 @@ def test_prop_09_link_integrity_baseline_blocks_only_new_debt(tmp_path: Path) ->
     assert comparison.new_violations[0].target == "Brand new broken target"
 
 
+def test_prop_09_misdirected_links_separate_from_intent_links(tmp_path: Path) -> None:
+    """PROP-09: only links missing an existing note are exposed as misdirected."""
+    vault = _fresh_vault(tmp_path)
+    _write_note(vault, "target.md", _NOTE_ID_A, "Cafe Runbook", "# Cafe Runbook\n")
+    _write_note(
+        vault,
+        "source.md",
+        _NOTE_ID_B,
+        "Source",
+        "# Source\n\n[[Missing target]]\n\n[[Cafe-Runbook]]\n",
+    )
+
+    scan = scan_vault_read_only(vault)
+
+    assert len(scan.broken_wikilinks) == 2
+    assert [item.target for item in scan.misdirected_wikilinks] == ["Cafe-Runbook"]
+
+
 def test_checked_in_reliability_policy_tracks_expected_legacy_counts() -> None:
     """The publishable policy tracks exactly the declared 4 ID and 35 link debts."""
     policy_path = Path(__file__).parents[1] / "fixtures" / "reliability_baseline.json"

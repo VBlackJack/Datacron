@@ -21,7 +21,8 @@ The response contains:
   stored reindex timestamp, indexed/live note counts, chunk count, exact
   consistency, stale entry count, byte-hash divergence count, and staleness
   seconds;
-- `integrity`: live read-only counts for ID mismatches, broken wikilinks,
+- `integrity`: live read-only counts for ID mismatches, broken wikilinks
+  (`broken_wikilinks`) and their blocking subset (`broken_wikilinks_misdirected`),
   mixed-EOL Markdown notes, supersedes cycles, and parse errors;
 - `vault_checksum`: SHA-256 rollup of sorted relative paths and byte-exact note
   content hashes;
@@ -51,8 +52,17 @@ after a reconcile changes the complete index state; `generation_hash` remains th
 deterministic rollup of indexed path, ID, and content-hash rows.
 
 Health remains `degraded` when the index is current but the live scan finds ID
-mismatches, broken wikilinks, mixed-EOL notes, supersedes cycles, or frontmatter
+mismatches, misdirected wikilinks, mixed-EOL notes, supersedes cycles, or frontmatter
 parse errors. This separates index freshness from known content-cleanup backlog.
+
+Broken wikilinks are judged by classification, not by count. A link whose target
+exists nowhere (`nonexistent`) is an intent link: some vaults use one to mark a note
+that still has to be written, so it counts in `broken_wikilinks` without blocking
+`healthy`. A link whose target exists under another title or alias
+(`existing_under_other_title_or_alias`) is always a mistake: it counts in
+`broken_wikilinks_misdirected` and keeps `degraded`. Without that split, a legitimate
+writing convention pins `status` to `degraded` forever, and the only field meant to
+alert becomes the field readers learn to ignore.
 
 A scrubber anomaly is different: top-level health becomes `critical`. Scrubber
 alerts come only from a direct primary-filesystem byte comparison or a configured

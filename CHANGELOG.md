@@ -9,6 +9,19 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Changed
+
+- `get_health` now judges broken wikilinks by classification instead of by count. A link whose
+  target does not exist anywhere is editorial backlog and no longer prevents `healthy`; a link
+  whose target exists under another title or alias is a misdirection and still reports
+  `degraded`. Vaults that mark a note yet to be written with an unresolved link kept `status`
+  pinned to `degraded`, which made the field unusable as an alert.
+
+### Added
+
+- The `integrity` payload exposes `broken_wikilinks_misdirected` next to `broken_wikilinks`, so
+  a reader can tell the blocking subset from the total.
+
 ## [2026.0827.01] - 2026-08-27
 
 ### Fixed
