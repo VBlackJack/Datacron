@@ -49,12 +49,20 @@ from datacron.core.paths import read_ulid_mappings
 from datacron.indexing.chunker import MarkdownChunker
 
 __all__ = [
+    "WIKILINK_EXISTING_UNDER_OTHER_TITLE_OR_ALIAS",
+    "WIKILINK_NONEXISTENT",
     "BaselineComparison",
     "ReliabilityScan",
     "ReliabilityViolation",
     "compare_with_baseline",
     "scan_vault_read_only",
 ]
+
+WIKILINK_NONEXISTENT: Final[str] = "nonexistent"
+"""Target resolves to no note at all: an intent link toward a note yet to be written."""
+
+WIKILINK_EXISTING_UNDER_OTHER_TITLE_OR_ALIAS: Final[str] = "existing_under_other_title_or_alias"
+"""Target matches an existing note under another title or alias: a genuine misdirection."""
 
 _H1_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?m)^#\s+(.+?)\s*$")
 _WHITESPACE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\s+")
@@ -137,6 +145,21 @@ class ReliabilityScan:
     @property
     def violations(self) -> tuple[ReliabilityViolation, ...]:
         return (*self.id_violations, *self.broken_wikilinks, *self.supersedes_cycles)
+
+    @property
+    def misdirected_wikilinks(self) -> tuple[ReliabilityViolation, ...]:
+        """Broken wikilinks whose target exists under another title or alias.
+
+        A link classified ``nonexistent`` is excluded on purpose: vaults may use an
+        unresolved link to mark a note that still has to be written, so it carries an
+        editorial backlog rather than a defect. A link that misses an existing note is
+        always a mistake, which is what operational health has to keep reporting.
+        """
+        return tuple(
+            violation
+            for violation in self.broken_wikilinks
+            if violation.classification != WIKILINK_NONEXISTENT
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -426,7 +449,9 @@ def _append_broken_wikilink(
     occurrences[occurrence_key] += 1
     ordinal = occurrences[occurrence_key]
     aggressive_matches = aggressive_aliases.get(_aggressive_alias(target), set())
-    classification = "existing_under_other_title_or_alias" if aggressive_matches else "nonexistent"
+    classification = (
+        WIKILINK_EXISTING_UNDER_OTHER_TITLE_OR_ALIAS if aggressive_matches else WIKILINK_NONEXISTENT
+    )
     details = (
         (("candidate_paths", ";".join(sorted(aggressive_matches))),) if aggressive_matches else ()
     )

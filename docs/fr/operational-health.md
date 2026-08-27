@@ -22,8 +22,8 @@ La réponse contient :
   cohérence exacte, nombre d'entrées obsolètes, nombre de divergences de hash d'octets et
   secondes d'obsolescence ;
 - `integrity` : compteurs en lecture seule vivants pour les incohérences d'ID, les wikilinks
-  cassés, les notes Markdown à EOL mixtes, les cycles de `supersedes` et les erreurs de
-  parsing ;
+  cassés (`broken_wikilinks`) et leur sous-ensemble bloquant (`broken_wikilinks_misdirected`),
+  les notes Markdown à EOL mixtes, les cycles de `supersedes` et les erreurs de parsing ;
 - `vault_checksum` : rollup SHA-256 des chemins relatifs triés et des hashes de contenu de note
   exacts aux octets ;
 - `durability` : backend filesystem, support du flush de répertoire, mode sélectionné,
@@ -53,9 +53,18 @@ n'avance qu'après qu'un reconcile a changé l'état complet de l'index ; `gener
 le rollup déterministe des lignes chemin, ID et hash de contenu indexées.
 
 La santé reste `degraded` quand l'index est à jour mais que le scan vivant trouve des
-incohérences d'ID, des wikilinks cassés, des notes à EOL mixtes, des cycles de `supersedes` ou
-des erreurs de parsing de frontmatter. Cela sépare la fraîcheur de l'index du backlog connu de
-nettoyage de contenu.
+incohérences d'ID, des wikilinks mal dirigés, des notes à EOL mixtes, des cycles de
+`supersedes` ou des erreurs de parsing de frontmatter. Cela sépare la fraîcheur de l'index du
+backlog connu de nettoyage de contenu.
+
+Les wikilinks cassés sont jugés par classification, pas par nombre. Un lien dont la cible
+n'existe nulle part (`nonexistent`) est un lien d'intention : certains vaults s'en servent pour
+marquer une note qui reste à écrire, donc il compte dans `broken_wikilinks` sans empêcher
+`healthy`. Un lien dont la cible existe sous un autre titre ou un autre alias
+(`existing_under_other_title_or_alias`) est toujours une erreur : il compte dans
+`broken_wikilinks_misdirected` et maintient `degraded`. Sans cette distinction, une convention
+d'écriture légitime fige `status` sur `degraded` en permanence, et le seul champ censé alerter
+devient un champ qu'on apprend à ignorer.
 
 Une anomalie du scrubber est différente : la santé de haut niveau devient `critical`. Les
 alertes du scrubber ne viennent que d'une comparaison directe d'octets du filesystem primaire

@@ -314,6 +314,7 @@ class HealthIntegrityOutput(TypedDict, total=False):
     notes_count: Required[int]
     id_mismatches: Required[int]
     broken_wikilinks: Required[int]
+    broken_wikilinks_misdirected: Required[int]
     mixed_eol_notes: Required[int]
     supersedes_cycles: Required[int]
     frontmatter_parse_errors: Required[int]

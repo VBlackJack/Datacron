@@ -289,6 +289,7 @@ async def test_prop_health_reports_truth(tmp_path: Path) -> None:
         "notes_count": scan.notes_count,
         "id_mismatches": len(scan.id_violations),
         "broken_wikilinks": len(scan.broken_wikilinks),
+        "broken_wikilinks_misdirected": len(scan.misdirected_wikilinks),
         "mixed_eol_notes": len(scan.mixed_eol_notes),
         "supersedes_cycles": len(scan.supersedes_cycles),
         "frontmatter_parse_errors": len(scan.parse_errors),
