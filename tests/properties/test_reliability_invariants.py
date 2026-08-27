@@ -27,7 +27,9 @@ from typing import Any
 import pytest
 from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
+from typer.testing import CliRunner
 
+from datacron.cli import app as cli_app
 from datacron.core.config import Settings
 from datacron.core.frontmatter import parse, serialize
 from datacron.core.hashing import hash_text
@@ -39,6 +41,7 @@ from datacron.mcp.server import DatacronApp, build_app
 from datacron.mcp.tools import (
     _append_journal_impl,
     _create_note_ai_impl,
+    _get_health_impl,
     _get_note_impl,
     _patch_note_section_impl,
     _set_frontmatter_impl,
@@ -585,3 +588,62 @@ def test_invariant_manifest_collects_prop_01_through_prop_15() -> None:
     for path in property_dir.glob("test_*.py"):
         discovered.update(int(match) for match in pattern.findall(path.read_text(encoding="utf-8")))
     assert discovered == set(range(1, 16))
+
+
+_REPAIRABLE_ID = "01J00000000000000000000031"
+_MALFORMED_IMPORT_ID = "01KVMTG0IA2AGENTSCPDC0616"
+
+
+async def _id_mismatch_count(vault: Path) -> int:
+    app, store = await _open_writable_app(vault)
+    try:
+        health = await _get_health_impl(app)
+    finally:
+        await store.close()
+    return int(health["integrity"]["id_mismatches"])
+
+
+def test_prop_07_id_repair_clears_the_only_divergence(tmp_path: Path) -> None:
+    """PROP-07: `ops repair-id` converges a mismatch that no write tool can reach."""
+    vault = _fresh_vault(tmp_path)
+    _write_note(vault, "known.md", _REPAIRABLE_ID, "Known", "# Known\n\nBody line.\n")
+    runner = CliRunner()
+    assert runner.invoke(cli_app, ["index", "--vault", str(vault)]).exit_code == 0
+
+    # Reproduce the real import debt: a frontmatter ID that is not a ULID at all,
+    # while the index keeps the canonical one. No sanctioned write tool can edit
+    # the `id` field, which is what pins `get_health` to `degraded`.
+    target = vault / "known.md"
+    original = target.read_bytes()
+    target.write_bytes(original.replace(_REPAIRABLE_ID.encode(), _MALFORMED_IMPORT_ID.encode()))
+    before = target.read_bytes()
+    scan = scan_vault_read_only(vault)
+    assert [item.classification for item in scan.id_violations] == ["mismatch"]
+    assert asyncio.run(_id_mismatch_count(vault)) == 1
+
+    result = runner.invoke(
+        cli_app,
+        [
+            "ops",
+            "repair-id",
+            "--vault",
+            str(vault),
+            "--rel-path",
+            "known.md",
+            "--action",
+            "adopt-index",
+            "--expected-hash",
+            dict(scan.content_hashes)["known.md"],
+            "--confirm",
+            "known.md",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert scan_vault_read_only(vault).id_violations == ()
+    assert asyncio.run(_id_mismatch_count(vault)) == 0
+    after = target.read_bytes()
+    assert _frontmatter_without_updated(after.decode("utf-8")) == _frontmatter_without_updated(
+        original.decode("utf-8")
+    )
+    assert after.split(b"---\n", 2)[2] == before.split(b"---\n", 2)[2]

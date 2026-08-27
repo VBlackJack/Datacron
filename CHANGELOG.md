@@ -21,6 +21,18 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 - The `integrity` payload exposes `broken_wikilinks_misdirected` next to `broken_wikilinks`, so
   a reader can tell the blocking subset from the total.
+- `datacron ops inspect-id` lists every note whose identity diverges between the frontmatter, the
+  ULID sidecar, and the index, with the three recorded values, the classification, the exact
+  content hash to copy, and the action that would repair it. It changes no durable state.
+- `datacron ops repair-id` repairs one such divergence under `--rel-path`, `--action`,
+  `--expected-hash`, and a `--confirm` repeating the path. `adopt-index` writes the canonical ID
+  into the frontmatter through the ordinary atomic, journaled write path; `adopt-frontmatter`
+  realigns the sidecar and the index instead, and is refused when the frontmatter ID is not a
+  canonical 26-character Crockford ULID, so a malformed identity can never be propagated. The
+  command generates no ID, accepts none by hand, reports duplicate IDs instead of guessing at
+  them, and realigns the live index without an offline `datacron reindex`. No write tool on the
+  MCP surface could reach the `id` field, which left a single divergent note pinning `get_health`
+  to `degraded` with no sanctioned way out.
 
 ## [2026.0827.01] - 2026-08-27
 
