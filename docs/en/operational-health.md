@@ -163,6 +163,11 @@ wikilink parser. Before publication it validates exact path, ID, and content-has
 equality against the vault, checks note count and next generation, runs SQLite
 `integrity_check`, and flushes the temporary database.
 
+The command refuses before it starts when another process holds the live index open. On Windows
+`os.replace` cannot replace an open file, and a running `datacron mcp serve` keeps the index open
+for as long as it serves, so stop every MCP client and server on the vault first. The check costs
+one file handle; discovering the same condition at publication costs the whole rebuild.
+
 Publication uses one same-filesystem atomic replacement followed by a directory
 flush. A failure before replacement preserves the old complete generation; a
 failure after replacement exposes the new complete generation. The command fails

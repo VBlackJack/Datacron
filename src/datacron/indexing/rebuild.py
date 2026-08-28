@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sqlite3
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Final, TypedDict
@@ -41,6 +42,13 @@ __all__ = [
 ]
 
 _LOGGER = get_logger(__name__)
+_WINDOWS_SHARING_ERRORS: Final[frozenset[int]] = frozenset({5, 32, 33})
+_INDEX_HELD_MESSAGE: Final[str] = (
+    "the live index at {db_path} is held open by another process, so it cannot be "
+    "replaced. A running `datacron mcp serve` holds it open for as long as it serves. "
+    "Stop every MCP client and server on this vault, then run the rebuild again. "
+    "Nothing was published and the existing index is untouched."
+)
 
 FaultInjector = Callable[[str], None]
 REBUILD_FAULT_POINTS: Final[tuple[str, ...]] = (
@@ -83,6 +91,7 @@ async def rebuild_index_atomic(
     db_path = sidecar_index_db(root)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     _assert_no_sqlite_sidecars(db_path)
+    _assert_index_replaceable(db_path)
     previous_generation = await _read_generation(db_path)
     temp_path = db_path.with_name(f".{db_path.name}.{uuid4().hex}.rebuild")
     temp_store = SQLiteFTS5Store(term_map=vault_config.query_expansion)
@@ -130,7 +139,7 @@ async def rebuild_index_atomic(
         _inject(fault_injector, "after_validation")
         _assert_no_sqlite_sidecars(db_path)
         _inject(fault_injector, "before_swap")
-        os.replace(temp_path, db_path)
+        _publish_index(temp_path, db_path)
         published = True
         _inject(fault_injector, "after_swap")
         durable_flush_directory(db_path.parent)
@@ -163,6 +172,71 @@ async def _read_generation(db_path: Path) -> int:
         return await store.get_generation()
     finally:
         await store.close()
+
+
+def _publish_index(temp_path: Path, db_path: Path) -> None:
+    """Swap the validated rebuild over the live index, or say why it could not.
+
+    The up-front probe cannot close the race: a server may open the index while the
+    rebuild runs. Reporting the same actionable message here beats surfacing a bare
+    `WinError 5` from a call site the reader has to go and look up.
+    """
+    try:
+        os.replace(temp_path, db_path)
+    except PermissionError as exc:
+        raise IndexRebuildError(_INDEX_HELD_MESSAGE.format(db_path=db_path)) from exc
+
+
+def _assert_index_replaceable(db_path: Path) -> None:
+    """Refuse before the rebuild when the live index cannot be replaced.
+
+    Windows refuses to replace a file another process holds open, and a running
+    `datacron mcp serve` holds the index open for as long as it serves. The check
+    costs one handle here; discovering it at publication costs the entire rebuild,
+    which is minutes of work on a real vault and reports a bare `WinError 5` from a
+    call site the reader has to go and look up.
+
+    POSIX replaces an open file happily, so there is nothing to detect there.
+    """
+    if sys.platform != "win32" or not db_path.exists():
+        return
+
+    import ctypes  # noqa: PLC0415 -- Windows-only, and only on this path
+    from ctypes import wintypes  # noqa: PLC0415
+
+    generic_read_write = 0x80000000 | 0x40000000
+    open_existing = 3
+    invalid_handle = ctypes.c_void_p(-1).value
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    handle = kernel32.CreateFileW(
+        str(db_path),
+        generic_read_write,
+        0,  # no sharing: this is exactly what os.replace needs and cannot get
+        None,
+        open_existing,
+        0,
+        None,
+    )
+    if handle != invalid_handle:
+        kernel32.CloseHandle(handle)
+        return
+    if ctypes.get_last_error() in _WINDOWS_SHARING_ERRORS:
+        raise IndexRebuildError(_INDEX_HELD_MESSAGE.format(db_path=db_path))
+    # Any other reason to fail an exclusive open is not this defect. Let the rebuild
+    # proceed and report its own error rather than guessing here.
 
 
 def _assert_no_sqlite_sidecars(db_path: Path) -> None:

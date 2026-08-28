@@ -39,6 +39,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- `datacron reindex` now refuses up front when another process holds the live index, instead of
+  indexing every note and then failing at publication with a bare `PermissionError [WinError 5]`
+  from `os.replace`. A running `datacron mcp serve` holds the index open for as long as it
+  serves, which is knowable before the rebuild starts and costs one file handle to test; the old
+  behaviour threw away minutes of work and named neither the cause nor the remedy. The
+  publication path reports the same actionable message, since a server can still open the index
+  while a rebuild runs.
 - `datacron scrub` and `datacron scrub-init` run under the same maintenance write scope as
   `datacron ops`, so they can write their own checkpoint and canaries under `.datacron/`. The
   content write scope exists to bound agent writes to note folders and deliberately excludes

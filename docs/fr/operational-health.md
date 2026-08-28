@@ -170,6 +170,12 @@ configuré. Avant publication, elle valide l'égalité exacte de chemin, d'ID et
 contre le vault, vérifie le nombre de notes et la génération suivante, exécute
 l'`integrity_check` SQLite et flush la base temporaire.
 
+La commande refuse de démarrer quand un autre processus tient l'index vivant ouvert. Sous Windows,
+`os.replace` ne peut pas remplacer un fichier ouvert, et un `datacron mcp serve` en cours le tient
+ouvert tant qu'il sert : arrête donc tous les clients et serveurs MCP du vault avant. Le contrôle
+coûte un descripteur de fichier ; découvrir la même condition à la publication coûte la
+réindexation entière.
+
 La publication utilise un remplacement atomique sur le même filesystem suivi d'un flush de
 répertoire. Un échec avant le remplacement préserve l'ancienne génération complète ; un échec
 après le remplacement expose la nouvelle génération complète. La commande échoue en mode fermé

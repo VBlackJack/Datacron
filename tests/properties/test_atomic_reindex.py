@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,8 +26,14 @@ import pytest
 from datacron.core.config import Settings, VaultConfig
 from datacron.core.durability import DurabilityStatus
 from datacron.core.frontmatter import serialize
+from datacron.core.paths import sidecar_index_db
+from datacron.indexing import rebuild as rebuild_module
 from datacron.indexing.fts5_store import SQLiteFTS5Store
-from datacron.indexing.rebuild import REBUILD_FAULT_POINTS, rebuild_index_atomic
+from datacron.indexing.rebuild import (
+    REBUILD_FAULT_POINTS,
+    IndexRebuildError,
+    rebuild_index_atomic,
+)
 from datacron.mcp.health import build_health
 from datacron.mcp.server import build_app
 
@@ -169,3 +177,58 @@ async def test_atomic_reindex_crash_boundaries(tmp_path: Path, fault_point: str)
     assert health["index"]["hash_divergences"] == (0 if published_new else 1)  # type: ignore[index]
     assert note_path.read_bytes() == new_raw
     assert not list((vault / ".datacron" / "index").glob("*.rebuild*"))
+
+
+def test_publication_failure_names_the_cause_and_the_remedy(tmp_path: Path) -> None:
+    """A held index must not surface as a bare WinError 5 from `os.replace`.
+
+    The operator has no way to guess from `PermissionError: [WinError 5]` that the
+    MCP server is what holds the file. Reading the source was the only route.
+    """
+    db_path = tmp_path / "datacron.db"
+    db_path.write_bytes(b"live index")
+    temp_path = tmp_path / "datacron.db.rebuild"
+    temp_path.write_bytes(b"rebuilt index")
+
+    def _denied(_source: object, _destination: object) -> None:
+        raise PermissionError(13, "Access is denied")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(rebuild_module.os, "replace", _denied)
+        with pytest.raises(IndexRebuildError) as caught:
+            rebuild_module._publish_index(temp_path, db_path)
+
+    message = str(caught.value)
+    assert "held open by another process" in message
+    assert "datacron mcp serve" in message
+    assert "Stop every MCP client and server" in message
+    assert "the existing index is untouched" in message
+    assert db_path.read_bytes() == b"live index"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="only Windows refuses to replace open files")
+async def test_rebuild_refuses_up_front_when_the_index_is_held_open(tmp_path: Path) -> None:
+    """The condition is knowable before the rebuild, not after minutes of work.
+
+    BL-0103 measured the old behaviour: 2290 notes indexed, then a raw traceback at
+    the swap. The whole rebuild was thrown away for a condition one handle can test.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "note.md").write_bytes(
+        _serialized(_NOTE_A, "Held", "# Held\n\nBody.\n").encode("utf-8")
+    )
+    await rebuild_index_atomic(vault, _settings(vault), VaultConfig())
+    db_path = sidecar_index_db(vault)
+    before = db_path.read_bytes()
+
+    holder = sqlite3.connect(db_path)
+    try:
+        with pytest.raises(IndexRebuildError) as caught:
+            await rebuild_index_atomic(vault, _settings(vault), VaultConfig())
+    finally:
+        holder.close()
+
+    assert "held open by another process" in str(caught.value)
+    assert db_path.read_bytes() == before
+    assert not list(db_path.parent.glob("*.rebuild*"))
