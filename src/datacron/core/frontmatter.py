@@ -44,6 +44,8 @@ __all__ = [
 _ItemT = TypeVar("_ItemT")
 _IdentityT = TypeVar("_IdentityT")
 
+_BOM: Final[str] = "\ufeff"
+
 _FENCED_CODE_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?ms)^[ \t]*(?P<fence>`{3,}|~{3,})[^\n]*\n.*?^[ \t]*(?P=fence)[ \t]*(?=\n|$)"
 )
@@ -83,11 +85,20 @@ def parse(raw: str) -> tuple[dict[str, Any], str]:
     delimiter and the trailing newline are both dropped, and CRLF is normalized
     to LF. Callers that must round-trip a note without rewriting bytes they did
     not intend to touch use ``_parse_preserving_bom_and_body_eols`` instead.
+
+    A leading UTF-8 BOM is tolerated. ``str.lstrip`` does not treat U+FEFF as
+    whitespace and the YAML parser does not skip it either, so without this a
+    note saved by a BOM-emitting editor parsed as having no frontmatter at all:
+    no title, no tags, and no frontmatter ``id``. The BOM belongs to the file
+    rather than to the note, so it is dropped from the body when frontmatter is
+    present; the no-frontmatter branch still returns ``raw`` untouched, keeping
+    that body byte-exact.
     """
-    if not raw.lstrip().startswith("---"):
+    parseable = raw[1:] if raw.startswith(_BOM) else raw
+    if not parseable.lstrip().startswith("---"):
         return {}, raw
     try:
-        post = frontmatter.loads(raw)
+        post = frontmatter.loads(parseable)
     except yaml.YAMLError as exc:
         raise FrontmatterError(str(exc)) from exc
     metadata: dict[str, Any] = dict(post.metadata)

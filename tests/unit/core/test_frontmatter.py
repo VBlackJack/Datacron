@@ -29,6 +29,25 @@ class TestParse:
         assert meta == {"title": "Hello", "tags": ["a", "b"]}
         assert body.lstrip().startswith("# Body")
 
+    def test_bom_prefixed_frontmatter_is_parsed(self) -> None:
+        """A leading BOM must not hide a note's frontmatter.
+
+        ``str.lstrip`` does not strip U+FEFF and the YAML parser does not skip
+        it either, so the delimiter check used to miss it and every BOM-saved
+        note was indexed with no title, no tags and no frontmatter id at all.
+        """
+        raw = "\ufeff---\ntitle: Hello\ntags: [a, b]\n---\n\n# Body\n"
+        meta, body = parse(raw)
+        assert meta == {"title": "Hello", "tags": ["a", "b"]}
+        assert body.lstrip().startswith("# Body")
+        assert "\ufeff" not in body
+
+    def test_bom_without_yaml_keeps_body_byte_exact(self) -> None:
+        raw = "\ufeff# Just a body\n"
+        meta, body = parse(raw)
+        assert meta == {}
+        assert body == raw
+
     def test_without_yaml(self) -> None:
         raw = "# Just a body\n"
         meta, body = parse(raw)
