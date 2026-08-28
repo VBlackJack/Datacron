@@ -15,6 +15,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import click
 import pytest
 import yaml
 from typer.testing import CliRunner
@@ -72,7 +73,7 @@ def test_vault_option_help_states_the_current_directory_precondition(
     result = runner.invoke(app, list(command), terminal_width=240)
 
     assert result.exit_code == 0, result.stdout
-    rendered = " ".join(result.stdout.replace("│", " ").split())
+    rendered = " ".join(click.unstyle(result.stdout).replace("│", " ").split())
     assert (
         "Fallback: DATACRON_VAULT_ROOT, then cwd containing VAULT.yaml under .datacron." in rendered
     )
