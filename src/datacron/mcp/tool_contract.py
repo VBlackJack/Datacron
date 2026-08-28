@@ -291,7 +291,7 @@ class HealthViolationOutput(TypedDict, total=False):
 
 
 class HealthFlaggedPathsOutput(TypedDict):
-    """Raw mixed-EOL paths and sanitized frontmatter parse-error descriptions."""
+    """Raw mixed-EOL paths and sanitized read, decode, or frontmatter error descriptions."""
 
     mixed_eol_notes: list[str]
     frontmatter_parse_errors: list[str]
@@ -348,6 +348,25 @@ class HealthInvariantsOutput(TypedDict):
     scope_notes: dict[str, str]
 
 
+class HealthRecoveryOperationOutput(TypedDict):
+    """Content-free evidence for one operation that requires explicit repair."""
+
+    operation_id: str
+    rel_path: str
+    reason: str
+    expected_before_hash: str | None
+    expected_after_hash: str
+    disk_hash: str | None
+
+
+class HealthRecoveryOutput(TypedDict):
+    """Bounded recovery evidence included in operational health."""
+
+    required: bool
+    blocked_operations: int
+    operations: list[HealthRecoveryOperationOutput]
+
+
 class GetHealthOutput(TypedDict):
     """Successful ``get_health`` payload."""
 
@@ -358,6 +377,7 @@ class GetHealthOutput(TypedDict):
     integrity: HealthIntegrityOutput
     vault_checksum: HealthChecksumOutput
     durability: dict[str, Any]
+    recovery: HealthRecoveryOutput
     scrubber: dict[str, Any]
     invariants: HealthInvariantsOutput
 

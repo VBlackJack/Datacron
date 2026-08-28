@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Confined, locked, durable filesystem writes for Markdown vault notes."""
+"""Confined, locked note writes governed by an explicit durability policy."""
 
 from __future__ import annotations
 
@@ -213,7 +213,7 @@ class FilesystemVaultWriter:
         expected_hash: str | None = None,
         operation: OperationContext | None = None,
     ) -> str:
-        """Run a complete locked read-CAS-mutate-durable-write transaction."""
+        """Run a locked read-CAS-mutate transaction under the durability policy."""
         return await asyncio.to_thread(
             self._mutate_note_atomic_sync,
             rel_path,
@@ -221,6 +221,23 @@ class FilesystemVaultWriter:
             expected_hash,
             operation,
         )
+
+    @contextmanager
+    def lock_note_identity(self, rel_path: str, *, expected_hash: str) -> Iterator[None]:
+        """Hold cooperative identity and note locks after a fresh byte-level CAS.
+
+        Explicit maintenance uses this synchronous context when sidecar and index
+        effects must remain linearized with one unchanged note. It intentionally
+        follows the writer-wide lock order: identity first, then the confined note.
+        """
+        self._write_policy.ensure_writable()
+        recovery = self._recover_operations_sync(purge_history=False)
+        self._raise_if_recovery_blocked(recovery)
+        target, _safe_rel_path = self._resolve_target(rel_path)
+        with self._advisory_lock("identity"), self._advisory_lock(f"note:{self._lock_key(target)}"):
+            current_bytes = target.read_bytes() if target.is_file() else None
+            _check_expected_hash(expected_hash, current_bytes)
+            yield
 
     async def revert_note_atomic(
         self,

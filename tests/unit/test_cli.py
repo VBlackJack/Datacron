@@ -47,6 +47,37 @@ async def _create_empty_index(db_path: Path) -> None:
     await store.close()
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        ("status", "--help"),
+        ("index", "--help"),
+        ("reindex", "--help"),
+        ("scrub-init", "--help"),
+        ("scrub", "--help"),
+        ("eval", "--help"),
+        ("unregister", "--help"),
+        ("ops", "inspect", "--help"),
+        ("ops", "repair", "--help"),
+        ("ops", "inspect-id", "--help"),
+        ("ops", "repair-id", "--help"),
+        ("mcp", "serve", "--help"),
+        ("mcp", "install", "--help"),
+    ],
+)
+def test_vault_option_help_states_the_current_directory_precondition(
+    runner: CliRunner,
+    command: tuple[str, ...],
+) -> None:
+    result = runner.invoke(app, list(command), terminal_width=240)
+
+    assert result.exit_code == 0, result.stdout
+    rendered = " ".join(result.stdout.replace("│", " ").split())
+    assert (
+        "Fallback: DATACRON_VAULT_ROOT, then cwd containing VAULT.yaml under .datacron." in rendered
+    )
+
+
 class TestInit:
     def test_creates_sidecar(self, runner: CliRunner, tmp_path: Path) -> None:
         vault = tmp_path / "my-vault"

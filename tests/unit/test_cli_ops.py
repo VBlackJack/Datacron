@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -29,7 +31,7 @@ from datacron.core.hashing import sha256_bytes
 from datacron.core.operation_log import OperationRecord
 from datacron.core.vault_writer import FilesystemVaultWriter
 from datacron.mcp.tools.write_validation import is_canonical_ulid
-from datacron.reliability import scan_vault_read_only
+from datacron.reliability import ReliabilityScan, scan_vault_read_only
 
 _RECOVERY_TIMESTAMP = "2026-08-10T00:00:00+00:00"
 
@@ -358,7 +360,7 @@ def _note_bytes(note_id: str, title: str = "Sample note", body: str = _NOTE_BODY
 
 
 def _without_updated(raw: bytes) -> bytes:
-    """Drop the frontmatter `updated` line, which every sanctioned write stamps."""
+    """Drop the timestamp that an identity-repair frontmatter rewrite refreshes."""
     return b"\n".join(line for line in raw.split(b"\n") if not line.startswith(b"updated:"))
 
 
@@ -482,6 +484,79 @@ class TestOpsInspectId:
         assert "classification: duplicate" in result.stdout
         assert "duplicate IDs are reported, never repaired automatically" in result.stdout
 
+    def test_inspect_id_falls_back_when_the_preferred_id_is_claimed_elsewhere(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """A contested index ID must fall back to an executable frontmatter action."""
+        vault = _indexed_vault(
+            runner,
+            tmp_path,
+            {
+                "a.md": _note_bytes(_CANONICAL_ID, "A"),
+                "b.md": _note_bytes(_OTHER_ID, "B"),
+            },
+        )
+        contested = vault / "b.md"
+        contested.write_bytes(_note_bytes(_THIRD_ID, "B"))
+        sidecar = vault / ".datacron" / "ulids.json"
+        sidecar.write_text(json.dumps({"b.md": _CANONICAL_ID}), encoding="ascii")
+        connection = sqlite3.connect(vault / ".datacron" / "index" / "datacron.db")
+        try:
+            connection.execute("DELETE FROM notes WHERE rel_path = ?", ("b.md",))
+            connection.execute("DELETE FROM ulid_paths WHERE rel_path = ?", ("b.md",))
+            connection.commit()
+        finally:
+            connection.close()
+        note_before = contested.read_bytes()
+        sidecar_before = sidecar.read_bytes()
+        index_before = _indexed_note_ids(vault)
+
+        result = runner.invoke(app, ["ops", "inspect-id", "--vault", str(vault)])
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        b_block = result.stdout.split("rel_path: b.md", 1)[1]
+        assert "recommended action: adopt-frontmatter" in b_block
+        assert contested.read_bytes() == note_before
+        assert sidecar.read_bytes() == sidecar_before
+        assert _indexed_note_ids(vault) == index_before
+
+    def test_inspect_id_recommends_none_when_every_candidate_id_is_claimed(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """No repair action is executable when both candidate IDs collide."""
+        vault = _indexed_vault(
+            runner,
+            tmp_path,
+            {
+                "a.md": _note_bytes(_CANONICAL_ID, "A"),
+                "b.md": _note_bytes(_OTHER_ID, "B"),
+                "c.md": _note_bytes(_THIRD_ID, "C"),
+            },
+        )
+        contested = vault / "b.md"
+        contested.write_bytes(_note_bytes(_THIRD_ID, "B"))
+        sidecar = vault / ".datacron" / "ulids.json"
+        sidecar.write_text(json.dumps({"b.md": _CANONICAL_ID}), encoding="ascii")
+        connection = sqlite3.connect(vault / ".datacron" / "index" / "datacron.db")
+        try:
+            connection.execute("DELETE FROM notes WHERE rel_path = ?", ("b.md",))
+            connection.execute("DELETE FROM ulid_paths WHERE rel_path = ?", ("b.md",))
+            connection.commit()
+        finally:
+            connection.close()
+
+        result = runner.invoke(app, ["ops", "inspect-id", "--vault", str(vault)])
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        b_block = result.stdout.split("rel_path: b.md", 1)[1].split("rel_path: c.md", 1)[0]
+        assert "recommended action: none --" in b_block
+        assert f"{_CANONICAL_ID} is already carried by a.md" in b_block
+        assert f"{_THIRD_ID} is already carried by c.md" in b_block
+
 
 class TestOpsRepairId:
     """Identity repairs require exact operator intent and converge the scan."""
@@ -515,7 +590,7 @@ class TestOpsRepairId:
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        """Body bytes are exact; the frontmatter is canonicalized like every write tool.
+        """Body bytes are exact; identity repair canonicalizes the frontmatter.
 
         The other byte-preservation test starts from a `serialize`-produced note, which is
         already canonical, so it cannot see this. A hand-written frontmatter comes back with
@@ -601,6 +676,150 @@ class TestOpsRepairId:
         assert json.loads(sidecar.read_text(encoding="utf-8")) == {"note.md": _THIRD_ID}
         assert _indexed_note_ids(vault)["note.md"] == _THIRD_ID
         assert not scan_vault_read_only(vault).id_violations
+
+    def test_adopt_frontmatter_rechecks_hash_under_lock_before_side_effects(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A concurrent note edit must leave the sidecar and index untouched."""
+        vault = _indexed_vault(runner, tmp_path, {"note.md": _note_bytes(_CANONICAL_ID)})
+        target = vault / "note.md"
+        target.write_bytes(_note_bytes(_THIRD_ID))
+        sidecar = vault / ".datacron" / "ulids.json"
+        sidecar.write_text(json.dumps({"note.md": _CANONICAL_ID}), encoding="ascii")
+        before = target.read_bytes()
+        concurrent = before + b"Concurrent body edit.\n"
+        sidecar_before = sidecar.read_bytes()
+        index_before = _indexed_note_ids(vault)
+        real_scan = scan_vault_read_only
+        scan_calls = 0
+
+        def _scan_then_edit(vault_root: Path) -> ReliabilityScan:
+            nonlocal scan_calls
+            scan = real_scan(vault_root)
+            scan_calls += 1
+            if scan_calls == 1:
+                target.write_bytes(concurrent)
+            return scan
+
+        monkeypatch.setattr("datacron.reliability.scan_vault_read_only", _scan_then_edit)
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(
+                vault,
+                "note.md",
+                "adopt-frontmatter",
+                sha256_bytes(before),
+                "note.md",
+            ),
+        )
+
+        assert result.exit_code == 1
+        assert "hash mismatch" in result.stderr
+        assert target.read_bytes() == concurrent
+        assert sidecar.read_bytes() == sidecar_before
+        assert _indexed_note_ids(vault) == index_before
+
+    def test_adopt_index_rechecks_rewritten_hash_before_source_side_effects(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A post-rewrite edit must stop stale sidecar and index effects."""
+        vault, target, content_hash = _mismatched_vault(runner, tmp_path)
+        sidecar = vault / ".datacron" / "ulids.json"
+        sidecar.write_text(json.dumps({"note.md": _THIRD_ID}), encoding="ascii")
+        sidecar_before = sidecar.read_bytes()
+        index_before = _indexed_note_ids(vault)
+        real_lock = FilesystemVaultWriter.lock_note_identity
+        concurrent: list[bytes] = []
+
+        @contextmanager
+        def _edit_then_lock(
+            writer: FilesystemVaultWriter,
+            rel_path: str,
+            *,
+            expected_hash: str,
+        ) -> Iterator[None]:
+            rewritten = target.read_bytes()
+            concurrent.append(rewritten + b"Concurrent body edit.\n")
+            target.write_bytes(concurrent[-1])
+            with real_lock(writer, rel_path, expected_hash=expected_hash):
+                yield
+
+        monkeypatch.setattr(FilesystemVaultWriter, "lock_note_identity", _edit_then_lock)
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "note.md", "adopt-index", content_hash, "note.md"),
+        )
+
+        assert result.exit_code == 1
+        assert "applied in part" in result.stderr
+        assert "hash mismatch" in result.stderr
+        assert target.read_bytes() == concurrent[-1]
+        assert sidecar.read_bytes() == sidecar_before
+        assert _indexed_note_ids(vault) == index_before
+
+    def test_adopt_index_holds_identity_lock_through_source_realignments(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The post-rewrite lock must cover sidecar, index, and final scan work."""
+        vault, _target, content_hash = _mismatched_vault(runner, tmp_path)
+        real_lock = FilesystemVaultWriter.lock_note_identity
+        from datacron.cli import _apply_id_source_realignments
+
+        lock_held = False
+
+        @contextmanager
+        def _tracked_lock(
+            writer: FilesystemVaultWriter,
+            rel_path: str,
+            *,
+            expected_hash: str,
+        ) -> Iterator[None]:
+            nonlocal lock_held
+            with real_lock(writer, rel_path, expected_hash=expected_hash):
+                lock_held = True
+                try:
+                    yield
+                finally:
+                    lock_held = False
+
+        async def _assert_locked_then_realign(
+            vault_root: Path,
+            rel_path: str,
+            note_id: str,
+            sources: dict[str, str],
+        ) -> tuple[bool, str | None, str | None]:
+            assert lock_held
+            return await _apply_id_source_realignments(
+                vault_root,
+                rel_path,
+                note_id,
+                sources,
+            )
+
+        monkeypatch.setattr(FilesystemVaultWriter, "lock_note_identity", _tracked_lock)
+        monkeypatch.setattr(
+            "datacron.cli._apply_id_source_realignments",
+            _assert_locked_then_realign,
+        )
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "note.md", "adopt-index", content_hash, "note.md"),
+        )
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert "id_mismatches: 1 -> 0" in result.stdout
 
     def test_repair_id_refuses_adopt_frontmatter_for_a_malformed_ulid(
         self,
@@ -720,6 +939,11 @@ class TestOpsRepairId:
         migrated = vault / ".datacron" / "ulids.json.migrated"
         migrated.write_text(json.dumps({"note.md": _THIRD_ID}), encoding="ascii")
         before = target.read_bytes()
+
+        inspection = runner.invoke(app, ["ops", "inspect-id", "--vault", str(vault)])
+
+        assert inspection.exit_code == 0, inspection.stdout + inspection.stderr
+        assert "recommended action: none -- migrated sidecar" in inspection.stdout
 
         result = runner.invoke(
             app,
@@ -864,6 +1088,34 @@ class TestOpsRepairIdSafety:
         assert "applied in part" in result.stderr
         assert "refused" not in result.stderr
         assert target.read_bytes() != before
+
+    def test_index_failure_does_not_claim_an_absent_sidecar_was_written(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Partial-repair evidence must describe only durable state that exists."""
+        vault, _target, content_hash = _mismatched_vault(runner, tmp_path)
+
+        async def _index_unavailable(
+            *_args: object,
+            **_kwargs: object,
+        ) -> tuple[str | None, str | None]:
+            raise sqlite3.OperationalError("index unavailable")
+
+        monkeypatch.setattr("datacron.cli._realign_index_identity", _index_unavailable)
+
+        result = runner.invoke(
+            app,
+            _repair_id_argv(vault, "note.md", "adopt-index", content_hash, "note.md"),
+        )
+
+        assert result.exit_code == 1
+        assert "applied in part" in result.stderr
+        assert "any required sidecar realignment completed" in result.stderr
+        assert "and the sidecar now carry" not in result.stderr
+        assert not (vault / ".datacron" / "ulids.json").exists()
 
     def test_realigns_an_index_row_when_the_note_bytes_never_change(
         self,

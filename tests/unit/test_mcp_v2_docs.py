@@ -27,7 +27,8 @@ from datacron.mcp.security_manifest import (
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-VERIFIED_DATE = "2026-08-11"
+MCP_V2_BASELINE_VERIFIED_DATE = "2026-08-11"
+OPERATIONAL_VERIFIED_DATE = "2026-08-28"
 FINAL_PROTOCOL = "2026-07-28"
 LEGACY_PROTOCOL = "2025-11-25"
 SPEC_RELEASE_URL = "https://blog.modelcontextprotocol.io/posts/2026-07-28/"
@@ -75,6 +76,13 @@ OPERATIONAL_PATHS = (
     Path("docs/fr/operational-health.md"),
     Path("docs/en/operational-health.md"),
 )
+VERIFIED_DATES = {
+    **dict.fromkeys(
+        (*ARCHITECTURE_PATHS, *SPEC_PATHS, *SECURITY_PATHS, *USER_GUIDE_PATHS),
+        MCP_V2_BASELINE_VERIFIED_DATE,
+    ),
+    **dict.fromkeys(OPERATIONAL_PATHS, OPERATIONAL_VERIFIED_DATE),
+}
 SOURCE_DESCRIPTION_PATHS = (
     Path("src/datacron/cli.py"),
     Path("src/datacron/mcp/__init__.py"),
@@ -102,6 +110,43 @@ def _table_tool_names(content: str) -> set[str]:
         for tool_name in known_tools
         if f"`{tool_name}`" in line
     }
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "required", "forbidden"),
+    [
+        (
+            Path("README.en.md"),
+            "the current directory is accepted only when it contains `.datacron/VAULT.yaml`",
+            "current directory or `--vault`",
+        ),
+        (
+            Path("docs/en/setup.md"),
+            "the current directory is accepted only when it contains `.datacron/VAULT.yaml`",
+            "`--vault` or current directory",
+        ),
+        (
+            Path("README.md"),
+            "le répertoire courant n'est accepté que s'il contient `.datacron/VAULT.yaml`",
+            "répertoire courant ou `--vault`",
+        ),
+        (
+            Path("docs/fr/setup.md"),
+            "le répertoire courant n'est accepté que s'il contient `.datacron/VAULT.yaml`",
+            "`--vault` ou répertoire courant",
+        ),
+    ],
+)
+def test_public_setup_docs_require_a_vault_marker_for_cwd_fallback(
+    relative_path: Path,
+    required: str,
+    forbidden: str,
+) -> None:
+    """Keep every public fallback description aligned with `_resolve_vault_root`."""
+    content = _collapse_whitespace(_read(relative_path))
+
+    assert required in content
+    assert forbidden not in content
 
 
 def _list_tool_names(content: str) -> set[str]:
@@ -182,13 +227,21 @@ def test_mcp_v2_docs_remove_v1_and_release_candidate_language(relative_path: Pat
     assert "SDK final" not in content
 
 
-@pytest.mark.parametrize("relative_path", VERIFIED_PAGE_PATHS)
-def test_mcp_v2_docs_have_current_verification_metadata(relative_path: Path) -> None:
-    """Require evidence metadata on every edited standalone documentation page."""
+def test_mcp_v2_docs_verification_dates_cover_every_verified_page() -> None:
+    """Make every verified page opt in to an explicit evidence date."""
+    assert set(VERIFIED_DATES) == set(VERIFIED_PAGE_PATHS)
+
+
+@pytest.mark.parametrize(("relative_path", "verified_date"), VERIFIED_DATES.items())
+def test_mcp_v2_docs_have_current_verification_metadata(
+    relative_path: Path,
+    verified_date: str,
+) -> None:
+    """Require the recorded evidence date on every standalone documentation page."""
     content = _read(relative_path)
 
     assert content.startswith("---\n")
-    assert f"verified: {VERIFIED_DATE}" in content
+    assert f"verified: {verified_date}" in content
     assert "tested_on:" in content
 
 
@@ -291,6 +344,179 @@ def test_mcp_v2_docs_read_only_inventory_matches_runtime_mutators(relative_path:
     }
 
     assert documented_mutators == set(MUTATING_TOOL_NAMES)
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "required_markers", "forbidden_markers"),
+    [
+        (
+            Path("docs/en/operational-health.md"),
+            (
+                "IDs are not part of this consistency boolean",
+                "If that timestamp is unavailable or there are no live-note mtimes, it reports "
+                "`null`",
+                "after every successfully published full rebuild, including an empty one",
+                "Exclusion is a read/admission policy, not a write ACL",
+                "including folders that `excluded_folders` omits from admitted reads, indexing, "
+                "and the integrity counters",
+                "health instead synthesizes a transient `checkpoint_unreadable` anomaly in memory",
+                "POSIX permits replacing an open file",
+                "The filesystem walk is not an atomic snapshot",
+                "O(Markdown paths + total readable Markdown bytes + indexed rows)",
+                "attempts a directory flush",
+                "VaultWriter note writes attempt their own directory flush",
+                "degraded target-file fsync fallback",
+                "Maintenance paths that bypass VaultWriter do not inherit even that behavior",
+                "`DATACRON_LOG_DIR`",
+                "`DATACRON_WRITE_PATHS`",
+                "current directory only when it contains `.datacron/VAULT.yaml`",
+                "passes its collision and migrated-sidecar preflight",
+                "can still refuse after an inspection when that state changes",
+                "does not ensure that the log directory is outside the vault",
+                "Maintenance commands that bypass `WritePolicy.ensure_writable`",
+                "`revert_note` can restore exact history bytes, including an earlier `id`",
+                "its mtime gate trusts other unchanged-mtime rows without rereading or hashing "
+                "them",
+                "`last_reindex`",
+                "`recovery`",
+            ),
+            (
+                "Every parameter is mandatory",
+                "A missing timestamp then reports `null`",
+                "advances only after a reconcile changes the complete index state",
+                "body and the BOM survive byte for byte",
+                "every real write still performs its own directory flush",
+                "O(number of Markdown notes)",
+                "followed by a directory flush",
+                "VaultWriter note writes still perform their own directory flush",
+                "including the folders `excluded_folders` keeps out of everything else",
+                "unreadable/inconsistent checkpoint condition",
+                "Scrubber alerts come only from",
+                "no write tool can reach it",
+                "FileLogger output is outside the vault and remains writable",
+                "outside the vault, but the setting is configurable",
+                "and falls back to `DATACRON_VAULT_ROOT` or the current directory",
+                "`strict` refuses every write",
+                "No MCP write tool can edit the `id` field",
+                "exactly as every other write tool does",
+                "an index that has drifted elsewhere is brought back in the same pass",
+                "immutable",
+            ),
+        ),
+        (
+            Path("docs/fr/operational-health.md"),
+            (
+                "L'ID ne participe pas à ce booléen de cohérence",
+                "Si cet horodatage est indisponible ou s'il n'existe aucun mtime de note vivante, "
+                "elle rapporte `null`",
+                "après chaque publication réussie d'un reindex complet, y compris vide",
+                "L'exclusion est une politique de lecture/admission, pas une ACL d'écriture",
+                "y compris les dossiers que `excluded_folders` écarte des lectures admises, "
+                "de l'indexation et des compteurs d'intégrité",
+                "la santé synthétise à la place une anomalie transitoire "
+                "`checkpoint_unreadable` en mémoire",
+                "POSIX permet de remplacer un fichier ouvert",
+                "Le parcours du filesystem n'est pas un snapshot atomique",
+                "O(chemins Markdown + total des octets Markdown lisibles + lignes d'index)",
+                "tente un flush de répertoire",
+                "Les écritures de notes par VaultWriter tentent leur propre flush de répertoire",
+                "fallback dégradé de fsync du fichier cible",
+                "Les chemins de maintenance qui contournent VaultWriter",
+                "`DATACRON_LOG_DIR`",
+                "`DATACRON_WRITE_PATHS`",
+                "répertoire courant seulement s'il contient `.datacron/VAULT.yaml`",
+                "passe ses précontrôles de collision et de sidecar migré",
+                "peut donc encore refuser après une inspection si cet état change",
+                "ne garantit pas que le répertoire de logs soit hors du vault",
+                "Les commandes de maintenance qui contournent `WritePolicy.ensure_writable`",
+                "`revert_note` peut restaurer les octets exacts d'un historique, y compris un "
+                "ancien `id`",
+                "son filtre mtime fait confiance aux autres lignes dont le mtime n'a pas changé",
+                "`last_reindex`",
+                "`recovery`",
+            ),
+            (
+                "Tous les paramètres sont obligatoires",
+                "Un horodatage manquant rapporte alors `null`",
+                "n'avance qu'après qu'un reconcile a changé l'état complet de l'index",
+                "Le corps et le BOM survivent octet pour octet",
+                "chaque écriture réelle exécute encore son propre flush",
+                "O(nombre de notes Markdown)",
+                "suivi d'un flush de répertoire",
+                "Les écritures de notes par VaultWriter exécutent encore leur propre flush",
+                "les dossiers que `excluded_folders` écarte de tout le reste",
+                "checkpoint illisible/incohérent",
+                "Les alertes du scrubber ne viennent que",
+                "aucun outil d'écriture ne l'atteint",
+                "La sortie du FileLogger est hors du vault et reste inscriptible",
+                "sa valeur par défaut `~/.datacron/logs` est hors du vault",
+                "se replie sur `DATACRON_VAULT_ROOT` ou le répertoire courant",
+                "`strict` refuse toute écriture",
+                "Aucun outil d'écriture MCP ne sait modifier le champ `id`",
+                "exactement comme le fait tout autre outil d'écriture",
+                "un index qui a dérivé ailleurs est remis d'aplomb dans la même passe",
+                "immuable",
+            ),
+        ),
+    ],
+)
+def test_mcp_v2_docs_operational_health_qualifies_live_boundaries(
+    relative_path: Path,
+    required_markers: tuple[str, ...],
+    forbidden_markers: tuple[str, ...],
+) -> None:
+    """Keep measured caveats visible and reject previously overbroad guarantees."""
+    content = _collapse_whitespace(_read(relative_path))
+
+    for marker in required_markers:
+        assert marker in content
+    for marker in forbidden_markers:
+        assert marker not in content
+
+
+def test_reliability_source_treats_exclusion_as_admission_not_write_acl() -> None:
+    """Keep the scanner source description aligned with independent write authorization."""
+    content = _collapse_whitespace(_read(Path("src/datacron/reliability.py")))
+
+    assert "Exclusion is not a write ACL" in content
+    assert "no tool can repair it" not in content
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "required_markers", "forbidden_markers"),
+    [
+        (
+            Path("docs/en/spec.md"),
+            (
+                "These rows cover mutations routed through `WritePolicy.ensure_writable`",
+                "Certified read-only mode always refuses registered MCP mutations",
+                "local maintenance commands remain a separate operator surface",
+            ),
+            ("Every write is refused", "always refuses writes"),
+        ),
+        (
+            Path("docs/fr/spec.md"),
+            (
+                "Ces lignes couvrent les mutations passant par `WritePolicy.ensure_writable`",
+                "Le mode certifié read-only refuse toujours les mutations MCP enregistrées",
+                "les commandes de maintenance locale restent une surface opérateur distincte",
+            ),
+            ("Toute écriture est refusée", "refuse toujours les écritures"),
+        ),
+    ],
+)
+def test_mcp_v2_spec_qualifies_durability_and_read_only_scope(
+    relative_path: Path,
+    required_markers: tuple[str, ...],
+    forbidden_markers: tuple[str, ...],
+) -> None:
+    """Keep maintenance paths outside MCP and WritePolicy guarantees."""
+    content = _collapse_whitespace(_read(relative_path))
+
+    for marker in required_markers:
+        assert marker in content
+    for marker in forbidden_markers:
+        assert marker not in content
 
 
 def test_mcp_v2_docs_svg_and_source_descriptions_use_mcpserver() -> None:

@@ -21,11 +21,12 @@ effects. Markdown bytes, JSON sidecars, and SQLite are only read; SQLite
 databases are opened with ``mode=ro``.
 
 Invariants are reported for admitted notes only. A defect on a note that
-``excluded_folders`` removes from the served vault is unactionable -- no tool
-will read it and no tool can repair it -- so reporting it pins health to
-``degraded`` forever. The byte checksum is the deliberate exception: it stays
-exhaustive, because narrowing it would silently change what an earlier trusted
-value means.
+``excluded_folders`` removes is outside the regular reader, index, and invariant
+counters, so reporting it would pin health to ``degraded`` outside that serving
+scope. Exclusion is not a write ACL: an independently write-authorized mutator
+can still reach the path. The byte checksum is the deliberate exception: it
+stays exhaustive, because narrowing it would silently change what an earlier
+trusted value means.
 """
 
 from __future__ import annotations

@@ -355,10 +355,13 @@ et [nouveautés du SDK Python MCP v2](https://github.com/modelcontextprotocol/py
 
 | Mode | Si le flush de répertoire est supporté | S'il n'est pas supporté |
 |---|---|---|
-| `best-effort` | L'écriture atomique est autorisée | L'écriture est autorisée avec un warning explicite |
-| `strict` | L'écriture atomique est autorisée | Toute écriture est refusée |
+| `best-effort` | La mutation atomique gouvernée par la politique est autorisée | La mutation gouvernée par la politique est autorisée avec un warning explicite |
+| `strict` | La mutation atomique gouvernée par la politique est autorisée | La mutation gouvernée par la politique est refusée avec `DurabilityUnavailableError` |
 
-Le mode certifié read-only refuse toujours les écritures, indépendamment du mode de durabilité.
+Ces lignes couvrent les mutations passant par `WritePolicy.ensure_writable` ; les chemins de
+maintenance locale qui contournent cette politique sont hors de cette gate de durabilité. Le mode
+certifié read-only refuse toujours les mutations MCP enregistrées, indépendamment du mode de
+durabilité, mais les commandes de maintenance locale restent une surface opérateur distincte.
 `get_health` et `datacron://policy/active` exposent l'état effectif pertinent.
 
 ---

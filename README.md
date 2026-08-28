@@ -177,7 +177,7 @@ Variables d'environnement utiles :
 
 | Variable | Défaut | Rôle |
 |---|---:|---|
-| `DATACRON_VAULT_ROOT` | répertoire courant ou `--vault` | vault servi par le serveur |
+| `DATACRON_VAULT_ROOT` | non définie | fallback après `--vault` ; le répertoire courant n'est accepté que s'il contient `.datacron/VAULT.yaml` |
 | `DATACRON_READ_PATHS` | vide | allowlist de lecture ; le setup des clients la fixe au vault |
 | `DATACRON_WRITE_PATHS` | vide | allowlist d'écriture ; vide = write tools désactivés |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | nombre max de résultats retournés |

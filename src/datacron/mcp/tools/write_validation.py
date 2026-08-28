@@ -477,10 +477,10 @@ def replace_frontmatter_id(raw: str, note_id: str) -> str:
     exact-body parser is deliberate, since the plain one strips the trailing
     newline and would turn an identity repair into a silent rewrite of the note.
 
-    The frontmatter itself is re-serialized in canonical key order, exactly as
-    every other write tool does, so a hand-written frontmatter can come back with
-    more changed lines than ``id`` alone -- a flow-style list is re-emitted in
-    block style, and a ``T``-separated timestamp comes back with a space.
+    The frontmatter itself is re-serialized in canonical key order, so a
+    hand-written frontmatter can come back with more changed lines than ``id``
+    alone -- a flow-style list is re-emitted in block style, and a ``T``-separated
+    timestamp comes back with a space.
     """
     metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
     if not metadata:

@@ -607,15 +607,16 @@ async def _id_mismatch_count(vault: Path) -> int:
 
 
 def test_prop_07_id_repair_clears_the_only_divergence(tmp_path: Path) -> None:
-    """PROP-07: `ops repair-id` converges a mismatch that no write tool can reach."""
+    """PROP-07: `ops repair-id` converges a mismatch without restorable history."""
     vault = _fresh_vault(tmp_path)
     _write_note(vault, "known.md", _REPAIRABLE_ID, "Known", "# Known\n\nBody line.\n")
     runner = CliRunner()
     assert runner.invoke(cli_app, ["index", "--vault", str(vault)]).exit_code == 0
 
     # Reproduce the real import debt: a frontmatter ID that is not a ULID at all,
-    # while the index keeps the canonical one. No sanctioned write tool can edit
-    # the `id` field, which is what pins `get_health` to `degraded`.
+    # while the index keeps the canonical one. This manual mutation has no operation-
+    # history restore target, and structured MCP mutators cannot choose a replacement
+    # `id`, which is what pins `get_health` to `degraded`.
     target = vault / "known.md"
     original = target.read_bytes()
     target.write_bytes(original.replace(_REPAIRABLE_ID.encode(), _MALFORMED_IMPORT_ID.encode()))

@@ -15,8 +15,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import multiprocessing
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -33,6 +35,8 @@ ChunkFactory = Callable[..., Chunk]
 
 _NOTE_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
 _OTHER_NOTE_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX6"
+_SUBPROCESS_TIMEOUT_SECONDS = 20
+_SUBPROCESS_TERMINATION_TIMEOUT_SECONDS = 5
 
 
 def _db_path(tmp_path: Path) -> Path:
@@ -56,6 +60,22 @@ async def _note_count(db_path: Path) -> int:
         row = await cursor.fetchone()
     assert row is not None
     return int(row[0])
+
+
+async def _replace_note_in_store(db_path: Path, note_json: str, chunk_json: str) -> None:
+    writer = SQLiteFTS5Store()
+    await writer.open(db_path)
+    try:
+        note = Note.model_validate_json(note_json)
+        chunk = Chunk.model_validate_json(chunk_json)
+        await writer.upsert_note(note, [chunk])
+        await writer.increment_generation()
+    finally:
+        await writer.close()
+
+
+def _replace_note_in_subprocess(db_path: Path, note_json: str, chunk_json: str) -> None:
+    asyncio.run(_replace_note_in_store(db_path, note_json, chunk_json))
 
 
 async def test_open_creates_schema(tmp_path: Path) -> None:
@@ -173,6 +193,64 @@ async def test_read_only_reader_observes_committed_writer_updates(
     finally:
         await reader.close()
         await writer.close()
+
+
+async def test_read_only_reader_observes_updates_committed_by_another_process(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    db_path = _db_path(tmp_path)
+    note = note_factory(id=_NOTE_ID, rel_path="welcome.md")
+    initial_chunk = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::::0000",
+        content="legacyprocessanchor",
+    )
+    replacement_chunk = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::::0000",
+        content="replacementprocessanchor",
+    )
+    seed_writer = SQLiteFTS5Store()
+    reader = SQLiteFTS5Store()
+
+    await seed_writer.open(db_path)
+    try:
+        await seed_writer.upsert_note(note, [initial_chunk])
+        await seed_writer.increment_generation()
+    finally:
+        await seed_writer.close()
+
+    await reader.open(db_path, read_only=True)
+    process = multiprocessing.get_context("spawn").Process(
+        target=_replace_note_in_subprocess,
+        args=(db_path, note.model_dump_json(), replacement_chunk.model_dump_json()),
+    )
+    try:
+        assert await reader.get_generation() == 1
+        assert [result.chunk.content for result in await reader.search("legacyprocessanchor")] == [
+            "legacyprocessanchor"
+        ]
+
+        process.start()
+        await asyncio.to_thread(process.join, _SUBPROCESS_TIMEOUT_SECONDS)
+        assert not process.is_alive(), (
+            f"writer subprocess did not finish within {_SUBPROCESS_TIMEOUT_SECONDS} seconds"
+        )
+        assert process.exitcode == 0
+
+        assert await reader.get_generation() == 2
+        assert await reader.search("legacyprocessanchor") == []
+        assert [
+            result.chunk.content for result in await reader.search("replacementprocessanchor")
+        ] == ["replacementprocessanchor"]
+    finally:
+        await reader.close()
+        if process.is_alive():
+            process.terminate()
+            await asyncio.to_thread(process.join, _SUBPROCESS_TERMINATION_TIMEOUT_SECONDS)
+        process.close()
 
 
 async def test_migration_imports_ulids_and_keeps_sidecar_readable(tmp_path: Path) -> None:

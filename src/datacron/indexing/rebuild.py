@@ -81,6 +81,16 @@ class RebuildStats(TypedDict):
     db_path: str
 
 
+async def _advance_empty_rebuild_generation(
+    store: SQLiteFTS5Store,
+    *,
+    checked_notes: int,
+) -> None:
+    """Advance publication generation when a complete rebuild contains no rows."""
+    if checked_notes == 0:
+        await store.increment_generation()
+
+
 async def rebuild_index_atomic(
     vault_root: Path,
     settings: Settings,
@@ -116,6 +126,12 @@ async def rebuild_index_atomic(
             chunker,
             mtime_gate=False,
             progress=progress,
+        )
+        # Publishing a complete empty index is still a new generation. Reconcile
+        # advances only when it inserts or deletes a row.
+        await _advance_empty_rebuild_generation(
+            temp_store,
+            checked_notes=reconcile_stats["checked_notes"],
         )
         stats = await temp_store.stats()
         indexed = await temp_store.list_indexed_notes()

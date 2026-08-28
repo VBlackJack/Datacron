@@ -345,11 +345,14 @@ Directory-entry flush capability is probed on the vault backend.
 
 | Mode | If directory flush is supported | If it is unsupported |
 |---|---|---|
-| `best-effort` | Atomic write is allowed | Write is allowed with an explicit warning |
-| `strict` | Atomic write is allowed | Every write is refused |
+| `best-effort` | Policy-governed atomic mutation is allowed | Policy-governed mutation is allowed with an explicit warning |
+| `strict` | Policy-governed atomic mutation is allowed | Policy-governed mutation is refused with `DurabilityUnavailableError` |
 
-Certified read-only mode always refuses writes, regardless of durability mode. `get_health` and
-`datacron://policy/active` expose the relevant effective state.
+These rows cover mutations routed through `WritePolicy.ensure_writable`; local maintenance paths
+that bypass that policy are outside this durability gate. Certified read-only mode always refuses
+registered MCP mutations, regardless of durability mode, but local maintenance commands remain a
+separate operator surface. `get_health` and `datacron://policy/active` expose the relevant effective
+state.
 
 ---
 

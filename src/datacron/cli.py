@@ -108,6 +108,9 @@ if TYPE_CHECKING:
 __all__ = ["app", "mcp_entry"]
 
 _LOGGER = get_logger(__name__)
+_VAULT_ROOT_HELP: Final[str] = (
+    "Vault root. Fallback: DATACRON_VAULT_ROOT, then cwd containing VAULT.yaml under .datacron."
+)
 
 
 class _SetupPrompt(StrEnum):
@@ -367,7 +370,7 @@ def status(
         None,
         "--vault",
         "-v",
-        help="Vault root. Defaults to DATACRON_VAULT_ROOT or current directory.",
+        help=_VAULT_ROOT_HELP,
     ),
 ) -> None:
     """Print vault metadata, note count, and index freshness."""
@@ -432,7 +435,7 @@ def ops_inspect(
         None,
         "--vault",
         "-v",
-        help="Vault root. Defaults to DATACRON_VAULT_ROOT or current directory.",
+        help=_VAULT_ROOT_HELP,
     ),
 ) -> None:
     """Inspect blocked operation manifests without changing durable state."""
@@ -483,7 +486,7 @@ def ops_repair(
         None,
         "--vault",
         "-v",
-        help="Vault root. Defaults to DATACRON_VAULT_ROOT or current directory.",
+        help=_VAULT_ROOT_HELP,
     ),
 ) -> None:
     """Repair one blocked operation under exact ID and disk-hash confirmation."""
@@ -548,8 +551,23 @@ class _IdRepairOutcome:
     mismatches_after: int
 
 
-def _recommended_id_action(violation: ReliabilityViolation) -> str:
-    """Return the action `ops repair-id` would accept for one divergence.
+def _id_claimants(scan: ReliabilityScan, rel_path: str, note_id: str) -> tuple[str, ...]:
+    """Return other divergent paths whose recorded sources carry ``note_id``."""
+    return tuple(
+        sorted(
+            other.rel_path
+            for other in scan.id_violations
+            if other.rel_path != rel_path and note_id in dict(other.details).values()
+        )
+    )
+
+
+def _recommended_id_action(
+    vault_root: Path,
+    scan: ReliabilityScan,
+    violation: ReliabilityViolation,
+) -> str:
+    """Return the safest identity-source action the repair preflight accepts.
 
     The canonical-ULID check is replayed here on purpose. Without it the command
     recommends `adopt-index` for an index that holds a malformed 26-character ID,
@@ -563,11 +581,27 @@ def _recommended_id_action(violation: ReliabilityViolation) -> str:
     sources = dict(violation.details)
     canonical = sources.get("sqlite") or sources.get("sidecar")
     frontmatter_id = sources.get("frontmatter")
+    candidates: list[tuple[str, str]] = []
     if canonical and is_canonical_ulid(canonical):
-        return "adopt-index"
+        candidates.append(("adopt-index", canonical))
     if frontmatter_id and is_canonical_ulid(frontmatter_id):
-        return "adopt-frontmatter"
-    return "none -- no source carries a canonical ULID"
+        candidates.append(("adopt-frontmatter", frontmatter_id))
+    if not candidates:
+        return "none -- no source carries a canonical ULID"
+
+    refusals: list[str] = []
+    for action, note_id in candidates:
+        claimants = _id_claimants(scan, violation.rel_path, note_id)
+        if claimants:
+            refusals.append(f"{note_id} is already carried by {', '.join(claimants)}")
+            continue
+        try:
+            _assert_migrated_sidecar_agrees(vault_root, violation.rel_path, note_id)
+        except ValueError as exc:
+            refusals.append(str(exc))
+            continue
+        return action
+    return f"none -- {'; '.join(refusals)}"
 
 
 @ops_app.command(name="inspect-id")
@@ -576,7 +610,7 @@ def ops_inspect_id(
         None,
         "--vault",
         "-v",
-        help="Vault root. Defaults to DATACRON_VAULT_ROOT or current directory.",
+        help=_VAULT_ROOT_HELP,
     ),
 ) -> None:
     """Inspect note-identity divergences without changing durable state."""
@@ -604,7 +638,7 @@ def ops_inspect_id(
             _print(f"  {source}: {sources.get(source, '<absent>')}")
         _print(f"  classification: {item.classification}")
         _print(f"  content_hash: {content_hashes.get(item.rel_path, '<absent>')}")
-        _print(f"  recommended action: {_recommended_id_action(item)}")
+        _print(f"  recommended action: {_recommended_id_action(vault_root, scan, item)}")
     _print("No changes made.")
     _log_completion("ops.inspect-id", started)
 
@@ -627,7 +661,7 @@ def ops_repair_id(
         None,
         "--vault",
         "-v",
-        help="Vault root. Defaults to DATACRON_VAULT_ROOT or current directory.",
+        help=_VAULT_ROOT_HELP,
     ),
 ) -> None:
     """Repair one divergent note identity under exact path and hash confirmation."""
@@ -724,11 +758,7 @@ def _assert_id_is_unclaimed(
     the index upsert overwrite the other note's row by ``note_id``: the collided
     note stays on disk but vanishes from search, listing and backlinks.
     """
-    claimants = sorted(
-        other.rel_path
-        for other in scan.id_violations
-        if other.rel_path != rel_path and note_id in dict(other.details).values()
-    )
+    claimants = _id_claimants(scan, rel_path, note_id)
     if claimants:
         raise ValueError(
             f"{note_id} is already carried by {', '.join(claimants)}; adopting it here "
@@ -802,8 +832,9 @@ async def _realign_index_identity(
     are consulted, because ``notes`` gates reconcile while ``ulid_paths`` can hold a
     mapping of its own, and dropping only one leaves the other stale.
 
-    Reconcile runs over the whole vault, not just this note: an index that has
-    drifted elsewhere is brought back in the same pass.
+    Reconcile scans the whole vault and drops vanished paths, but its mtime gate
+    trusts other unchanged-mtime rows without rereading or hashing them. Unrelated
+    index-only drift can therefore remain after this targeted identity repair.
     """
     from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
     from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
@@ -832,6 +863,34 @@ async def _realign_index_identity(
     finally:
         await store.close()
     return before, after
+
+
+async def _apply_id_source_realignments(
+    vault_root: Path,
+    rel_path: str,
+    note_id: str,
+    sources: dict[str, str],
+) -> tuple[bool, str | None, str | None]:
+    """Realign sidecar and index sources after the note plan is validated."""
+    sidecar_realigned = "sidecar" in sources and sources["sidecar"] != note_id
+    if sidecar_realigned:
+        try:
+            _realign_sidecar_entry(vault_root, rel_path, note_id)
+        except OSError as exc:
+            raise _PartialIdRepairError(
+                f"the note now carries {note_id}, but the sidecar could not be "
+                f"updated: {exc}. Re-run this command to finish the repair."
+            ) from exc
+
+    try:
+        index_before, index_after = await _realign_index_identity(vault_root, rel_path, note_id)
+    except (OSError, sqlite3.Error) as exc:
+        raise _PartialIdRepairError(
+            f"the note repair and any required sidecar realignment completed for {note_id}, "
+            f"but the index could not be realigned: {exc}. Re-run this command once the index "
+            "is free, or run `datacron reindex` with MCP servers stopped."
+        ) from exc
+    return sidecar_realigned, index_before, index_after
 
 
 async def _repair_note_id(
@@ -869,9 +928,9 @@ async def _repair_note_id(
     if content_hash != cleaned_hash:
         raise WriteConflictError("note changed since inspection (hash mismatch); re-read and retry")
 
+    writer = _ops_writer(vault_root, settings)
     note_rewritten = sources.get("frontmatter") != note_id
     if note_rewritten:
-        writer = _ops_writer(vault_root, settings)
         content_hash = await writer.mutate_note_atomic(
             rel_path,
             lambda raw: replace_frontmatter_id(raw, note_id),
@@ -883,25 +942,51 @@ async def _repair_note_id(
                 parameters={"action": action.value, "note_id": note_id},
             ),
         )
-
-    sidecar_realigned = "sidecar" in sources and sources["sidecar"] != note_id
-    if sidecar_realigned:
         try:
-            _realign_sidecar_entry(vault_root, rel_path, note_id)
-        except OSError as exc:
+            with writer.lock_note_identity(rel_path, expected_hash=content_hash):
+                locked_scan = scan_vault_read_only(vault_root)
+                _assert_id_is_unclaimed(locked_scan, rel_path, note_id)
+                _assert_migrated_sidecar_agrees(vault_root, rel_path, note_id)
+                sidecar_realigned, index_before, index_after = await _apply_id_source_realignments(
+                    vault_root,
+                    rel_path,
+                    note_id,
+                    sources,
+                )
+                mismatches_after = len(scan_vault_read_only(vault_root).id_violations)
+        except _PartialIdRepairError:
+            raise
+        except (
+            HistoryUnavailableError,
+            OSError,
+            OperationLogError,
+            ValueError,
+            VaultLockBusyError,
+            sqlite3.Error,
+        ) as exc:
             raise _PartialIdRepairError(
-                f"the note now carries {note_id}, but the sidecar could not be "
-                f"updated: {exc}. Re-run this command to finish the repair."
+                "the note rewrite completed, but sidecar and index realignment stopped: "
+                f"{exc}. Re-run `datacron ops inspect-id` before any further repair."
             ) from exc
-
-    try:
-        index_before, index_after = await _realign_index_identity(vault_root, rel_path, note_id)
-    except (OSError, sqlite3.Error) as exc:
-        raise _PartialIdRepairError(
-            f"the note and the sidecar now carry {note_id}, but the index could not "
-            f"be realigned: {exc}. Re-run this command once the index is free, or "
-            "run `datacron reindex` with MCP servers stopped."
-        ) from exc
+    else:
+        with writer.lock_note_identity(rel_path, expected_hash=cleaned_hash):
+            locked_scan = scan_vault_read_only(vault_root)
+            _locked_violation, locked_sources = _resolve_id_violation(locked_scan, rel_path)
+            locked_label, locked_note_id = _canonical_id_for_action(action, locked_sources)
+            if locked_sources != sources or locked_label != label or locked_note_id != note_id:
+                raise WriteConflictError(
+                    "identity sources changed since inspection; re-read and retry"
+                )
+            _assert_id_is_unclaimed(locked_scan, rel_path, note_id)
+            _assert_migrated_sidecar_agrees(vault_root, rel_path, note_id)
+            sources = locked_sources
+            sidecar_realigned, index_before, index_after = await _apply_id_source_realignments(
+                vault_root,
+                rel_path,
+                note_id,
+                sources,
+            )
+            mismatches_after = len(scan_vault_read_only(vault_root).id_violations)
 
     return _IdRepairOutcome(
         rel_path=rel_path,
@@ -914,7 +999,7 @@ async def _repair_note_id(
         index_before=index_before,
         index_after=index_after,
         mismatches_before=mismatches_before,
-        mismatches_after=len(scan_vault_read_only(vault_root).id_violations),
+        mismatches_after=mismatches_after,
     )
 
 
@@ -941,7 +1026,7 @@ async def _index_status_label(db_path: Path) -> str:
 
 @app.command()
 def index(
-    vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
 ) -> None:
     """Build or refresh the FTS5 index for the vault."""
     settings = get_settings()
@@ -951,7 +1036,7 @@ def index(
 
 @app.command()
 def reindex(
-    vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
 ) -> None:
     """Build, validate, and atomically publish a complete FTS5 replacement."""
     settings = get_settings()
@@ -961,7 +1046,7 @@ def reindex(
 
 @app.command(name="scrub-init")
 def scrub_init(
-    vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
 ) -> None:
     """Explicitly create configured integrity canaries without overwriting any."""
     base_settings = get_settings()
@@ -981,7 +1066,7 @@ def scrub_init(
 
 @app.command()
 def scrub(
-    vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
 ) -> None:
     """Run one configured, resumable, alert-only integrity scrub window."""
     base_settings = get_settings()
@@ -1104,7 +1189,7 @@ def eval_(
         exists=True,
         help="Path to an eval-questions YAML file.",
     ),
-    vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
     pipeline: EvalPipeline = typer.Option(
         EvalPipeline.TOOL,
         "--pipeline",
@@ -1686,7 +1771,7 @@ def unregister(
         None,
         "--vault",
         "-v",
-        help="Vault root, required when the scope includes project configs.",
+        help=_VAULT_ROOT_HELP,
     ),
     assume_yes: bool = typer.Option(
         False,
@@ -1928,7 +2013,7 @@ def _render_protocol_outcomes(
 
 @mcp_app.command("serve")
 def mcp_serve(
-    vault: Path | None = typer.Option(None, "--vault", "-v", help="Vault root."),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
 ) -> None:
     """Run the MCPServer stdio server.
 
@@ -1966,7 +2051,7 @@ def mcp_install(
         None,
         "--vault",
         "-v",
-        help="Vault root. Defaults to DATACRON_VAULT_ROOT or current directory.",
+        help=_VAULT_ROOT_HELP,
     ),
     config_path: Path | None = typer.Option(
         None,
@@ -2007,7 +2092,8 @@ def mcp_entry() -> None:
     Used by ``installers/claude_desktop.py`` (Sem 3) so the Claude Desktop
     config can launch the server without going through the ``datacron mcp
     serve`` subcommand. Reads the vault root from ``DATACRON_VAULT_ROOT``
-    (set by the installer) or falls back to the current directory.
+    (set by the installer), or uses the current directory only when it contains
+    ``.datacron/VAULT.yaml``.
     """
     settings = get_settings()
     vault_root = _resolve_vault_root(None, settings)

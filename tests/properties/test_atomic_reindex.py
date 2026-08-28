@@ -81,6 +81,36 @@ async def _health(vault: Path) -> tuple[dict[str, object], SQLiteFTS5Store]:
     return await build_health(app), store
 
 
+async def test_empty_vault_rebuild_publishes_each_generation(tmp_path: Path) -> None:
+    """A fresh or already-indexed empty vault still publishes one complete generation."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+
+    first = await rebuild_index_atomic(vault, _settings(vault), VaultConfig())
+    second = await rebuild_index_atomic(vault, _settings(vault), VaultConfig())
+    store = SQLiteFTS5Store()
+    await store.open(sidecar_index_db(vault), read_only=True)
+    try:
+        stats = await store.stats()
+        indexed = await store.list_indexed_notes()
+    finally:
+        await store.close()
+
+    assert first == {
+        "checked_notes": 0,
+        "reindexed_notes": 0,
+        "chunk_count": 0,
+        "generation": 1,
+        "db_path": str(sidecar_index_db(vault)),
+    }
+    assert second["generation"] == 2
+    assert stats.generation == 2
+    assert stats.note_count == 0
+    assert stats.chunk_count == 0
+    assert indexed == {}
+    assert not list(sidecar_index_db(vault).parent.glob("*.rebuild*"))
+
+
 async def test_prop_fresh_index_zero_hash_divergence(tmp_path: Path) -> None:
     """Fresh full rebuild stores exact BOM/EOL hashes and only real wikilinks."""
     vault = tmp_path / "vault"

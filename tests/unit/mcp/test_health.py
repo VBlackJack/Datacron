@@ -36,6 +36,7 @@ from datacron.mcp.health import (
 )
 from datacron.mcp.sandbox import sanitize_metadata_value
 from datacron.mcp.server import _startup_recover_operations, build_app
+from datacron.mcp.tool_contract import GetHealthOutput
 from datacron.mcp.tools import ops
 from datacron.reliability import (
     WIKILINK_EXISTING_UNDER_OTHER_TITLE_OR_ALIAS,
@@ -310,6 +311,7 @@ async def test_get_health_reports_bounded_sanitized_recovery_blocks(
         await app.store.close()
 
     assert health["status"] == "degraded"
+    assert set(health) == set(GetHealthOutput.__annotations__)
     assert health["recovery"] == {
         "required": True,
         "blocked_operations": 2,

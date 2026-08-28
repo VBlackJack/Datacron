@@ -14,11 +14,25 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - An opt-in `DATACRON_TOOL_DESCRIPTION_PROFILE=compact` mode strengthens the `search_text`
   usage trigger for compact language models without changing tool schemas or handlers.
 
+### Changed
+
+- Operational documentation and every public `--vault` help surface now describe the measured
+  admission, durability, reindex, identity-repair, and vault-root fallback contracts without
+  treating read exclusions as write ACLs or best-effort flushes as confirmed durability.
+- The typed `get_health` output now includes the bounded `recovery` block already emitted by the
+  runtime, including blocked operation identifiers and content-free hash evidence.
+
 ### Fixed
 
 - Certified read-only readers now keep SQLite locking and change detection enabled. A running
   reader can follow committed index updates from another process instead of retaining an
   `immutable=1` snapshot that eventually reports a live database as malformed.
+- A complete `datacron reindex` now publishes and advances the generation even when the vault is
+  empty, instead of rejecting a valid zero-note replacement as an incomplete rebuild.
+- `datacron ops repair-id` now rechecks the note hash while holding the identity and note locks
+  through sidecar/index realignment. Its inspection recommendation also falls back to another safe
+  source or reports why no action passes collision and migrated-sidecar preflight, instead of
+  proposing an action the repair would immediately refuse.
 
 ## [2026.0828.00] - 2026-08-28
 
@@ -36,12 +50,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   a reader can tell the blocking subset from the total.
 - `datacron ops inspect-id` lists every note whose identity diverges between the frontmatter, the
   ULID sidecar, and the index, with the three recorded values, the classification, the exact
-  content hash to copy, and the action that would repair it. It changes no durable state.
+  content hash to copy, and the preferred action that passes its collision and migrated-sidecar
+  preflight, or the reason no action can be suggested. It changes no durable state.
 - `datacron ops repair-id` repairs one such divergence under `--rel-path`, `--action`,
   `--expected-hash`, and a `--confirm` repeating the path. `adopt-index` writes the canonical ID
   into the frontmatter through the ordinary atomic, journaled write path, preserving the body
-  byte for byte while re-serializing the frontmatter in canonical key order like every other
-  write tool; `adopt-frontmatter`
+  byte for byte for uniform-EOL notes while re-serializing the frontmatter in canonical key order
+  through this structured identity-repair path; `adopt-frontmatter`
   realigns the sidecar and the index instead, and is refused when the frontmatter ID is not a
   canonical 26-character Crockford ULID, so a malformed identity can never be propagated. The
   command generates no ID, accepts none by hand, reports duplicate IDs instead of guessing at
@@ -82,8 +97,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - The reliability scan now honours `excluded_folders` and `excluded_files` from `VAULT.yaml`,
   as the reader, the index and the MCP surface already did. It was the only component that did
   not, so it reported defects on notes nothing else treats as part of the vault -- notes
-  `get_note` refuses with `note_not_admitted` and no write tool can repair. One of them pinned
-  `status` to `degraded` with no way out. `integrity.notes_count` now matches
+  `get_note` refuses with `note_not_admitted`. One of them pinned `status` to `degraded` even
+  though admitted reads and indexing deliberately ignored it. `integrity.notes_count` now matches
   `index.notes_count` for the first time. `vault_checksum` is the deliberate exception and stays
   exhaustive: it is a byte-integrity claim over the folder, and narrowing it would silently
   change what an earlier trusted value means, so it now reports its own count and says plainly

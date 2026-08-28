@@ -178,7 +178,7 @@ Useful environment variables:
 
 | Variable | Default | Role |
 |---|---:|---|
-| `DATACRON_VAULT_ROOT` | current directory or `--vault` | vault served by the server |
+| `DATACRON_VAULT_ROOT` | unset | fallback after `--vault`; the current directory is accepted only when it contains `.datacron/VAULT.yaml` |
 | `DATACRON_READ_PATHS` | empty | read allowlist; client setup sets it to the vault |
 | `DATACRON_WRITE_PATHS` | empty | write allowlist; empty = write tools disabled |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | maximum number of results returned |

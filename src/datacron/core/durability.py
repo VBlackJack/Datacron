@@ -76,7 +76,7 @@ def atomic_durable_write(
     *,
     fault_injector: FaultInjector | None = None,
 ) -> str:
-    """Atomically replace ``path`` with durable exact ``data`` and return its SHA-256.
+    """Atomically replace ``path`` with exact ``data`` and return its SHA-256.
 
     The caller must create ``path.parent`` first. The temporary file is always a
     sibling so the replacement stays on one filesystem. On Windows, directory
@@ -140,7 +140,7 @@ def _replace_with_windows_retry(source: Path, destination: Path) -> None:
 
 
 def durable_flush_directory(path: Path) -> None:
-    """Durably flush directory metadata, with the documented Windows fallback."""
+    """Attempt to flush directory metadata; log failure without raising."""
     if not _flush_directory_or_false(path):
         _LOGGER.warning("Directory fsync unavailable for metadata update under %s", path)
 

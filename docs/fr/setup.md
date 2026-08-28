@@ -241,7 +241,7 @@ datacron protocol uninstall --client all
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `DATACRON_VAULT_ROOT` | `--vault` ou répertoire courant | Vault servi par le serveur. |
+| `DATACRON_VAULT_ROOT` | non définie | Fallback après `--vault` ; le répertoire courant n'est accepté que s'il contient `.datacron/VAULT.yaml`. |
 | `DATACRON_READ_PATHS` | vide | Allowlist de lecture ; l'installateur la fixe au vault. |
 | `DATACRON_WRITE_PATHS` | vide | Allowlist d'écriture ; **vide = écriture désactivée**. |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | Nombre max de résultats retournés. |
