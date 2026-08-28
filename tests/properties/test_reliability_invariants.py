@@ -742,3 +742,55 @@ def test_prop_02_write_tools_preserve_the_exact_body_bytes(tmp_path: Path) -> No
     # without normalization there it would grow a stray blank line every time.
     assert b"beta body.\n\n## Journal\n\n- one\n" in written["append_journal"]
     assert b"\n\n\n## Journal" not in written["append_journal"]
+
+
+def test_prop_07_scan_honours_excluded_folders_but_checksum_stays_exhaustive(
+    tmp_path: Path,
+) -> None:
+    """PROP-07: a defect inside an excluded folder is unactionable, so it is not reported.
+
+    The reader, the index and the MCP surface all drop `excluded_folders`. While the
+    scan did not, it reported defects on notes no tool will read and no tool can
+    repair, which pinned health to `degraded` for good. The byte checksum is the
+    deliberate exception: narrowing it would silently change what an earlier trusted
+    value means, so it stays exhaustive.
+    """
+    vault = _fresh_vault(tmp_path)
+    _write_note(vault, "live.md", _NOTE_ID_A, "Live", "# Live\n")
+    _write_note(vault, "_archive/old.md", _NOTE_ID_B, "Old", "# Old\n")
+    sidecar = vault / ".datacron" / "ulids.json"
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(json.dumps({"_archive/old.md": _NOTE_ID_C}), encoding="ascii")
+
+    served = scan_vault_read_only(vault)
+    assert [item.rel_path for item in served.id_violations] == ["_archive/old.md"]
+    assert served.notes_count == 2
+
+    (vault / ".datacron" / "VAULT.yaml").write_text(
+        "excluded_folders:\n  - _archive\n", encoding="utf-8"
+    )
+    excluded = scan_vault_read_only(vault)
+
+    assert excluded.id_violations == ()
+    assert excluded.notes_count == 1
+    assert dict(excluded.content_hashes) == dict(served.content_hashes)
+    assert "_archive/old.md" in dict(excluded.content_hashes)
+
+
+def test_prop_07_excluded_files_follow_the_same_boundary(tmp_path: Path) -> None:
+    """PROP-07: `excluded_files` narrows the scan exactly as `excluded_folders` does."""
+    vault = _fresh_vault(tmp_path)
+    _write_note(vault, "live.md", _NOTE_ID_A, "Live", "# Live\n")
+    _write_note(vault, "00_INDEX.md", _NOTE_ID_B, "Index", "# Index\n")
+    sidecar = vault / ".datacron" / "ulids.json"
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(json.dumps({"00_INDEX.md": _NOTE_ID_C}), encoding="ascii")
+    (vault / ".datacron" / "VAULT.yaml").write_text(
+        "excluded_files:\n  - 00_INDEX.md\n", encoding="utf-8"
+    )
+
+    scan = scan_vault_read_only(vault)
+
+    assert scan.id_violations == ()
+    assert scan.notes_count == 1
+    assert "00_INDEX.md" in dict(scan.content_hashes)

@@ -39,6 +39,15 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- The reliability scan now honours `excluded_folders` and `excluded_files` from `VAULT.yaml`,
+  as the reader, the index and the MCP surface already did. It was the only component that did
+  not, so it reported defects on notes nothing else treats as part of the vault -- notes
+  `get_note` refuses with `note_not_admitted` and no write tool can repair. One of them pinned
+  `status` to `degraded` with no way out. `integrity.notes_count` now matches
+  `index.notes_count` for the first time. `vault_checksum` is the deliberate exception and stays
+  exhaustive: it is a byte-integrity claim over the folder, and narrowing it would silently
+  change what an earlier trusted value means, so it now reports its own count and says plainly
+  that it covers folders the vault excludes from what it serves.
 - The write tools no longer eat a note's last byte. `parse()` strips the body it returns, so
   `set_frontmatter`, `rename_note_section`, and `delete_note_section` silently removed the
   trailing newline of every note they touched, along with the blank line after the closing

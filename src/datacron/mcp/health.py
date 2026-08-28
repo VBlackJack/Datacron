@@ -134,8 +134,11 @@ async def build_health(
         "vault_checksum": {
             "algorithm": "sha256-path-content-hash-rollup-v1",
             "value": vault_checksum(dict(scan.content_hashes)),
-            "notes_count": scan.notes_count,
-            "scope": "all non-hidden Markdown notes in the reliability scan",
+            "notes_count": len(scan.content_hashes),
+            "scope": (
+                "every non-hidden Markdown note on disk, including folders the vault "
+                "excludes from what it serves"
+            ),
             "claim": "point-in-time Markdown byte integrity; not future durability",
         },
         "durability": durability,

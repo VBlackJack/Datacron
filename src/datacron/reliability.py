@@ -15,8 +15,17 @@
 
 The scanner deliberately does not instantiate ``FilesystemVaultReader``:
 notes without frontmatter IDs would otherwise be assigned a persisted sidecar
-ID. Markdown bytes, JSON sidecars, and SQLite are only read; SQLite databases
-are opened with ``mode=ro``.
+ID. It does reuse the reader's :class:`NoteAdmissionPolicy`, so that both agree
+on what belongs to the vault without the scan acquiring the reader's write side
+effects. Markdown bytes, JSON sidecars, and SQLite are only read; SQLite
+databases are opened with ``mode=ro``.
+
+Invariants are reported for admitted notes only. A defect on a note that
+``excluded_folders`` removes from the served vault is unactionable -- no tool
+will read it and no tool can repair it -- so reporting it pins health to
+``degraded`` forever. The byte checksum is the deliberate exception: it stays
+exhaustive, because narrowing it would silently change what an earlier trusted
+value means.
 """
 
 from __future__ import annotations
@@ -35,6 +44,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
+from datacron.core.config import load_vault_config
 from datacron.core.frontmatter import (
     FrontmatterError,
     build_tiered_alias_index,
@@ -45,7 +55,8 @@ from datacron.core.frontmatter import (
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
-from datacron.core.paths import read_ulid_mappings
+from datacron.core.paths import read_ulid_mappings, sidecar_vault_config
+from datacron.core.vault import SKIPPED_FOLDERS, NoteAdmissionPolicy
 from datacron.indexing.chunker import MarkdownChunker
 
 __all__ = [
@@ -198,7 +209,12 @@ def scan_vault_read_only(vault_root: Path) -> ReliabilityScan:
     if not root.is_dir():
         raise FileNotFoundError(f"vault root does not exist: {root}")
 
-    notes, parse_errors = _load_notes(root)
+    every_note, every_parse_error = _load_notes(root)
+    policy = _admission_policy(root)
+    notes = [note for note in every_note if _is_admitted(note.rel_path, policy)]
+    parse_errors = [
+        entry for entry in every_parse_error if _is_admitted(entry.split(":", 1)[0], policy)
+    ]
     sidecar_ids = _load_sidecar_ids(root)
     sqlite_ids = _load_sqlite_ids(root)
     canonical_ids = {
@@ -216,13 +232,14 @@ def scan_vault_read_only(vault_root: Path) -> ReliabilityScan:
         broken_wikilinks=tuple(broken_wikilinks),
         supersedes_cycles=tuple(supersedes_cycles),
         mixed_eol_notes=tuple(note.rel_path for note in notes if note.mixed_eol),
-        content_hashes=tuple((note.rel_path, note.content_hash) for note in notes),
+        content_hashes=tuple((note.rel_path, note.content_hash) for note in every_note),
         parse_errors=tuple(parse_errors),
     )
     _logger().info(
         "reliability scan complete "
-        "(notes=%d ids=%d links=%d mixed_eol=%d cycles=%d parse_errors=%d)",
+        "(notes=%d excluded=%d ids=%d links=%d mixed_eol=%d cycles=%d parse_errors=%d)",
         result.notes_count,
+        len(every_note) - len(notes),
         len(result.id_violations),
         len(result.broken_wikilinks),
         len(result.mixed_eol_notes),
@@ -251,6 +268,27 @@ def compare_with_baseline(
         accepted_violations=accepted,
         stale_fingerprints=stale,
     )
+
+
+def _admission_policy(root: Path) -> NoteAdmissionPolicy:
+    """Return the same admission policy the vault reader builds for ``root``."""
+    config = load_vault_config(sidecar_vault_config(root))
+    excluded_folders = set(config.excluded_folders) if config is not None else set()
+    excluded_files = set(config.excluded_files) if config is not None else set()
+    return NoteAdmissionPolicy(
+        excluded_folders=SKIPPED_FOLDERS | frozenset(excluded_folders),
+        excluded_files=frozenset(excluded_files),
+    )
+
+
+def _is_admitted(rel_path: str, policy: NoteAdmissionPolicy) -> bool:
+    """Report whether the served vault would hand this path to a reader."""
+    parts = rel_path.split("/")
+    if any(
+        part.casefold() in policy.excluded_folders or part.startswith(".") for part in parts[:-1]
+    ):
+        return False
+    return parts[-1].casefold() not in policy.excluded_files
 
 
 def _load_notes(root: Path) -> tuple[list[ReliabilityNote], list[str]]:

@@ -25,7 +25,8 @@ The response contains:
   (`broken_wikilinks`) and their blocking subset (`broken_wikilinks_misdirected`),
   mixed-EOL Markdown notes, supersedes cycles, and parse errors;
 - `vault_checksum`: SHA-256 rollup of sorted relative paths and byte-exact note
-  content hashes;
+  content hashes, over every non-hidden Markdown note on disk -- including the folders
+  `excluded_folders` keeps out of everything else;
 - `durability`: filesystem backend, directory-flush support, selected mode, the
   policy/durability-only `writes_allowed` gate, whether at least one write path is configured
   (`write_paths_configured`), and whether a write can actually land
@@ -69,6 +70,20 @@ alerts come only from a direct primary-filesystem byte comparison or a configure
 canary check. `get_health` never starts a scrub or repairs an anomaly; it only
 reads the durable checkpoint. See [Integrity scrubber](integrity-scrubber.md) for the
 execution, budget, resume, and canary contract.
+
+### What the scan looks at
+
+The counts under `integrity` cover the notes the vault actually serves: `excluded_folders` and
+`excluded_files` from `VAULT.yaml` are honoured here exactly as the reader, the index and the MCP
+surface honour them. A defect inside an excluded folder is not reported, because it is not
+actionable -- `get_note` refuses such a path with `note_not_admitted`, and no write tool can reach
+it. Reporting it would pin `status` to `degraded` with no way out, which is the same failure the
+wikilink classification above exists to avoid.
+
+`vault_checksum` is the deliberate exception. It stays exhaustive and carries its own
+`notes_count`, so the two numbers differ on a vault that excludes anything. Narrowing the checksum
+would silently change what a comparison against an earlier trusted value means, and a byte
+integrity claim that quietly changes scope is worse than no claim.
 
 ### Checksum boundary
 

@@ -73,6 +73,21 @@ aucune anomalie ; il ne fait que lire le point de contrôle durable. Voir
 [Scrubber d'intégrité](integrity-scrubber.md) pour le contrat d'exécution, de budget, de reprise
 et de sentinelle.
 
+### Ce que le scan regarde
+
+Les compteurs d'`integrity` portent sur les notes que le vault sert réellement : `excluded_folders`
+et `excluded_files` de `VAULT.yaml` sont honorés ici exactement comme les honorent le reader,
+l'index et la surface MCP. Un défaut situé dans un dossier exclu n'est pas signalé, parce qu'il
+n'est pas actionnable - `get_note` refuse un tel chemin avec `note_not_admitted`, et aucun outil
+d'écriture ne l'atteint. Le signaler figerait `status` sur `degraded` sans issue, c'est-à-dire
+exactement la défaillance que la classification des wikilinks ci-dessus sert à éviter.
+
+`vault_checksum` est l'exception délibérée. Il reste exhaustif et porte son propre `notes_count`,
+donc les deux nombres diffèrent sur un vault qui exclut quoi que ce soit. Le restreindre changerait
+silencieusement le sens d'une comparaison avec une valeur de référence antérieure, et une
+affirmation d'intégrité d'octets dont la portée change en silence vaut moins que pas
+d'affirmation du tout.
+
 ### Frontière du checksum
 
 Le rollup est un signal ponctuel pour les octets et chemins des notes Markdown. Le comparer à
