@@ -117,6 +117,58 @@ def test_server_instructions_include_memory_protocol() -> None:
 
 
 @pytest.mark.asyncio
+async def test_compact_profile_only_changes_search_text_description(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    standard_app = build_app(
+        settings=Settings(
+            read_paths=[vault],
+            vault_root=vault,
+            tool_description_profile="standard",
+        ),
+        vault_root=vault,
+    )
+    compact_app = build_app(
+        settings=Settings(
+            read_paths=[vault],
+            vault_root=vault,
+            tool_description_profile="compact",
+        ),
+        vault_root=vault,
+    )
+
+    standard = {
+        tool.name: tool.model_dump() for tool in await create_server(standard_app).list_tools()
+    }
+    compact = {
+        tool.name: tool.model_dump() for tool in await create_server(compact_app).list_tools()
+    }
+
+    assert standard["search_text"]["description"] == (
+        "First stop for any question about the user's notes, projects, decisions, "
+        "or past work - search before saying you do not know. Full-text BM25 search "
+        "over the FTS5 index. Returns ranked sandbox-wrapped snippets with **term** "
+        "highlighting. Requires `datacron index` to have been run first. By default, "
+        "explicitly superseded notes are demoted; set include_superseded=true to "
+        "inspect historical notes."
+    )
+    assert compact["search_text"]["description"] == (
+        "Use this tool first for every technical, procedural, project, product, decision, "
+        "configuration, release, incident, or past-work query, even when the prompt is "
+        "terse or seems answerable from general knowledge. Search before answering, "
+        "refusing, or asking for clarification; use get_note after a hit. Full-text BM25 "
+        "search over the FTS5 index. Returns ranked sandbox-wrapped snippets with **term** "
+        "highlighting. Requires `datacron index` to have been run first. By default, "
+        "explicitly superseded notes are demoted; set include_superseded=true to inspect "
+        "historical notes."
+    )
+
+    standard["search_text"].pop("description")
+    compact["search_text"].pop("description")
+    assert standard == compact
+
+
+@pytest.mark.asyncio
 async def test_default_production_reader_never_persists_ulid_mappings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

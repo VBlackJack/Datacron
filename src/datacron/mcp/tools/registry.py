@@ -83,6 +83,27 @@ _REVERT_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
     open_world_hint=False,
 )
 
+_SEARCH_TEXT_DESCRIPTIONS: Final[dict[str, str]] = {
+    "standard": (
+        "First stop for any question about the user's notes, projects, decisions, "
+        "or past work - search before saying you do not know. Full-text BM25 search "
+        "over the FTS5 index. Returns ranked sandbox-wrapped snippets with **term** "
+        "highlighting. Requires `datacron index` to have been run first. By default, "
+        "explicitly superseded notes are demoted; set include_superseded=true to "
+        "inspect historical notes."
+    ),
+    "compact": (
+        "Use this tool first for every technical, procedural, project, product, decision, "
+        "configuration, release, incident, or past-work query, even when the prompt is "
+        "terse or seems answerable from general knowledge. Search before answering, "
+        "refusing, or asking for clarification; use get_note after a hit. Full-text BM25 "
+        "search over the FTS5 index. Returns ranked sandbox-wrapped snippets with **term** "
+        "highlighting. Requires `datacron index` to have been run first. By default, "
+        "explicitly superseded notes are demoted; set include_superseded=true to inspect "
+        "historical notes."
+    ),
+}
+
 
 def register_tools(server: MCPServer[Any], app: Any) -> None:
     """Attach the Sem-2 tools to ``server``.
@@ -157,14 +178,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
     @server.tool(
         name="search_text",
         title="Search text (BM25)",
-        description=(
-            "First stop for any question about the user's notes, projects, decisions, "
-            "or past work - search before saying you do not know. Full-text BM25 search "
-            "over the FTS5 index. Returns ranked sandbox-wrapped snippets with **term** "
-            "highlighting. Requires `datacron index` to have been run first. By default, "
-            "explicitly superseded notes are demoted; set include_superseded=true to "
-            "inspect historical notes."
-        ),
+        description=_SEARCH_TEXT_DESCRIPTIONS[app.settings.tool_description_profile],
         annotations=_READ_ANNOTATIONS,
     )
     async def search_text(

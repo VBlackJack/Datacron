@@ -250,8 +250,15 @@ datacron protocol uninstall --client all
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | Budget de `get_note(format="full")`. |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | Taille cible max des chunks. |
 | `DATACRON_RIPGREP_PATH` | `rg` | Binaire ripgrep. |
+| `DATACRON_TOOL_DESCRIPTION_PROFILE` | `standard` | Profil de description : `standard` ou `compact` en opt-in. |
 
 Les listes de chemins utilisent le séparateur de l'OS : `:` sous Unix, `;` sous Windows.
+
+Le profil `compact` renforce uniquement le déclencheur d'usage de `search_text` pour les petits
+modèles de langage. Les noms, schémas, annotations, handlers et contrôles d'accès restent
+inchangés. Les clients MCP peuvent mettre `tools/list` en cache ; redémarre le serveur et le client
+après un changement de profil. Le setup guidé ne persiste pas cet opt-in : configure-le
+explicitement dans l'environnement du processus ou de l'utilisateur.
 
 ## 8. Activer l'écriture (optionnel)
 

@@ -245,8 +245,14 @@ datacron protocol uninstall --client all
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | Budget for `get_note(format="full")`. |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | Target maximum chunk size. |
 | `DATACRON_RIPGREP_PATH` | `rg` | ripgrep binary. |
+| `DATACRON_TOOL_DESCRIPTION_PROFILE` | `standard` | Tool description profile: `standard` or opt-in `compact`. |
 
 Path lists use the OS separator: `:` on Unix, `;` on Windows.
+
+The `compact` profile strengthens only the `search_text` usage trigger for compact language
+models. Tool names, schemas, annotations, handlers, and access controls remain unchanged. MCP
+clients may cache `tools/list`; restart the server and client after changing the profile. Guided
+setup does not persist this opt-in, so configure it in the process or user environment explicitly.
 
 ## 8. Enable writing (optional)
 

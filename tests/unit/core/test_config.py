@@ -41,6 +41,7 @@ from datacron.core.config import (
     DEFAULT_SCRUB_MAX_DURATION_SECONDS,
     DEFAULT_SCRUB_MEBIBYTES_PER_SECOND,
     DEFAULT_SCRUB_NOTES_PER_SECOND,
+    DEFAULT_TOOL_DESCRIPTION_PROFILE,
     Settings,
     VaultConfig,
     get_settings,
@@ -76,6 +77,7 @@ class TestDefaults:
         assert settings.vault_root is None
         assert settings.read_only is False
         assert settings.durability == DEFAULT_DURABILITY_MODE
+        assert settings.tool_description_profile == DEFAULT_TOOL_DESCRIPTION_PROFILE
         assert settings.scrub_notes_per_second == DEFAULT_SCRUB_NOTES_PER_SECOND
         assert settings.scrub_mebibytes_per_second == DEFAULT_SCRUB_MEBIBYTES_PER_SECOND
         assert settings.scrub_max_duration_seconds == DEFAULT_SCRUB_MAX_DURATION_SECONDS
@@ -186,6 +188,25 @@ class TestEnvLoading:
     def test_invalid_durability_mode_raises(self) -> None:
         with pytest.raises(ValidationError, match="DATACRON_DURABILITY"):
             Settings(durability="eventually")
+
+    @pytest.mark.parametrize("raw", ["compact", " COMPACT "])
+    def test_tool_description_profile_env_is_normalized(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        raw: str,
+    ) -> None:
+        monkeypatch.setenv("DATACRON_TOOL_DESCRIPTION_PROFILE", raw)
+
+        assert Settings().tool_description_profile == "compact"
+
+    def test_invalid_tool_description_profile_env_raises(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("DATACRON_TOOL_DESCRIPTION_PROFILE", "automatic")
+
+        with pytest.raises(ValidationError, match="DATACRON_TOOL_DESCRIPTION_PROFILE"):
+            Settings()
 
     def test_scrub_canaries_load_from_json_env(
         self,

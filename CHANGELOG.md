@@ -9,6 +9,11 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- An opt-in `DATACRON_TOOL_DESCRIPTION_PROFILE=compact` mode strengthens the `search_text`
+  usage trigger for compact language models without changing tool schemas or handlers.
+
 ### Fixed
 
 - Certified read-only readers now keep SQLite locking and change detection enabled. A running

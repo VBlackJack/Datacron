@@ -76,6 +76,7 @@ DEFAULT_ENCODING: Final[str] = "utf-8"
 DEFAULT_LINE_ENDINGS: Final[str] = "lf"
 DEFAULT_REDACT_SECRETS: Final[str] = "all"
 DEFAULT_DURABILITY_MODE: Final[str] = "best-effort"
+DEFAULT_TOOL_DESCRIPTION_PROFILE: Final[str] = "standard"
 DEFAULT_SCRUB_NOTES_PER_SECOND: Final[float] = 50.0
 DEFAULT_SCRUB_MEBIBYTES_PER_SECOND: Final[float] = 16.0
 DEFAULT_SCRUB_MAX_DURATION_SECONDS: Final[float] = 30.0
@@ -121,6 +122,7 @@ VALID_SECRET_REDACTION_POLICIES: Final[frozenset[str]] = frozenset(
     {"off", "log", "retrieval", "all"}
 )
 VALID_DURABILITY_MODES: Final[frozenset[str]] = frozenset({"strict", "best-effort"})
+VALID_TOOL_DESCRIPTION_PROFILES: Final[frozenset[str]] = frozenset({"standard", "compact"})
 
 
 class VaultConfig(BaseModel):
@@ -291,6 +293,7 @@ class Settings(BaseSettings):
     secret_redaction_patterns: Annotated[list[str], NoDecode] = Field(default_factory=list)
     read_only: bool = False
     durability: str = DEFAULT_DURABILITY_MODE
+    tool_description_profile: str = DEFAULT_TOOL_DESCRIPTION_PROFILE
     scrub_notes_per_second: float = Field(default=DEFAULT_SCRUB_NOTES_PER_SECOND, gt=0)
     scrub_mebibytes_per_second: float = Field(
         default=DEFAULT_SCRUB_MEBIBYTES_PER_SECOND,
@@ -394,6 +397,17 @@ class Settings(BaseSettings):
         normalized = str(value).strip().lower()
         if normalized not in VALID_DURABILITY_MODES:
             raise ValueError(f"DATACRON_DURABILITY must be one of {sorted(VALID_DURABILITY_MODES)}")
+        return normalized
+
+    @field_validator("tool_description_profile", mode="before")
+    @classmethod
+    def _normalize_tool_description_profile(cls, value: object) -> str:
+        normalized = str(value).strip().lower()
+        if normalized not in VALID_TOOL_DESCRIPTION_PROFILES:
+            raise ValueError(
+                "DATACRON_TOOL_DESCRIPTION_PROFILE must be one of "
+                f"{sorted(VALID_TOOL_DESCRIPTION_PROFILES)}"
+            )
         return normalized
 
     @field_validator("scrub_checkpoint_path", "scrub_canary_dir", mode="before")
