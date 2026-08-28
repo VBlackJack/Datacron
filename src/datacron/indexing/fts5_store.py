@@ -340,7 +340,7 @@ class SQLiteFTS5Store:
         read_only: bool = False,
         sidecar_writeback: bool = True,
     ) -> None:
-        """Open SQLite normally or as an immutable certified read-only index."""
+        """Open SQLite normally or in certified read-only mode."""
         if self._conn is not None:
             return
 
@@ -350,7 +350,7 @@ class SQLiteFTS5Store:
                 raise FileNotFoundError(
                     f"certified read-only mode requires a prebuilt index: {resolved_path}"
                 )
-            uri = f"{resolved_path.as_uri()}?mode=ro&immutable=1"
+            uri = f"{resolved_path.as_uri()}?mode=ro"
             connection = await aiosqlite.connect(uri, uri=True)
         else:
             resolved_path.parent.mkdir(parents=True, exist_ok=True)
@@ -708,7 +708,7 @@ class SQLiteFTS5Store:
 
     def _require_writable(self) -> None:
         if self._read_only:
-            raise PermissionError("immutable read-only index refuses mutation")
+            raise PermissionError("read-only index refuses mutation")
 
     async def _migrate_notes_columns(self, connection: aiosqlite.Connection) -> None:
         """Add columns introduced after the initial ``notes`` schema (idempotent).

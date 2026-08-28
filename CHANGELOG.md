@@ -9,6 +9,12 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Fixed
+
+- Certified read-only readers now keep SQLite locking and change detection enabled. A running
+  reader can follow committed index updates from another process instead of retaining an
+  `immutable=1` snapshot that eventually reports a live database as malformed.
+
 ## [2026.0828.00] - 2026-08-28
 
 ### Changed

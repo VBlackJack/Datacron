@@ -370,13 +370,14 @@ def _load_sidecar_ids(root: Path) -> dict[str, str]:
 def _load_sqlite_ids(root: Path) -> dict[str, str]:
     result: dict[str, str] = {}
     for db_path in sorted((root / ".datacron").glob("**/*.db")):
-        uri = f"{db_path.resolve().as_uri()}?mode=ro&immutable=1"
+        uri = f"{db_path.resolve().as_uri()}?mode=ro"
         try:
             connection = sqlite3.connect(uri, uri=True)
         except sqlite3.Error as exc:
             _logger().warning("cannot open index %s read-only: %s", db_path, exc)
             continue
         try:
+            connection.execute("PRAGMA query_only = ON;")
             queries = (
                 ("ulid_paths", "SELECT rel_path, note_id FROM ulid_paths"),
                 ("notes", "SELECT rel_path, note_id FROM notes"),

@@ -105,7 +105,7 @@ async def test_read_only_open_requires_prebuilt_index_without_creating_parent(
     assert not db_path.parent.exists()
 
 
-async def test_immutable_read_only_open_refuses_mutation_and_sidecars(tmp_path: Path) -> None:
+async def test_read_only_open_refuses_mutation_and_sidecars(tmp_path: Path) -> None:
     db_path = _db_path(tmp_path)
     writable = SQLiteFTS5Store()
     await writable.open(db_path)
@@ -118,7 +118,7 @@ async def test_immutable_read_only_open_refuses_mutation_and_sidecars(tmp_path: 
     read_only = SQLiteFTS5Store()
     await read_only.open(db_path, read_only=True)
     assert (await read_only.stats()).note_count == 0
-    with pytest.raises(PermissionError, match="immutable read-only index"):
+    with pytest.raises(PermissionError, match="read-only index"):
         await read_only.delete_note(_NOTE_ID)
     await read_only.close()
 
@@ -129,6 +129,50 @@ async def test_immutable_read_only_open_refuses_mutation_and_sidecars(tmp_path: 
     assert before == after
     assert not db_path.with_name(f"{db_path.name}-wal").exists()
     assert not db_path.with_name(f"{db_path.name}-shm").exists()
+
+
+async def test_read_only_reader_observes_committed_writer_updates(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    db_path = _db_path(tmp_path)
+    note = note_factory(id=_NOTE_ID, rel_path="welcome.md")
+    initial_chunk = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::::0000",
+        content="legacyanchor",
+    )
+    replacement_chunk = chunk_factory(
+        note=note,
+        chunk_id=f"{note.id}::::0000",
+        content="replacementanchor",
+    )
+    writer = SQLiteFTS5Store()
+    reader = SQLiteFTS5Store()
+
+    await writer.open(db_path)
+    try:
+        await writer.upsert_note(note, [initial_chunk])
+        await writer.increment_generation()
+        await reader.open(db_path, read_only=True)
+
+        assert await reader.get_generation() == 1
+        assert [result.chunk.content for result in await reader.search("legacyanchor")] == [
+            "legacyanchor"
+        ]
+
+        await writer.upsert_note(note, [replacement_chunk])
+        await writer.increment_generation()
+
+        assert await reader.get_generation() == 2
+        assert await reader.search("legacyanchor") == []
+        assert [result.chunk.content for result in await reader.search("replacementanchor")] == [
+            "replacementanchor"
+        ]
+    finally:
+        await reader.close()
+        await writer.close()
 
 
 async def test_migration_imports_ulids_and_keeps_sidecar_readable(tmp_path: Path) -> None:

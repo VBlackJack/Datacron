@@ -198,9 +198,11 @@ Le registre MCP vivant omet alors `create_note_ai`, `append_journal`, `set_front
 `revert_note`. Les appels directs échouent aussi avec `ReadOnlyModeError`.
 
 La garantie inclut le sidecar `.datacron` : la récupération au démarrage est sautée, l'index
-SQLite préconstruit s'ouvre avec `mode=ro&immutable=1`, et la réparation à la lecture de la
-recherche est désactivée. La sortie du FileLogger est hors du vault et reste inscriptible. Un
-index préconstruit est requis ; le mode certifié n'en crée jamais.
+SQLite préconstruit s'ouvre avec `mode=ro`, et la réparation à la lecture de la recherche est
+désactivée. Le lecteur vivant conserve le verrouillage et la détection des changements SQLite
+afin de suivre sans incohérence les commits d'un autre processus. La sortie du FileLogger est
+hors du vault et reste inscriptible. Un index préconstruit est requis ; le mode certifié n'en
+crée jamais.
 
 ## Mode de durabilité
 

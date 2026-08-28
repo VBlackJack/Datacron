@@ -189,9 +189,10 @@ The live MCP registry then omits `create_note_ai`, `append_journal`, `set_frontm
 `revert_note`. Direct calls also fail with `ReadOnlyModeError`.
 
 The guarantee includes the `.datacron` sidecar: startup recovery is skipped, the
-prebuilt SQLite index opens with `mode=ro&immutable=1`, and search read-repair is
-disabled. FileLogger output is outside the vault and remains writable. A prebuilt
-index is required; certified mode never creates one.
+prebuilt SQLite index opens with `mode=ro`, and search read-repair is disabled. The
+live reader keeps SQLite locking and change detection enabled so it can follow index
+commits from another process safely. FileLogger output is outside the vault and remains
+writable. A prebuilt index is required; certified mode never creates one.
 
 ## Durability mode
 
@@ -206,7 +207,7 @@ DATACRON_DURABILITY=strict
 writes continue with a loud FileLogger warning and the existing per-write fallback.
 
 `strict` refuses every write with `DurabilityUnavailableError` when the probe is
-unsupported. Reads remain available from a prebuilt immutable index.
+unsupported. Reads remain available from a prebuilt read-only index.
 
 On Windows the probe opens the existing directory with
 `FILE_FLAG_BACKUP_SEMANTICS` and calls `FlushFileBuffers`. On POSIX it opens the

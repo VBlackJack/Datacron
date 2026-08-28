@@ -116,9 +116,10 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _indexed_paths(db_path: Path) -> set[str]:
-    uri = f"{db_path.resolve().as_uri()}?mode=ro&immutable=1"
+    uri = f"{db_path.resolve().as_uri()}?mode=ro"
     connection = sqlite3.connect(uri, uri=True)
     try:
+        connection.execute("PRAGMA query_only = ON;")
         return {str(row[0]) for row in connection.execute("SELECT rel_path FROM notes")}
     finally:
         connection.close()
