@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0828.00] - 2026-08-28
+
 ### Changed
 
 - `get_health` now judges broken wikilinks by classification instead of by count. A link whose
@@ -39,6 +41,9 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- Markdown notes with a leading UTF-8 BOM now expose their YAML frontmatter during reads and
+  indexing instead of being treated as notes with empty metadata. The original BOM remains part
+  of `content_hash`, and a note without frontmatter keeps its body unchanged.
 - An unexpected system error now returns a stable `code` and a `correlation_id` alongside the
   opaque `internal error` message. The nine sites that flatten such failures disclose exactly as
   much about the host as before -- no `errno`, no `winerror`, no path, no `strerror` -- which is
