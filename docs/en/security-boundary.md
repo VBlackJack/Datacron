@@ -116,6 +116,10 @@ FileLogger under the same `correlation_id` the payload carries, so an operator h
 payload can find the one log line that explains it. Quote the `correlation_id`, not the message:
 `code` is the stable field to branch on, and the message is prose.
 
+Read it as `error.get("code")`. Most error payloads carry no `code` at all -- a refused argument
+or a missing note reports `type` and `message` only -- so the field marks the classes of failure
+worth branching on rather than every failure.
+
 ## Audited tool capabilities
 
 The closed manifest is `datacron.mcp.security_manifest.MCP_TOOL_CAPABILITIES`.

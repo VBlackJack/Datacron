@@ -44,7 +44,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
-from datacron.core.config import load_vault_config
+from datacron.core.config import VaultConfig, load_vault_config
 from datacron.core.frontmatter import (
     FrontmatterError,
     build_tiered_alias_index,
@@ -271,13 +271,17 @@ def compare_with_baseline(
 
 
 def _admission_policy(root: Path) -> NoteAdmissionPolicy:
-    """Return the same admission policy the vault reader builds for ``root``."""
-    config = load_vault_config(sidecar_vault_config(root))
-    excluded_folders = set(config.excluded_folders) if config is not None else set()
-    excluded_files = set(config.excluded_files) if config is not None else set()
+    """Return the same admission policy the vault reader builds for ``root``.
+
+    The ``or VaultConfig()`` fallback is the whole point and not a formality: with no
+    ``.datacron/VAULT.yaml`` the reader still applies the default exclusions, so a
+    scan that fell back to "exclude nothing" would disagree with the reader on
+    exactly the vaults that never configured anything.
+    """
+    config = load_vault_config(sidecar_vault_config(root)) or VaultConfig()
     return NoteAdmissionPolicy(
-        excluded_folders=SKIPPED_FOLDERS | frozenset(excluded_folders),
-        excluded_files=frozenset(excluded_files),
+        excluded_folders=SKIPPED_FOLDERS | frozenset(config.excluded_folders),
+        excluded_files=frozenset(config.excluded_files),
     )
 
 

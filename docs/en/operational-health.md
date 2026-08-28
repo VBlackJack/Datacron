@@ -25,8 +25,9 @@ The response contains:
   (`broken_wikilinks`) and their blocking subset (`broken_wikilinks_misdirected`),
   mixed-EOL Markdown notes, supersedes cycles, and parse errors;
 - `vault_checksum`: SHA-256 rollup of sorted relative paths and byte-exact note
-  content hashes, over every non-hidden Markdown note on disk -- including the folders
-  `excluded_folders` keeps out of everything else;
+  content hashes, over every readable Markdown note outside hidden and build directories --
+  including the folders `excluded_folders` keeps out of everything else, and carrying its own
+  `notes_count` because that scope is wider than the one `integrity` reports on;
 - `durability`: filesystem backend, directory-flush support, selected mode, the
   policy/durability-only `writes_allowed` gate, whether at least one write path is configured
   (`write_paths_configured`), and whether a write can actually land

@@ -24,6 +24,10 @@ from pathlib import Path
 from typing import Final, TypedDict
 from uuid import uuid4
 
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
 from datacron.core.config import Settings, VaultConfig
 from datacron.core.durability import WritePolicy, probe_directory_durability
 from datacron.core.logger import get_logger
@@ -42,7 +46,11 @@ __all__ = [
 ]
 
 _LOGGER = get_logger(__name__)
-_WINDOWS_SHARING_ERRORS: Final[frozenset[int]] = frozenset({5, 32, 33})
+# ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION only. ERROR_ACCESS_DENIED (5) is
+# deliberately absent: it is what MoveFileEx reports for a denied ACL or a read-only
+# attribute, neither of which is another process holding the file, and treating it as
+# one refuses rebuilds that would have succeeded.
+_WINDOWS_SHARING_ERRORS: Final[frozenset[int]] = frozenset({32, 33})
 _INDEX_HELD_MESSAGE: Final[str] = (
     "the live index at {db_path} is held open by another process, so it cannot be "
     "replaced. A running `datacron mcp serve` holds it open for as long as it serves. "
@@ -184,6 +192,11 @@ def _publish_index(temp_path: Path, db_path: Path) -> None:
     try:
         os.replace(temp_path, db_path)
     except PermissionError as exc:
+        if sys.platform != "win32" or exc.winerror not in _WINDOWS_SHARING_ERRORS:
+            # POSIX replaces open files, and a denied ACL is not a held file. Naming a
+            # cause the platform cannot have would send the operator hunting servers
+            # that are not the problem.
+            raise
         raise IndexRebuildError(_INDEX_HELD_MESSAGE.format(db_path=db_path)) from exc
 
 
@@ -197,46 +210,60 @@ def _assert_index_replaceable(db_path: Path) -> None:
     call site the reader has to go and look up.
 
     POSIX replaces an open file happily, so there is nothing to detect there.
+
+    The probe asks for exactly the access ``os.replace`` needs and no more.
+    ``MoveFileEx`` requires ``DELETE`` on the target, not write access, so asking for
+    ``GENERIC_WRITE`` would refuse a rebuild that a denied write ACL cannot actually
+    stop -- a refusal with no way past it, since ``reindex`` has no ``--force``.
     """
-    if sys.platform != "win32" or not db_path.exists():
+    if not db_path.exists():
         return
+    if sys.platform == "win32":
+        _assert_windows_index_replaceable(db_path)
 
-    import ctypes  # noqa: PLC0415 -- Windows-only, and only on this path
-    from ctypes import wintypes  # noqa: PLC0415
 
-    generic_read_write = 0x80000000 | 0x40000000
-    open_existing = 3
-    invalid_handle = ctypes.c_void_p(-1).value
+if sys.platform == "win32":
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateFileW.restype = wintypes.HANDLE
-    kernel32.CreateFileW.argtypes = [
-        wintypes.LPCWSTR,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.LPVOID,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.HANDLE,
-    ]
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    def _assert_windows_index_replaceable(db_path: Path) -> None:
+        """Refuse only when another process is genuinely holding the index open."""
+        delete_and_read = 0x00010000 | 0x80000000  # DELETE | GENERIC_READ
+        open_existing = 3
+        invalid_handle = ctypes.c_void_p(-1).value
 
-    handle = kernel32.CreateFileW(
-        str(db_path),
-        generic_read_write,
-        0,  # no sharing: this is exactly what os.replace needs and cannot get
-        None,
-        open_existing,
-        0,
-        None,
-    )
-    if handle != invalid_handle:
-        kernel32.CloseHandle(handle)
-        return
-    if ctypes.get_last_error() in _WINDOWS_SHARING_ERRORS:
-        raise IndexRebuildError(_INDEX_HELD_MESSAGE.format(db_path=db_path))
-    # Any other reason to fail an exclusive open is not this defect. Let the rebuild
-    # proceed and report its own error rather than guessing here.
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.CreateFileW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        ]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        handle = kernel32.CreateFileW(
+            str(db_path),
+            delete_and_read,
+            0,  # no sharing: this is exactly what os.replace needs and cannot get
+            None,
+            open_existing,
+            0,
+            None,
+        )
+        if handle != invalid_handle:
+            kernel32.CloseHandle(handle)
+            return
+        if ctypes.get_last_error() in _WINDOWS_SHARING_ERRORS:
+            raise IndexRebuildError(_INDEX_HELD_MESSAGE.format(db_path=db_path))
+        # Any other reason to fail an exclusive open is not this defect -- a denied ACL
+        # is not a held file. Let the rebuild proceed and report its own error.
+
+else:
+
+    def _assert_windows_index_replaceable(db_path: Path) -> None:
+        """POSIX replaces an open file happily, so there is nothing to detect."""
 
 
 def _assert_no_sqlite_sidecars(db_path: Path) -> None:

@@ -34,6 +34,7 @@ from datacron.core.config import Settings
 from datacron.core.frontmatter import parse, serialize
 from datacron.core.hashing import hash_text
 from datacron.core.logger import configure_logging, shutdown_logging
+from datacron.core.vault import build_configured_reader
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.reconcile import reconcile
 from datacron.mcp.sandbox import wrap_vault_content
@@ -744,6 +745,16 @@ def test_prop_02_write_tools_preserve_the_exact_body_bytes(tmp_path: Path) -> No
     assert b"\n\n\n## Journal" not in written["append_journal"]
 
 
+def _served_paths(vault: Path) -> set[str]:
+    """Return what the reader actually hands out for this vault."""
+
+    async def _read() -> set[str]:
+        reader = build_configured_reader(vault, read_only=True)
+        return {note.rel_path for note in await reader.list_notes()}
+
+    return asyncio.run(_read())
+
+
 def test_prop_07_scan_honours_excluded_folders_but_checksum_stays_exhaustive(
     tmp_path: Path,
 ) -> None:
@@ -754,6 +765,39 @@ def test_prop_07_scan_honours_excluded_folders_but_checksum_stays_exhaustive(
     repair, which pinned health to `degraded` for good. The byte checksum is the
     deliberate exception: narrowing it would silently change what an earlier trusted
     value means, so it stays exhaustive.
+
+    `_scratch` is used rather than `_archive` on purpose: it is not one of the default
+    exclusions, so the two states below differ only by the configuration under test.
+    """
+    vault = _fresh_vault(tmp_path)
+    _write_note(vault, "live.md", _NOTE_ID_A, "Live", "# Live\n")
+    _write_note(vault, "_scratch/old.md", _NOTE_ID_B, "Old", "# Old\n")
+    sidecar = vault / ".datacron" / "ulids.json"
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(json.dumps({"_scratch/old.md": _NOTE_ID_C}), encoding="ascii")
+    config = vault / ".datacron" / "VAULT.yaml"
+
+    config.write_text("excluded_folders: []\n", encoding="utf-8")
+    served = scan_vault_read_only(vault)
+    assert [item.rel_path for item in served.id_violations] == ["_scratch/old.md"]
+    assert served.notes_count == len(_served_paths(vault)) == 2
+
+    config.write_text("excluded_folders:\n  - _scratch\n", encoding="utf-8")
+    excluded = scan_vault_read_only(vault)
+
+    assert excluded.id_violations == ()
+    assert excluded.notes_count == len(_served_paths(vault)) == 1
+    assert dict(excluded.content_hashes) == dict(served.content_hashes)
+    assert "_scratch/old.md" in dict(excluded.content_hashes)
+
+
+def test_prop_07_scan_matches_the_reader_with_no_vault_config(tmp_path: Path) -> None:
+    """PROP-07: the default exclusions bind the scan too, not only a written config.
+
+    With no `.datacron/VAULT.yaml` the reader still applies `_attachments`, `_trash`
+    and `_archive`. A scan that read the missing file as "exclude nothing" would
+    disagree with the reader on precisely the vaults that never configured anything --
+    and would keep reporting a defect nothing can repair.
     """
     vault = _fresh_vault(tmp_path)
     _write_note(vault, "live.md", _NOTE_ID_A, "Live", "# Live\n")
@@ -761,20 +805,13 @@ def test_prop_07_scan_honours_excluded_folders_but_checksum_stays_exhaustive(
     sidecar = vault / ".datacron" / "ulids.json"
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(json.dumps({"_archive/old.md": _NOTE_ID_C}), encoding="ascii")
+    assert not (vault / ".datacron" / "VAULT.yaml").exists()
 
-    served = scan_vault_read_only(vault)
-    assert [item.rel_path for item in served.id_violations] == ["_archive/old.md"]
-    assert served.notes_count == 2
+    scan = scan_vault_read_only(vault)
 
-    (vault / ".datacron" / "VAULT.yaml").write_text(
-        "excluded_folders:\n  - _archive\n", encoding="utf-8"
-    )
-    excluded = scan_vault_read_only(vault)
-
-    assert excluded.id_violations == ()
-    assert excluded.notes_count == 1
-    assert dict(excluded.content_hashes) == dict(served.content_hashes)
-    assert "_archive/old.md" in dict(excluded.content_hashes)
+    assert scan.id_violations == ()
+    assert scan.notes_count == len(_served_paths(vault)) == 1
+    assert "_archive/old.md" in dict(scan.content_hashes)
 
 
 def test_prop_07_excluded_files_follow_the_same_boundary(tmp_path: Path) -> None:
@@ -792,5 +829,5 @@ def test_prop_07_excluded_files_follow_the_same_boundary(tmp_path: Path) -> None
     scan = scan_vault_read_only(vault)
 
     assert scan.id_violations == ()
-    assert scan.notes_count == 1
+    assert scan.notes_count == len(_served_paths(vault)) == 1
     assert "00_INDEX.md" in dict(scan.content_hashes)

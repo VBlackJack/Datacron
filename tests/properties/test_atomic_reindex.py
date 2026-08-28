@@ -179,22 +179,23 @@ async def test_atomic_reindex_crash_boundaries(tmp_path: Path, fault_point: str)
     assert not list((vault / ".datacron" / "index").glob("*.rebuild*"))
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="only Windows reports a sharing violation")
 def test_publication_failure_names_the_cause_and_the_remedy(tmp_path: Path) -> None:
-    """A held index must not surface as a bare WinError 5 from `os.replace`.
+    """A held index must not surface as a bare WinError 32 from `os.replace`.
 
-    The operator has no way to guess from `PermissionError: [WinError 5]` that the
-    MCP server is what holds the file. Reading the source was the only route.
+    The operator has no way to guess from `PermissionError` that the MCP server is
+    what holds the file. Reading the source was the only route.
     """
     db_path = tmp_path / "datacron.db"
     db_path.write_bytes(b"live index")
     temp_path = tmp_path / "datacron.db.rebuild"
     temp_path.write_bytes(b"rebuilt index")
 
-    def _denied(_source: object, _destination: object) -> None:
-        raise PermissionError(13, "Access is denied")
+    def _sharing_violation(_source: object, _destination: object) -> None:
+        raise PermissionError(13, "The process cannot access the file", None, 32)
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(rebuild_module.os, "replace", _denied)
+        patch.setattr("datacron.indexing.rebuild.os.replace", _sharing_violation)
         with pytest.raises(IndexRebuildError) as caught:
             rebuild_module._publish_index(temp_path, db_path)
 
@@ -206,12 +207,37 @@ def test_publication_failure_names_the_cause_and_the_remedy(tmp_path: Path) -> N
     assert db_path.read_bytes() == b"live index"
 
 
+def test_publication_failure_unrelated_to_sharing_is_not_relabelled(tmp_path: Path) -> None:
+    """A denied ACL is not a held file, and POSIX replaces open files happily.
+
+    Naming a cause the platform cannot have sends the operator hunting servers that
+    are not the problem, so anything that is not a sharing violation is re-raised
+    exactly as it came.
+    """
+    db_path = tmp_path / "datacron.db"
+    db_path.write_bytes(b"live index")
+    temp_path = tmp_path / "datacron.db.rebuild"
+    temp_path.write_bytes(b"rebuilt index")
+
+    def _denied(_source: object, _destination: object) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("datacron.indexing.rebuild.os.replace", _denied)
+        with pytest.raises(PermissionError):
+            rebuild_module._publish_index(temp_path, db_path)
+
+    assert db_path.read_bytes() == b"live index"
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="only Windows refuses to replace open files")
 async def test_rebuild_refuses_up_front_when_the_index_is_held_open(tmp_path: Path) -> None:
     """The condition is knowable before the rebuild, not after minutes of work.
 
     BL-0103 measured the old behaviour: 2290 notes indexed, then a raw traceback at
     the swap. The whole rebuild was thrown away for a condition one handle can test.
+    The reconcile sentinel is what makes this test about *up front*: without it, the
+    publication path raises the same message and every other assertion still holds.
     """
     vault = tmp_path / "vault"
     vault.mkdir()
@@ -222,10 +248,15 @@ async def test_rebuild_refuses_up_front_when_the_index_is_held_open(tmp_path: Pa
     db_path = sidecar_index_db(vault)
     before = db_path.read_bytes()
 
+    async def _must_not_run(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("reconcile ran: the refusal was not up front")
+
     holder = sqlite3.connect(db_path)
     try:
-        with pytest.raises(IndexRebuildError) as caught:
-            await rebuild_index_atomic(vault, _settings(vault), VaultConfig())
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr("datacron.indexing.rebuild.reconcile", _must_not_run)
+            with pytest.raises(IndexRebuildError) as caught:
+                await rebuild_index_atomic(vault, _settings(vault), VaultConfig())
     finally:
         holder.close()
 

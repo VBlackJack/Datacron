@@ -69,10 +69,14 @@ scope deliberately excludes: that scope exists to bound agent writes to note fol
 vault root, and share one helper with it.
 
 This is worth knowing when reading a `PathConfinementError` from an older build: the failure is
-immediate, before any note is read, because the checkpoint is authorized at the top of the run. A
-scrubber that cannot start still leaves `anomalies_count: 0` in `get_health`, which reads exactly
-like a clean pass. Check `last_scrub` and the scrubber's `index_generation` before trusting that
-zero.
+immediate, before any note is read, because the checkpoint is authorized at the top of the run.
+
+A scrubber that cannot start still leaves `anomalies_count: 0` in `get_health`. On a vault that
+was never scrubbed the payload says so plainly -- `status: not_run`, `last_scrub: null`, canaries
+unhealthy. The trap is the other case: after one successful pass, a scrubber that can no longer
+run keeps reporting *that* pass's zero and its healthy canaries indefinitely, and only
+`status: stale` with a frozen `index_generation` says the measurement stopped. Check `last_scrub`
+and that generation before trusting the zero.
 
 ## Checkpoint and resume
 

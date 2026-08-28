@@ -4731,23 +4731,88 @@ class TestRecoveryRequiredMapping:
             tags=["recovery"],
         )
 
-        error = result["error"]
-        assert error["type"] == "RuntimeError"
-        assert error["message"] == "internal error"
-        assert error["code"] == "internal_error"
-
-        # Nothing about the host leaves the surface: no errno, no path, no strerror.
-        # That opacity is the arbitrated contract and it has not moved.
-        assert "unexpected disk failure" not in json.dumps(result)
-        assert "OSError" not in json.dumps(result)
-
-        # What is new is the join. An opaque payload with nowhere to go was the
-        # actual defect: the detail was always logged, and unreachable.
-        correlation_id = error["correlation_id"]
+        # Exact equality, open only on the correlation id. Anything looser lets a
+        # field be added later without a test noticing -- and this envelope is now
+        # shared by every tool, so one added field would leak from all of them.
+        correlation_id = result["error"]["correlation_id"]
+        assert result == {
+            "error": {
+                "type": "RuntimeError",
+                "message": "internal error",
+                "code": "internal_error",
+                "correlation_id": correlation_id,
+            }
+        }
         assert len(correlation_id) == 12
+
+        # The detail is not lost, it is local -- and reachable through the same id.
         assert "create_note_ai failed" in caplog.text
         assert f"correlation_id={correlation_id}" in caplog.text
         assert "unexpected disk failure" in caplog.text
+
+    async def test_each_internal_error_gets_its_own_correlation_id(
+        self,
+        writable_app: DatacronApp,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A constant id would satisfy every other assertion and be worthless.
+
+        The whole feature is that one payload names one log line, so variability is
+        not a detail of the feature: it is the feature.
+        """
+        from datacron.mcp.tools import _create_note_ai_impl
+
+        async def raise_unexpected(*_args: Any, **_kwargs: Any) -> str:
+            raise OSError("unexpected disk failure")
+
+        monkeypatch.setattr(writable_app.vault_writer, "write_note_atomic", raise_unexpected)
+
+        seen = set()
+        for index in range(3):
+            result = await _create_note_ai_impl(
+                writable_app,
+                rel_path=f"_memory/facts/failure-{index}.md",
+                title="Failure",
+                body="# Failure\n",
+                origin="ai",
+                confidence="high",
+                tags=["recovery"],
+            )
+            seen.add(result["error"]["correlation_id"])
+
+        assert len(seen) == 3
+
+    async def test_journal_read_failure_stays_opaque_for_every_tool(
+        self,
+        writable_app: DatacronApp,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`get_note_history` and `audit_query` read the journal with an unguarded
+        `read_bytes()`. A real `OSError` used to escape to the SDK, which hands the
+        caller `str(exc)` -- errno, host path and user name included. The published
+        security boundary says that cannot happen, so it must not.
+        """
+        from datacron.mcp.tools import _audit_query_impl, _get_note_history_impl
+
+        host_path = "C:\\Users\\somebody\\vault\\.datacron\\operations.jsonl"
+
+        async def raise_unexpected(*_args: Any, **_kwargs: Any) -> list[Any]:
+            raise OSError(13, "Permission denied", host_path)
+
+        monkeypatch.setattr(writable_app.vault_writer, "list_operations", raise_unexpected)
+
+        history = await _get_note_history_impl(writable_app, note="anything", limit=10)
+        audit = await _audit_query_impl(
+            writable_app, start=None, end=None, tool=None, note=None, limit=10
+        )
+
+        for result in (history, audit):
+            assert result["error"]["message"] == "internal error"
+            assert result["error"]["code"] == "internal_error"
+            rendered = json.dumps(result)
+            assert "somebody" not in rendered
+            assert "Permission denied" not in rendered
+            assert "operations.jsonl" not in rendered
 
     async def test_expected_value_error_omits_code(
         self,

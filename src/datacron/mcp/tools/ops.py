@@ -89,6 +89,11 @@ async def _get_note_history_impl(
         records = await app.vault_writer.list_operations()
     except OperationLogError as exc:
         return _error_response("get_note_history", exc, started, note=cleaned_note)
+    except Exception:
+        # The journal is read with an unguarded read_bytes(): a real OSError used to
+        # escape to the SDK, which returns str(exc) to the caller -- errno, host path
+        # and user name included.
+        return _internal_error_response("get_note_history", started, note=cleaned_note)
     matching = [record for record in records if cleaned_note in (record.rel_path, record.note_id)]
     returned = matching[-bounded_limit:]
     payload = {
@@ -128,6 +133,8 @@ async def _audit_query_impl(
         records = await app.vault_writer.list_operations()
     except (OperationLogError, ValueError) as exc:
         return _error_response("audit_query", exc, started)
+    except Exception:
+        return _internal_error_response("audit_query", started)
 
     cleaned_tool = tool.strip() if tool else None
     cleaned_note = note.strip() if note else None

@@ -72,9 +72,14 @@ helper.
 
 Bon à savoir en lisant un `PathConfinementError` venu d'un build plus ancien : l'échec est
 immédiat, avant toute lecture de note, parce que le point de contrôle est autorisé en tête de
-passe. Or un scrubber qui ne démarre pas laisse quand même `anomalies_count: 0` dans
-`get_health`, ce qui se lit exactement comme une passe propre. Vérifier `last_scrub` et
-l'`index_generation` du scrubber avant de faire confiance à ce zéro.
+passe.
+
+Un scrubber qui ne démarre pas laisse quand même `anomalies_count: 0` dans `get_health`. Sur un
+vault jamais scrubbé, la charge le dit clairement - `status: not_run`, `last_scrub: null`,
+sentinelles en échec. Le piège est l'autre cas : après une passe réussie, un scrubber qui ne peut
+plus tourner continue de rapporter le zéro *de cette passe-là* et ses sentinelles saines
+indéfiniment, et seul `status: stale` avec une `index_generation` figée dit que la mesure s'est
+arrêtée. Vérifier `last_scrub` et cette génération avant de faire confiance au zéro.
 
 ## Point de contrôle et reprise
 

@@ -57,8 +57,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   content write scope exists to bound agent writes to note folders and deliberately excludes
   Datacron's own state, so with a real `DATACRON_WRITE_PATHS` both commands failed with
   `PathConfinementError` before reading a single note. No bit-rot detection ran at all, while
-  `get_health` kept reporting `anomalies_count: 0` in the same field, and the same shape, as a
-  successful measurement -- an absence of evidence presented as evidence of absence. The
+  `get_health` kept reporting the last successful pass's `anomalies_count: 0` and its healthy
+  canaries, with only `status: stale` and a frozen `index_generation` to say the measurement had
+  stopped -- an absence of evidence that reads like evidence of absence unless `last_scrub` is
+  checked. The
   widening now lives in one helper the three commands share, since each building it separately
   is how `scrub` came to be the one that never got it.
 - The reliability scan now honours `excluded_folders` and `excluded_files` from `VAULT.yaml`,

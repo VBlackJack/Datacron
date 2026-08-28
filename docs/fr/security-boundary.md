@@ -118,6 +118,10 @@ FileLogger sous le même `correlation_id` que porte la charge utile, de sorte qu
 tient une erreur peut retrouver la ligne de journal qui l'explique. Citer le `correlation_id`,
 pas le message : `code` est le champ stable sur lequel brancher, le message est de la prose.
 
+Le lire avec `error.get("code")`. La plupart des charges d'erreur ne portent aucun `code` - un
+argument refusé ou une note absente ne rendent que `type` et `message` - de sorte que le champ
+marque les classes d'echec sur lesquelles il vaut la peine de brancher, pas toutes les erreurs.
+
 ## Capacités d'outils auditées
 
 Le manifeste fermé est `datacron.mcp.security_manifest.MCP_TOOL_CAPABILITIES`. La propriété

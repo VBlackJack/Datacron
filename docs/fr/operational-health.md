@@ -25,7 +25,10 @@ La réponse contient :
   cassés (`broken_wikilinks`) et leur sous-ensemble bloquant (`broken_wikilinks_misdirected`),
   les notes Markdown à EOL mixtes, les cycles de `supersedes` et les erreurs de parsing ;
 - `vault_checksum` : rollup SHA-256 des chemins relatifs triés et des hashes de contenu de note
-  exacts aux octets ;
+  exacts aux octets, sur toute note Markdown lisible hors répertoires cachés et de build -
+  y compris les dossiers que `excluded_folders` écarte de tout le reste, et portant son propre
+  `notes_count` parce que cette portée est plus large que celle sur laquelle `integrity`
+  rapporte ;
 - `durability` : backend filesystem, support du flush de répertoire, mode sélectionné,
   condition de politique et de durabilité `writes_allowed`, présence d'au moins un chemin
   d'écriture configuré (`write_paths_configured`) et possibilité pour une écriture d'aboutir

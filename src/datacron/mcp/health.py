@@ -136,8 +136,9 @@ async def build_health(
             "value": vault_checksum(dict(scan.content_hashes)),
             "notes_count": len(scan.content_hashes),
             "scope": (
-                "every non-hidden Markdown note on disk, including folders the vault "
-                "excludes from what it serves"
+                "every readable Markdown note outside hidden and build directories, "
+                "including folders the vault excludes from what it serves; a note the "
+                "scan cannot decode is counted in frontmatter_parse_errors instead"
             ),
             "claim": "point-in-time Markdown byte integrity; not future durability",
         },
