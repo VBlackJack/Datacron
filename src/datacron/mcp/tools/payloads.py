@@ -16,7 +16,8 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
+from uuid import uuid4
 
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.logger import get_logger
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
 _LOGGER = get_logger("datacron.mcp.tools")
+_INTERNAL_ERROR_CODE: Final[str] = "internal_error"
 
 
 def _estimate_tokens(text: str) -> int:
@@ -48,6 +50,34 @@ def _error_response(tool: str, exc: BaseException, started: float, **fields: Any
     if code is not None:
         error["code"] = code
     return {"error": error}
+
+
+def _internal_error_response(tool: str, started: float, **fields: Any) -> dict[str, Any]:
+    """Log the real cause locally, and return a payload that can be joined to it.
+
+    Nothing about the host filesystem leaves the MCP surface: no ``errno``, no
+    ``winerror``, no path, no strerror. That opacity is deliberate and unchanged.
+
+    What was missing was any way to connect an opaque ``internal error`` to the
+    local log line that does carry the detail, so whoever hit one had nowhere to go
+    and nothing to quote. ``correlation_id`` is that join, and ``code`` makes the
+    class of failure stable enough to branch on without parsing prose.
+
+    Call this from inside an ``except`` block: the traceback comes from the live
+    exception context.
+    """
+    correlation_id = uuid4().hex[:12]
+    _LOGGER.exception("%s failed correlation_id=%s %s", tool, correlation_id, fields or "")
+    payload = _error_response(
+        tool,
+        RuntimeError("internal error"),
+        started,
+        correlation_id=correlation_id,
+        **fields,
+    )
+    payload["error"]["code"] = _INTERNAL_ERROR_CODE
+    payload["error"]["correlation_id"] = correlation_id
+    return payload
 
 
 def _audit(tool: str, started: float, **fields: Any) -> None:

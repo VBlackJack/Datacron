@@ -4704,7 +4704,7 @@ class TestRecoveryRequiredMapping:
 
         _assert_recovery_required(result)
 
-    async def test_unexpected_write_error_remains_internal_without_code(
+    async def test_unexpected_write_error_stays_opaque_but_joinable_to_the_log(
         self,
         writable_app: DatacronApp,
         monkeypatch: pytest.MonkeyPatch,
@@ -4731,13 +4731,22 @@ class TestRecoveryRequiredMapping:
             tags=["recovery"],
         )
 
-        assert result == {
-            "error": {
-                "type": "RuntimeError",
-                "message": "internal error",
-            }
-        }
+        error = result["error"]
+        assert error["type"] == "RuntimeError"
+        assert error["message"] == "internal error"
+        assert error["code"] == "internal_error"
+
+        # Nothing about the host leaves the surface: no errno, no path, no strerror.
+        # That opacity is the arbitrated contract and it has not moved.
+        assert "unexpected disk failure" not in json.dumps(result)
+        assert "OSError" not in json.dumps(result)
+
+        # What is new is the join. An opaque payload with nowhere to go was the
+        # actual defect: the detail was always logged, and unreachable.
+        correlation_id = error["correlation_id"]
+        assert len(correlation_id) == 12
         assert "create_note_ai failed" in caplog.text
+        assert f"correlation_id={correlation_id}" in caplog.text
         assert "unexpected disk failure" in caplog.text
 
     async def test_expected_value_error_omits_code(

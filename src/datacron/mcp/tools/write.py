@@ -43,7 +43,7 @@ from datacron.core.operation_log import (
 )
 from datacron.core.paths import PathConfinementError
 from datacron.core.vault_writer import UlidCollisionError
-from datacron.mcp.tools.payloads import _LOGGER, _audit, _error_response
+from datacron.mcp.tools.payloads import _LOGGER, _audit, _error_response, _internal_error_response
 from datacron.mcp.tools.read import _resolve_note
 from datacron.mcp.tools.search import (
     _invalidate_alias_cache_if_index_changed,
@@ -99,13 +99,7 @@ async def _execute_write_tool(
         fields = expected_audit_fields(exc) if expected_audit_fields is not None else audit_fields
         return _error_response(tool, final, started, **fields)
     except Exception:
-        _LOGGER.exception("%s failed (%s)", tool, audit_fields)
-        return _error_response(
-            tool,
-            RuntimeError("internal error"),
-            started,
-            **audit_fields,
-        )
+        return _internal_error_response(tool, started, **audit_fields)
 
 
 async def _create_note_ai_impl(

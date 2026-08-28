@@ -32,6 +32,7 @@ from datacron.mcp.tools.payloads import (
     _audit,
     _bounded_count,
     _error_response,
+    _internal_error_response,
     _redact_retrieval_text,
     _sanitize_optional_retrieval_metadata,
     _sanitize_retrieval_metadata,
@@ -87,8 +88,7 @@ async def _search_text_impl(
         )[:bounded_limit]
         timings_ms["rerank"] = _elapsed_ms(stage_started)
     except Exception:
-        _LOGGER.exception("search_text failed (query=%r)", query)
-        return _error_response("search_text", RuntimeError("internal error"), started, query=query)
+        return _internal_error_response("search_text", started, query=query)
 
     stage_started = time.perf_counter()
     results, truncated_for_tokens = _apply_token_budget(
@@ -191,14 +191,7 @@ async def _search_regex_impl(
             glob=glob,
         )
     except Exception:
-        _LOGGER.exception("search_regex failed (pattern=%r glob=%r)", pattern, glob)
-        return _error_response(
-            "search_regex",
-            RuntimeError("internal error"),
-            started,
-            pattern=pattern,
-            glob=glob,
-        )
+        return _internal_error_response("search_regex", started, pattern=pattern, glob=glob)
 
     results, truncated_for_tokens = _apply_token_budget(
         raw_results, max_tokens=app.settings.max_result_tokens
@@ -248,10 +241,7 @@ async def _get_backlinks_impl(
     try:
         resolved_id = await _resolve_backlink_target(app, cleaned)
     except Exception:
-        _LOGGER.exception("get_backlinks resolution failed (target=%r)", target)
-        return _error_response(
-            "get_backlinks", RuntimeError("internal error"), started, target=target
-        )
+        return _internal_error_response("get_backlinks", started, stage="resolution", target=target)
 
     if resolved_id is None:
         payload_unresolved: dict[str, Any] = {
@@ -274,13 +264,8 @@ async def _get_backlinks_impl(
         repair = await _repair_index_on_read(app)
         sources = await _find_backlink_sources(app, resolved_id, cleaned, bounded_limit)
     except Exception:
-        _LOGGER.exception("get_backlinks scan failed (target=%r id=%r)", target, resolved_id)
-        return _error_response(
-            "get_backlinks",
-            RuntimeError("internal error"),
-            started,
-            target=target,
-            resolved_note_id=resolved_id,
+        return _internal_error_response(
+            "get_backlinks", started, stage="scan", target=target, resolved_note_id=resolved_id
         )
 
     payload: dict[str, Any] = {

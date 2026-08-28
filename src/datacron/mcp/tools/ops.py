@@ -23,7 +23,12 @@ from datacron.core.operation_log import (
     OperationLogError,
     OperationRecord,
 )
-from datacron.mcp.tools.payloads import _LOGGER, _audit, _bounded_count, _error_response
+from datacron.mcp.tools.payloads import (
+    _audit,
+    _bounded_count,
+    _error_response,
+    _internal_error_response,
+)
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -44,8 +49,7 @@ async def _get_health_impl(
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         return _error_response("get_health", exc, started)
     except Exception:
-        _LOGGER.exception("get_health failed")
-        return _error_response("get_health", RuntimeError("internal error"), started)
+        return _internal_error_response("get_health", started)
     audit_fields: dict[str, Any] = {
         "status": payload["status"],
         "read_only": payload["read_only"],

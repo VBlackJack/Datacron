@@ -100,6 +100,24 @@ chunk. Ils ne contournent ni l'expurgation à la récupération, ni le sandboxin
 contrôles de périmètre du vault ; seuls les champs porteurs de contenu restent soumis à ces
 frontières.
 
+## Divulgation des erreurs
+
+Une erreur système inattendue rend la même enveloppe opaque, quel que soit l'outil :
+
+```json
+{"error": {"type": "RuntimeError", "message": "internal error",
+           "code": "internal_error", "correlation_id": "d5eb466345ad"}}
+```
+
+Rien du système de fichiers hôte ne franchit la surface - ni `errno`, ni `winerror`, ni chemin,
+ni `strerror`. C'est la frontière, et elle est délibérée : l'appelant d'une surface MCP n'a pas à
+recevoir une carte de la machine qui le sert.
+
+Le détail n'est pas perdu, il est local. L'exception complète, traceback compris, part dans le
+FileLogger sous le même `correlation_id` que porte la charge utile, de sorte qu'un opérateur qui
+tient une erreur peut retrouver la ligne de journal qui l'explique. Citer le `correlation_id`,
+pas le message : `code` est le champ stable sur lequel brancher, le message est de la prose.
+
 ## Capacités d'outils auditées
 
 Le manifeste fermé est `datacron.mcp.security_manifest.MCP_TOOL_CAPABILITIES`. La propriété

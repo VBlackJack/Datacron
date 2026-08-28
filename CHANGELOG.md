@@ -39,6 +39,12 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- An unexpected system error now returns a stable `code` and a `correlation_id` alongside the
+  opaque `internal error` message. The nine sites that flatten such failures disclose exactly as
+  much about the host as before -- no `errno`, no `winerror`, no path, no `strerror` -- which is
+  the arbitrated boundary and has not moved. What changed is that the payload can now be joined
+  to the local log line that does carry the detail: the same `correlation_id` appears in both.
+  Before, `internal error` left the caller with nothing to go on and nothing to quote.
 - `datacron reindex` now refuses up front when another process holds the live index, instead of
   indexing every note and then failing at publication with a bare `PermissionError [WinError 5]`
   from `os.replace`. A running `datacron mcp serve` holds the index open for as long as it

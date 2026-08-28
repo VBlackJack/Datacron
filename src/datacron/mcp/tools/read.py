@@ -32,11 +32,11 @@ from datacron.mcp.sandbox import (
     wrap_vault_content,
 )
 from datacron.mcp.tools.payloads import (
-    _LOGGER,
     _audit,
     _bounded_count,
     _error_response,
     _estimate_tokens,
+    _internal_error_response,
     _redact_retrieval_text,
     _sanitize_retrieval_metadata,
 )
@@ -112,14 +112,8 @@ async def _list_notes_impl(
     except Exception:
         # Defensive: per brief, any unexpected tool failure must log a
         # traceback and return an error rather than crashing the server.
-        _LOGGER.exception("list_notes failed (folder=%r)", folder)
-        return _error_response(
-            "list_notes",
-            RuntimeError("internal error"),
-            started,
-            folder=folder,
-            tags=tags,
-            frontmatter=frontmatter,
+        return _internal_error_response(
+            "list_notes", started, folder=folder, tags=tags, frontmatter=frontmatter
         )
 
     end = min(start + bounded_limit, total)
@@ -246,10 +240,7 @@ async def _get_note_impl(
     except (NoteAdmissionError, FileNotFoundError, ValueError, PathConfinementError) as exc:
         return _error_response("get_note", exc, started, id_or_path=id_or_path, fmt=fmt)
     except Exception:
-        _LOGGER.exception("get_note failed (id_or_path=%r)", id_or_path)
-        return _error_response(
-            "get_note", RuntimeError("internal error"), started, id_or_path=id_or_path, fmt=fmt
-        )
+        return _internal_error_response("get_note", started, id_or_path=id_or_path, fmt=fmt)
 
     if note is None:
         return _error_response(

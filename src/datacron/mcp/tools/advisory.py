@@ -30,7 +30,7 @@ from datacron.contradictions import (
     build_scan_report,
     confirm_proposal,
 )
-from datacron.mcp.tools.payloads import _LOGGER, _audit, _error_response
+from datacron.mcp.tools.payloads import _audit, _error_response, _internal_error_response
 from datacron.mcp.tools.search import _repair_index_on_read
 
 if TYPE_CHECKING:
@@ -125,14 +125,7 @@ async def _contradiction_scan_impl(
             writes="none",
         )
     except Exception:
-        _LOGGER.exception("contradiction_scan failed without mutating application state")
-        return _error_response(
-            "contradiction_scan",
-            RuntimeError("internal error"),
-            started,
-            mode=mode,
-            writes="none",
-        )
+        return _internal_error_response("contradiction_scan", started, mode=mode, writes="none")
 
 
 async def _elicit_first_candidate(

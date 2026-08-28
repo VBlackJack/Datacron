@@ -98,6 +98,24 @@ chunk content. They do not bypass the existing retrieval redaction, sandboxing,
 or vault-scope checks; the only content-bearing fields remain subject to those
 boundaries.
 
+## Error disclosure
+
+An unexpected system error returns the same opaque envelope from every tool:
+
+```json
+{"error": {"type": "RuntimeError", "message": "internal error",
+           "code": "internal_error", "correlation_id": "d5eb466345ad"}}
+```
+
+Nothing about the host filesystem crosses the surface -- no `errno`, no `winerror`, no path, no
+`strerror`. That is the boundary, and it is deliberate: a caller of the MCP surface is not
+entitled to a map of the machine serving it.
+
+The detail is not lost, it is local. The full exception, traceback included, goes to the
+FileLogger under the same `correlation_id` the payload carries, so an operator holding an error
+payload can find the one log line that explains it. Quote the `correlation_id`, not the message:
+`code` is the stable field to branch on, and the message is prose.
+
 ## Audited tool capabilities
 
 The closed manifest is `datacron.mcp.security_manifest.MCP_TOOL_CAPABILITIES`.
