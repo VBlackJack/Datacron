@@ -402,12 +402,26 @@ def status(
     _log_completion("status", started)
 
 
+def _maintenance_settings(vault_root: Path, settings: Settings) -> Settings:
+    """Widen the write scope to the vault root for explicit local maintenance.
+
+    The content write scope exists to bound *agent* writes to note folders, so it
+    deliberately excludes ``.datacron/`` -- where Datacron keeps its own state. A
+    maintenance command writing its own checkpoint is not an agent write, and
+    refusing it means the command cannot run at all.
+
+    Shared on purpose: ``ops inspect``, ``ops repair`` and ``scrub`` all need this
+    exact widening, and having each build it separately is how ``scrub`` came to be
+    the one that never got it.
+    """
+    return settings.model_copy(update={"write_paths": [vault_root]})
+
+
 def _ops_writer(vault_root: Path, settings: Settings) -> FilesystemVaultWriter:
     """Build a vault-confined writer for explicit local maintenance."""
-    maintenance_settings = settings.model_copy(update={"write_paths": [vault_root]})
     return FilesystemVaultWriter(
         vault_root,
-        maintenance_settings,
+        _maintenance_settings(vault_root, settings),
         _load_vault_yaml(vault_root) or VaultConfig(),
     )
 
@@ -952,7 +966,7 @@ def scrub_init(
     """Explicitly create configured integrity canaries without overwriting any."""
     base_settings = get_settings()
     vault_root = _resolve_vault_root(vault, base_settings)
-    settings = _settings_for_cli_vault(base_settings, vault_root)
+    settings = _maintenance_settings(vault_root, _settings_for_cli_vault(base_settings, vault_root))
     scope = SingleTenantVaultScope(vault_root, settings)
     write_policy = WritePolicy(settings, probe_directory_durability(vault_root))
     try:
@@ -988,14 +1002,15 @@ async def _run_scrub(vault_root: Path, settings: Settings) -> ScrubState:
     from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
     from datacron.scrubber import run_integrity_scrub  # noqa: PLC0415
 
+    maintenance = _maintenance_settings(vault_root, settings)
     store = SQLiteFTS5Store()
     await store.open(sidecar_index_db(vault_root), read_only=True)
     try:
-        scope = SingleTenantVaultScope(vault_root, settings)
-        write_policy = WritePolicy(settings, probe_directory_durability(vault_root))
+        scope = SingleTenantVaultScope(vault_root, maintenance)
+        write_policy = WritePolicy(maintenance, probe_directory_durability(vault_root))
         return await run_integrity_scrub(
             vault_root,
-            settings,
+            maintenance,
             scope,
             write_policy,
             store,

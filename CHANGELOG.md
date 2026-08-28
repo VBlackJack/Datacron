@@ -39,6 +39,15 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- `datacron scrub` and `datacron scrub-init` run under the same maintenance write scope as
+  `datacron ops`, so they can write their own checkpoint and canaries under `.datacron/`. The
+  content write scope exists to bound agent writes to note folders and deliberately excludes
+  Datacron's own state, so with a real `DATACRON_WRITE_PATHS` both commands failed with
+  `PathConfinementError` before reading a single note. No bit-rot detection ran at all, while
+  `get_health` kept reporting `anomalies_count: 0` in the same field, and the same shape, as a
+  successful measurement -- an absence of evidence presented as evidence of absence. The
+  widening now lives in one helper the three commands share, since each building it separately
+  is how `scrub` came to be the one that never got it.
 - The reliability scan now honours `excluded_folders` and `excluded_files` from `VAULT.yaml`,
   as the reader, the index and the MCP surface already did. It was the only component that did
   not, so it reported defects on notes nothing else treats as part of the vault -- notes

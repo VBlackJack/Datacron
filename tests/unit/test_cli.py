@@ -21,7 +21,11 @@ from typer.testing import CliRunner
 
 from datacron import __version__
 from datacron.cli import app
-from datacron.core.config import DEFAULT_HISTORY_MODE, DEFAULT_HISTORY_RETENTION_DAYS
+from datacron.core.config import (
+    DEFAULT_HISTORY_MODE,
+    DEFAULT_HISTORY_RETENTION_DAYS,
+    reset_settings_cache,
+)
 from datacron.core.paths import (
     sidecar_dir,
     sidecar_index_db,
@@ -239,6 +243,39 @@ class TestScrub:
         scrubbed = runner.invoke(app, ["scrub", "--vault", str(tmp_vault)])
         assert scrubbed.exit_code == 0, scrubbed.stdout + scrubbed.stderr
         assert "Integrity scrub complete: 6/6 notes, 0 anomalies" in scrubbed.stdout
+
+    def test_scrub_runs_when_write_paths_are_bounded_to_content(
+        self,
+        runner: CliRunner,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A content write scope must not stop Datacron writing its own state.
+
+        The scrubber authorizes `.datacron/scrubber/` through the content scope, which
+        lists note folders only. Under a real `DATACRON_WRITE_PATHS` both commands
+        refused before reading a single note, so no bit-rot detection ran at all --
+        while `anomalies_count: 0` kept being reported in the same field, and the same
+        shape, as a successful measurement. The other scrub tests do not see this: with
+        no `DATACRON_WRITE_PATHS` set, the CLI widens the scope to the vault root by
+        itself.
+        """
+        content = tmp_vault / "_memory"
+        content.mkdir(exist_ok=True)
+        monkeypatch.setenv("DATACRON_VAULT_ROOT", str(tmp_vault))
+        monkeypatch.setenv("DATACRON_WRITE_PATHS", str(content))
+        reset_settings_cache()
+
+        indexed = runner.invoke(app, ["reindex", "--vault", str(tmp_vault)])
+        assert indexed.exit_code == 0, indexed.stdout + indexed.stderr
+        initialized = runner.invoke(app, ["scrub-init", "--vault", str(tmp_vault)])
+        assert initialized.exit_code == 0, initialized.stdout + initialized.stderr
+
+        scrubbed = runner.invoke(app, ["scrub", "--vault", str(tmp_vault)])
+
+        assert scrubbed.exit_code == 0, scrubbed.stdout + scrubbed.stderr
+        assert "Integrity scrub complete" in scrubbed.stdout
+        assert (tmp_vault / ".datacron" / "scrubber" / "checkpoint.json").is_file()
 
     def test_init_refuses_to_overwrite_altered_canary(
         self,

@@ -62,6 +62,20 @@ Le contenu attendu vient de la configuration, tandis que les octets observés de
 viennent du répertoire sidecar du vault configuré. Par exemple, un mapping personnalisé peut
 être fourni en JSON avec des octets de fin de ligne échappés.
 
+## Portée d'écriture
+
+Le scrubber garde son point de contrôle et ses sentinelles sous `.datacron/`, que la portée
+d'écriture *de contenu* exclut délibérément : cette portée existe pour borner les écritures
+d'agent aux dossiers de notes. `scrub` et `scrub-init` tournent donc sous le même élargissement de
+maintenance que `datacron ops`, cadré sur la racine du vault, et partagent avec lui un seul
+helper.
+
+Bon à savoir en lisant un `PathConfinementError` venu d'un build plus ancien : l'échec est
+immédiat, avant toute lecture de note, parce que le point de contrôle est autorisé en tête de
+passe. Or un scrubber qui ne démarre pas laisse quand même `anomalies_count: 0` dans
+`get_health`, ce qui se lit exactement comme une passe propre. Vérifier `last_scrub` et
+l'`index_generation` du scrubber avant de faire confiance à ce zéro.
+
 ## Point de contrôle et reprise
 
 Le point de contrôle JSON ASCII enregistre :

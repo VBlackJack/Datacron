@@ -61,6 +61,19 @@ The expected content comes from configuration, while observed canary bytes come
 from the configured vault-sidecar directory. For example, a custom mapping can be
 provided as JSON with escaped EOL bytes.
 
+## Write scope
+
+The scrubber keeps its checkpoint and canaries under `.datacron/`, which the *content* write
+scope deliberately excludes: that scope exists to bound agent writes to note folders. `scrub` and
+`scrub-init` therefore run under the same maintenance widening as `datacron ops`, scoped to the
+vault root, and share one helper with it.
+
+This is worth knowing when reading a `PathConfinementError` from an older build: the failure is
+immediate, before any note is read, because the checkpoint is authorized at the top of the run. A
+scrubber that cannot start still leaves `anomalies_count: 0` in `get_health`, which reads exactly
+like a clean pass. Check `last_scrub` and the scrubber's `index_generation` before trusting that
+zero.
+
 ## Checkpoint and resume
 
 The ASCII JSON checkpoint records:
