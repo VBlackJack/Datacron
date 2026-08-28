@@ -28,6 +28,8 @@ structure, or frontmatter. Existing notes are not normalized or rewritten during
 indexing.
 
 - YAML frontmatter is optional. When present and valid, Datacron parses it.
+- A leading UTF-8 BOM does not hide otherwise valid YAML frontmatter. It remains part of the raw
+  bytes used for freshness hashing and, when no frontmatter is present, part of the Markdown body.
 - The title comes from the `title` field, then the first non-empty H1, then the filename.
 - Missing or invalid dates come from filesystem timestamps.
 - Valid hashtags come from frontmatter and the Markdown body, excluding inline and fenced code.

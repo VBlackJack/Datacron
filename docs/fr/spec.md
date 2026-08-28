@@ -29,6 +29,9 @@ structure de dossiers ou de frontmatter. Les notes existantes ne sont pas normal
 réécrites pendant une lecture ou une indexation.
 
 - Le frontmatter YAML est optionnel. S'il est présent et valide, Datacron le parse.
+- Un BOM UTF-8 initial ne masque pas un frontmatter YAML par ailleurs valide. Il reste dans les
+  octets bruts utilisés pour le hash de fraîcheur et, en l'absence de frontmatter, dans le corps
+  Markdown.
 - Le titre vient du champ `title`, puis du premier H1 non vide, puis du nom de fichier.
 - Les dates absentes ou invalides viennent des timestamps du filesystem.
 - Les hashtags valides viennent du frontmatter et du corps Markdown, hors code inline et blocs
