@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0828.01] - 2026-08-28
+
 ### Added
 
 - An opt-in `DATACRON_TOOL_DESCRIPTION_PROFILE=compact` mode strengthens the `search_text`

@@ -1,7 +1,7 @@
 ---
 title: Santé opérationnelle, mode lecture seule certifié et politique de durabilité
 verified: 2026-08-28
-tested_on: "Datacron 2026.0828.00 / MCP stdio / mcp 2.0.0 / Python 3.11.15"
+tested_on: "Datacron 2026.0828.01 / MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
 # Santé opérationnelle, mode lecture seule certifié et politique de durabilité
