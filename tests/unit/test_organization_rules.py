@@ -124,6 +124,12 @@ def test_empty_organization_configuration_remains_inert() -> None:
     assert VaultConfig.model_validate({"organization": {}}).organization is None
 
 
+@pytest.mark.parametrize("organization", [[], False, 0, ""])
+def test_false_like_non_mapping_organization_is_rejected(organization: object) -> None:
+    with pytest.raises(ValidationError):
+        VaultConfig.model_validate({"organization": organization})
+
+
 @pytest.mark.parametrize("folder", ["../escape", "/absolute", "C:/drive", "a/../b"])
 def test_folder_must_stay_inside_the_vault(folder: str) -> None:
     with pytest.raises(ValidationError):
@@ -140,6 +146,27 @@ def test_unknown_rule_key_is_rejected_rather_than_ignored() -> None:
     """A typo must fail loudly instead of silently disabling the rule."""
     with pytest.raises(ValidationError):
         OrganizationRule(tag="memory/fact", foldr="_memory/facts")  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"tag": None, "folder": "_memory/facts"},
+        {"tag": ["memory/fact"], "folder": "_memory/facts"},
+        {"tag": "memory/fact", "folder": 42},
+        {"tag": "memory/fact", "folder": "_memory/facts", "naming": None},
+    ],
+)
+def test_rule_string_fields_reject_non_strings(payload: dict[str, object]) -> None:
+    """A YAML type error must fail instead of silently changing rule meaning."""
+    with pytest.raises(ValidationError, match="must be a string"):
+        OrganizationRule.model_validate(payload)
+
+
+@pytest.mark.parametrize("scope", [["_memory"], 42, False])
+def test_scope_rejects_non_strings(scope: object) -> None:
+    with pytest.raises(ValidationError, match="must be a string"):
+        OrganizationConfig.model_validate({"scope": scope})
 
 
 def test_max_kb_must_be_positive() -> None:

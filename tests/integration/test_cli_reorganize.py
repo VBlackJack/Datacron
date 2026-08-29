@@ -236,6 +236,11 @@ def test_basic_configuration_errors_are_code_two(
         ("invalid-pydantic", None),
         ("invalid-list-type", None),
         ("missing-scope", None),
+        ("invalid-organization-type", None),
+        ("invalid-rule-tag-type", None),
+        ("invalid-rule-folder-type", None),
+        ("invalid-rule-naming-type", None),
+        ("invalid-scope-type", None),
     ],
 )
 def test_invalid_sidecar_content_is_code_two(
@@ -272,6 +277,48 @@ def test_invalid_sidecar_content_is_code_two(
         _write_config(
             vault,
             {"organization": {"rules": [{"tag": "memory/fact", "folder": "_memory/facts"}]}},
+        )
+    elif case == "invalid-organization-type":
+        _write_config(vault, {"organization": []})
+    elif case == "invalid-rule-tag-type":
+        _write_config(
+            vault,
+            {
+                "organization": {
+                    "scope": "_memory",
+                    "rules": [{"tag": None, "folder": "_memory/facts"}],
+                }
+            },
+        )
+    elif case == "invalid-rule-folder-type":
+        _write_config(
+            vault,
+            {
+                "organization": {
+                    "scope": "_memory",
+                    "rules": [{"tag": "memory/fact", "folder": ["_memory", "facts"]}],
+                }
+            },
+        )
+    elif case == "invalid-rule-naming-type":
+        _write_config(
+            vault,
+            {
+                "organization": {
+                    "scope": "_memory",
+                    "rules": [{"tag": "memory/fact", "folder": "_memory/facts", "naming": 42}],
+                }
+            },
+        )
+    elif case == "invalid-scope-type":
+        _write_config(
+            vault,
+            {
+                "organization": {
+                    "scope": ["_memory"],
+                    "rules": [{"tag": "memory/fact", "folder": "_memory/facts"}],
+                }
+            },
         )
     else:  # pragma: no cover - parametrization is exhaustive
         raise AssertionError(case)

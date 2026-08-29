@@ -155,7 +155,9 @@ class OrganizationRule(BaseModel):
     @field_validator("tag", mode="before")
     @classmethod
     def _normalize_tag(cls, value: object) -> str:
-        tag = str(value).strip()
+        if not isinstance(value, str):
+            raise ValueError("organization rule tag must be a string")
+        tag = value.strip()
         if not tag:
             raise ValueError("organization rule tag must not be empty")
         return tag
@@ -165,7 +167,9 @@ class OrganizationRule(BaseModel):
     def _normalize_folder(cls, value: object) -> str:
         # Absoluteness must be judged before the separators are trimmed, or a
         # leading slash would be silently normalized into a relative path.
-        folder = str(value).strip().replace("\\", "/")
+        if not isinstance(value, str):
+            raise ValueError("organization rule folder must be a string")
+        folder = value.strip().replace("\\", "/")
         if not folder.strip("/"):
             raise ValueError("organization rule folder must not be empty")
         if folder.startswith("/") or ":" in folder:
@@ -178,7 +182,9 @@ class OrganizationRule(BaseModel):
     @field_validator("naming", mode="before")
     @classmethod
     def _normalize_naming(cls, value: object) -> str:
-        naming = str(value).strip()
+        if not isinstance(value, str):
+            raise ValueError("organization rule naming must be a string")
+        naming = value.strip()
         if not naming:
             raise ValueError("organization rule naming must not be empty")
         tokens = set(_NAMING_TOKEN_PATTERN.findall(naming))
@@ -208,9 +214,13 @@ class OrganizationConfig(BaseModel):
     @field_validator("scope", mode="before")
     @classmethod
     def _normalize_scope(cls, value: object) -> str | None:
-        if value is None or str(value).strip() == "":
+        if value is None:
             return None
-        scope = str(value).strip().replace("\\", "/")
+        if not isinstance(value, str):
+            raise ValueError("organization scope must be a string")
+        if value.strip() == "":
+            return None
+        scope = value.strip().replace("\\", "/")
         if scope.startswith("/") or ":" in scope:
             raise ValueError(f"organization scope must be vault-relative; got {scope!r}")
         trimmed = scope.strip("/")
@@ -265,8 +275,9 @@ class VaultConfig(BaseModel):
     @field_validator("organization", mode="before")
     @classmethod
     def _normalize_organization(cls, value: object) -> object:
-        # An absent, empty or blank block all mean the same thing: no policy.
-        if not value:
+        # An absent or empty mapping means no policy. Other false-like YAML
+        # values are type errors, not a silent way to disable organization.
+        if value is None or value == {}:
             return None
         return value
 
