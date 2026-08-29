@@ -125,6 +125,98 @@ VALID_DURABILITY_MODES: Final[frozenset[str]] = frozenset({"strict", "best-effor
 VALID_TOOL_DESCRIPTION_PROFILES: Final[frozenset[str]] = frozenset({"standard", "compact"})
 
 
+DEFAULT_ORGANIZATION_NAMING: Final[str] = "{slug}"
+VALID_NAMING_TOKENS: Final[frozenset[str]] = frozenset({"date", "slug"})
+_NAMING_TOKEN_PATTERN: Final[re.Pattern[str]] = re.compile(r"\{([^{}]*)\}")
+
+
+@final
+class OrganizationRule(BaseModel):
+    """One declarative placement rule, matched on a single frontmatter tag.
+
+    Rules are ordered and the order is meaningful: the first rule whose ``tag``
+    appears on a note wins, and resolution stops there. Notes routinely carry
+    several tags at once, so declaration order is the tie-breaker -- and it is
+    one the vault owner controls by reordering the list, without reading code.
+
+    ``extra="forbid"`` is deliberate here, against the tolerant ``extra="ignore"``
+    used by :class:`VaultConfig`. A misspelled key in a rule would otherwise be
+    dropped in silence and leave the rule matching nothing, which is far worse
+    than a loud failure at load time.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: str
+    folder: str
+    naming: str = DEFAULT_ORGANIZATION_NAMING
+    max_kb: int | None = Field(default=None, gt=0)
+
+    @field_validator("tag", mode="before")
+    @classmethod
+    def _normalize_tag(cls, value: object) -> str:
+        tag = str(value).strip()
+        if not tag:
+            raise ValueError("organization rule tag must not be empty")
+        return tag
+
+    @field_validator("folder", mode="before")
+    @classmethod
+    def _normalize_folder(cls, value: object) -> str:
+        # Absoluteness must be judged before the separators are trimmed, or a
+        # leading slash would be silently normalized into a relative path.
+        folder = str(value).strip().replace("\\", "/")
+        if not folder.strip("/"):
+            raise ValueError("organization rule folder must not be empty")
+        if folder.startswith("/") or ":" in folder:
+            raise ValueError(f"organization rule folder must be vault-relative; got {folder!r}")
+        trimmed = folder.strip("/")
+        if any(segment in {"..", "."} for segment in trimmed.split("/")):
+            raise ValueError(f"organization rule folder must not traverse directories: {folder!r}")
+        return trimmed
+
+    @field_validator("naming", mode="before")
+    @classmethod
+    def _normalize_naming(cls, value: object) -> str:
+        naming = str(value).strip()
+        if not naming:
+            raise ValueError("organization rule naming must not be empty")
+        tokens = set(_NAMING_TOKEN_PATTERN.findall(naming))
+        unknown = sorted(tokens - VALID_NAMING_TOKENS)
+        if unknown:
+            allowed = ", ".join(sorted(VALID_NAMING_TOKENS))
+            raise ValueError(
+                f"organization rule naming uses unknown token(s) {unknown}; allowed: {allowed}"
+            )
+        return naming
+
+
+@final
+class OrganizationConfig(BaseModel):
+    """Declarative organization policy for a vault.
+
+    Datacron knows the *shape* of a rule and nothing else. Folder names and tag
+    names come from the vault's own sidecar, never from this package, so a vault
+    with a different taxonomy is served identically.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rules: tuple[OrganizationRule, ...] = ()
+
+    @field_validator("rules", mode="after")
+    @classmethod
+    def _reject_duplicate_tags(
+        cls, value: tuple[OrganizationRule, ...]
+    ) -> tuple[OrganizationRule, ...]:
+        seen: set[str] = set()
+        for rule in value:
+            if rule.tag in seen:
+                raise ValueError(f"duplicate organization rule for tag {rule.tag!r}")
+            seen.add(rule.tag)
+        return value
+
+
 class VaultConfig(BaseModel):
     """Typed model for ``.datacron/VAULT.yaml``."""
 
@@ -145,6 +237,18 @@ class VaultConfig(BaseModel):
     excluded_folders: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FOLDERS))
     excluded_files: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FILES))
     query_expansion: dict[str, list[str]] = Field(default_factory=default_query_expansion)
+    # Absent block means the feature is inert: every existing vault keeps its
+    # exact current behaviour, which is the non-regression guarantee for vaults
+    # already published against earlier releases.
+    organization: OrganizationConfig | None = None
+
+    @field_validator("organization", mode="before")
+    @classmethod
+    def _normalize_organization(cls, value: object) -> object:
+        # An absent, empty or blank block all mean the same thing: no policy.
+        if not value:
+            return None
+        return value
 
     @field_validator("line_endings", mode="before")
     @classmethod

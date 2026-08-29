@@ -9,6 +9,18 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- An optional `organization` block in `.datacron/VAULT.yaml` declares where notes carrying a
+  given tag belong, how they should be named, and an optional size ceiling. Rule order is
+  priority order: the first rule whose tag is present on a note wins, which is the tie-break
+  for notes carrying several tags at once. A vault without the block is unaffected.
+- `datacron reorganize --dry-run` reports the gap between a vault and the organization it
+  declares, as text or as stable JSON, optionally narrowed with `--kind`. The command is
+  read-only: it never moves, renames or rewrites a note. It exits 0 when the report is empty,
+  1 when it is not, and 2 on a configuration error, so a non-empty report stays detectable in
+  CI without being an error. `--dry-run` is mandatory and deliberately never implicit.
+
 ### Changed
 
 - The Windows release command now verifies a clean, synchronized `main`, empty Git identity

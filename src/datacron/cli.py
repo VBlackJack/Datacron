@@ -27,7 +27,7 @@ import sqlite3
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -1042,6 +1042,77 @@ def reindex(
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
     asyncio.run(_run_index(vault_root, drop_first=True))
+
+
+_REORGANIZE_DRY_RUN_HELP: Final[str] = (
+    "Required. Report only: this release never moves, renames or rewrites a note."
+)
+_REORGANIZE_JSON_HELP: Final[str] = "Emit the stable machine-readable report instead of text."
+_REORGANIZE_KIND_HELP: Final[str] = "Restrict the report to one deviation kind."
+_REORGANIZE_REQUIRES_DRY_RUN: Final[str] = (
+    "datacron reorganize currently supports --dry-run only. Pass --dry-run explicitly: "
+    "no other mode exists yet, and the flag must never become implicit."
+)
+_REORGANIZE_NO_CONFIG: Final[str] = "No .datacron/VAULT.yaml found under {vault_root}."
+_REORGANIZE_BAD_KIND: Final[str] = "Unknown --kind {value!r}. Expected one of: {allowed}."
+_EXIT_DEVIATIONS_FOUND: Final[int] = 1
+_EXIT_CONFIGURATION_ERROR: Final[int] = 2
+
+
+@app.command()
+def reorganize(
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
+    dry_run: bool = typer.Option(False, "--dry-run", help=_REORGANIZE_DRY_RUN_HELP),
+    as_json: bool = typer.Option(False, "--json", help=_REORGANIZE_JSON_HELP),
+    kind: str | None = typer.Option(None, "--kind", help=_REORGANIZE_KIND_HELP),
+) -> None:
+    """Measure how far the vault has drifted from the organization it declares.
+
+    Read-only by construction. Exit code 0 means no deviation, 1 means the
+    report is not empty, and 2 means the vault or its configuration could not
+    be read -- so a non-empty report is detectable in CI without being an error.
+    """
+    from datacron.organization.planner import DeviationKind, plan_organization  # noqa: PLC0415
+    from datacron.organization.report import render_json, render_text  # noqa: PLC0415
+
+    if not dry_run:
+        typer.secho(_REORGANIZE_REQUIRES_DRY_RUN, fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=_EXIT_CONFIGURATION_ERROR)
+
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    config = _load_vault_yaml(vault_root)
+    if config is None:
+        typer.secho(
+            _REORGANIZE_NO_CONFIG.format(vault_root=vault_root),
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=_EXIT_CONFIGURATION_ERROR)
+
+    selected: DeviationKind | None = None
+    if kind is not None:
+        try:
+            selected = DeviationKind(kind.strip().upper())
+        except ValueError:
+            allowed = ", ".join(item.value for item in DeviationKind)
+            typer.secho(
+                _REORGANIZE_BAD_KIND.format(value=kind, allowed=allowed),
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=_EXIT_CONFIGURATION_ERROR) from None
+
+    plan = plan_organization(vault_root, config)
+    if selected is not None:
+        plan = replace(
+            plan,
+            deviations=tuple(item for item in plan.deviations if item.kind is selected),
+        )
+
+    _print(render_json(plan) if as_json else render_text(plan))
+    if plan.has_deviations:
+        raise typer.Exit(code=_EXIT_DEVIATIONS_FOUND)
 
 
 @app.command(name="scrub-init")
