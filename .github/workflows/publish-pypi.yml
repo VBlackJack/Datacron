@@ -78,6 +78,7 @@ jobs:
   publish-pypi:
     name: Publish to PyPI
     needs: build-dist
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

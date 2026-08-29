@@ -32,6 +32,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM Capture the exact main commit that the clean preflight verifies against origin.
+set "BASE="
+for /f "delims=" %%s in ('git rev-parse HEAD 2^>nul') do set "BASE=%%s"
+if "%BASE%"=="" (echo Could not resolve the current Git commit. & exit /b 1)
+
+"%PY%" scripts\release_preflight.py clean --version "%VER%" --base-sha "%BASE%" || (
+    echo Release preflight failed before any change.
+    exit /b 1
+)
+
 echo.
 echo   Next Datacron release: %VER%
 echo.
@@ -39,11 +49,19 @@ choice /c YN /m "Bump, commit, tag v%VER% and push"
 if errorlevel 2 (echo Aborted, nothing changed. & exit /b 0)
 
 "%PY%" scripts\bump_version.py || (echo Bump failed. & exit /b 1)
-git add src\datacron\__init__.py server.json CHANGELOG.md || (echo git add failed. & exit /b 1)
+"%PY%" scripts\release_preflight.py bumped || (echo Bumped state is unsafe. & exit /b 1)
+git add src\datacron\__init__.py server.json || (echo git add failed. & exit /b 1)
+"%PY%" scripts\release_preflight.py staged || (echo Staged state is unsafe. & exit /b 1)
 git commit -m "chore(version): %VER%" || (echo git commit failed. & exit /b 1)
 git tag -a "v%VER%" -m "Datacron %VER%" || (echo git tag failed. & exit /b 1)
-git push origin HEAD || (echo git push branch failed. & exit /b 1)
-git push origin "v%VER%" || (echo git push tag failed. & exit /b 1)
+"%PY%" scripts\release_preflight.py committed --version "%VER%" --base-sha "%BASE%" || (
+    echo Committed release state is unsafe; nothing was pushed.
+    exit /b 1
+)
+git push --atomic origin "HEAD:refs/heads/main" "refs/tags/v%VER%:refs/tags/v%VER%" || (
+    echo Atomic branch and tag push failed.
+    exit /b 1
+)
 
 echo.
 echo   Released v%VER% - the GitHub release workflow will build the binaries.

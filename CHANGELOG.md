@@ -9,6 +9,17 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Changed
+
+- The Windows release command now verifies a clean, synchronized `main`, empty Git identity
+  emails, absent release tags, exact version-only changes, and the final commit and annotated tag
+  before pushing the branch and tag atomically.
+
+### Fixed
+
+- A manual `publish-pypi` workflow dispatch from a branch can no longer reach the PyPI
+  publication job; publishing now requires a `v*` tag reference.
+
 ## [2026.0828.01] - 2026-08-28
 
 ### Added

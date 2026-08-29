@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = ROOT / "pyproject.toml"
 LAUNCHER = ROOT / "packaging" / "datacron_launcher.py"
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "publish-pypi.yml"
 WINDOWS_BUILD_SCRIPT = ROOT / "scripts" / "build_installer.ps1"
 POSIX_BUILD_SCRIPT = ROOT / "scripts" / "build_installer.sh"
 
@@ -42,6 +43,15 @@ def test_truststore_dependency_and_build_contract_are_declared() -> None:
     assert "--hidden-import truststore" in RELEASE_WORKFLOW.read_text(encoding="utf-8")
     assert '"--hidden-import", "truststore"' in WINDOWS_BUILD_SCRIPT.read_text(encoding="utf-8")
     assert "--hidden-import truststore" in POSIX_BUILD_SCRIPT.read_text(encoding="utf-8")
+
+
+def test_pypi_publication_job_is_tag_gated() -> None:
+    workflow = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+    publish_job = workflow.split("  publish-pypi:\n", maxsplit=1)[1].split(
+        "\n  publish-mcp-registry:", maxsplit=1
+    )[0]
+
+    assert "    if: startsWith(github.ref, 'refs/tags/v')" in publish_job
 
 
 def test_launcher_injects_truststore_before_importing_cli(
