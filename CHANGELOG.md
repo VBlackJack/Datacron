@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0829.00] - 2026-08-29
+
 ### Added
 
 - An optional `organization` block in `.datacron/VAULT.yaml` declares where notes carrying a
@@ -34,6 +36,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- Invalid YAML types in organization rules now fail with exit code 2 instead of being coerced
+  into text or silently disabling organization.
 - A manual `publish-pypi` workflow dispatch from a branch can no longer reach the PyPI
   publication job; publishing now requires a `v*` tag reference.
 
