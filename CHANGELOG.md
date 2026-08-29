@@ -9,6 +9,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- Organization naming rules can use `{iso_date}` exactly once at the start of a template to
+  require a valid ASCII `YYYY-MM-DD` calendar date without comparing it with frontmatter
+  lifecycle fields. The existing `{date}` token keeps its exact `created`-then-`updated`
+  semantics.
+
 ## [2026.0829.00] - 2026-08-29
 
 ### Added

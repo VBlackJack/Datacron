@@ -315,6 +315,28 @@ def test_date_matching_never_uses_file_mtime(tmp_path: Path) -> None:
     assert {item.kind for item in plan.deviations} == {DeviationKind.NAMING}
 
 
+def test_iso_date_template_is_independent_from_lifecycle_fields(tmp_path: Path) -> None:
+    rules = OrganizationConfig(
+        scope="_memory",
+        rules=(
+            OrganizationRule(
+                tag="memory/fact",
+                folder="_memory/facts",
+                naming="{iso_date}-{slug}",
+            ),
+        ),
+    )
+    _write(
+        tmp_path,
+        "_memory/facts/2026-01-15-transcript.md",
+        ["memory/fact"],
+        created="2026-08-27T23:30:00-02:00",
+        updated="2026-08-28",
+    )
+
+    assert plan_organization(tmp_path, _config(rules=rules)).deviations == ()
+
+
 def test_template_without_date_ignores_lifecycle_fields(tmp_path: Path) -> None:
     _write(
         tmp_path,

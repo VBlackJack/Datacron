@@ -19,7 +19,12 @@ import pytest
 from pydantic import ValidationError
 
 from datacron.core.config import OrganizationConfig, OrganizationRule, VaultConfig
-from datacron.organization.rules import matches_naming, resolve_rule, rule_tags
+from datacron.organization.rules import (
+    expected_stem_pattern,
+    matches_naming,
+    resolve_rule,
+    rule_tags,
+)
 
 
 def _config(*pairs: tuple[str, str]) -> OrganizationConfig:
@@ -82,6 +87,16 @@ def test_absent_configuration_resolves_to_nothing() -> None:
         ("heimdall", "{slug}", None, True),
         ("heimdall-release-v2026.072401", "{slug}", None, True),
         ("2026-8-9-short-date", "{date}-{slug}", "2026-08-09", False),
+        ("2026-01-15-transcript", "{iso_date}-{slug}", None, True),
+        ("2026-01-15-transcript", "{iso_date}-{slug}", "2026-08-27", True),
+        ("2024-02-29-leap-day", "{iso_date}-{slug}", None, True),
+        ("2025-02-29-not-a-leap-day", "{iso_date}-{slug}", None, False),
+        ("2026-02-30-invalid-day", "{iso_date}-{slug}", None, False),
+        ("2026-13-01-invalid-month", "{iso_date}-{slug}", None, False),
+        ("0000-01-01-invalid-year", "{iso_date}-{slug}", None, False),
+        ("\uff12\uff10\uff12\uff16-08-29-unicode-year", "{iso_date}-{slug}", None, False),
+        ("2026-8-9-short-date", "{iso_date}-{slug}", None, False),
+        ("2026-08-29", "{iso_date}-{slug}", None, False),
     ],
 )
 def test_naming_templates(
@@ -103,9 +118,50 @@ def test_literal_text_in_a_template_is_not_a_regex() -> None:
     assert matches_naming("noteXmd-x", "note.md-{slug}") is False
 
 
+def test_public_pattern_helper_remains_structural_for_compatibility() -> None:
+    pattern = expected_stem_pattern("{iso_date}-{slug}")
+
+    assert pattern.fullmatch("2026-02-30-note") is not None
+    assert matches_naming("2026-02-30-note", "{iso_date}-{slug}") is False
+
+
 def test_unknown_naming_token_is_rejected_at_load_time() -> None:
-    with pytest.raises(ValidationError, match="unknown token"):
+    with pytest.raises(
+        ValidationError,
+        match=r"unknown token\(s\) \['author'\]; allowed: date, iso_date, slug",
+    ):
         OrganizationRule(tag="memory/fact", folder="_memory/facts", naming="{author}-{slug}")
+
+
+def test_iso_date_naming_token_is_accepted_at_the_start() -> None:
+    rule = OrganizationRule(
+        tag="memory/fact",
+        folder="_memory/facts",
+        naming="{iso_date}-{slug}",
+    )
+
+    assert rule.naming == "{iso_date}-{slug}"
+
+
+@pytest.mark.parametrize("naming", ["{slug}-{iso_date}", "{iso_date}-{iso_date}-{slug}"])
+def test_iso_date_naming_token_must_be_a_single_prefix(naming: str) -> None:
+    with pytest.raises(ValidationError, match="must appear exactly once at the start"):
+        OrganizationRule(tag="memory/fact", folder="_memory/facts", naming=naming)
+
+
+@pytest.mark.parametrize(
+    ("stem", "naming"),
+    [
+        ("note-2026-08-29", "{slug}-{iso_date}"),
+        ("2026-08-29-2026-08-30-note", "{iso_date}-{iso_date}-{slug}"),
+        ("2026-08-29-note", "{author}-{slug}"),
+    ],
+)
+def test_direct_naming_helper_rejects_unvalidated_template_structure(
+    stem: str,
+    naming: str,
+) -> None:
+    assert matches_naming(stem, naming) is False
 
 
 def test_duplicate_tags_are_rejected() -> None:

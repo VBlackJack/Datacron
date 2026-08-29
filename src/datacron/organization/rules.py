@@ -22,9 +22,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Sequence
+from datetime import date
 from typing import Final
 
-from datacron.core.config import OrganizationConfig, OrganizationRule
+from datacron.core.config import VALID_NAMING_TOKENS, OrganizationConfig, OrganizationRule
 
 __all__ = [
     "expected_stem_pattern",
@@ -34,6 +35,11 @@ __all__ = [
 ]
 
 _TOKEN_PATTERN: Final[re.Pattern[str]] = re.compile(r"\{([^{}]*)\}")
+_DATE_NAME: Final[str] = "date"
+_ISO_DATE_NAME: Final[str] = "iso_date"
+_ISO_DATE_PLACEHOLDER: Final[str] = "{iso_date}"
+_ISO_DATE_GROUP_PREFIX: Final[str] = "iso_date_"
+_ISO_DATE_PATTERN: Final[str] = r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
 # A slug is whatever the vault owner already writes: word characters, dots and
 # separators. Deliberately permissive -- this lot reports naming shape, it does
 # not police vocabulary.
@@ -65,30 +71,50 @@ def resolve_rule(
     return None
 
 
-def expected_stem_pattern(
+def _expected_stem_pattern(
     naming: str,
     *,
     calendar_date: str | None = None,
 ) -> re.Pattern[str]:
-    """Compile a naming template into an anchored filename-stem pattern.
+    """Compile a naming template into an anchored structural pattern.
 
     Literal text between tokens is escaped, so a template stays a template and
-    never becomes an accidental regular expression.
+    never becomes an accidental regular expression. Calendar validity is
+    enforced separately by :func:`matches_naming`.
     """
     parts: list[str] = []
     cursor = 0
+    iso_date_index = 0
     for match in _TOKEN_PATTERN.finditer(naming):
         parts.append(re.escape(naming[cursor : match.start()]))
         placeholder = match.group(1)
-        if placeholder == "date":
+        if placeholder == _DATE_NAME:
             parts.append(
                 re.escape(calendar_date) if calendar_date is not None else _NEVER_MATCH_PATTERN
             )
+        elif placeholder == _ISO_DATE_NAME:
+            group_name = f"{_ISO_DATE_GROUP_PREFIX}{iso_date_index}"
+            parts.append(f"(?P<{group_name}>{_ISO_DATE_PATTERN})")
+            iso_date_index += 1
         else:
             parts.append(_SLUG_PATTERN)
         cursor = match.end()
     parts.append(re.escape(naming[cursor:]))
     return re.compile(rf"\A{''.join(parts)}\Z")
+
+
+def expected_stem_pattern(
+    naming: str,
+    *,
+    calendar_date: str | None = None,
+) -> re.Pattern[str]:
+    """Compile the backward-compatible structural filename pattern.
+
+    This public helper intentionally remains lexical. Call
+    :func:`matches_naming` when calendar validity and validated template
+    placement are required.
+    """
+    return _expected_stem_pattern(naming, calendar_date=calendar_date)
 
 
 def matches_naming(
@@ -97,8 +123,41 @@ def matches_naming(
     *,
     calendar_date: str | None = None,
 ) -> bool:
-    """Report whether a filename stem satisfies ``naming`` and its exact date."""
-    return expected_stem_pattern(naming, calendar_date=calendar_date).fullmatch(stem) is not None
+    """Report whether a filename stem satisfies the declared naming contract.
+
+    ``{date}`` keeps its exact lifecycle-date semantics. Every ``{iso_date}``
+    occurrence is independent from lifecycle fields and must be a valid ASCII
+    ``YYYY-MM-DD`` calendar date.
+    """
+    if not _is_supported_naming(naming):
+        return False
+    match = _expected_stem_pattern(naming, calendar_date=calendar_date).fullmatch(stem)
+    if match is None:
+        return False
+    iso_dates = (
+        value
+        for name, value in match.groupdict().items()
+        if name.startswith(_ISO_DATE_GROUP_PREFIX)
+    )
+    return all(value is not None and _is_valid_iso_date(value) for value in iso_dates)
+
+
+def _is_supported_naming(naming: str) -> bool:
+    """Return whether a direct helper call obeys the validated template contract."""
+    token_occurrences = _TOKEN_PATTERN.findall(naming)
+    if not set(token_occurrences).issubset(VALID_NAMING_TOKENS):
+        return False
+    iso_date_count = token_occurrences.count(_ISO_DATE_NAME)
+    return not iso_date_count or (iso_date_count == 1 and naming.startswith(_ISO_DATE_PLACEHOLDER))
+
+
+def _is_valid_iso_date(value: str) -> bool:
+    """Return whether ``value`` is a real ISO calendar date."""
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def rule_tags(config: OrganizationConfig | None) -> Sequence[str]:

@@ -158,6 +158,35 @@ def test_clean_vault_exits_zero(runner: CliRunner, tmp_path: Path) -> None:
     assert result.exit_code == 0
 
 
+def test_iso_date_template_accepts_a_semantic_date_from_yaml(
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    organization = {
+        "organization": {
+            "scope": "_memory",
+            "rules": [
+                {
+                    "tag": "memory/fact",
+                    "folder": "_memory/facts",
+                    "naming": "{iso_date}-{slug}",
+                }
+            ],
+        }
+    }
+    _write_config(tmp_path, organization)
+    _write_note(
+        tmp_path,
+        "_memory/facts/2026-01-15-transcript.md",
+        "memory/fact",
+        created="2026-08-27",
+    )
+
+    result = runner.invoke(app, ["reorganize", "--dry-run", "--vault", str(tmp_path)])
+
+    assert result.exit_code == 0
+
+
 def test_deviations_exit_one_and_are_listed(runner: CliRunner, tmp_path: Path) -> None:
     _make_vault(tmp_path)
     _write_note(tmp_path, "_memory/facts/2026-08-29-misplaced.md", "memory/decision")

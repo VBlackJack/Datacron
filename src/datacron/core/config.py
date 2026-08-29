@@ -126,8 +126,10 @@ VALID_TOOL_DESCRIPTION_PROFILES: Final[frozenset[str]] = frozenset({"standard", 
 
 
 DEFAULT_ORGANIZATION_NAMING: Final[str] = "{slug}"
-VALID_NAMING_TOKENS: Final[frozenset[str]] = frozenset({"date", "slug"})
+VALID_NAMING_TOKENS: Final[frozenset[str]] = frozenset({"date", "iso_date", "slug"})
 _NAMING_TOKEN_PATTERN: Final[re.Pattern[str]] = re.compile(r"\{([^{}]*)\}")
+_ISO_DATE_NAMING_NAME: Final[str] = "iso_date"
+_ISO_DATE_NAMING_PLACEHOLDER: Final[str] = "{iso_date}"
 
 
 @final
@@ -187,12 +189,20 @@ class OrganizationRule(BaseModel):
         naming = value.strip()
         if not naming:
             raise ValueError("organization rule naming must not be empty")
-        tokens = set(_NAMING_TOKEN_PATTERN.findall(naming))
+        token_occurrences = _NAMING_TOKEN_PATTERN.findall(naming)
+        tokens = set(token_occurrences)
         unknown = sorted(tokens - VALID_NAMING_TOKENS)
         if unknown:
             allowed = ", ".join(sorted(VALID_NAMING_TOKENS))
             raise ValueError(
                 f"organization rule naming uses unknown token(s) {unknown}; allowed: {allowed}"
+            )
+        iso_date_count = token_occurrences.count(_ISO_DATE_NAMING_NAME)
+        if iso_date_count and (
+            iso_date_count != 1 or not naming.startswith(_ISO_DATE_NAMING_PLACEHOLDER)
+        ):
+            raise ValueError(
+                "organization rule naming token '{iso_date}' must appear exactly once at the start"
             )
         return naming
 
