@@ -343,6 +343,8 @@ def test_invalid_runtime_scope_or_target_is_code_two(
     result = runner.invoke(app, ["reorganize", "--dry-run", "--vault", str(vault)])
 
     _assert_configuration_error(result)
+    if case == "target-outside-scope":
+        assert "resolves outside organization scope '_memory': 'other/facts'" in result.stderr
 
 
 def test_no_discoverable_vault_is_code_two(
@@ -456,6 +458,8 @@ def test_outgoing_scope_or_target_link_is_code_two(
     result = runner.invoke(app, ["reorganize", "--dry-run", "--vault", str(vault)])
 
     _assert_configuration_error(result)
+    if linked_path == "target":
+        assert "rule folder resolves outside the vault: '_memory/facts'" in result.stderr
 
 
 def test_outgoing_non_rule_link_is_never_scanned(

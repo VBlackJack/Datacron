@@ -170,10 +170,24 @@ def _prepare_context(
     for rule in organization.rules:
         try:
             resolved_folder = guard.authorize_rel_path(rule.folder, "read")
-            resolved_folder = assert_within_paths(resolved_folder, [scope_root], kind="read")
-        except (PathConfinementError, RuntimeError) as exc:
+        except PathConfinementError as exc:
             raise OrganizationConfigurationError(
-                f"organization rule folder escapes scope {organization.scope!r}: {rule.folder!r}"
+                f"organization rule folder resolves outside the vault: {rule.folder!r}"
+            ) from exc
+        except RuntimeError as exc:
+            raise OrganizationConfigurationError(
+                f"organization rule folder cannot be resolved safely: {rule.folder!r}"
+            ) from exc
+        try:
+            resolved_folder = assert_within_paths(resolved_folder, [scope_root], kind="read")
+        except PathConfinementError as exc:
+            raise OrganizationConfigurationError(
+                "organization rule folder resolves outside organization scope "
+                f"{organization.scope!r}: {rule.folder!r}"
+            ) from exc
+        except RuntimeError as exc:
+            raise OrganizationConfigurationError(
+                f"organization rule folder cannot be resolved safely: {rule.folder!r}"
             ) from exc
         if resolved_folder.exists() and not resolved_folder.is_dir():
             raise OrganizationConfigurationError(
