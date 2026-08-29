@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0829.01] - 2026-08-29
+
 ### Added
 
 - Organization naming rules can use `{iso_date}` exactly once at the start of a template to
