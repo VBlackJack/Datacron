@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Annotated, Final, final
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from datacron.core.query_expansion import default_query_expansion, normalize_term_map
@@ -202,7 +202,21 @@ class OrganizationConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    scope: str | None = None
     rules: tuple[OrganizationRule, ...] = ()
+
+    @field_validator("scope", mode="before")
+    @classmethod
+    def _normalize_scope(cls, value: object) -> str | None:
+        if value is None or str(value).strip() == "":
+            return None
+        scope = str(value).strip().replace("\\", "/")
+        if scope.startswith("/") or ":" in scope:
+            raise ValueError(f"organization scope must be vault-relative; got {scope!r}")
+        trimmed = scope.strip("/")
+        if not trimmed or any(segment in {"..", "."} for segment in trimmed.split("/")):
+            raise ValueError(f"organization scope must not traverse directories: {scope!r}")
+        return trimmed
 
     @field_validator("rules", mode="after")
     @classmethod
@@ -215,6 +229,12 @@ class OrganizationConfig(BaseModel):
                 raise ValueError(f"duplicate organization rule for tag {rule.tag!r}")
             seen.add(rule.tag)
         return value
+
+    @model_validator(mode="after")
+    def _require_scope_for_active_rules(self) -> OrganizationConfig:
+        if self.rules and self.scope is None:
+            raise ValueError("organization scope is required when rules are declared")
+        return self
 
 
 class VaultConfig(BaseModel):
@@ -307,7 +327,7 @@ def load_vault_config(path: Path) -> VaultConfig | None:
     if not path.exists():
         return None
     with path.open(encoding="utf-8") as fh:
-        data = yaml.safe_load(fh) or {}
+        data = yaml.safe_load(fh)
     if not isinstance(data, dict):
         raise ValueError(f"{path} must be a YAML mapping; found {type(data).__name__}.")
     return VaultConfig.model_validate(data)

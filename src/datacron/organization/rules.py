@@ -37,10 +37,8 @@ _TOKEN_PATTERN: Final[re.Pattern[str]] = re.compile(r"\{([^{}]*)\}")
 # A slug is whatever the vault owner already writes: word characters, dots and
 # separators. Deliberately permissive -- this lot reports naming shape, it does
 # not police vocabulary.
-_TOKEN_EXPANSIONS: Final[dict[str, str]] = {
-    "date": r"\d{4}-\d{2}-\d{2}",
-    "slug": r"[^/\\]+",
-}
+_SLUG_PATTERN: Final[str] = r"[^/\\]+"
+_NEVER_MATCH_PATTERN: Final[str] = r"(?!)"
 
 
 def resolve_rule(
@@ -67,7 +65,11 @@ def resolve_rule(
     return None
 
 
-def expected_stem_pattern(naming: str) -> re.Pattern[str]:
+def expected_stem_pattern(
+    naming: str,
+    *,
+    calendar_date: str | None = None,
+) -> re.Pattern[str]:
     """Compile a naming template into an anchored filename-stem pattern.
 
     Literal text between tokens is escaped, so a template stays a template and
@@ -77,15 +79,26 @@ def expected_stem_pattern(naming: str) -> re.Pattern[str]:
     cursor = 0
     for match in _TOKEN_PATTERN.finditer(naming):
         parts.append(re.escape(naming[cursor : match.start()]))
-        parts.append(_TOKEN_EXPANSIONS[match.group(1)])
+        placeholder = match.group(1)
+        if placeholder == "date":
+            parts.append(
+                re.escape(calendar_date) if calendar_date is not None else _NEVER_MATCH_PATTERN
+            )
+        else:
+            parts.append(_SLUG_PATTERN)
         cursor = match.end()
     parts.append(re.escape(naming[cursor:]))
     return re.compile(rf"\A{''.join(parts)}\Z")
 
 
-def matches_naming(stem: str, naming: str) -> bool:
-    """Report whether a filename stem satisfies ``naming``."""
-    return expected_stem_pattern(naming).fullmatch(stem) is not None
+def matches_naming(
+    stem: str,
+    naming: str,
+    *,
+    calendar_date: str | None = None,
+) -> bool:
+    """Report whether a filename stem satisfies ``naming`` and its exact date."""
+    return expected_stem_pattern(naming, calendar_date=calendar_date).fullmatch(stem) is not None
 
 
 def rule_tags(config: OrganizationConfig | None) -> Sequence[str]:

@@ -42,6 +42,7 @@ def _as_mapping(plan: OrganizationPlan) -> dict[str, Any]:
     return {
         "schema": _SCHEMA_VERSION,
         "vault_root": plan.vault_root,
+        "scope": plan.scope,
         "scanned": plan.scanned,
         "governed": plan.governed,
         "unmatched": plan.unmatched,
@@ -67,7 +68,7 @@ def render_json(plan: OrganizationPlan) -> str:
 
 def render_text(plan: OrganizationPlan) -> str:
     """Render a plan as a compact operator-facing report."""
-    if plan.scanned == 0 and not plan.deviations:
+    if plan.scope is None:
         return _NO_RULES_MESSAGE
 
     lines: list[str] = [

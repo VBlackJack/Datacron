@@ -18,13 +18,14 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from datacron.core.config import OrganizationConfig, OrganizationRule
+from datacron.core.config import OrganizationConfig, OrganizationRule, VaultConfig
 from datacron.organization.rules import matches_naming, resolve_rule, rule_tags
 
 
 def _config(*pairs: tuple[str, str]) -> OrganizationConfig:
     return OrganizationConfig(
-        rules=tuple(OrganizationRule(tag=tag, folder=folder) for tag, folder in pairs)
+        scope="_memory",
+        rules=tuple(OrganizationRule(tag=tag, folder=folder) for tag, folder in pairs),
     )
 
 
@@ -72,18 +73,28 @@ def test_absent_configuration_resolves_to_nothing() -> None:
 
 
 @pytest.mark.parametrize(
-    ("stem", "naming", "expected"),
+    ("stem", "naming", "calendar_date", "expected"),
     [
-        ("2026-08-29-release-notes", "{date}-{slug}", True),
-        ("release-notes", "{date}-{slug}", False),
-        ("2026-08-29", "{date}-{slug}", False),
-        ("heimdall", "{slug}", True),
-        ("heimdall-release-v2026.072401", "{slug}", True),
-        ("2026-8-9-short-date", "{date}-{slug}", False),
+        ("2026-08-29-release-notes", "{date}-{slug}", "2026-08-29", True),
+        ("2026-08-28-release-notes", "{date}-{slug}", "2026-08-29", False),
+        ("release-notes", "{date}-{slug}", "2026-08-29", False),
+        ("2026-08-29", "{date}-{slug}", "2026-08-29", False),
+        ("heimdall", "{slug}", None, True),
+        ("heimdall-release-v2026.072401", "{slug}", None, True),
+        ("2026-8-9-short-date", "{date}-{slug}", "2026-08-09", False),
     ],
 )
-def test_naming_templates(stem: str, naming: str, expected: bool) -> None:
-    assert matches_naming(stem, naming) is expected
+def test_naming_templates(
+    stem: str,
+    naming: str,
+    calendar_date: str | None,
+    expected: bool,
+) -> None:
+    assert matches_naming(stem, naming, calendar_date=calendar_date) is expected
+
+
+def test_date_template_never_matches_without_a_frontmatter_date() -> None:
+    assert matches_naming("2026-08-29-release-notes", "{date}-{slug}") is False
 
 
 def test_literal_text_in_a_template_is_not_a_regex() -> None:
@@ -102,10 +113,27 @@ def test_duplicate_tags_are_rejected() -> None:
         _config(("memory/fact", "_memory/facts"), ("memory/fact", "_memory/other"))
 
 
+def test_active_rules_require_an_explicit_scope() -> None:
+    with pytest.raises(ValidationError, match="scope is required"):
+        OrganizationConfig(rules=(OrganizationRule(tag="memory/fact", folder="_memory/facts"),))
+
+
+def test_empty_organization_configuration_remains_inert() -> None:
+    assert OrganizationConfig().scope is None
+    assert OrganizationConfig().rules == ()
+    assert VaultConfig.model_validate({"organization": {}}).organization is None
+
+
 @pytest.mark.parametrize("folder", ["../escape", "/absolute", "C:/drive", "a/../b"])
 def test_folder_must_stay_inside_the_vault(folder: str) -> None:
     with pytest.raises(ValidationError):
         OrganizationRule(tag="memory/fact", folder=folder)
+
+
+@pytest.mark.parametrize("scope", ["../escape", "/absolute", "C:/drive", "a/../b", "."])
+def test_scope_must_stay_inside_the_vault(scope: str) -> None:
+    with pytest.raises(ValidationError):
+        OrganizationConfig(scope=scope)
 
 
 def test_unknown_rule_key_is_rejected_rather_than_ignored() -> None:
@@ -130,3 +158,33 @@ def test_backslash_folder_is_normalized_to_posix() -> None:
     rule = OrganizationRule(tag="memory/fact", folder="_memory\\facts")
 
     assert rule.folder == "_memory/facts"
+
+
+def test_backslash_scope_is_normalized_to_posix() -> None:
+    assert OrganizationConfig(scope="_memory\\projects").scope == "_memory/projects"
+
+
+@pytest.mark.parametrize(
+    ("tags", "expected"),
+    [
+        (["memory/project", "memory/decision"], "memory/project"),
+        (["memory/fact", "memory/decision"], "memory/fact"),
+        (["memory/project", "memory/fact", "memory/decision"], "memory/project"),
+        (["memory/session", "memory/decision"], "memory/session"),
+        (["memory/decision"], "memory/decision"),
+    ],
+)
+def test_declared_primary_tag_priority(tags: list[str], expected: str) -> None:
+    config = _config(
+        ("memory/preference", "_memory/preferences"),
+        ("memory/contact", "_memory/people"),
+        ("memory/session", "_memory/sessions"),
+        ("memory/project", "_memory/projects"),
+        ("memory/fact", "_memory/facts"),
+        ("memory/decision", "_memory/decisions"),
+    )
+
+    resolved = resolve_rule(tags, config)
+
+    assert resolved is not None
+    assert resolved.tag == expected

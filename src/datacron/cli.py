@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Final, NoReturn
 
 import click
 import typer
+import yaml
 from rich.console import Console
 from rich.progress import Progress, TaskID, TextColumn
 
@@ -240,6 +241,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     _version: bool = typer.Option(
         False,
         "--version",
@@ -248,8 +250,9 @@ def main(
         help="Show the version and exit.",
     ),
 ) -> None:
-    """Configure process logging once at the CLI execution boundary."""
-    configure_logging()
+    """Configure process logging except for the strictly read-only planner."""
+    if ctx.invoked_subcommand != "reorganize":
+        configure_logging()
 
 
 def _print(message: str) -> None:
@@ -263,9 +266,9 @@ def _explain(prompt: _SetupPrompt, **values: str) -> None:
         _print(f"  {line.format_map(values)}")
 
 
-def _error(message: str) -> NoReturn:
+def _error(message: str, *, exit_code: int = 1) -> NoReturn:
     typer.secho(message, fg=typer.colors.RED, err=True)
-    raise typer.Exit(code=1)
+    raise typer.Exit(code=exit_code)
 
 
 @contextmanager
@@ -285,7 +288,12 @@ def _index_progress() -> Iterator[Callable[[int, int], None]]:
         yield update
 
 
-def _resolve_vault_root(explicit: Path | None, settings: Settings) -> Path:
+def _resolve_vault_root(
+    explicit: Path | None,
+    settings: Settings,
+    *,
+    error_exit_code: int = 1,
+) -> Path:
     if explicit is not None:
         return explicit.expanduser().resolve()
     if settings.vault_root is not None:
@@ -295,7 +303,8 @@ def _resolve_vault_root(explicit: Path | None, settings: Settings) -> Path:
         return cwd
     _error(
         "No vault root provided. Pass --vault or set DATACRON_VAULT_ROOT, "
-        "or run from a directory containing .datacron/VAULT.yaml."
+        "or run from a directory containing .datacron/VAULT.yaml.",
+        exit_code=error_exit_code,
     )
 
 
@@ -1055,6 +1064,8 @@ _REORGANIZE_REQUIRES_DRY_RUN: Final[str] = (
 )
 _REORGANIZE_NO_CONFIG: Final[str] = "No .datacron/VAULT.yaml found under {vault_root}."
 _REORGANIZE_BAD_KIND: Final[str] = "Unknown --kind {value!r}. Expected one of: {allowed}."
+_REORGANIZE_BAD_VAULT: Final[str] = "Vault root is not a readable directory: {vault_root}."
+_REORGANIZE_BAD_CONFIG: Final[str] = "Invalid organization configuration: {detail}"
 _EXIT_DEVIATIONS_FOUND: Final[int] = 1
 _EXIT_CONFIGURATION_ERROR: Final[int] = 2
 
@@ -1072,22 +1083,15 @@ def reorganize(
     report is not empty, and 2 means the vault or its configuration could not
     be read -- so a non-empty report is detectable in CI without being an error.
     """
-    from datacron.organization.planner import DeviationKind, plan_organization  # noqa: PLC0415
+    from datacron.organization.planner import (  # noqa: PLC0415
+        DeviationKind,
+        OrganizationConfigurationError,
+        plan_organization,
+    )
     from datacron.organization.report import render_json, render_text  # noqa: PLC0415
 
     if not dry_run:
         typer.secho(_REORGANIZE_REQUIRES_DRY_RUN, fg=typer.colors.RED, err=True)
-        raise typer.Exit(code=_EXIT_CONFIGURATION_ERROR)
-
-    settings = get_settings()
-    vault_root = _resolve_vault_root(vault, settings)
-    config = _load_vault_yaml(vault_root)
-    if config is None:
-        typer.secho(
-            _REORGANIZE_NO_CONFIG.format(vault_root=vault_root),
-            fg=typer.colors.RED,
-            err=True,
-        )
         raise typer.Exit(code=_EXIT_CONFIGURATION_ERROR)
 
     selected: DeviationKind | None = None
@@ -1103,7 +1107,44 @@ def reorganize(
             )
             raise typer.Exit(code=_EXIT_CONFIGURATION_ERROR) from None
 
-    plan = plan_organization(vault_root, config)
+    try:
+        settings = get_settings()
+        vault_root = _resolve_vault_root(
+            vault,
+            settings,
+            error_exit_code=_EXIT_CONFIGURATION_ERROR,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        _error(
+            _REORGANIZE_BAD_CONFIG.format(detail=str(exc)),
+            exit_code=_EXIT_CONFIGURATION_ERROR,
+        )
+    if not vault_root.is_dir():
+        _error(
+            _REORGANIZE_BAD_VAULT.format(vault_root=vault_root),
+            exit_code=_EXIT_CONFIGURATION_ERROR,
+        )
+
+    try:
+        config = _load_vault_yaml(vault_root)
+    except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+        _error(
+            _REORGANIZE_BAD_CONFIG.format(detail=str(exc)),
+            exit_code=_EXIT_CONFIGURATION_ERROR,
+        )
+    if config is None:
+        _error(
+            _REORGANIZE_NO_CONFIG.format(vault_root=vault_root),
+            exit_code=_EXIT_CONFIGURATION_ERROR,
+        )
+
+    try:
+        plan = plan_organization(vault_root, config, settings=settings)
+    except (OrganizationConfigurationError, OSError) as exc:
+        _error(
+            _REORGANIZE_BAD_CONFIG.format(detail=str(exc)),
+            exit_code=_EXIT_CONFIGURATION_ERROR,
+        )
     if selected is not None:
         plan = replace(
             plan,

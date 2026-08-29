@@ -20,6 +20,9 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   read-only: it never moves, renames or rewrites a note. It exits 0 when the report is empty,
   1 when it is not, and 2 on a configuration error, so a non-empty report stays detectable in
   CI without being an error. `--dry-run` is mandatory and deliberately never implicit.
+- Active organization rules now declare an explicit, confined vault scope. Planning shares the
+  canonical note-admission policy, reports only that scope, and matches `{date}` to frontmatter
+  `created` (falling back to `updated`) instead of accepting any date-shaped filename.
 
 ### Changed
 

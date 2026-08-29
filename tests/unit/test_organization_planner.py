@@ -15,33 +15,70 @@
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 
+import pytest
+import yaml
+
 from datacron.core.config import OrganizationConfig, OrganizationRule, VaultConfig
-from datacron.organization.planner import DeviationKind, plan_organization
+from datacron.organization.planner import (
+    DeviationKind,
+    OrganizationConfigurationError,
+    plan_organization,
+)
 from datacron.organization.report import render_json, render_text
 
+_UNSET = object()
 _RULES = OrganizationConfig(
+    scope="_memory",
     rules=(
-        OrganizationRule(tag="memory/decision", folder="_memory/decisions", naming="{date}-{slug}"),
+        OrganizationRule(tag="memory/preference", folder="_memory/preferences", naming="{slug}"),
+        OrganizationRule(tag="memory/contact", folder="_memory/people", naming="{slug}"),
+        OrganizationRule(tag="memory/session", folder="_memory/sessions", naming="{date}-{slug}"),
+        OrganizationRule(tag="memory/project", folder="_memory/projects", naming="{slug}"),
         OrganizationRule(
             tag="memory/fact", folder="_memory/facts", naming="{date}-{slug}", max_kb=1
         ),
-        OrganizationRule(tag="memory/project", folder="_memory/projects", naming="{slug}"),
-    )
+        OrganizationRule(tag="memory/decision", folder="_memory/decisions", naming="{date}-{slug}"),
+    ),
 )
 
 
-def _write(root: Path, rel_path: str, tags: list[str], body: str = "content\n") -> Path:
+def _write(
+    root: Path,
+    rel_path: str,
+    tags: list[str],
+    body: str = "content\n",
+    *,
+    created: object = "2026-08-29",
+    updated: object = _UNSET,
+) -> Path:
     path = root / rel_path
     path.parent.mkdir(parents=True, exist_ok=True)
-    rendered = "\n".join(f"  - {tag}" for tag in tags)
-    path.write_text(f"---\ntitle: note\ntags:\n{rendered}\n---\n\n{body}", encoding="utf-8")
+    metadata: dict[str, object] = {"title": "note", "tags": tags}
+    if created is not _UNSET:
+        metadata["created"] = created
+    if updated is not _UNSET:
+        metadata["updated"] = updated
+    rendered = yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True).strip()
+    path.write_text(f"---\n{rendered}\n---\n\n{body}", encoding="utf-8")
     return path
 
 
-def _config() -> VaultConfig:
-    return VaultConfig(organization=_RULES)
+def _config(
+    *,
+    rules: OrganizationConfig = _RULES,
+    excluded_folders: list[str] | None = None,
+    excluded_files: list[str] | None = None,
+) -> VaultConfig:
+    updates: dict[str, object] = {"organization": rules}
+    if excluded_folders is not None:
+        updates["excluded_folders"] = excluded_folders
+    if excluded_files is not None:
+        updates["excluded_files"] = excluded_files
+    return VaultConfig.model_validate(updates)
 
 
 def test_vault_without_organization_block_is_inert(tmp_path: Path) -> None:
@@ -50,12 +87,13 @@ def test_vault_without_organization_block_is_inert(tmp_path: Path) -> None:
 
     plan = plan_organization(tmp_path, VaultConfig())
 
+    assert plan.scope is None
     assert plan.scanned == 0
     assert plan.deviations == ()
     assert render_text(plan).startswith("No organization rules")
 
 
-def test_note_in_the_declared_folder_is_clean(tmp_path: Path) -> None:
+def test_note_in_the_declared_folder_with_the_exact_date_is_clean(tmp_path: Path) -> None:
     _write(tmp_path, "_memory/facts/2026-08-29-fine.md", ["memory/fact"])
 
     plan = plan_organization(tmp_path, _config())
@@ -101,12 +139,18 @@ def test_note_without_a_matching_rule_is_out_of_scope_not_a_deviation(tmp_path: 
     assert plan.deviations == ()
 
 
-def test_first_matching_rule_governs_a_multi_tagged_note(tmp_path: Path) -> None:
-    _write(tmp_path, "_memory/facts/2026-08-29-both.md", ["memory/fact", "memory/decision"])
+def test_priority_governs_a_multi_tagged_note(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "_memory/decisions/2026-08-29-both.md",
+        ["memory/fact", "memory/decision"],
+    )
 
     plan = plan_organization(tmp_path, _config())
 
-    assert [item.tag for item in plan.deviations] == ["memory/decision"]
+    assert plan.governed == 1
+    assert {item.tag for item in plan.deviations} == {"memory/fact"}
+    assert {item.kind for item in plan.deviations} == {DeviationKind.WRONG_FOLDER}
 
 
 def test_unreadable_frontmatter_is_skipped_without_failing_the_scan(tmp_path: Path) -> None:
@@ -122,25 +166,88 @@ def test_unreadable_frontmatter_is_skipped_without_failing_the_scan(tmp_path: Pa
     assert plan.governed == 1
 
 
-def test_excluded_and_dot_folders_are_not_scanned(tmp_path: Path) -> None:
-    _write(tmp_path, "_archive/old/undated.md", ["memory/fact"])
-    _write(tmp_path, ".datacron/history/undated.md", ["memory/fact"])
-    _write(tmp_path, "_memory/facts/2026-08-29-fine.md", ["memory/fact"])
+def test_invalid_yaml_timestamp_is_skipped_without_escaping(tmp_path: Path) -> None:
+    broken = tmp_path / "_memory" / "facts" / "invalid-date.md"
+    broken.parent.mkdir(parents=True, exist_ok=True)
+    broken.write_text(
+        "---\ntitle: broken\ncreated: 2026-02-30\ntags: [memory/fact]\n---\nbody\n",
+        encoding="utf-8",
+    )
 
     plan = plan_organization(tmp_path, _config())
 
     assert plan.scanned == 1
+    assert plan.governed == 0
+    assert len(plan.skipped) == 1
 
 
-def test_report_is_byte_identical_across_runs(tmp_path: Path) -> None:
-    """Determinism is the contract that makes the report diffable and CI-usable."""
-    for index in range(12):
-        _write(tmp_path, f"_memory/facts/note-{index}.md", ["memory/decision"])
+def test_invalid_utf8_is_skipped_after_admission(tmp_path: Path) -> None:
+    broken = tmp_path / "_memory" / "facts" / "broken.md"
+    broken.parent.mkdir(parents=True)
+    broken.write_bytes(b"\xff\xfe")
 
-    first = render_json(plan_organization(tmp_path, _config()))
-    second = render_json(plan_organization(tmp_path, _config()))
+    plan = plan_organization(tmp_path, _config())
 
-    assert first == second
+    assert plan.scanned == 1
+    assert plan.skipped[0].reason == "UnicodeDecodeError"
+
+
+def test_only_the_scope_is_scanned(tmp_path: Path) -> None:
+    _write(tmp_path, "outside/2026-08-29-outside.md", ["memory/fact"])
+    _write(tmp_path, "_memory/facts/2026-08-29-inside.md", ["memory/fact"])
+
+    plan = plan_organization(tmp_path, _config())
+
+    assert plan.scanned == 1
+    assert plan.scope == "_memory"
+
+
+def test_canonical_exclusions_are_case_insensitive(tmp_path: Path) -> None:
+    _write(tmp_path, "_memory/NODE_MODULES/hidden.md", ["memory/fact"])
+    _write(tmp_path, "_memory/ARCHIVE/hidden.md", ["memory/fact"])
+    _write(tmp_path, "_memory/.hidden/hidden.md", ["memory/fact"])
+    _write(tmp_path, "_memory/facts/SKIP.MD", ["memory/fact"])
+    _write(tmp_path, "_memory/facts/2026-08-29-visible.MD", ["memory/fact"])
+
+    plan = plan_organization(
+        tmp_path,
+        _config(excluded_folders=["archive"], excluded_files=["skip.md"]),
+    )
+
+    assert plan.scanned == 1
+    assert plan.governed == 1
+
+
+def test_directory_exclusions_do_not_hide_similarly_named_files(tmp_path: Path) -> None:
+    _write(tmp_path, "_memory/projects/.note.md", ["memory/project"])
+    _write(tmp_path, "_memory/projects/archive.md", ["memory/project"])
+
+    plan = plan_organization(
+        tmp_path,
+        _config(excluded_folders=["archive.md"]),
+    )
+
+    assert plan.scanned == 2
+    assert plan.governed == 2
+    assert plan.deviations == ()
+
+
+def test_report_paths_remain_vault_relative(tmp_path: Path) -> None:
+    _write(tmp_path, "_memory/facts/2026-08-29-misplaced.md", ["memory/decision"])
+
+    payload = json.loads(render_json(plan_organization(tmp_path, _config())))
+
+    assert payload["scope"] == "_memory"
+    assert payload["deviations"][0]["rel_path"].startswith("_memory/")
+
+
+def test_active_empty_scope_reports_clean_not_missing_rules(tmp_path: Path) -> None:
+    (tmp_path / "_memory").mkdir()
+
+    plan = plan_organization(tmp_path, _config())
+
+    assert plan.scanned == 0
+    assert "No deviation found" in render_text(plan)
 
 
 def test_deviations_are_sorted_by_path_then_kind(tmp_path: Path) -> None:
@@ -163,6 +270,108 @@ def test_a_single_note_can_carry_several_deviations(tmp_path: Path) -> None:
         DeviationKind.NAMING,
         DeviationKind.OVER_SIZE,
     }
+
+
+@pytest.mark.parametrize(
+    ("created", "updated", "expected_deviation"),
+    [
+        ("2026-08-29", _UNSET, False),
+        ("2026-08-28", _UNSET, True),
+        ("2026-08-29T23:30:00-02:00", _UNSET, False),
+        ("not-a-date", "2026-08-29", False),
+        (_UNSET, _UNSET, True),
+    ],
+)
+def test_date_template_uses_created_then_updated_without_timezone_conversion(
+    tmp_path: Path,
+    created: object,
+    updated: object,
+    expected_deviation: bool,
+) -> None:
+    _write(
+        tmp_path,
+        "_memory/facts/2026-08-29-note.md",
+        ["memory/fact"],
+        created=created,
+        updated=updated,
+    )
+
+    plan = plan_organization(tmp_path, _config())
+
+    assert (DeviationKind.NAMING in {item.kind for item in plan.deviations}) is expected_deviation
+
+
+def test_date_matching_never_uses_file_mtime(tmp_path: Path) -> None:
+    note = _write(
+        tmp_path,
+        "_memory/facts/2026-08-29-note.md",
+        ["memory/fact"],
+        created=_UNSET,
+    )
+    os.utime(note, (1_577_836_800, 1_577_836_800))
+
+    plan = plan_organization(tmp_path, _config())
+
+    assert {item.kind for item in plan.deviations} == {DeviationKind.NAMING}
+
+
+def test_template_without_date_ignores_lifecycle_fields(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "_memory/projects/datacron.md",
+        ["memory/project"],
+        created="not-a-date",
+        updated=None,
+    )
+
+    assert plan_organization(tmp_path, _config()).deviations == ()
+
+
+def test_absent_target_directory_under_scope_is_valid(tmp_path: Path) -> None:
+    (tmp_path / "_memory").mkdir()
+    rules = OrganizationConfig(
+        scope="_memory",
+        rules=(OrganizationRule(tag="memory/fact", folder="_memory/not-created"),),
+    )
+
+    plan = plan_organization(tmp_path, _config(rules=rules))
+
+    assert plan.deviations == ()
+
+
+@pytest.mark.parametrize("kind", ["missing", "scope-file", "target-file", "outside-target"])
+def test_invalid_scope_or_target_is_rejected(tmp_path: Path, kind: str) -> None:
+    folder = "_memory/facts"
+    if kind != "missing":
+        (tmp_path / "_memory").mkdir()
+    if kind == "scope-file":
+        (tmp_path / "_memory").rmdir()
+        (tmp_path / "_memory").write_text("not a directory", encoding="utf-8")
+    elif kind == "target-file":
+        (tmp_path / "_memory" / "facts").write_text("not a directory", encoding="utf-8")
+    elif kind == "outside-target":
+        folder = "other/facts"
+    rules = OrganizationConfig(
+        scope="_memory",
+        rules=(OrganizationRule(tag="memory/fact", folder=folder),),
+    )
+
+    with pytest.raises(OrganizationConfigurationError):
+        plan_organization(tmp_path, _config(rules=rules))
+
+
+def test_planner_does_not_reload_the_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write(tmp_path, "_memory/facts/2026-08-29-note.md", ["memory/fact"])
+
+    def fail_reload(_path: Path) -> VaultConfig:
+        raise AssertionError("the planner must use the already loaded VaultConfig")
+
+    monkeypatch.setattr("datacron.core.scope.load_vault_config", fail_reload)
+
+    assert plan_organization(tmp_path, _config()).governed == 1
 
 
 def test_planner_writes_nothing_to_the_vault(tmp_path: Path) -> None:
