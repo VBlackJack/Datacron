@@ -114,6 +114,7 @@ def test_ollama_docs_keep_the_smoke_read_only_and_model_quality_separate() -> No
         assert "DATACRON_READ_PATHS" in content
         assert "DATACRON_WRITE_PATHS" in content
         assert "BL-0019" in content
+        assert "BL-0107" in content
         assert "qwen3:8b" not in content
 
     assert "ne garantit pas" in french

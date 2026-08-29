@@ -568,6 +568,42 @@ def test_mcp_v2_docs_architecture_removes_superseded_v1_premise_and_dates_footer
 
 
 @pytest.mark.parametrize(
+    ("relative_path", "resolved_marker", "stale_markers"),
+    [
+        (
+            Path("docs/en/architecture.md"),
+            "the payload returns a flat `headings` list in document order",
+            (
+                "\n2. **Citation format** - which format for returned chunks?",
+                "\n3. **`get_note(format=map)`** - which exact tree to return",
+            ),
+        ),
+        (
+            Path("docs/fr/architecture.md"),
+            "le payload renvoie une liste plate `headings` dans l'ordre du document",
+            (
+                "\n2. **Format de citation** - quel format pour les chunks renvoyés ?",
+                "\n3. **`get_note(format=map)`** - quel arbre exact renvoyer",
+            ),
+        ),
+    ],
+)
+def test_mcp_v2_docs_architecture_closes_phase_zero_read_contract_questions(
+    relative_path: Path,
+    resolved_marker: str,
+    stale_markers: tuple[str, ...],
+) -> None:
+    """Keep resolved structured-read contracts out of the open-question backlog."""
+    content = _read(relative_path)
+
+    assert resolved_marker in content
+    for field in ("`level`", "`text`", "`path`", "`chunk_id`", "`chunk_count`"):
+        assert field in content
+    for stale_marker in stale_markers:
+        assert stale_marker not in content
+
+
+@pytest.mark.parametrize(
     ("relative_path", "validation_contract", "business_contract", "protocol_contract"),
     [
         *[

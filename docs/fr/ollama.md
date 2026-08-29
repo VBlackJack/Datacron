@@ -133,8 +133,9 @@ de correctifs. Les deux voies ci-dessus conservent donc seules une place dans ce
 
 La présence du tool calling dans Ollama ne garantit pas qu'un modèle choisira le bon outil,
 produira des arguments valides ou terminera correctement une suite de plusieurs appels. Cette
-qualité dépend du modèle et du prompt ; son évaluation reste séparée dans BL-0019. Cette page
-ne certifie donc aucun modèle particulier.
+qualité dépend du modèle et du prompt. BL-0019 est la campagne terminée qui a mesuré cette
+limite ; BL-0107 suit la validation complète encore ouverte du profil compact. Cette page ne
+certifie donc aucun modèle particulier.
 
 ## Références
 

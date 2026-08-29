@@ -480,8 +480,8 @@ and releases; this section publishes no unmeasured remote status or counter.
 ## 12. Open questions for Phase 0
 
 1. ~~**Chunker model** - is a single AST splitter enough, or do we need dedicated strategies (code blocks, tables) from v1?~~ → **Resolved (Week 3.5)**: a single AST splitter, plus a size guardrail (`chunk_max_tokens`) that re-splits any oversized block on line boundaries, with dedicated CODE (repeated fence + language) and TABLE (repeated header + separator) strategies, and an intra-line split fallback. Deterministic splitting, sub-chunks with disjoint, gap-free line ranges.
-2. **Citation format** - which format for returned chunks? Obsidian-style `[[note#header]]`, or structured JSON?
-3. **`get_note(format=map)`** - which exact tree to return (headings only, or + counts/excerpts)?
+2. ~~**Citation format** - which format for returned chunks? Obsidian-style `[[note#header]]`, or structured JSON?~~ -> **Resolved**: MCP read tools return structured JSON. A chunk read carries its identity, note path, section path, line range, sandboxed content, freshness hashes, and `prev_chunk_id` / `next_chunk_id` navigation.
+3. ~~**`get_note(format=map)`** - which exact tree to return (headings only, or + counts/excerpts)?~~ -> **Resolved**: the payload returns a flat `headings` list in document order. Each entry contains `level`, `text`, `path`, and `chunk_id`; the payload also carries the total `chunk_count`, without per-heading counts or excerpts.
 4. ~~**Julien eval set** - which questions?~~ → **Partially resolved**: golden set
    `local/golden-julien.yaml` used for QE/TR; next step = expand it with temporal cases and
    second-generation killer questions.

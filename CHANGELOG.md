@@ -14,6 +14,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - The Windows release command now verifies a clean, synchronized `main`, empty Git identity
   emails, absent release tags, exact version-only changes, and the final commit and annotated tag
   before pushing the branch and tag atomically.
+- The bilingual architecture and Ollama guides now record the implemented structured-read
+  contracts and distinguish the completed BL-0019 campaign from the parked BL-0107 follow-up.
 
 ### Fixed
 

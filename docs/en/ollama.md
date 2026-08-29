@@ -129,8 +129,9 @@ updates or bug fixes. Only the two paths above therefore remain in this guide.
 
 Tool-calling support in Ollama does not guarantee that a model will choose the right tool,
 produce valid arguments, or complete a sequence of multiple calls. That quality depends on
-the model and prompt; its evaluation remains separate under BL-0019. This page therefore
-certifies no particular model.
+the model and prompt. BL-0019 is the completed campaign that measured this boundary; BL-0107
+tracks the remaining full validation of the compact profile. This page therefore certifies no
+particular model.
 
 ## References
 

@@ -490,8 +490,8 @@ remesuré.
 ## 12. Questions ouvertes pour Phase 0
 
 1. ~~**Modèle de chunker** - un seul splitter AST suffit-il, ou besoin de stratégies dédiées (code blocks, tables) dès v1 ?~~ → **Résolu (Sem 3.5)** : un seul splitter AST, plus un garde-fou de taille (`chunk_max_tokens`) qui redécoupe tout bloc trop gros sur frontières de lignes, avec stratégies dédiées CODE (fence + langue répétées) et TABLE (en-tête + séparateur répétés), et fallback de découpe intra-ligne. Découpe déterministe, sous-chunks à plages de lignes disjointes et sans trou.
-2. **Format de citation** - quel format pour les chunks renvoyés ? `[[note#header]]` Obsidian-style, ou JSON structuré ?
-3. **`get_note(format=map)`** - quel arbre exact renvoyer (juste headings, ou + counts/excerpts) ?
+2. ~~**Format de citation** - quel format pour les chunks renvoyés ? `[[note#header]]` Obsidian-style, ou JSON structuré ?~~ -> **Résolu** : les outils de lecture MCP renvoient du JSON structuré. La lecture d'un chunk porte son identité, le chemin de la note, le chemin de section, la plage de lignes, le contenu sandboxé, les hashes de fraîcheur et la navigation `prev_chunk_id` / `next_chunk_id`.
+3. ~~**`get_note(format=map)`** - quel arbre exact renvoyer (juste headings, ou + counts/excerpts) ?~~ -> **Résolu** : le payload renvoie une liste plate `headings` dans l'ordre du document. Chaque entrée contient `level`, `text`, `path` et `chunk_id` ; le payload porte aussi le `chunk_count` total, sans compteurs ni extraits par heading.
 4. ~~**Eval set Julien** - quelles questions ?~~ → **Résolu partiellement** : golden set
    `local/golden-julien.yaml` utilisé pour QE/TR ; prochaine étape = l'élargir avec cas
    temporels et questions tueuses de deuxième génération.
