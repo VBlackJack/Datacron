@@ -22,7 +22,7 @@ les logs, les ULID internes, l'historique et le journal d'opérations.
 | Lecture vault | `list_notes`, `get_note`, resources `datacron://vault/map`, `vault/info`, `policy/active` |
 | Recherche | SQLite FTS5/BM25, query-expansion FR↔EN, re-rank temporel, `ripgrep` via `search_regex` |
 | Graphe local | Wikilinks et backlinks via `get_backlinks` |
-| Écriture | 8 tools confinés et réversibles, désactivés par défaut sans `DATACRON_WRITE_PATHS` |
+| Écriture | 8 tools de note + 1 lot d'organisation, confinés et journalisés, désactivés par défaut sans `DATACRON_WRITE_PATHS` |
 | Transport MCP | SDK Python MCP v2 via `MCPServer`, stdio local uniquement ; protocole moderne `2026-07-28` et compatibilité legacy `2025-11-25`, sans listener HTTP |
 | Index | `datacron index` incrémental, `datacron reindex` complet, réparation automatique à la lecture |
 | Évaluation | `datacron eval` sur le pipeline MCP réel : recall@k, MRR, nDCG, fraîcheur, latence et payload tokens |
@@ -217,17 +217,49 @@ Tools d'écriture disponibles :
 - `delete_note_section` : supprime explicitement une section ATX H2-H6 et son sous-arbre.
 - `rename_note_section` : renomme uniquement le titre d'une section ATX H2-H6.
 - `revert_note` : restaure les octets exacts d'une version conservée dans l'historique.
+- `apply_organization_manifest` : valide puis applique un bundle local adressé par contenu,
+  après confirmation liée au pré-état exact admis de l'organisation.
 
 Garanties :
 
-- confinement strict dans `DATACRON_WRITE_PATHS`
+- confinement strict des notes dans `DATACRON_WRITE_PATHS` ; les sources et cibles notes d'un batch
+  d'organisation doivent aussi rester dans le `organization.scope` live inchangé et passer la
+  politique live d'admission des notes, exclusions comprises
+- deux cibles internes sous CAS exact pour un batch d'organisation : `.datacron/VAULT.yaml`,
+  seulement pour modifier le mapping top-level `organization` sans changer `organization.scope`,
+  et `.datacron/ulids.json`, seulement quand Datacron dérive la migration de clé imposée par un
+  `move_replace_exact`
 - overwrite atomique via fichier temporaire + `os.replace`
 - historique adressé par contenu avant modification d'une note existante
-- `reconcile()` après write pour rendre la note immédiatement cherchable
+- `reconcile()` synchrone après un write normal ; la disponibilité immédiate dans la recherche
+  n'est garantie que si cette réconciliation réussit
 - audit log local
+- pour un manifeste d'organisation : transaction récupérable après crash et remplacement
+  atomique de chaque fichier ; la visibilité simultanée de plusieurs chemins n'est pas garantie
 
 Le mode concurrent multi-machines n'est pas supporté pour les écritures : garde une règle
 single-writer sur le vault.
+
+Pour `apply_organization_manifest`, arrête aussi les autres clients et serveurs Datacron pendant
+la fenêtre de maintenance. Avant l'application, conserve hors du vault une sauvegarde exacte aux
+octets et vérifiée des notes affectées et du répertoire `.datacron` complet jusqu'à ce que tous les
+contrôles post-commit soient verts. Appelle d'abord `mode="validate"`, contrôle les hashes bornés retournés,
+puis réutilise l'exact `confirmation_token` avec `mode="apply"`. Le token lie le manifeste et ses
+payloads, toutes les notes Markdown admises dans `organization.scope`, la configuration exacte du
+vault et les sidecars d'identité, ainsi que le rapport projeté. Il ne lie délibérément pas les
+octets de notes sans rapport situées hors de `organization.scope`. Toute modification d'un
+composant authentifié invalide la confirmation avant mutation. `history_mode=full` est requis dès
+la validation. Si Datacron dérive un nettoyage de collisions de casse du sidecar, contrôle aussi
+`identity_sidecar_case_canonicalization_count` et son SHA-256 content-free avant d'appliquer ; ces
+deux preuves sont liées au token et conservées dans le reçu durable.
+Une source existante de `replace_exact` ou `move_replace_exact` doit porter son `id` dans le
+frontmatter ; une identité disponible uniquement dans le sidecar n'est pas prise en charge par ce
+schéma v1. Si le batch a déjà atteint son commit durable mais que la réconciliation ou l'oracle
+planner échoue, la réponse le dit explicitement (`committed_index_incomplete` ou
+`committed_report_mismatch`) et le même appel peut être rejoué avec le même token.
+Un blocage de batch d'organisation est rapporté par `datacron ops inspect` avec une raison
+`pending_batch_` et les deux réparations limitées à une note indisponibles ; applique alors le
+rollback hors ligne complet du guide de santé opérationnelle, sans réparer ni isoler un seul membre.
 
 ## MCP Tools
 
@@ -253,6 +285,7 @@ single-writer sur le vault.
 | `delete_note_section` | supprime explicitement une section ATX H2-H6 et son sous-arbre, avec CAS optionnel et historique exact |
 | `rename_note_section` | renomme le titre d'une section ATX H2-H6 sans modifier son contenu ni son sous-arbre |
 | `revert_note` | restaure une note depuis son historique adressé par contenu ; l'opération reste durable, réversible et auditée |
+| `apply_organization_manifest` | valide un bundle local content-addressed contenant au moins une opération exacte sur une note et/ou un remplacement exact de la configuration `organization`, puis applique ses membres déclarés et, si nécessaire, la migration dérivée du sidecar ULID sous CAS ; l'application est journalisée et récupérable après crash |
 
 ### Opérationnel
 

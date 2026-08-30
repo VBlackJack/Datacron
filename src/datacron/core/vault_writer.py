@@ -34,6 +34,13 @@ if sys.platform == "win32":
 else:
     import fcntl
 
+from datacron.core.batch_transaction import (
+    BatchApplyResult,
+    BatchFaultInjector,
+    BatchPrecommitValidator,
+    BatchRecoveryOutcome,
+    OrganizationBatchTransaction,
+)
 from datacron.core.config import SIDECAR_DIR_NAME, Settings, VaultConfig
 from datacron.core.durability import (
     RecoveryRequiredError,
@@ -64,11 +71,14 @@ from datacron.core.recovery import (
     RecoveryRepairAction,
     RecoveryRepairResult,
 )
+from datacron.core.scope import assert_path_chain_without_links
 from datacron.core.security import SecretRedactor
+from datacron.organization.manifest import ValidatedOrganizationBundle
 
 __all__ = [
     "FAULT_POINTS",
     "OPERATION_FAULT_POINTS",
+    "BatchApplyResult",
     "FilesystemVaultWriter",
     "OperationRecoveryError",
     "RecoveryRepairResult",
@@ -172,6 +182,11 @@ class FilesystemVaultWriter:
             history_mode=self._vault_config.history_mode,
             purge_min_interval_seconds=(settings.operation_history_purge_min_interval_seconds),
         )
+        self._batch_transaction = OrganizationBatchTransaction(
+            self._vault_root,
+            self._operation_journal,
+            write_paths=settings.write_paths,
+        )
         self._recovery_outcome = RecoveryOutcome()
 
     @property
@@ -227,17 +242,24 @@ class FilesystemVaultWriter:
         """Hold cooperative identity and note locks after a fresh byte-level CAS.
 
         Explicit maintenance uses this synchronous context when sidecar and index
-        effects must remain linearized with one unchanged note. It intentionally
-        follows the writer-wide lock order: identity first, then the confined note.
+        effects must remain linearized with one unchanged note. It follows the
+        writer-wide order: global mutation, identity, confined note, then oplog.
         """
-        self._write_policy.ensure_writable()
-        recovery = self._recover_operations_sync(purge_history=False)
-        self._raise_if_recovery_blocked(recovery)
-        target, _safe_rel_path = self._resolve_target(rel_path)
-        with self._advisory_lock("identity"), self._advisory_lock(f"note:{self._lock_key(target)}"):
-            current_bytes = target.read_bytes() if target.is_file() else None
-            _check_expected_hash(expected_hash, current_bytes)
-            yield
+        with self._advisory_lock("mutation"):
+            self._write_policy.ensure_writable()
+            recovery = self._recover_operations_sync(
+                purge_history=False,
+                recover_organization_batches=False,
+            )
+            self._raise_if_recovery_blocked(recovery)
+            target, _safe_rel_path = self._resolve_target(rel_path)
+            with (
+                self._advisory_lock("identity"),
+                self._advisory_lock(f"note:{self._lock_key(target)}"),
+            ):
+                current_bytes = target.read_bytes() if target.is_file() else None
+                _check_expected_hash(expected_hash, current_bytes)
+                yield
 
     async def revert_note_atomic(
         self,
@@ -256,10 +278,83 @@ class FilesystemVaultWriter:
             operation,
         )
 
+    async def get_organization_batch_result(
+        self,
+        manifest_sha256: str,
+    ) -> BatchApplyResult | None:
+        """Return one durable organization receipt without mutating state."""
+        return await asyncio.to_thread(
+            self._get_organization_batch_result_sync,
+            manifest_sha256,
+        )
+
+    async def resolve_organization_batch_result(
+        self,
+        manifest_sha256: str,
+    ) -> BatchApplyResult | None:
+        """Recover all pending work atomically, then return one committed receipt."""
+        self._write_policy.ensure_writable()
+        return await asyncio.to_thread(
+            self._resolve_organization_batch_result_sync,
+            manifest_sha256,
+        )
+
+    async def get_organization_removed_identity_ids(
+        self,
+        result: BatchApplyResult,
+    ) -> tuple[str, ...]:
+        """Derive stale index identities from a committed sidecar transition."""
+        return await asyncio.to_thread(
+            self._get_organization_removed_identity_ids_sync,
+            result,
+        )
+
+    async def apply_organization_manifest(
+        self,
+        bundle: ValidatedOrganizationBundle,
+        *,
+        confirmation_token: str,
+        projected_report_sha256: str,
+        precommit_validator: BatchPrecommitValidator,
+        operation: OperationContext,
+        fault_injector: BatchFaultInjector | None = None,
+    ) -> BatchApplyResult:
+        """Apply one validated organization bundle under the global mutation lock."""
+        return await asyncio.to_thread(
+            self._apply_organization_manifest_sync,
+            bundle,
+            confirmation_token,
+            projected_report_sha256,
+            precommit_validator,
+            operation,
+            fault_injector,
+        )
+
+    async def validate_organization_manifest_capacity(
+        self,
+        bundle: ValidatedOrganizationBundle,
+        *,
+        confirmation_token: str,
+        projected_report_sha256: str,
+        operation: OperationContext,
+    ) -> None:
+        """Prove the future durable receipt is bounded without writing state."""
+        await asyncio.to_thread(
+            self._validate_organization_manifest_capacity_sync,
+            bundle,
+            confirmation_token,
+            projected_report_sha256,
+            operation,
+        )
+
+    async def has_pending_organization_batches(self) -> bool:
+        """Return whether organization batch recovery is pending."""
+        return await asyncio.to_thread(self._batch_transaction.has_pending_batches)
+
     async def recover_operations(self) -> int:
         """Resolve durable pending manifests before serving or writing."""
         self._write_policy.ensure_writable()
-        outcome = await asyncio.to_thread(self._recover_operations_sync)
+        outcome = await asyncio.to_thread(self._recover_operations_guarded_sync)
         return outcome.recovered
 
     async def inspect_recovery(self) -> tuple[BlockedOperation, ...]:
@@ -277,7 +372,7 @@ class FilesystemVaultWriter:
         """Apply one exact-hash recovery repair after explicit CLI confirmation."""
         self._write_policy.ensure_writable()
         return await asyncio.to_thread(
-            self._repair_recovery_sync,
+            self._repair_recovery_guarded_sync,
             operation_id,
             action,
             expected_disk_hash,
@@ -291,7 +386,110 @@ class FilesystemVaultWriter:
     async def purge_history(self) -> list[str]:
         """Apply the configured content-history retention policy now."""
         self._write_policy.ensure_writable()
-        return await asyncio.to_thread(self._purge_history_sync)
+        return await asyncio.to_thread(self._purge_history_guarded_sync)
+
+    def _apply_organization_manifest_sync(
+        self,
+        bundle: ValidatedOrganizationBundle,
+        confirmation_token: str,
+        projected_report_sha256: str,
+        precommit_validator: BatchPrecommitValidator,
+        operation: OperationContext,
+        fault_injector: BatchFaultInjector | None,
+    ) -> BatchApplyResult:
+        self._write_policy.ensure_writable()
+        with self._advisory_lock("mutation"):
+            recovery = self._recover_operations_sync(purge_history=False)
+            self._raise_if_recovery_blocked(recovery)
+            sanitized = self._sanitize_organization_operation(operation)
+            with self._advisory_lock("oplog"):
+                result = self._batch_transaction.apply(
+                    bundle,
+                    confirmation_token=confirmation_token,
+                    projected_report_sha256=projected_report_sha256,
+                    precommit_validator=precommit_validator,
+                    operation=sanitized,
+                    fault_injector=fault_injector,
+                )
+                self._operation_journal.purge_history()
+            return result
+
+    def _validate_organization_manifest_capacity_sync(
+        self,
+        bundle: ValidatedOrganizationBundle,
+        confirmation_token: str,
+        projected_report_sha256: str,
+        operation: OperationContext,
+    ) -> None:
+        self._write_policy.ensure_writable()
+        self._batch_transaction.validate_capacity(
+            bundle,
+            confirmation_token=confirmation_token,
+            projected_report_sha256=projected_report_sha256,
+            operation=self._sanitize_organization_operation(operation),
+        )
+
+    def _sanitize_organization_operation(self, operation: OperationContext) -> OperationContext:
+        return OperationContext(
+            op=operation.op,
+            tool=operation.tool,
+            actor=(
+                self._secret_redactor.redact_text(operation.actor.strip())
+                or "mcp-client:unidentified"
+            ),
+            parameters={
+                key: (self._secret_redactor.redact_text(value) if isinstance(value, str) else value)
+                for key, value in operation.parameters.items()
+            },
+        )
+
+    def _get_organization_batch_result_sync(
+        self,
+        manifest_sha256: str,
+    ) -> BatchApplyResult | None:
+        with self._advisory_lock("oplog"):
+            return self._batch_transaction.get_result(manifest_sha256)
+
+    def _resolve_organization_batch_result_sync(
+        self,
+        manifest_sha256: str,
+    ) -> BatchApplyResult | None:
+        self._write_policy.ensure_writable()
+        with self._advisory_lock("mutation"):
+            recovery = self._recover_operations_sync()
+            self._raise_if_recovery_blocked(recovery)
+            with self._advisory_lock("oplog"):
+                return self._batch_transaction.get_result(manifest_sha256)
+
+    def _get_organization_removed_identity_ids_sync(
+        self,
+        result: BatchApplyResult,
+    ) -> tuple[str, ...]:
+        with self._advisory_lock("oplog"):
+            return self._batch_transaction.removed_identity_ids(result)
+
+    def _recover_operations_guarded_sync(self) -> RecoveryOutcome:
+        with self._advisory_lock("mutation"):
+            return self._recover_operations_sync()
+
+    def _repair_recovery_guarded_sync(
+        self,
+        operation_id: str,
+        action: RecoveryRepairAction,
+        expected_disk_hash: str,
+        actor: str,
+    ) -> RecoveryRepairResult:
+        with self._advisory_lock("mutation"):
+            return self._repair_recovery_sync(
+                operation_id,
+                action,
+                expected_disk_hash,
+                actor,
+            )
+
+    def _purge_history_guarded_sync(self) -> list[str]:
+        with self._advisory_lock("mutation"):
+            return self._purge_history_sync()
 
     def _write_note_atomic_sync(
         self,
@@ -302,8 +500,30 @@ class FilesystemVaultWriter:
         note_id: str | None,
         operation: OperationContext | None,
     ) -> str:
+        with self._advisory_lock("mutation"):
+            return self._write_note_atomic_locked_sync(
+                rel_path,
+                content,
+                overwrite,
+                expected_hash,
+                note_id,
+                operation,
+            )
+
+    def _write_note_atomic_locked_sync(
+        self,
+        rel_path: str,
+        content: str,
+        overwrite: bool,
+        expected_hash: str | None,
+        note_id: str | None,
+        operation: OperationContext | None,
+    ) -> str:
         self._write_policy.ensure_writable()
-        recovery = self._recover_operations_sync(purge_history=False)
+        recovery = self._recover_operations_sync(
+            purge_history=False,
+            recover_organization_batches=False,
+        )
         self._raise_if_recovery_blocked(recovery)
         target, safe_rel_path = self._resolve_target(rel_path)
         if note_id is not None and not _ULID_PATTERN.fullmatch(note_id):
@@ -341,8 +561,26 @@ class FilesystemVaultWriter:
         expected_hash: str | None,
         operation: OperationContext | None,
     ) -> str:
+        with self._advisory_lock("mutation"):
+            return self._mutate_note_atomic_locked_sync(
+                rel_path,
+                mutation,
+                expected_hash,
+                operation,
+            )
+
+    def _mutate_note_atomic_locked_sync(
+        self,
+        rel_path: str,
+        mutation: NoteMutation,
+        expected_hash: str | None,
+        operation: OperationContext | None,
+    ) -> str:
         self._write_policy.ensure_writable()
-        recovery = self._recover_operations_sync(purge_history=False)
+        recovery = self._recover_operations_sync(
+            purge_history=False,
+            recover_organization_batches=False,
+        )
         self._raise_if_recovery_blocked(recovery)
         target, safe_rel_path = self._resolve_target(rel_path)
         with self._advisory_lock(f"note:{self._lock_key(target)}"):
@@ -376,8 +614,26 @@ class FilesystemVaultWriter:
         expected_hash: str | None,
         operation: OperationContext,
     ) -> str:
+        with self._advisory_lock("mutation"):
+            return self._revert_note_atomic_locked_sync(
+                rel_path,
+                to_hash,
+                expected_hash,
+                operation,
+            )
+
+    def _revert_note_atomic_locked_sync(
+        self,
+        rel_path: str,
+        to_hash: str,
+        expected_hash: str | None,
+        operation: OperationContext,
+    ) -> str:
         self._write_policy.ensure_writable()
-        recovery = self._recover_operations_sync(purge_history=False)
+        recovery = self._recover_operations_sync(
+            purge_history=False,
+            recover_organization_batches=False,
+        )
         self._raise_if_recovery_blocked(recovery)
         target, safe_rel_path = self._resolve_target(rel_path)
         with self._advisory_lock(f"note:{self._lock_key(target)}"):
@@ -506,13 +762,25 @@ class FilesystemVaultWriter:
         )
         return after_hash
 
-    def _recover_operations_sync(self, *, purge_history: bool = True) -> RecoveryOutcome:
-        recovered = 0
+    def _recover_operations_sync(
+        self,
+        *,
+        purge_history: bool = True,
+        recover_organization_batches: bool = True,
+    ) -> RecoveryOutcome:
+        batch_outcome = self._recover_organization_batches_sync(
+            allowed=recover_organization_batches
+        )
+        if batch_outcome.blocked:
+            outcome = RecoveryOutcome(blocked=batch_outcome.blocked)
+            self._recovery_outcome = outcome
+            return outcome
+        recovered = batch_outcome.recovered
         blocked: list[BlockedOperation] = []
         pending_paths = self._operation_journal.pending_paths()
         pending_paths.sort(key=self._recovery_order)
         for pending_path in pending_paths:
-            record = self._operation_journal.read_pending(pending_path)
+            record, pending_snapshot = self._operation_journal.read_pending_snapshot(pending_path)
             candidate = (self._vault_root / record.rel_path).expanduser().resolve()
             safe_rel_path = self._safe_relative_path(candidate)
             with (
@@ -520,9 +788,14 @@ class FilesystemVaultWriter:
                 self._advisory_lock("oplog"),
             ):
                 current_path = self._operation_journal.pending_path(record.operation_id)
-                if not current_path.is_file():
-                    continue
-                record = self._operation_journal.read_pending(current_path)
+                current_record, current_snapshot = self._operation_journal.read_pending_snapshot(
+                    current_path
+                )
+                if current_snapshot != pending_snapshot or current_record != record:
+                    raise OperationLogError(
+                        f"pending operation changed during recovery: {record.operation_id}"
+                    )
+                record = current_record
                 current_bytes = candidate.read_bytes() if candidate.is_file() else None
                 current_hash = sha256_bytes(current_bytes) if current_bytes is not None else None
                 records = self._operation_journal.read_records()
@@ -578,8 +851,24 @@ class FilesystemVaultWriter:
                 self._operation_journal.purge_history()
         return outcome
 
+    def _recover_organization_batches_sync(
+        self,
+        *,
+        allowed: bool,
+    ) -> BatchRecoveryOutcome:
+        """Recover global batches only through an explicitly canonical caller."""
+        with self._advisory_lock("oplog"):
+            if allowed:
+                return self._batch_transaction.recover()
+            if self._batch_transaction.has_pending_batches():
+                raise RecoveryRequiredError(
+                    "Recovery required: pending organization batches must be recovered "
+                    "explicitly through the canonical single-tenant vault scope"
+                )
+            return BatchRecoveryOutcome()
+
     def _inspect_recovery_sync(self) -> tuple[BlockedOperation, ...]:
-        blocked: list[BlockedOperation] = []
+        blocked: list[BlockedOperation] = list(self._batch_transaction.inspect())
         records = self._operation_journal.read_records()
         for pending_path in self._operation_journal.pending_paths():
             manifest_before = pending_path.read_bytes()
@@ -824,7 +1113,10 @@ class FilesystemVaultWriter:
             return self._operation_journal.read_records()
 
     def _purge_history_sync(self) -> list[str]:
-        recovery = self._recover_operations_sync(purge_history=False)
+        recovery = self._recover_operations_sync(
+            purge_history=False,
+            recover_organization_batches=False,
+        )
         self._raise_if_recovery_blocked(recovery)
         with self._advisory_lock("oplog"):
             return self._operation_journal.purge_history()
@@ -998,10 +1290,23 @@ class FilesystemVaultWriter:
 
     @contextmanager
     def _advisory_lock(self, key: str) -> Iterator[None]:
-        lock_dir = sidecar_dir(self._vault_root) / "locks"
+        lock_dir = assert_path_chain_without_links(
+            sidecar_dir(self._vault_root) / "locks",
+            anchor=self._vault_root,
+            allow_missing=True,
+        )
         lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_dir = assert_path_chain_without_links(
+            lock_dir,
+            anchor=self._vault_root,
+            allow_missing=False,
+        )
         lock_name = f"{sha256_bytes(key.encode('utf-8'))}.lock"
-        lock_path = lock_dir / lock_name
+        lock_path = assert_path_chain_without_links(
+            lock_dir / lock_name,
+            anchor=self._vault_root,
+            allow_missing=True,
+        )
         with lock_path.open("a+b") as lock_file:
             lock_file.seek(0, os.SEEK_END)
             if lock_file.tell() == 0:

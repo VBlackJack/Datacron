@@ -27,8 +27,9 @@ from datacron.mcp.security_manifest import (
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-MCP_V2_BASELINE_VERIFIED_DATE = "2026-08-11"
-OPERATIONAL_VERIFIED_DATE = "2026-08-28"
+MCP_V2_BASELINE_VERIFIED_DATE = "2026-08-30"
+SECURITY_VERIFIED_DATE = "2026-08-11"
+OPERATIONAL_VERIFIED_DATE = "2026-08-30"
 FINAL_PROTOCOL = "2026-07-28"
 LEGACY_PROTOCOL = "2025-11-25"
 SPEC_RELEASE_URL = "https://blog.modelcontextprotocol.io/posts/2026-07-28/"
@@ -78,9 +79,10 @@ OPERATIONAL_PATHS = (
 )
 VERIFIED_DATES = {
     **dict.fromkeys(
-        (*ARCHITECTURE_PATHS, *SPEC_PATHS, *SECURITY_PATHS, *USER_GUIDE_PATHS),
+        (*ARCHITECTURE_PATHS, *SPEC_PATHS, *USER_GUIDE_PATHS),
         MCP_V2_BASELINE_VERIFIED_DATE,
     ),
+    **dict.fromkeys(SECURITY_PATHS, SECURITY_VERIFIED_DATE),
     **dict.fromkeys(OPERATIONAL_PATHS, OPERATIONAL_VERIFIED_DATE),
 }
 SOURCE_DESCRIPTION_PATHS = (
@@ -206,8 +208,8 @@ def test_mcp_v2_docs_readme_catalogs_match_runtime_manifest(
     table_tools = _table_tool_names(content)
     table_mutators = _table_tool_names(_section(content, write_heading, operational_heading))
 
-    assert len(MCP_TOOL_CAPABILITIES) == 17
-    assert len(MUTATING_TOOL_NAMES) == 8
+    assert len(MCP_TOOL_CAPABILITIES) == 18
+    assert len(MUTATING_TOOL_NAMES) == 9
     assert len(READ_ONLY_TOOL_NAMES) == 9
     assert available_tools == set(MUTATING_TOOL_NAMES)
     assert table_tools == set(MCP_TOOL_CAPABILITIES)
@@ -302,8 +304,8 @@ def test_mcp_v2_docs_public_catalog_matches_runtime_manifest(relative_path: Path
         if f"`{tool_name}`" in line
     }
 
-    assert len(MCP_TOOL_CAPABILITIES) == 17
-    assert len(MUTATING_TOOL_NAMES) == 8
+    assert len(MCP_TOOL_CAPABILITIES) == 18
+    assert len(MUTATING_TOOL_NAMES) == 9
     assert len(READ_ONLY_TOOL_NAMES) == 9
     assert documented_tools == set(MCP_TOOL_CAPABILITIES)
     assert documented_mutators == set(MUTATING_TOOL_NAMES)
@@ -544,12 +546,14 @@ def test_mcp_v2_docs_svg_and_source_descriptions_use_mcpserver() -> None:
         (
             Path("docs/fr/architecture.md"),
             "v1 = Claude Desktop + Code uniquement. Cowork via tunnel HTTPS en v1.x.",
-            "Document v2.2 synchronisé le 2026-08-11 avec `main`.",
+            "Document v2.2 vérifié le 2026-08-30 par rapport à l'implémentation "
+            "livrée par cette version.",
         ),
         (
             Path("docs/en/architecture.md"),
             "v1 = Claude Desktop + Code only. Cowork via HTTPS tunnel in v1.x.",
-            "v2.2 document synced on 2026-08-11 with `main`.",
+            "v2.2 document verified on 2026-08-30 against the implementation "
+            "delivered by this version.",
         ),
     ],
 )

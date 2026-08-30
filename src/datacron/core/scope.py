@@ -15,9 +15,11 @@
 
 from __future__ import annotations
 
+import os
+import stat
 from collections.abc import Awaitable, Callable
 from pathlib import Path, PurePosixPath
-from typing import Final, Literal, Protocol, final, runtime_checkable
+from typing import TYPE_CHECKING, Final, Literal, Protocol, cast, final, runtime_checkable
 
 from datacron.core.config import (
     SIDECAR_DIR_NAME,
@@ -26,7 +28,7 @@ from datacron.core.config import (
     VaultConfig,
     load_vault_config,
 )
-from datacron.core.durability import WritePolicy
+from datacron.core.durability import RecoveryRequiredError, WritePolicy
 from datacron.core.models import Note
 from datacron.core.operation_log import OperationContext, OperationRecord
 from datacron.core.paths import PathConfinementError, assert_within_paths
@@ -38,20 +40,94 @@ from datacron.core.recovery import (
 )
 from datacron.core.vault import SKIPPED_FOLDERS, NoteAdmissionPolicy
 
+if TYPE_CHECKING:
+    from datacron.core.batch_transaction import (
+        BatchApplyResult,
+        BatchFaultInjector,
+        BatchPrecommitValidator,
+    )
+    from datacron.organization.manifest import ValidatedOrganizationBundle
+
 __all__ = [
     "AccessMode",
     "ConjunctiveVaultScope",
+    "LinkedPathError",
     "NoteAdmissionError",
     "NoteAdmissionPolicy",
+    "OrganizationBatchWriter",
     "ScopedVaultReader",
     "ScopedVaultWriter",
     "SingleTenantVaultScope",
     "VaultScope",
+    "assert_path_chain_without_links",
 ]
 
 AccessMode = Literal["read", "write"]
 NoteMutation = Callable[[str], str]
 NotePathLookup = Callable[[str], Awaitable[str | None]]
+_FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = 0x0400
+
+
+class LinkedPathError(PathConfinementError):
+    """Raised when a filesystem path crosses a link or reparse point."""
+
+
+def assert_path_chain_without_links(
+    path: Path,
+    *,
+    anchor: Path | None = None,
+    allow_missing: bool = False,
+) -> Path:
+    """Return an absolute path after rejecting linked path components.
+
+    This guard inspects the lexical path before calling ``Path.resolve``. That
+    order is intentional: resolving first would erase the evidence that a
+    symlink, junction, or other Windows reparse point was traversed.
+
+    Args:
+        path: Candidate path. Relative paths are rejected.
+        anchor: Optional lexical ancestor that must contain ``path``.
+        allow_missing: Permit the first missing component and its descendants.
+
+    Returns:
+        The absolute lexical path. No link has been followed.
+
+    Raises:
+        FileNotFoundError: If a component is missing and ``allow_missing`` is
+            false.
+        LinkedPathError: If the path is relative, escapes ``anchor``, or any
+            existing component is a symlink or reparse point.
+        OSError: If a component cannot be inspected safely.
+    """
+    expanded = path.expanduser()
+    if not expanded.is_absolute():
+        raise LinkedPathError(f"Path must be absolute: {path!s}")
+    absolute = Path(os.path.abspath(os.fspath(expanded)))
+
+    if anchor is not None:
+        expanded_anchor = anchor.expanduser()
+        if not expanded_anchor.is_absolute():
+            raise LinkedPathError(f"Path anchor must be absolute: {anchor!s}")
+        absolute_anchor = Path(os.path.abspath(os.fspath(expanded_anchor)))
+        try:
+            absolute.relative_to(absolute_anchor)
+        except ValueError as exc:
+            raise LinkedPathError(
+                f"Path {absolute} escapes lexical anchor {absolute_anchor}."
+            ) from exc
+
+    chain = (*reversed(absolute.parents), absolute)
+    for component in chain:
+        try:
+            component_stat = os.lstat(component)
+        except FileNotFoundError:
+            if allow_missing:
+                break
+            raise
+        attributes = getattr(component_stat, "st_file_attributes", 0)
+        if stat.S_ISLNK(component_stat.st_mode) or bool(attributes & _FILE_ATTRIBUTE_REPARSE_POINT):
+            raise LinkedPathError(f"Linked path component is forbidden: {component}")
+    return absolute
 
 
 class NoteAdmissionError(Exception):
@@ -82,6 +158,59 @@ class VaultScope(Protocol):
 
     def allows_note_rel_path(self, rel_path: str) -> bool:
         """Return whether the relative path identifies an admissible live note."""
+        ...
+
+
+class OrganizationBatchWriter(VaultWriter, Protocol):
+    """Narrow extension implemented only by organization-capable vault writers."""
+
+    async def get_organization_batch_result(
+        self,
+        manifest_sha256: str,
+    ) -> BatchApplyResult | None:
+        """Return a durable organization receipt for idempotent replay."""
+        ...
+
+    async def resolve_organization_batch_result(
+        self,
+        manifest_sha256: str,
+    ) -> BatchApplyResult | None:
+        """Recover pending work and return one receipt under the global lock."""
+        ...
+
+    async def get_organization_removed_identity_ids(
+        self,
+        result: BatchApplyResult,
+    ) -> tuple[str, ...]:
+        """Return identity IDs removed by a committed sidecar transition."""
+        ...
+
+    async def apply_organization_manifest(
+        self,
+        bundle: ValidatedOrganizationBundle,
+        *,
+        confirmation_token: str,
+        projected_report_sha256: str,
+        precommit_validator: BatchPrecommitValidator,
+        operation: OperationContext,
+        fault_injector: BatchFaultInjector | None = None,
+    ) -> BatchApplyResult:
+        """Apply one validated exact-byte organization batch under global lock."""
+        ...
+
+    async def validate_organization_manifest_capacity(
+        self,
+        bundle: ValidatedOrganizationBundle,
+        *,
+        confirmation_token: str,
+        projected_report_sha256: str,
+        operation: OperationContext,
+    ) -> None:
+        """Prove the exact durable receipt fits before returning a confirmation token."""
+        ...
+
+    async def has_pending_organization_batches(self) -> bool:
+        """Return whether journaled organization recovery is pending."""
         ...
 
 
@@ -343,6 +472,7 @@ class ScopedVaultWriter:
         operation: OperationContext | None = None,
     ) -> str:
         self._write_policy.ensure_writable()
+        await self._ensure_organization_recovery_scope()
         self._scope.authorize_rel_path(rel_path, "write")
         return await self._delegate.write_note_atomic(
             rel_path,
@@ -362,6 +492,7 @@ class ScopedVaultWriter:
         operation: OperationContext | None = None,
     ) -> str:
         self._write_policy.ensure_writable()
+        await self._ensure_organization_recovery_scope()
         self._scope.authorize_rel_path(rel_path, "write")
         return await self._delegate.mutate_note_atomic(
             rel_path,
@@ -379,6 +510,7 @@ class ScopedVaultWriter:
         operation: OperationContext,
     ) -> str:
         self._write_policy.ensure_writable()
+        await self._ensure_organization_recovery_scope()
         self._scope.authorize_rel_path(rel_path, "write")
         return await self._delegate.revert_note_atomic(
             rel_path,
@@ -389,6 +521,13 @@ class ScopedVaultWriter:
 
     async def recover_operations(self) -> int:
         self._write_policy.ensure_writable()
+        if type(self._scope) is not SingleTenantVaultScope:
+            if await self.has_pending_organization_batches():
+                raise RecoveryRequiredError(
+                    "Recovery required: pending organization batches require the canonical "
+                    "single-tenant vault scope"
+                )
+            return 0
         return await self._delegate.recover_operations()
 
     async def inspect_recovery(self) -> tuple[BlockedOperation, ...]:
@@ -404,6 +543,7 @@ class ScopedVaultWriter:
         actor: str,
     ) -> RecoveryRepairResult:
         self._write_policy.ensure_writable()
+        await self._ensure_organization_recovery_scope()
         blocked = await self.inspect_recovery()
         selected = next(
             (item for item in blocked if item.operation_id == operation_id),
@@ -427,4 +567,95 @@ class ScopedVaultWriter:
 
     async def purge_history(self) -> list[str]:
         self._write_policy.ensure_writable()
+        await self._ensure_organization_recovery_scope()
         return await self._delegate.purge_history()
+
+    async def get_organization_batch_result(
+        self,
+        manifest_sha256: str,
+    ) -> BatchApplyResult | None:
+        """Return a committed organization batch result through the delegate."""
+        self._require_canonical_organization_scope()
+        delegate = cast("OrganizationBatchWriter", self._delegate)
+        return await delegate.get_organization_batch_result(manifest_sha256)
+
+    async def resolve_organization_batch_result(
+        self,
+        manifest_sha256: str,
+    ) -> BatchApplyResult | None:
+        """Resolve and read a batch only through the canonical vault scope."""
+        self._write_policy.ensure_writable()
+        self._require_canonical_organization_scope()
+        delegate = cast("OrganizationBatchWriter", self._delegate)
+        return await delegate.resolve_organization_batch_result(manifest_sha256)
+
+    async def get_organization_removed_identity_ids(
+        self,
+        result: BatchApplyResult,
+    ) -> tuple[str, ...]:
+        """Return sidecar removals through the canonical organization delegate."""
+        self._require_canonical_organization_scope()
+        delegate = cast("OrganizationBatchWriter", self._delegate)
+        return await delegate.get_organization_removed_identity_ids(result)
+
+    async def validate_organization_manifest_capacity(
+        self,
+        bundle: ValidatedOrganizationBundle,
+        *,
+        confirmation_token: str,
+        projected_report_sha256: str,
+        operation: OperationContext,
+    ) -> None:
+        """Validate the exact future receipt without publishing durable state."""
+        self._write_policy.ensure_writable()
+        self._require_canonical_organization_scope()
+        delegate = cast("OrganizationBatchWriter", self._delegate)
+        await delegate.validate_organization_manifest_capacity(
+            bundle,
+            confirmation_token=confirmation_token,
+            projected_report_sha256=projected_report_sha256,
+            operation=operation,
+        )
+
+    async def has_pending_organization_batches(self) -> bool:
+        """Return whether the delegate has an organization recovery receipt."""
+        delegate = cast("OrganizationBatchWriter", self._delegate)
+        return await delegate.has_pending_organization_batches()
+
+    async def _ensure_organization_recovery_scope(self) -> None:
+        if type(self._scope) is SingleTenantVaultScope:
+            return
+        if await self.has_pending_organization_batches():
+            raise RecoveryRequiredError(
+                "Recovery required: pending organization batches require the canonical "
+                "single-tenant vault scope"
+            )
+
+    def _require_canonical_organization_scope(self) -> None:
+        if type(self._scope) is not SingleTenantVaultScope:
+            raise RecoveryRequiredError(
+                "organization batches require the canonical single-tenant vault scope"
+            )
+
+    async def apply_organization_manifest(
+        self,
+        bundle: ValidatedOrganizationBundle,
+        *,
+        confirmation_token: str,
+        projected_report_sha256: str,
+        precommit_validator: BatchPrecommitValidator,
+        operation: OperationContext,
+        fault_injector: BatchFaultInjector | None = None,
+    ) -> BatchApplyResult:
+        """Apply one prevalidated organization bundle through the scoped writer."""
+        self._write_policy.ensure_writable()
+        self._require_canonical_organization_scope()
+        delegate = cast("OrganizationBatchWriter", self._delegate)
+        return await delegate.apply_organization_manifest(
+            bundle,
+            confirmation_token=confirmation_token,
+            projected_report_sha256=projected_report_sha256,
+            precommit_validator=precommit_validator,
+            operation=operation,
+            fault_injector=fault_injector,
+        )

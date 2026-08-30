@@ -16,12 +16,14 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+import stat
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Final, TypeAlias
+from typing import Final, NoReturn, TypeAlias
 
 from datacron.core.config import (
     DEFAULT_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS,
@@ -39,6 +41,30 @@ JsonScalar: TypeAlias = str | int | float | bool | None
 _HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{64}$")
 _OPERATIONS_FILENAME: Final[str] = "operations.jsonl"
 _FORMAT_VERSION: Final[int] = 2
+_MAX_PENDING_RECORD_BYTES: Final[int] = 64 * 1024
+_PENDING_TEMP_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\..+\.json\.[0-9a-f]{32}\.tmp$")
+_FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = 0x0400
+_RECORD_KEYS_V2: Final[frozenset[str]] = frozenset(
+    {
+        "actor",
+        "after_hash",
+        "before_hash",
+        "format_version",
+        "history_stored",
+        "note_id",
+        "op",
+        "operation_id",
+        "parameters",
+        "prev_hash",
+        "rel_path",
+        "timestamp",
+        "tool",
+    }
+)
+_RECORD_KEYS_V1: Final[frozenset[str]] = _RECORD_KEYS_V2 - {
+    "format_version",
+    "prev_hash",
+}
 _LOGGER = get_logger(__name__)
 
 
@@ -48,6 +74,46 @@ class OperationLogError(RuntimeError):
 
 class HistoryUnavailableError(OperationLogError):
     """Raised when requested exact history bytes are absent or redacted."""
+
+
+class _StrictJsonError(ValueError):
+    """Raised when JSON uses an ambiguous or non-standard construct."""
+
+
+def _assert_unlinked_operation_path(
+    path: Path,
+    *,
+    anchor: Path,
+    allow_missing: bool,
+) -> Path:
+    expanded = path.expanduser()
+    expanded_anchor = anchor.expanduser()
+    if not expanded.is_absolute() or not expanded_anchor.is_absolute():
+        raise OperationLogError("operation journal paths must be absolute")
+    absolute = Path(os.path.abspath(os.fspath(expanded)))
+    absolute_anchor = Path(os.path.abspath(os.fspath(expanded_anchor)))
+    try:
+        relative = absolute.relative_to(absolute_anchor)
+    except ValueError as exc:
+        raise OperationLogError(f"operation journal path escapes vault root: {absolute}") from exc
+    current = absolute_anchor
+    components = [current]
+    for part in relative.parts:
+        current /= part
+        components.append(current)
+    for component in components:
+        try:
+            component_stat = os.lstat(component)
+        except FileNotFoundError:
+            if allow_missing:
+                break
+            raise
+        attributes = getattr(component_stat, "st_file_attributes", 0)
+        if stat.S_ISLNK(component_stat.st_mode) or bool(attributes & _FILE_ATTRIBUTE_REPARSE_POINT):
+            raise OperationLogError(
+                f"linked or reparse operation journal path is forbidden: {component}"
+            )
+    return absolute
 
 
 @dataclass(frozen=True)
@@ -99,6 +165,7 @@ class OperationRecord:
     def from_dict(cls, payload: object) -> OperationRecord:
         if not isinstance(payload, dict):
             raise OperationLogError("operation record must be a JSON object")
+        _require_exact_record_keys(payload)
         required_strings = (
             "operation_id",
             "timestamp",
@@ -134,6 +201,8 @@ class OperationRecord:
             scalar = isinstance(value, (str, int, float, bool, type(None)))
             if not isinstance(key, str) or not scalar:
                 raise OperationLogError("parameters must contain scalar JSON values")
+            if isinstance(value, float) and not math.isfinite(value):
+                raise OperationLogError("parameters must contain only finite JSON numbers")
             cleaned_parameters[key] = value
         record = cls(
             operation_id=str(payload["operation_id"]),
@@ -154,6 +223,12 @@ class OperationRecord:
         return record
 
     def validate(self) -> None:
+        for key, value in self.parameters.items():
+            scalar = isinstance(value, (str, int, float, bool, type(None)))
+            if not isinstance(key, str) or not scalar:
+                raise OperationLogError("parameters must contain scalar JSON values")
+            if isinstance(value, float) and not math.isfinite(value):
+                raise OperationLogError("parameters must contain only finite JSON numbers")
         if self.before_hash is not None and not _HASH_PATTERN.fullmatch(self.before_hash):
             raise OperationLogError("before_hash is not a lowercase SHA-256")
         if not _HASH_PATTERN.fullmatch(self.after_hash):
@@ -183,7 +258,8 @@ class OperationJournal:
         history_mode: str,
         purge_min_interval_seconds: float = DEFAULT_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS,
     ) -> None:
-        self._sidecar = vault_root.expanduser().resolve() / SIDECAR_DIR_NAME
+        self._vault_root = vault_root.expanduser().resolve()
+        self._sidecar = self._vault_root / SIDECAR_DIR_NAME
         self._oplog_dir = self._sidecar / OPLOG_DIR_NAME
         self._pending_dir = self._oplog_dir / OPLOG_PENDING_DIR_NAME
         self._operations_path = self._oplog_dir / _OPERATIONS_FILENAME
@@ -200,6 +276,43 @@ class OperationJournal:
     def history_enabled(self) -> bool:
         return self._history_mode == "full"
 
+    def _guard_path(self, path: Path, *, allow_missing: bool = True) -> Path:
+        return _assert_unlinked_operation_path(
+            path,
+            anchor=self._vault_root,
+            allow_missing=allow_missing,
+        )
+
+    def _guard_history_root(self) -> Path:
+        self._guard_path(self._sidecar)
+        return self._guard_path(self._history_dir)
+
+    def _guard_oplog_root(self) -> Path:
+        self._guard_path(self._sidecar)
+        return self._guard_path(self._oplog_dir)
+
+    def _guard_pending_root(self) -> Path:
+        self._guard_oplog_root()
+        return self._guard_path(self._pending_dir)
+
+    def _guard_operations_path(self) -> Path:
+        self._guard_oplog_root()
+        return self._guard_path(self._operations_path)
+
+    def _guard_history_target(self, path: Path) -> Path:
+        history_dir = self._guard_history_root()
+        target = self._guard_path(path)
+        if target.parent != history_dir:
+            raise OperationLogError("history target escapes the history directory")
+        return target
+
+    def _guard_pending_target(self, path: Path) -> Path:
+        pending_dir = self._guard_pending_root()
+        target = self._guard_path(path)
+        if target.parent != pending_dir:
+            raise OperationLogError("pending target escapes the pending directory")
+        return target
+
     def next_timestamp(self, now: datetime | None = None) -> str:
         candidate = (now or datetime.now(tz=UTC)).astimezone(UTC)
         self._ensure_tail_state()
@@ -213,9 +326,12 @@ class OperationJournal:
         content_hash = sha256_bytes(data)
         if not self.history_enabled:
             return content_hash
-        self._history_dir.mkdir(parents=True, exist_ok=True)
-        path = self._history_dir / content_hash
+        history_dir = self._guard_history_root()
+        history_dir.mkdir(parents=True, exist_ok=True)
+        history_dir = self._guard_history_root()
+        path = self._guard_history_target(history_dir / content_hash)
         if path.exists():
+            path = self._guard_history_target(path)
             existing = path.read_bytes()
             if sha256_bytes(existing) != content_hash or existing != data:
                 raise OperationLogError(f"history blob is corrupt: {content_hash}")
@@ -228,9 +344,10 @@ class OperationJournal:
             raise ValueError("to_hash must be a lowercase SHA-256")
         if not self.history_enabled:
             raise HistoryUnavailableError("history content is redacted by vault policy")
-        path = self._history_dir / content_hash
+        path = self._guard_history_target(self._history_dir / content_hash)
         if not path.is_file():
             raise HistoryUnavailableError(f"history version not found: {content_hash}")
+        path = self._guard_history_target(path)
         data = path.read_bytes()
         if sha256_bytes(data) != content_hash:
             raise OperationLogError(f"history blob hash mismatch: {content_hash}")
@@ -238,47 +355,96 @@ class OperationJournal:
 
     def write_pending(self, record: OperationRecord) -> None:
         record.validate()
-        self._pending_dir.mkdir(parents=True, exist_ok=True)
-        _atomic_write(self.pending_path(record.operation_id), _record_line(record))
+        payload = _record_line(record)
+        if len(payload) > _MAX_PENDING_RECORD_BYTES:
+            raise OperationLogError(
+                f"pending operation manifest exceeds {_MAX_PENDING_RECORD_BYTES} bytes"
+            )
+        pending_dir = self._guard_pending_root()
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        self._guard_pending_root()
+        target = self._guard_pending_target(self.pending_path(record.operation_id))
+        _atomic_write(target, payload)
 
     def read_pending(self, path: Path) -> OperationRecord:
+        record, _snapshot = self.read_pending_snapshot(path)
+        return record
+
+    def read_pending_snapshot(self, path: Path) -> tuple[OperationRecord, bytes]:
+        """Read one bounded receipt and bind its bytes to its operation filename."""
+        safe_path = self._guard_pending_target(path)
         try:
-            payload = json.loads(path.read_text(encoding="ascii"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise OperationLogError(f"invalid pending operation manifest: {path}") from exc
-        return OperationRecord.from_dict(payload)
+            with safe_path.open("rb") as handle:
+                snapshot = handle.read(_MAX_PENDING_RECORD_BYTES + 1)
+            if len(snapshot) > _MAX_PENDING_RECORD_BYTES:
+                raise OperationLogError(
+                    f"pending operation manifest exceeds {_MAX_PENDING_RECORD_BYTES} bytes"
+                )
+            payload = _strict_json_loads(snapshot.decode("ascii", errors="strict"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, _StrictJsonError) as exc:
+            raise OperationLogError(f"invalid pending operation manifest: {safe_path}") from exc
+        record = OperationRecord.from_dict(payload)
+        expected_name = f"{record.operation_id}.json"
+        if safe_path.name != expected_name:
+            raise OperationLogError(
+                "pending operation filename does not match operation_id: "
+                f"expected {expected_name!r}, actual {safe_path.name!r}"
+            )
+        return record, snapshot
 
     def pending_paths(self) -> list[Path]:
-        if not self._pending_dir.is_dir():
+        pending_dir = self._guard_pending_root()
+        if not pending_dir.is_dir():
             return []
-        return sorted(self._pending_dir.glob("*.json"))
+        paths: list[Path] = []
+        for candidate in sorted(pending_dir.iterdir()):
+            path = self._guard_pending_target(candidate)
+            if _PENDING_TEMP_PATTERN.fullmatch(path.name) and path.is_file():
+                continue
+            if path.suffix != ".json" or not path.is_file():
+                raise OperationLogError(
+                    f"unexpected entry in pending operation directory: {path.name!r}"
+                )
+            paths.append(path)
+        return paths
 
     def pending_path(self, operation_id: str) -> Path:
-        return self._pending_dir / f"{operation_id}.json"
+        return self._guard_pending_target(self._pending_dir / f"{operation_id}.json")
 
     def append_record(self, record: OperationRecord) -> bool:
         record.validate()
         self._load_tail_state()
-        if self._tail_record is not None and self._tail_record.operation_id == record.operation_id:
+        operations_path = self._guard_operations_path()
+        try:
+            existing_bytes = operations_path.read_bytes() if operations_path.is_file() else b""
+        except OSError as exc:
+            raise OperationLogError("failed to read the operation log before append") from exc
+        existing_records = _parse_records(existing_bytes, verify_chain=True)
+        current_tail = existing_records[-1] if existing_records else None
+        if current_tail is not None and current_tail.operation_id == record.operation_id:
+            self._tail_record = current_tail
+            self._tail_hash = sha256_bytes(_record_line(current_tail))
+            self._tail_loaded = True
             return False
+        current_tail_hash = (
+            sha256_bytes(_record_line(current_tail)) if current_tail is not None else None
+        )
         chained = replace(
             record,
-            prev_hash=self._tail_hash,
+            prev_hash=current_tail_hash,
             format_version=_FORMAT_VERSION,
         )
         chained.validate()
         line = _record_line(chained)
-        self._oplog_dir.mkdir(parents=True, exist_ok=True)
-        created = not self._operations_path.exists()
+        oplog_dir = self._guard_oplog_root()
+        oplog_dir.mkdir(parents=True, exist_ok=True)
+        self._guard_oplog_root()
+        operations_path = self._guard_operations_path()
         try:
-            with self._operations_path.open("ab") as stream:
-                stream.write(line)
-                stream.flush()
-                os.fsync(stream.fileno())
+            _atomic_write(operations_path, existing_bytes + line)
         except OSError as exc:
+            self._tail_loaded = False
             raise OperationLogError("failed to append the operation log") from exc
-        if created:
-            _durable_flush_directory(self._oplog_dir)
         self._tail_record = chained
         self._tail_hash = sha256_bytes(line)
         self._tail_loaded = True
@@ -288,21 +454,26 @@ class OperationJournal:
         path = self.pending_path(operation_id)
         if not path.exists():
             return
+        path = self._guard_pending_target(path)
         path.unlink()
-        _durable_flush_directory(self._pending_dir)
+        _durable_flush_directory(self._guard_pending_root())
 
     def read_records(self) -> list[OperationRecord]:
-        if not self._operations_path.is_file():
+        operations_path = self._guard_operations_path()
+        if not operations_path.is_file():
             return []
         self._ensure_tail_state()
-        return _parse_records(self._operations_path.read_bytes(), verify_chain=True)
+        operations_path = self._guard_operations_path()
+        return _parse_records(operations_path.read_bytes(), verify_chain=True)
 
     def latest_record_for_path(self, rel_path: str) -> OperationRecord | None:
         """Return the latest committed record for one exact vault-relative path."""
-        if not self._operations_path.is_file():
+        operations_path = self._guard_operations_path()
+        if not operations_path.is_file():
             return None
         self._ensure_tail_state()
-        records = _parse_records(self._operations_path.read_bytes(), verify_chain=True)
+        operations_path = self._guard_operations_path()
+        records = _parse_records(operations_path.read_bytes(), verify_chain=True)
         path_identity = _relative_path_identity(rel_path)
         return next(
             (
@@ -323,7 +494,7 @@ class OperationJournal:
             self._load_tail_state()
 
     def _load_tail_state(self) -> None:
-        tail = _read_tail_records(self._operations_path)
+        tail = _read_tail_records(self._guard_operations_path())
         if not tail:
             self._tail_record = None
             self._tail_hash = None
@@ -343,7 +514,8 @@ class OperationJournal:
         self._tail_loaded = True
 
     def _migrate_legacy_log(self) -> None:
-        data = self._operations_path.read_bytes()
+        operations_path = self._guard_operations_path()
+        data = operations_path.read_bytes()
         legacy_records = _parse_records(data, verify_chain=False)
         if any(record.format_version != 1 for record in legacy_records):
             raise OperationLogError("operation log contains mixed legacy and chained records")
@@ -358,7 +530,8 @@ class OperationJournal:
             chained_records.append(chained)
             previous_hash = sha256_bytes(_record_line(chained))
         migrated = b"".join(_record_line(record) for record in chained_records)
-        _atomic_write(self._operations_path, migrated)
+        operations_path = self._guard_operations_path()
+        _atomic_write(operations_path, migrated)
         _LOGGER.warning(
             "Migrated %d legacy operation records to chained format version %d",
             len(chained_records),
@@ -381,7 +554,8 @@ class OperationJournal:
             and purge_at - self._last_purge_at < self._purge_min_interval
         ):
             return []
-        if not self._history_dir.is_dir():
+        history_dir = self._guard_history_root()
+        if not history_dir.is_dir():
             return []
         retained = set(preserve_hashes or ())
         if self.history_enabled:
@@ -394,15 +568,17 @@ class OperationJournal:
                     retained.add(record.before_hash)
                 retained.add(record.after_hash)
         removed: list[str] = []
-        for path in sorted(self._history_dir.iterdir()):
+        for candidate in sorted(history_dir.iterdir()):
+            path = self._guard_history_target(candidate)
             if not path.is_file() or not _HASH_PATTERN.fullmatch(path.name):
                 continue
             if path.name in retained:
                 continue
+            path = self._guard_history_target(path)
             path.unlink()
             removed.append(path.name)
         if removed:
-            _durable_flush_directory(self._history_dir)
+            _durable_flush_directory(self._guard_history_root())
         self._last_purge_at = purge_at
         return removed
 
@@ -411,9 +587,33 @@ def _relative_path_identity(rel_path: str) -> str:
     return os.path.normcase(rel_path)
 
 
+def _require_exact_record_keys(payload: dict[object, object]) -> None:
+    non_string_keys = [key for key in payload if not isinstance(key, str)]
+    if non_string_keys:
+        raise OperationLogError(
+            "operation record fields differ from schema; "
+            f"missing=[], unexpected={sorted(repr(key) for key in non_string_keys)}"
+        )
+    actual: frozenset[str] = frozenset(key for key in payload if isinstance(key, str))
+    is_v2 = "format_version" in actual or "prev_hash" in actual
+    expected = _RECORD_KEYS_V2 if is_v2 else _RECORD_KEYS_V1
+    if actual != expected:
+        missing = sorted(str(key) for key in expected - actual)
+        unexpected = sorted(str(key) for key in actual - expected)
+        raise OperationLogError(
+            "operation record fields differ from schema; "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    if is_v2 and payload.get("format_version") != _FORMAT_VERSION:
+        raise OperationLogError(
+            f"operation record schema requires format_version {_FORMAT_VERSION}"
+        )
+
+
 def _record_line(record: OperationRecord) -> bytes:
     rendered = json.dumps(
         record.to_dict(),
+        allow_nan=False,
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
@@ -433,8 +633,8 @@ def _parse_records(data: bytes, *, verify_chain: bool) -> list[OperationRecord]:
         if not line:
             continue
         try:
-            payload = json.loads(line)
-        except json.JSONDecodeError as exc:
+            payload = _strict_json_loads(line)
+        except (json.JSONDecodeError, _StrictJsonError) as exc:
             raise OperationLogError(f"invalid JSONL at line {line_number}") from exc
         record = OperationRecord.from_dict(payload)
         if record.operation_id in seen:
@@ -478,11 +678,32 @@ def _read_tail_records(path: Path) -> list[tuple[OperationRecord, bytes]]:
     records: list[tuple[OperationRecord, bytes]] = []
     for line in lines:
         try:
-            payload = json.loads(line.decode("ascii", errors="strict"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            payload = _strict_json_loads(line.decode("ascii", errors="strict"))
+        except (UnicodeDecodeError, json.JSONDecodeError, _StrictJsonError) as exc:
             raise OperationLogError("invalid operation log tail record") from exc
         records.append((OperationRecord.from_dict(payload), line + b"\n"))
     return records
+
+
+def _strict_json_loads(text: str) -> object:
+    return json.loads(
+        text,
+        object_pairs_hook=_unique_json_object,
+        parse_constant=_reject_json_constant,
+    )
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _StrictJsonError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> NoReturn:
+    raise _StrictJsonError(f"non-finite JSON number is forbidden: {value}")
 
 
 def _atomic_write(path: Path, data: bytes) -> None:

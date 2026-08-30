@@ -20,12 +20,19 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from mcp import MCPError
 from mcp.client import Client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import Implementation, TextResourceContents
+
+from datacron.core.config import Settings
+from datacron.core.paths import sidecar_index_db
+from datacron.core.scope import OrganizationBatchWriter
+from datacron.mcp.server import build_app
+from datacron.mcp.tools.organization import _apply_organization_manifest_impl
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -61,6 +68,69 @@ def _server_params(vault: Path, log_dir: Path) -> StdioServerParameters:
         args=["-c", "from datacron.cli import mcp_entry; mcp_entry()"],
         env=env,
     )
+
+
+def _write_organization_bundle(
+    vault: Path,
+    bundle_root: Path,
+) -> tuple[Path, str, Path, Path, bytes]:
+    """Create one content-addressed move bundle outside the served vault."""
+    config_path = vault / ".datacron" / "VAULT.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        "history_mode: full\n"
+        "organization:\n"
+        "  scope: orgscope\n"
+        "  rules:\n"
+        "    - tag: memory/fact\n"
+        "      folder: orgscope/facts\n"
+        "      naming: '{slug}'\n"
+        "      max_kb: 120\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    source = vault / "orgscope" / "inbox" / "organization-item.md"
+    source.parent.mkdir(parents=True)
+    payload = (
+        b"---\n"
+        b"id: 01J00000000000000000000099\n"
+        b"title: Organization item\n"
+        b"aliases: []\n"
+        b"tags:\n"
+        b"  - memory/fact\n"
+        b"---\n"
+        b"# Organization item\n\n"
+        b"content-free-journal-canary\n"
+    )
+    source.write_bytes(payload)
+    target = vault / "orgscope" / "facts" / "organization-item.md"
+    payload_sha256 = hashlib.sha256(payload).hexdigest()
+    payload_root = bundle_root / "payloads"
+    payload_root.mkdir(parents=True)
+    (payload_root / f"{payload_sha256}.md").write_bytes(payload)
+    manifest = {
+        "schema": "organization-apply-v1",
+        "operations": [
+            {
+                "kind": "move_replace_exact",
+                "source": source.relative_to(vault).as_posix(),
+                "target": target.relative_to(vault).as_posix(),
+                "expected_sha256": payload_sha256,
+                "expected": {"id": "01J00000000000000000000099", "aliases": []},
+                "payload_sha256": payload_sha256,
+                "result": {"id": "01J00000000000000000000099", "aliases": []},
+            }
+        ],
+        "config": None,
+    }
+    manifest_path = bundle_root / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+        newline="\n",
+    )
+    manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    return manifest_path, manifest_sha256, source, target, payload
 
 
 async def _open_session(vault: Path, tmp_path: Path) -> tuple[Client, None]:
@@ -136,7 +206,7 @@ class TestMcpE2E:
             client_info=Implementation(name="bl0002-read-test", version="2.0"),
         ) as client:
             tools = await client.list_tools()
-            assert len(tools.tools) == 17
+            assert len(tools.tools) == 18
             get_note_tool = next(tool for tool in tools.tools if tool.name == "get_note")
             assert get_note_tool.output_schema is not None
             encoded_schema = json.dumps(
@@ -197,7 +267,7 @@ class TestMcpE2E:
         try:
             response = await session.list_tools()
             tool_names = {t.name for t in response.tools}
-            assert len(response.tools) == 17
+            assert len(response.tools) == 18
             assert {
                 "list_notes",
                 "get_note",
@@ -208,7 +278,17 @@ class TestMcpE2E:
                 "get_note_history",
                 "audit_query",
                 "contradiction_scan",
+                "apply_organization_manifest",
             } <= tool_names
+            organization = next(
+                tool for tool in response.tools if tool.name == "apply_organization_manifest"
+            )
+            assert organization.input_schema["properties"]["mode"]["enum"] == [
+                "validate",
+                "apply",
+            ]
+            assert organization.output_schema is not None
+            assert "confirmation_token" in organization.output_schema["properties"]
             get_note = next(tool for tool in response.tools if tool.name == "get_note")
             assert get_note.output_schema is not None
             encoded_schema = json.dumps(
@@ -220,6 +300,195 @@ class TestMcpE2E:
             assert hashlib.sha256(encoded_schema).hexdigest() == _GET_NOTE_OUTPUT_SCHEMA_SHA256
         finally:
             await _close_session(session, streams)
+
+    async def test_organization_manifest_validate_apply_and_replay_over_stdio(
+        self,
+        vault: Path,
+        tmp_path: Path,
+    ) -> None:
+        bundle = tmp_path / "organization-bundle"
+        manifest_path, manifest_sha256, source, target, payload = _write_organization_bundle(
+            vault, bundle
+        )
+        config_path = vault / ".datacron" / "VAULT.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                "history_mode: full",
+                "history_mode: redacted",
+            ),
+            encoding="utf-8",
+            newline="\n",
+        )
+        redacted_session, redacted_streams = await _open_session(vault, tmp_path)
+        try:
+            redacted = await redacted_session.call_tool(
+                "apply_organization_manifest",
+                {
+                    "manifest_path": str(manifest_path.resolve()),
+                    "expected_manifest_sha256": manifest_sha256,
+                    "mode": "validate",
+                },
+            )
+            assert redacted.is_error
+            error_payload = json.loads(redacted.content[0].text)  # type: ignore[union-attr]
+            assert error_payload["error"]["code"] == "organization_full_history_required"
+        finally:
+            await _close_session(redacted_session, redacted_streams)
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                "history_mode: redacted",
+                "history_mode: full",
+            ),
+            encoding="utf-8",
+            newline="\n",
+        )
+        session, streams = await _open_session(vault, tmp_path)
+        try:
+            validated = await session.call_tool(
+                "apply_organization_manifest",
+                {
+                    "manifest_path": str(manifest_path.resolve()),
+                    "expected_manifest_sha256": manifest_sha256,
+                    "mode": "validate",
+                },
+            )
+            assert not validated.is_error
+            assert validated.structured_content is not None
+            token = validated.structured_content["confirmation_token"]
+            assert isinstance(token, str)
+            assert len(token) == 64
+            assert validated.structured_content["derived_operation_count"] == 0
+            assert validated.structured_content["identity_sidecar_replaced"] is False
+            assert validated.structured_content["identity_sidecar_case_canonicalization_count"] == 0
+            case_digest = validated.structured_content[
+                "identity_sidecar_case_canonicalization_sha256"
+            ]
+            assert isinstance(case_digest, str)
+            assert len(case_digest) == 64
+            assert source.read_bytes() == payload
+            assert not target.exists()
+
+            applied = await session.call_tool(
+                "apply_organization_manifest",
+                {
+                    "manifest_path": str(manifest_path.resolve()),
+                    "expected_manifest_sha256": manifest_sha256,
+                    "mode": "apply",
+                    "confirmation_token": token,
+                },
+            )
+            assert not applied.is_error
+            assert applied.structured_content is not None
+            assert applied.structured_content["already_committed"] is False
+            assert applied.structured_content["indexed"] is True
+            assert applied.structured_content["status"] == "applied"
+            assert applied.structured_content["committed_error_code"] is None
+            assert (
+                applied.structured_content["identity_sidecar_case_canonicalization_sha256"]
+                == case_digest
+            )
+            assert (
+                applied.structured_content["projected_report_sha256"]
+                == (applied.structured_content["final_report_sha256"])
+            )
+            applied_receipt = dict(applied.structured_content)
+            assert not source.exists()
+            assert target.read_bytes() == payload
+
+            replayed = await session.call_tool(
+                "apply_organization_manifest",
+                {
+                    "manifest_path": str(manifest_path.resolve()),
+                    "expected_manifest_sha256": manifest_sha256,
+                    "mode": "apply",
+                    "confirmation_token": token,
+                },
+            )
+            assert not replayed.is_error
+            assert replayed.structured_content is not None
+            assert replayed.structured_content["already_committed"] is True
+            replayed_receipt = dict(replayed.structured_content)
+            applied_receipt.pop("already_committed")
+            replayed_receipt.pop("already_committed")
+            assert replayed_receipt == applied_receipt
+        finally:
+            await _close_session(session, streams)
+
+        operation_log = (vault / ".datacron" / "oplog" / "operations.jsonl").read_text(
+            encoding="ascii"
+        )
+        assert "content-free-journal-canary" not in operation_log
+
+    async def test_organization_retry_cleans_committed_pending_in_same_process(
+        self,
+        vault: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        bundle_root = tmp_path / "organization-crash-bundle"
+        manifest_path, manifest_sha256, _source, target, _payload = _write_organization_bundle(
+            vault, bundle_root
+        )
+        settings = Settings(read_paths=[vault], write_paths=[vault], vault_root=vault)
+        app = build_app(settings=settings, vault_root=vault)
+        await app.store.open(sidecar_index_db(vault))
+        try:
+            validated = await _apply_organization_manifest_impl(
+                app,
+                manifest_path=str(manifest_path.resolve()),
+                expected_manifest_sha256=manifest_sha256,
+                mode="validate",
+            )
+            token = validated["confirmation_token"]
+            assert isinstance(token, str)
+
+            scoped_writer = cast("OrganizationBatchWriter", app.vault_writer)
+            original_apply = scoped_writer.apply_organization_manifest
+
+            async def apply_with_commit_marker_crash(*args: Any, **kwargs: Any) -> Any:
+                def crash_after_commit_marker(point: str) -> None:
+                    if point == "after_commit_marker":
+                        raise RuntimeError("synthetic crash after commit marker")
+
+                kwargs["fault_injector"] = crash_after_commit_marker
+                return await original_apply(*args, **kwargs)
+
+            monkeypatch.setattr(
+                scoped_writer,
+                "apply_organization_manifest",
+                apply_with_commit_marker_crash,
+            )
+            failed = await _apply_organization_manifest_impl(
+                app,
+                manifest_path=str(manifest_path.resolve()),
+                expected_manifest_sha256=manifest_sha256,
+                mode="apply",
+                confirmation_token=token,
+            )
+            assert failed["error"]["code"] == "internal_error"
+            batches = vault / ".datacron" / "oplog" / "batches"
+            assert target.is_file()
+            assert list((batches / "pending").glob("*.json"))
+
+            monkeypatch.setattr(
+                scoped_writer,
+                "apply_organization_manifest",
+                original_apply,
+            )
+            retried = await _apply_organization_manifest_impl(
+                app,
+                manifest_path=str(manifest_path.resolve()),
+                expected_manifest_sha256=manifest_sha256,
+                mode="apply",
+                confirmation_token=token,
+            )
+
+            assert retried["status"] == "applied"
+            assert retried["already_committed"] is True
+            assert not list((batches / "pending").glob("*.json"))
+            assert not list((batches / "stage").glob("*"))
+        finally:
+            await app.store.close()
 
     async def test_lists_expected_resources(self, vault: Path, tmp_path: Path) -> None:
         session, streams = await _open_session(vault, tmp_path)

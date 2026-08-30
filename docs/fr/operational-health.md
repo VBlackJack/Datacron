@@ -1,6 +1,6 @@
 ---
 title: Santé opérationnelle, mode lecture seule certifié et politique de durabilité
-verified: 2026-08-28
+verified: 2026-08-30
 tested_on: "Datacron 2026.0828.01 / MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
@@ -45,6 +45,24 @@ La réponse contient :
 Le scan est intentionnellement non mis en cache et en O(chemins Markdown + total des octets
 Markdown lisibles + lignes d'index). Ne l'interroge pas comme un endpoint de métriques à haute
 fréquence.
+
+### Batchs d'organisation bloqués
+
+Avant `apply_organization_manifest`, arrête tous les clients et serveurs Datacron et réalise une
+sauvegarde exacte aux octets, vérifiée et hors du vault, des notes affectées et du répertoire
+`.datacron` complet. Conserve-la jusqu'à ce que la réponse d'application, le reconcile de l'index,
+l'oracle planner et les contrôles de santé soient tous verts.
+
+`datacron ops inspect --vault CHEMIN` rapporte les blocages ordinaires et ceux des batchs
+d'organisation. Une raison commençant par `pending_batch_` relève d'une transaction entière : les
+deux actions sont indiquées indisponibles, car `ops repair`, limité à une note, ne peut pas résoudre
+un membre en sécurité tant que le reste du batch demeure en attente. Arrête tous les writers et ne
+supprime ni ne modifie le reçu pending, le stage, l'operation log ou l'historique adressé par
+contenu. Préserve une copie forensique, puis restaure la sauvegarde pré-application complète et
+vérifiée comme un seul rollback de maintenance hors ligne. Sans cette sauvegarde, arrête-toi et
+préserve les preuves pour une récupération manuelle ; ne force ni ne mets en quarantaine un seul
+membre. Redémarre Datacron, relance `datacron ops inspect`, puis réconcilie ou réindexe et vérifie
+`get_health` avant de reprendre les écritures.
 
 ### Définition de l'obsolescence d'index
 
@@ -98,10 +116,13 @@ réglages, redémarre le serveur et réconcilie l'index avant d'attendre l'accor
 défaut situé dans un dossier exclu n'est pas signalé, et `get_note` refuse un tel chemin avec
 `note_not_admitted`.
 
-L'exclusion est une politique de lecture/admission, pas une ACL d'écriture. Les outils d'écriture
-autorisent leurs chemins séparément via `DATACRON_WRITE_PATHS` ; un chemin exclu qui est aussi
-autorisé en écriture reste donc atteignable par un appel direct à un mutateur. Garde les chemins
-d'écriture disjoints du contenu exclu si l'exclusion doit aussi signifier non inscriptible.
+L'exclusion est une politique de lecture/admission, pas une ACL d'écriture. Les outils
+ordinaires limités à une note autorisent leurs chemins séparément via `DATACRON_WRITE_PATHS` ; un
+chemin exclu qui est aussi autorisé en écriture reste donc atteignable par un appel direct à un
+mutateur ordinaire. `apply_organization_manifest` est plus strict : chaque source et cible note doit
+aussi passer la politique live d'admission et rester dans le `organization.scope` live inchangé.
+Garde les chemins d'écriture disjoints du contenu exclu si l'exclusion doit aussi signifier non
+inscriptible pour les mutateurs ordinaires.
 
 `vault_checksum` est l'exception délibérée. Il reste exhaustif et porte son propre `notes_count`,
 donc les deux nombres diffèrent quand au moins une note Markdown lisible est réellement exclue.
@@ -229,7 +250,8 @@ DATACRON_READ_ONLY=true
 
 Le registre MCP vivant omet alors `create_note_ai`, `append_journal`, `set_frontmatter`,
 `patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section` et
-`revert_note`. Les appels directs échouent aussi avec `ReadOnlyModeError`.
+`revert_note`, ainsi que `apply_organization_manifest`. Les appels directs échouent aussi avec
+`ReadOnlyModeError`.
 
 La garantie inclut le sidecar `.datacron` : la récupération au démarrage est sautée, l'index
 SQLite préconstruit s'ouvre avec `mode=ro`, et la réparation à la lecture de la recherche est

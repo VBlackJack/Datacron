@@ -24,7 +24,7 @@ ULIDs, history, and the operation journal.
 | Vault reading | `list_notes`, `get_note`, resources `datacron://vault/map`, `vault/info`, `policy/active` |
 | Search | SQLite FTS5/BM25, FR↔EN query expansion, temporal re-rank, `ripgrep` via `search_regex` |
 | Local graph | Wikilinks and backlinks via `get_backlinks` |
-| Writing | 8 confined, reversible tools, disabled by default without `DATACRON_WRITE_PATHS` |
+| Writing | 8 confined note tools + 1 organization batch, journaled and disabled by default without `DATACRON_WRITE_PATHS` |
 | MCP transport | Python MCP SDK v2 through `MCPServer`, local stdio only; modern `2026-07-28` protocol and legacy `2025-11-25` compatibility, with no HTTP listener |
 | Index | `datacron index` incremental, `datacron reindex` full, automatic repair on read |
 | Evaluation | `datacron eval` over the real MCP pipeline: recall@k, MRR, nDCG, freshness, latency, and payload tokens |
@@ -218,17 +218,49 @@ Available write tools:
 - `delete_note_section`: explicitly deletes an ATX H2-H6 section and its subtree.
 - `rename_note_section`: renames only the title of an ATX H2-H6 section.
 - `revert_note`: restores the exact bytes of a version kept in history.
+- `apply_organization_manifest`: validates and then applies a local content-addressed bundle
+  after confirmation bound to the exact admitted organization pre-state.
 
 Guarantees:
 
-- strict confinement within `DATACRON_WRITE_PATHS`
+- strict note confinement within `DATACRON_WRITE_PATHS`; organization-batch note sources and
+  targets must also stay inside the unchanged live `organization.scope` and pass the live
+  note-admission policy, including exclusions
+- two internal exact-CAS targets for an organization batch: `.datacron/VAULT.yaml`, only to change
+  the top-level `organization` mapping without changing `organization.scope`, and
+  `.datacron/ulids.json`, only when Datacron derives the key migration required by a
+  `move_replace_exact`
 - atomic overwrite via temporary file + `os.replace`
 - content-addressed history before modifying an existing note
-- `reconcile()` after write to make the note immediately searchable
+- synchronous `reconcile()` after a normal write; immediate searchability is guaranteed only when
+  reconciliation succeeds
 - local audit log
+- for an organization manifest: crash-consistent recovery and atomic replacement of each file;
+  simultaneous visibility across several paths is not guaranteed
 
 Concurrent multi-machine mode is not supported for writes: keep a single-writer rule on the
 vault.
+
+For `apply_organization_manifest`, also stop every other Datacron client and server during the
+maintenance window. Before applying, keep a verified byte-exact backup outside the vault of the
+affected notes and the complete `.datacron` directory until every post-commit check is green. Call
+`mode="validate"` first, review the bounded hashes it returns, then reuse
+the exact `confirmation_token` with `mode="apply"`. The token binds the manifest and payloads, all
+admitted Markdown notes inside `organization.scope`, the exact vault configuration and identity
+sidecars, and the projected report. It deliberately does not bind unrelated note bytes outside
+`organization.scope`. A change to any authenticated component invalidates the confirmation before
+mutation. `history_mode=full` is required at validation time. If Datacron derives identity-sidecar
+case-collision cleanup, also review `identity_sidecar_case_canonicalization_count` and its
+content-free SHA-256 before applying; both proofs are token-bound and retained in the durable
+receipt.
+An existing `replace_exact` or `move_replace_exact` source must carry its `id` in frontmatter; an
+identity available only from the sidecar is unsupported by this v1 schema. If the batch is already
+durably committed but index reconciliation or the planner oracle fails, the response says so
+explicitly (`committed_index_incomplete` or `committed_report_mismatch`) and the same call can be
+retried with the same token.
+An organization-batch blocker is reported by `datacron ops inspect` with a `pending_batch_` reason
+and both single-note repair actions unavailable; use the full offline rollback procedure in the
+operational-health guide rather than repairing or quarantining one member.
 
 ## MCP Tools
 
@@ -254,6 +286,7 @@ vault.
 | `delete_note_section` | explicitly deletes an ATX H2-H6 section and its subtree, with optional CAS and exact history |
 | `rename_note_section` | renames an ATX H2-H6 section title without modifying its content or subtree |
 | `revert_note` | restores a note from its content-addressed history; the operation stays durable, reversible, and audited |
+| `apply_organization_manifest` | validates a local content-addressed bundle containing at least one exact note operation and/or an exact `organization` configuration replacement, then applies its declared members and any required derived ULID-sidecar migration under CAS; application is journaled and crash-consistent |
 
 ### Operational
 

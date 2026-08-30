@@ -25,6 +25,13 @@ MemoryConfidence: TypeAlias = Literal["high", "medium", "low", "needs_verificati
 ContradictionScanMode: TypeAlias = Literal["scan", "confirm"]
 ContradictionScanDetail: TypeAlias = Literal["summary", "full"]
 HealthDetail: TypeAlias = Literal["summary", "full"]
+OrganizationManifestMode: TypeAlias = Literal["validate", "apply"]
+OrganizationManifestStatus: TypeAlias = Literal[
+    "validated",
+    "applied",
+    "committed_index_incomplete",
+    "committed_report_mismatch",
+]
 ContradictionClassName: TypeAlias = Literal[
     "CONTRADICTION",
     "RAFFINEMENT",
@@ -508,3 +515,30 @@ class RevertNoteOutput(TypedDict):
     reverted: RevertedNoteOutput
     content_hash: str
     indexed: bool
+
+
+class ApplyOrganizationManifestOutput(TypedDict):
+    """Content-free validation or application receipt for one organization bundle."""
+
+    schema_version: int
+    mode: OrganizationManifestMode
+    status: OrganizationManifestStatus
+    manifest_sha256: str
+    payload_set_sha256: str
+    scope_digest: str | None
+    config_before_sha256: str | None
+    projected_report_sha256: str
+    final_report_sha256: str | None
+    operation_count: int
+    derived_operation_count: int
+    identity_sidecar_replaced: bool
+    identity_sidecar_case_canonicalization_count: int
+    identity_sidecar_case_canonicalization_sha256: str
+    total_payload_bytes: int
+    confirmation_token: str
+    batch_id: str | None
+    applied_operations: int | None
+    already_committed: bool | None
+    indexed: bool | None
+    committed_error_code: str | None
+    committed_error_message: str | None

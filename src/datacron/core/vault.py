@@ -217,6 +217,11 @@ class JsonIdStore:
             cache[rel_path] = note_id
             await asyncio.to_thread(self._write_sync, dict(cache))
 
+    async def invalidate_cache(self) -> None:
+        """Drop the lazy snapshot after an out-of-band sidecar mutation."""
+        async with self._lock:
+            self._cache = None
+
     async def snapshot(self) -> dict[str, str]:
         async with self._lock:
             cache = await self._ensure_loaded()
@@ -379,6 +384,7 @@ class FilesystemVaultReader:
     async def invalidate_alias_cache(self) -> None:
         async with self._alias_lock:
             self._alias_cache = None
+            await self._id_store.invalidate_cache()
 
     # -------------------------------------------------------------- internals
 

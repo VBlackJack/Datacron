@@ -1,6 +1,6 @@
 ---
 title: Datacron - Architecture and technical specification
-verified: 2026-08-11
+verified: 2026-08-30
 tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
@@ -8,9 +8,9 @@ tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 
 **English** | [Français](../fr/architecture.md)
 
-> **Status**: v2.2 - Living spec synced with `main`
+> **Status**: v2.2 - Living spec for the implementation delivered by this version
 > **Author**: Julien Bombled
-> **Date**: 2026-08-11
+> **Date**: 2026-08-30
 > **Sources**:
 > - Current source code and regression tests
 > - Production validation (2026-07-21): Cowork desktop runs Datacron through local stdio MCP; claude.ai in the browser remains remote-only
@@ -34,9 +34,9 @@ The delivered foundation stays deliberately **minimalist**:
 3. **MCP server layer** - Python MCP SDK v2 `MCPServer`, stdio. Read/search tools, client-approved write tools, 3 resources.
 4. **Client layer** - Nine setup client IDs through user and, where available, project config.
 
-**Delivered on `main` after the Phase 0 foundation**:
+**Delivered by this version after the Phase 0 foundation**:
 - Static FR↔EN query expansion at search time, configured by `VAULT.yaml`.
-- Write tools: `create_note_ai`, `append_journal`, `set_frontmatter`, `patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`, and `revert_note`, disabled by default without `DATACRON_WRITE_PATHS`, confined, atomic, and journaled.
+- Write tools: `create_note_ai`, `append_journal`, `set_frontmatter`, `patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`, `revert_note`, and `apply_organization_manifest`, disabled by default without `DATACRON_WRITE_PATHS`, confined, and journaled. Single-note replacements are atomic; organization batches are crash-consistent and require a maintenance window because multi-path visibility is not instantaneous.
 - Conservative temporal re-ranking: explicit demotion of superseded notes and a light confidence penalty.
 
 **Still out of scope**:
@@ -135,7 +135,7 @@ flowchart TB
 
 ## 5. MCP catalog
 
-### 5.1 Tools
+### 5.1 Tools (18)
 
 | Group | Tool | Description | Implementation |
 |---|---|---|---|
@@ -152,6 +152,7 @@ flowchart TB
 | Write | `delete_note_section` | Explicit deletion of an ATX H2-H6 section and its subtree. | VaultWriter + operation log |
 | Write | `rename_note_section` | Rename an ATX H2-H6 heading while preserving its content. | VaultWriter + operation log |
 | Write | `revert_note` | Durable, reversible restore from content-addressed history. | History store + VaultWriter |
+| Write | `apply_organization_manifest` | Validate, then crash-consistently apply an exact organization bundle; multi-path visibility is not instantaneous. | Manifest validator + batch journal + VaultWriter |
 | Operational | `get_health` | Freshness, integrity, checksum, durability, and invariant evidence. | Read-only health scanner |
 | Operational | `get_note_history` | Committed operation metadata for a note, without reading historical content. | Operation journal |
 | Operational | `audit_query` | Read-only query of the journal by period, tool, or note. | Operation journal |
@@ -338,6 +339,41 @@ Rejected: hand-picked SemVer for an application (no public compatibility contrac
 for a true library, the compatibility signal must derive from Conventional Commits, not a
 manual choice).
 
+### ADR-020 - Exact two-phase organization batches
+`apply_organization_manifest` separates validation from mutation. `mode='validate'` authenticates
+the external `organization-apply-v1` manifest and payload bytes, verifies exact source hashes and
+identities, projects the planner report without writing, and returns a confirmation token. The
+token binds the manifest, payload set, complete admitted-scope digest including the exact identity
+sidecar pre-state, exact configuration pre-hash, and projected report. It does not bind unrelated
+Markdown note bytes outside `organization.scope`. The manifest must declare at least one exact note
+operation and/or one exact `organization` configuration replacement; neither category is required
+when the other is present.
+`mode='apply'` requires that token, reloads the bundle, and repeats the validation under the global
+mutation lock immediately before staging. Every member uses exact before-state or absence checks
+and an exact after hash.
+
+Every Markdown source and target must pass the intersection of the unchanged live
+`organization.scope`, the live note-admission policy, and `DATACRON_WRITE_PATHS`. V1 refuses an
+`organization.scope` change. There are exactly two internal non-note exceptions: an exact CAS
+replacement of `.datacron/VAULT.yaml` that may change only the top-level `organization` key, and
+an exact `.datacron/ulids.json` replacement derived internally from the affected source mapping
+key of a validated move or a mechanically proven obsolete case collision. Its count and
+content-free digest are token-bound; exact records remain in pending and committed receipts so
+recovery and index cleanup do not depend on history retention. This member is not an arbitrary
+manifest payload. A `replace_exact` or
+`move_replace_exact` source must carry its declared ID in Markdown frontmatter; a sidecar-only
+source identity is unsupported in v1.
+
+Payloads are staged durably before a pending receipt is published. Recovery revalidates the
+receipt, staged bytes, exact baselines, live scope, admission policy, write roots, and unchanged
+non-member scope notes before rolling forward; divergence blocks recovery. Each file replacement
+is atomic, but the batch exposes no simultaneous multi-path snapshot. Stop all other Datacron
+clients and servers and keep a maintenance window through final index reconciliation. After the
+bytes are durably committed, `committed_index_incomplete` means index reconciliation did not
+complete; `committed_report_mismatch` means reconciliation completed but the final planner report
+could not be verified against the projection. Both statuses require retrying apply with the same
+confirmation token.
+
 ---
 
 ## 7. Project layout
@@ -507,5 +543,5 @@ and releases; this section publishes no unmeasured remote status or counter.
 
 ---
 
-*v2.2 document synced on 2026-08-11 with `main`. The research reports and v2.1 decisions remain
-arbitration archives.*
+*v2.2 document verified on 2026-08-30 against the implementation delivered by this version. The
+research reports and v2.1 decisions remain arbitration archives.*

@@ -21,9 +21,11 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 
+from datacron.core.scope import SingleTenantVaultScope
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
 from datacron.mcp.tool_contract import (
     AppendJournalOutput,
+    ApplyOrganizationManifestOutput,
     ContradictionScanDetail,
     ContradictionScanMode,
     ContradictionScanOutput,
@@ -36,6 +38,7 @@ from datacron.mcp.tool_contract import (
     ListNotesOutput,
     MemoryConfidence,
     MemoryOrigin,
+    OrganizationManifestMode,
     PatchNotePreambleOutput,
     PatchNoteSectionOutput,
     RenameNoteSectionOutput,
@@ -45,6 +48,7 @@ from datacron.mcp.tool_contract import (
 )
 from datacron.mcp.tools.advisory import _contradiction_scan_impl
 from datacron.mcp.tools.ops import _audit_query_impl, _get_health_impl, _get_note_history_impl
+from datacron.mcp.tools.organization import _apply_organization_manifest_impl
 from datacron.mcp.tools.read import _get_note_impl, _list_notes_impl
 from datacron.mcp.tools.search import _get_backlinks_impl, _search_regex_impl, _search_text_impl
 from datacron.mcp.tools.write import (
@@ -583,6 +587,42 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         )
 
     @server.tool(
+        name="apply_organization_manifest",
+        title="Validate or apply an organization manifest",
+        description=(
+            "Use this to validate a local organization bundle, or crash-consistently apply "
+            "the exact validated batch. Each file replacement is atomic, but multi-path "
+            "visibility is not instantaneous: stop other Datacron clients and servers first. "
+            "manifest_path must be absolute and "
+            "expected_manifest_sha256 must match its raw bytes. Call mode='validate' "
+            "first and review the content-free projected report hash; then call "
+            "mode='apply' with the returned confirmation_token. Apply revalidates the "
+            "bundle and vault state under the global mutation lock, uses exact CAS for every "
+            "member, including any derived ULID sidecar key migration, reconciles the index "
+            "once, and never returns note payloads."
+        ),
+        annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
+    )
+    async def apply_organization_manifest(
+        manifest_path: str,
+        expected_manifest_sha256: str,
+        mode: OrganizationManifestMode,
+        ctx: Context[Any, Any],
+        confirmation_token: str | None = None,
+    ) -> ApplyOrganizationManifestOutput:
+        return cast(
+            "ApplyOrganizationManifestOutput",
+            await _apply_organization_manifest_impl(
+                app,
+                manifest_path=manifest_path,
+                expected_manifest_sha256=expected_manifest_sha256,
+                mode=mode,
+                confirmation_token=confirmation_token,
+                actor=app.identity_provider.identify(ctx).actor,
+            ),
+        )
+
+    @server.tool(
         name="get_note_history",
         title="Get note operation history",
         description=(
@@ -622,3 +662,8 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
     if app.settings.read_only:
         for tool_name in MUTATING_TOOL_NAMES:
             server.remove_tool(tool_name)
+    elif (
+        not app.write_policy.effective_writes_enabled
+        or type(app.scope) is not SingleTenantVaultScope
+    ):
+        server.remove_tool("apply_organization_manifest")

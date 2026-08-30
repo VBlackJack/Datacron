@@ -1,6 +1,6 @@
 ---
 title: Datacron - Architecture et spécification technique
-verified: 2026-08-11
+verified: 2026-08-30
 tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
@@ -8,9 +8,9 @@ tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 
 **Français** | [English](../en/architecture.md)
 
-> **Statut** : v2.2 - Spec vivante synchronisée avec `main`
+> **Statut** : v2.2 - Spec vivante de l'implémentation livrée par cette version
 > **Auteur** : Julien Bombled
-> **Date** : 2026-08-11
+> **Date** : 2026-08-30
 > **Sources** :
 > - Code source et tests de régression actuels
 > - Validation en production (2026-07-21) : Cowork desktop pilote Datacron via MCP stdio local ; claude.ai dans le navigateur reste remote-only
@@ -34,9 +34,9 @@ Le socle livré reste volontairement **minimaliste** :
 3. **Couche serveur MCP** - `MCPServer` du SDK Python MCP v2, stdio. Read/search tools, write tools approuvés côté client, 3 resources.
 4. **Couche client** - Neuf IDs de setup via config user et, si disponible, projet.
 
-**Livré sur `main` après le socle Phase 0** :
+**Livré par cette version après le socle Phase 0** :
 - Query-expansion FR↔EN statique au moment de la recherche, configurée par `VAULT.yaml`.
-- Write tools : `create_note_ai`, `append_journal`, `set_frontmatter`, `patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section` et `revert_note`, désactivés par défaut sans `DATACRON_WRITE_PATHS`, confinés, atomiques et historisés.
+- Write tools : `create_note_ai`, `append_journal`, `set_frontmatter`, `patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`, `revert_note` et `apply_organization_manifest`, désactivés par défaut sans `DATACRON_WRITE_PATHS`, confinés et historisés. Les remplacements d'une note sont atomiques ; les lots d'organisation sont crash-consistents et exigent une fenêtre de maintenance, car leur visibilité multi-chemins n'est pas instantanée.
 - Temporal re-ranking conservateur : démotion explicite des notes supersédées et pénalité légère de confidence.
 
 **Toujours hors scope** :
@@ -135,7 +135,7 @@ flowchart TB
 
 ## 5. Catalogue MCP
 
-### 5.1 Tools
+### 5.1 Tools (18)
 
 | Groupe | Tool | Description | Implémentation |
 |---|---|---|---|
@@ -152,6 +152,7 @@ flowchart TB
 | Écriture | `delete_note_section` | Suppression explicite d'une section ATX H2-H6 et de son sous-arbre. | VaultWriter + operation log |
 | Écriture | `rename_note_section` | Renommage d'un titre ATX H2-H6 en préservant le contenu. | VaultWriter + operation log |
 | Écriture | `revert_note` | Restauration durable et réversible depuis l'historique adressé par contenu. | History store + VaultWriter |
+| Écriture | `apply_organization_manifest` | Valide, puis applique de façon crash-consistent un lot d'organisation exact ; la visibilité multi-chemins n'est pas instantanée. | Manifest validator + batch journal + VaultWriter |
 | Opérationnel | `get_health` | Fraîcheur, intégrité, checksum, durabilité et preuves d'invariants. | Health scanner read-only |
 | Opérationnel | `get_note_history` | Métadonnées d'opérations validées pour une note, sans lire le contenu historique. | Operation journal |
 | Opérationnel | `audit_query` | Requête read-only du journal par période, tool ou note. | Operation journal |
@@ -347,6 +348,44 @@ préservé.
 à signaler ; pour une vraie librairie, le signal de compatibilité doit dériver des
 Conventional Commits, pas d'un choix manuel).
 
+### ADR-020 - Lots d'organisation exacts en deux phases
+`apply_organization_manifest` sépare la validation de la mutation. `mode='validate'` authentifie
+les octets du manifeste externe `organization-apply-v1` et de ses payloads, vérifie les hashes et
+identités source exacts, projette le rapport du planner sans écrire et renvoie un token de
+confirmation. Ce token lie le manifeste, le jeu de payloads, le digest complet du scope admis qui
+inclut le pré-état exact des sidecars d'identité, le pré-hash exact de la configuration et le rapport
+projeté. Il ne lie pas les octets des notes Markdown sans rapport situées hors de
+`organization.scope`. Le manifeste doit déclarer au moins une opération exacte sur une note et/ou
+un remplacement exact de la configuration `organization` ; aucune de ces deux catégories n'est
+obligatoire lorsque l'autre est présente. `mode='apply'` exige ce token, recharge le bundle et
+répète la validation sous le verrou global de mutation immédiatement avant le staging. Chaque
+membre utilise un contrôle exact de l'état antérieur ou de l'absence, ainsi qu'un hash exact de
+l'état final.
+
+Chaque source et cible Markdown doit passer l'intersection du `organization.scope` live et
+inchangé, de la politique live d'admission des notes et de `DATACRON_WRITE_PATHS`. La v1 refuse un
+changement de `organization.scope`. Il existe exactement deux exceptions internes hors notes : le
+remplacement CAS exact de `.datacron/VAULT.yaml`, qui ne peut modifier que la clé racine
+`organization`, et le remplacement exact de `.datacron/ulids.json`, dérivé en interne de la clé de
+mapping source concernée par un déplacement validé ou d'une collision de casse obsolète prouvée
+mécaniquement. Son nombre et son digest content-free sont liés au token ; les records exacts sont
+conservés dans les reçus pending et committed pour une recovery et une purge d'index indépendantes
+de la rétention d'historique. Ce membre n'est pas un payload arbitraire du manifeste. Une source de
+`replace_exact` ou `move_replace_exact` doit porter son ID déclaré dans le
+frontmatter Markdown ; une identité source présente uniquement dans le sidecar n'est pas prise en
+charge en v1.
+
+Les payloads sont stagés durablement avant la publication d'un reçu pending. La recovery revalide
+le reçu, les octets stagés, les baselines exactes, le scope live, la politique d'admission, les
+racines d'écriture et les notes hors lot inchangées avant tout roll-forward ; une divergence bloque
+la recovery. Chaque remplacement de fichier est atomique, mais le lot ne fournit aucun snapshot
+multi-chemins simultané. Arrêter tous les autres clients et serveurs Datacron et maintenir une
+fenêtre de maintenance jusqu'à la réconciliation finale de l'index. Après le commit durable des
+octets, `committed_index_incomplete` signifie que la réconciliation de l'index n'a pas abouti ;
+`committed_report_mismatch` signifie qu'elle a abouti mais que le rapport final du planner n'a pas
+pu être vérifié par rapport à la projection. Dans les deux cas, relancer apply avec le même token
+de confirmation.
+
 ---
 
 ## 7. Layout du projet
@@ -517,5 +556,5 @@ remesuré.
 
 ---
 
-*Document v2.2 synchronisé le 2026-08-11 avec `main`. Les
+*Document v2.2 vérifié le 2026-08-30 par rapport à l'implémentation livrée par cette version. Les
 rapports de recherche et décisions v2.1 restent des archives d'arbitrage.*

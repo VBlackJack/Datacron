@@ -24,14 +24,18 @@ CI signal.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Final, final
 
 from datacron.core.config import (
+    OrganizationConfig,
     OrganizationRule,
     Settings,
     VaultConfig,
@@ -47,13 +51,25 @@ __all__ = [
     "Deviation",
     "DeviationKind",
     "OrganizationConfigurationError",
+    "OrganizationNoteSnapshot",
     "OrganizationPlan",
     "SkippedNote",
+    "hash_organization_plan",
+    "organization_plan_mapping",
     "plan_organization",
+    "plan_organization_snapshot",
 ]
 
 _NOTE_SUFFIX: Final[str] = ".md"
 _BYTES_PER_KB: Final[int] = 1024
+_PLAN_SCHEMA_VERSION: Final[str] = "organization-plan-v1"
+
+
+def _filesystem_parts(path: PurePosixPath) -> tuple[str, ...]:
+    """Normalize path case only for case-insensitive filesystem contracts."""
+    if os.name == "nt":
+        return tuple(part.casefold() for part in path.parts)
+    return path.parts
 
 
 class OrganizationConfigurationError(ValueError):
@@ -96,6 +112,18 @@ class SkippedNote:
 
 @final
 @dataclass(frozen=True, slots=True)
+class OrganizationNoteSnapshot:
+    """Content-free planner inputs for one already-admitted note."""
+
+    rel_path: str
+    size_bytes: int
+    tags: tuple[str, ...]
+    calendar_date: str | None
+    skipped_reason: str | None = None
+
+
+@final
+@dataclass(frozen=True, slots=True)
 class OrganizationPlan:
     """The full read-only result of one planning pass."""
 
@@ -118,6 +146,41 @@ class OrganizationPlan:
             kind.value: sum(1 for item in self.deviations if item.kind is kind)
             for kind in DeviationKind
         }
+
+
+def organization_plan_mapping(plan: OrganizationPlan) -> dict[str, object]:
+    """Return the stable public mapping used to bind organization mutations."""
+    return {
+        "schema": _PLAN_SCHEMA_VERSION,
+        "vault_root": plan.vault_root,
+        "scope": plan.scope,
+        "scanned": plan.scanned,
+        "governed": plan.governed,
+        "unmatched": plan.unmatched,
+        "counts": plan.counts_by_kind(),
+        "deviations": [
+            {
+                "rel_path": item.rel_path,
+                "kind": str(item.kind),
+                "tag": item.tag,
+                "detail": item.detail,
+                "expected": item.expected,
+            }
+            for item in plan.deviations
+        ],
+        "skipped": [{"rel_path": item.rel_path, "reason": item.reason} for item in plan.skipped],
+    }
+
+
+def hash_organization_plan(plan: OrganizationPlan) -> str:
+    """Hash the canonical UTF-8 JSON form of an organization plan."""
+    payload = json.dumps(
+        organization_plan_mapping(plan),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 @final
@@ -374,6 +437,120 @@ def _evaluate(
     return found
 
 
+def _plan_snapshots(
+    *,
+    vault_root: Path,
+    scope: str,
+    organization: OrganizationConfig,
+    target_folders: Mapping[str, str],
+    notes: Iterable[OrganizationNoteSnapshot],
+) -> OrganizationPlan:
+    """Evaluate normalized note metadata without materializing note prose."""
+    deviations: list[Deviation] = []
+    skipped: list[SkippedNote] = []
+    scanned = 0
+    governed = 0
+    unmatched = 0
+    for note in sorted(notes, key=lambda item: item.rel_path):
+        relative = PurePosixPath(note.rel_path)
+        scanned += 1
+        if note.skipped_reason is not None:
+            skipped.append(SkippedNote(rel_path=note.rel_path, reason=note.skipped_reason))
+            continue
+        rule = resolve_rule(note.tags, organization)
+        if rule is None:
+            unmatched += 1
+            continue
+        governed += 1
+        parent = relative.parent.as_posix()
+        deviations.extend(
+            _evaluate(
+                rel_path=note.rel_path,
+                stem=relative.stem,
+                folder="" if parent == "." else parent,
+                size_bytes=note.size_bytes,
+                rule=rule,
+                expected_folder=target_folders[rule.tag],
+                calendar_date=note.calendar_date,
+            )
+        )
+    return OrganizationPlan(
+        vault_root=str(vault_root.expanduser().resolve()),
+        scope=scope,
+        scanned=scanned,
+        governed=governed,
+        unmatched=unmatched,
+        deviations=tuple(sorted(deviations, key=lambda item: item.sort_key)),
+        skipped=tuple(sorted(skipped, key=lambda item: item.rel_path)),
+    )
+
+
+def _snapshot_target_folders(config: VaultConfig) -> tuple[str, OrganizationConfig, dict[str, str]]:
+    """Validate rule folders lexically for an in-memory planner projection."""
+    organization = config.organization
+    if organization is None or not organization.rules or organization.scope is None:
+        raise OrganizationConfigurationError("active organization rules require a scope")
+    scope = PurePosixPath(organization.scope)
+    scope_key = _filesystem_parts(scope)
+    targets: dict[str, str] = {}
+    for rule in organization.rules:
+        folder = PurePosixPath(rule.folder)
+        folder_key = _filesystem_parts(folder)
+        if folder_key[: len(scope_key)] != scope_key:
+            raise OrganizationConfigurationError(
+                "organization rule folder resolves outside organization scope "
+                f"{organization.scope!r}: {rule.folder!r}"
+            )
+        targets[rule.tag] = folder.as_posix()
+    return scope.as_posix(), organization, targets
+
+
+def plan_organization_snapshot(
+    vault_root: Path,
+    config: VaultConfig,
+    notes: Iterable[OrganizationNoteSnapshot],
+) -> OrganizationPlan:
+    """Plan from content-free admitted-note metadata without filesystem copies."""
+    organization = config.organization
+    if organization is None or not organization.rules:
+        return OrganizationPlan(
+            vault_root=str(vault_root.expanduser().resolve()),
+            scope=None,
+            scanned=0,
+            governed=0,
+            unmatched=0,
+            deviations=(),
+            skipped=(),
+        )
+    scope, active, targets = _snapshot_target_folders(config)
+    scope_key = _filesystem_parts(PurePosixPath(scope))
+    materialized = tuple(notes)
+    for note in materialized:
+        relative = PurePosixPath(note.rel_path)
+        relative_key = _filesystem_parts(relative)
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or relative.suffix.casefold() != _NOTE_SUFFIX
+            or relative_key[: len(scope_key)] != scope_key
+            or len(relative_key) <= len(scope_key)
+        ):
+            raise OrganizationConfigurationError(
+                f"snapshot note is outside organization scope: {note.rel_path!r}"
+            )
+        if note.size_bytes < 0:
+            raise OrganizationConfigurationError(
+                f"snapshot note has negative size: {note.rel_path!r}"
+            )
+    return _plan_snapshots(
+        vault_root=vault_root,
+        scope=scope,
+        organization=active,
+        target_folders=targets,
+        notes=materialized,
+    )
+
+
 def plan_organization(
     vault_root: Path,
     config: VaultConfig,
@@ -399,53 +576,50 @@ def plan_organization(
         )
 
     context = _prepare_context(vault_root, config, settings or get_settings())
-    deviations: list[Deviation] = []
-    skipped: list[SkippedNote] = []
-    scanned = 0
-    governed = 0
-    unmatched = 0
-
+    snapshots: list[OrganizationNoteSnapshot] = []
     candidates = _discover_note_paths(context)
     for path in _authorize_note_paths(candidates, context):
         relative = path.relative_to(context.vault_root)
         rel_path = relative.as_posix()
-        scanned += 1
         try:
             raw = path.read_text(encoding="utf-8")
             size_bytes = path.stat().st_size
         except (OSError, UnicodeDecodeError) as exc:
-            skipped.append(SkippedNote(rel_path=rel_path, reason=type(exc).__name__))
+            snapshots.append(
+                OrganizationNoteSnapshot(
+                    rel_path=rel_path,
+                    size_bytes=0,
+                    tags=(),
+                    calendar_date=None,
+                    skipped_reason=type(exc).__name__,
+                )
+            )
             continue
         try:
             metadata, body = parse(raw)
         except (FrontmatterError, ValueError) as exc:
-            skipped.append(SkippedNote(rel_path=rel_path, reason=str(exc)))
+            snapshots.append(
+                OrganizationNoteSnapshot(
+                    rel_path=rel_path,
+                    size_bytes=size_bytes,
+                    tags=(),
+                    calendar_date=None,
+                    skipped_reason=str(exc),
+                )
+            )
             continue
-
-        rule = resolve_rule(extract_tags(metadata, body), organization)
-        if rule is None:
-            # Out of scope, not a deviation. Never invent a placement here.
-            unmatched += 1
-            continue
-        governed += 1
-        deviations.extend(
-            _evaluate(
+        snapshots.append(
+            OrganizationNoteSnapshot(
                 rel_path=rel_path,
-                stem=relative.stem,
-                folder="" if relative.parent == Path() else relative.parent.as_posix(),
                 size_bytes=size_bytes,
-                rule=rule,
-                expected_folder=context.target_folders[rule.tag],
+                tags=tuple(extract_tags(metadata, body)),
                 calendar_date=_frontmatter_calendar_date(metadata),
             )
         )
-
-    return OrganizationPlan(
-        vault_root=str(context.vault_root),
+    return _plan_snapshots(
+        vault_root=context.vault_root,
         scope=context.scope_rel_path,
-        scanned=scanned,
-        governed=governed,
-        unmatched=unmatched,
-        deviations=tuple(sorted(deviations, key=lambda item: item.sort_key)),
-        skipped=tuple(sorted(skipped, key=lambda item: item.rel_path)),
+        organization=organization,
+        target_folders=context.target_folders,
+        notes=snapshots,
     )

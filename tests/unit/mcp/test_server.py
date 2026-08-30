@@ -16,9 +16,11 @@
 from __future__ import annotations
 
 import inspect
+import json
 import tomllib
 from importlib.metadata import version
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -28,13 +30,21 @@ from mcp.client import Client
 from mcp.server import MCPServer
 from mcp.types import INVALID_PARAMS
 
+import datacron.mcp.tools.organization as organization_tools
+from datacron.core.batch_transaction import (
+    BatchApplyResult,
+    BatchConflictError,
+    BatchMemberResult,
+)
 from datacron.core.config import Settings
-from datacron.core.durability import DurabilityStatus
+from datacron.core.durability import DurabilityStatus, RecoveryRequiredError
 from datacron.core.hashing import sha256_bytes
 from datacron.core.operation_log import OperationRecord
 from datacron.core.paths import PathConfinementError, sidecar_index_db, sidecar_vault_config
-from datacron.core.vault import JsonIdStore
+from datacron.core.scope import SingleTenantVaultScope
+from datacron.core.vault import FilesystemVaultReader, JsonIdStore
 from datacron.core.vault_writer import FilesystemVaultWriter, VaultLockBusyError
+from datacron.indexing.reconcile import ReconcileStats
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
 from datacron.mcp.server import (
     SERVER_INSTRUCTIONS,
@@ -114,6 +124,13 @@ def test_server_instructions_include_memory_protocol() -> None:
     assert "dominant-EOL" in SERVER_INSTRUCTIONS
     assert "INIT.md" in SERVER_INSTRUCTIONS
     assert "sandbox-wrapped" in SERVER_INSTRUCTIONS
+    assert "apply_organization_manifest" in SERVER_INSTRUCTIONS
+    assert "mode='validate'" in SERVER_INSTRUCTIONS
+    assert "confirmation_token" in SERVER_INSTRUCTIONS
+    assert "committed_index_incomplete" in SERVER_INSTRUCTIONS
+    assert "crash-consistent" in SERVER_INSTRUCTIONS
+    assert "multi-path visibility is not instantaneous" in SERVER_INSTRUCTIONS
+    assert "Stop other Datacron clients and servers first" in SERVER_INSTRUCTIONS
 
 
 @pytest.mark.asyncio
@@ -261,6 +278,7 @@ async def test_rename_note_section_tool_annotations_describe_local_effects(
         "patch_note_section",
         "delete_note_section",
         "rename_note_section",
+        "apply_organization_manifest",
     ):
         assert annotations[name] == {
             "readOnlyHint": False,
@@ -274,6 +292,344 @@ async def test_rename_note_section_tool_annotations_describe_local_effects(
         "idempotentHint": True,
         "openWorldHint": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_organization_manifest_tool_requires_effective_writes(tmp_path: Path) -> None:
+    """Do not advertise the batch workflow when no write root is configured."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    inactive_app = build_app(
+        settings=Settings(read_paths=[vault], vault_root=vault),
+        vault_root=vault,
+    )
+    writable_app = build_app(
+        settings=Settings(read_paths=[vault], write_paths=[vault], vault_root=vault),
+        vault_root=vault,
+    )
+    restricted_settings = Settings(
+        read_paths=[vault],
+        write_paths=[vault],
+        vault_root=vault,
+    )
+    restricted_app = build_app(
+        settings=restricted_settings,
+        vault_root=vault,
+        scope=SingleTenantVaultScope(vault, restricted_settings),
+    )
+
+    inactive_names = {tool.name for tool in await create_server(inactive_app).list_tools()}
+    writable_names = {tool.name for tool in await create_server(writable_app).list_tools()}
+    restricted_names = {tool.name for tool in await create_server(restricted_app).list_tools()}
+
+    assert "apply_organization_manifest" not in inactive_names
+    assert "apply_organization_manifest" in writable_names
+    assert "apply_organization_manifest" not in restricted_names
+
+
+@pytest.mark.asyncio
+async def test_injected_scope_blocks_pending_organization_recovery_on_any_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    settings = Settings(
+        read_paths=[vault],
+        write_paths=[vault],
+        vault_root=vault,
+    )
+    app = build_app(
+        settings=settings,
+        vault_root=vault,
+        scope=SingleTenantVaultScope(vault, settings),
+    )
+    delegate = cast("Any", cast("Any", app.vault_writer)._delegate)
+
+    async def pending() -> bool:
+        return True
+
+    monkeypatch.setattr(delegate, "has_pending_organization_batches", pending)
+
+    with pytest.raises(RecoveryRequiredError, match="canonical single-tenant vault scope"):
+        await app.vault_writer.write_note_atomic(
+            "blocked.md",
+            "# Blocked\n",
+            overwrite=False,
+        )
+    with pytest.raises(RecoveryRequiredError, match="canonical single-tenant vault scope"):
+        await app.vault_writer.recover_operations()
+
+
+@pytest.mark.asyncio
+async def test_injected_scope_never_delegates_explicit_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    settings = Settings(read_paths=[vault], write_paths=[vault], vault_root=vault)
+    app = build_app(
+        settings=settings,
+        vault_root=vault,
+        scope=SingleTenantVaultScope(vault, settings),
+    )
+    delegate = cast("Any", cast("Any", app.vault_writer)._delegate)
+    delegated = False
+
+    async def recover() -> int:
+        nonlocal delegated
+        delegated = True
+        return 1
+
+    monkeypatch.setattr(delegate, "recover_operations", recover)
+
+    assert await app.vault_writer.recover_operations() == 0
+    assert delegated is False
+
+
+@pytest.mark.asyncio
+async def test_ordinary_writer_refuses_pending_batch_without_recovering_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    settings = Settings(read_paths=[vault], write_paths=[vault], vault_root=vault)
+    app = build_app(settings=settings, vault_root=vault)
+    delegate = cast("Any", cast("Any", app.vault_writer)._delegate)
+    transaction = cast("Any", delegate)._batch_transaction
+    recovered = False
+
+    def recover() -> Any:
+        nonlocal recovered
+        recovered = True
+        raise AssertionError("ordinary note writes must not recover organization batches")
+
+    monkeypatch.setattr(transaction, "has_pending_batches", lambda: True)
+    monkeypatch.setattr(transaction, "recover", recover)
+
+    with pytest.raises(RecoveryRequiredError, match="must be recovered explicitly"):
+        await delegate.write_note_atomic(
+            "blocked.md",
+            "# Blocked\n",
+            overwrite=False,
+        )
+
+    assert recovered is False
+    assert not (vault / "blocked.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_organization_cache_invalidation_reloads_out_of_band_ulid_sidecar(
+    tmp_path: Path,
+) -> None:
+    sidecar = tmp_path / ".datacron" / "ulids.json"
+    sidecar.parent.mkdir(parents=True)
+    old_id = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+    new_id = "01HQXR7K9YZ8M2N3PQRSTV4WX6"
+    later_id = "01HQXR7K9YZ8M2N3PQRSTV4WX7"
+    sidecar.write_text(json.dumps({"a.md": old_id}), encoding="utf-8")
+    reader = FilesystemVaultReader(tmp_path)
+    assert await reader.id_store.snapshot() == {"a.md": old_id}
+
+    sidecar.write_text(json.dumps({"a.md": new_id}), encoding="utf-8")
+    await reader.invalidate_alias_cache()
+
+    assert await reader.id_store.get("a.md") == new_id
+    assert await reader.id_store.snapshot() == {"a.md": new_id}
+    await reader.id_store.set("later.md", later_id)
+    assert json.loads(sidecar.read_text(encoding="utf-8")) == {
+        "a.md": new_id,
+        "later.md": later_id,
+    }
+
+
+def _organization_finalize_case() -> tuple[Any, BatchApplyResult]:
+    bundle = SimpleNamespace(
+        manifest_sha256="a" * 64,
+        payload_set_sha256="b" * 64,
+        total_payload_bytes=7,
+        manifest=SimpleNamespace(operations=(), config=None),
+    )
+    result = BatchApplyResult(
+        batch_id="a" * 64,
+        manifest_sha256="a" * 64,
+        confirmation_token="c" * 64,
+        projected_report_sha256="d" * 64,
+        payload_set_sha256="b" * 64,
+        scope_digest="f" * 64,
+        config_before_sha256="0" * 64,
+        members=(
+            BatchMemberResult(
+                operation_id=f"organization-{'a' * 64}-0000",
+                kind="create_exact",
+                source_rel_path=None,
+                target_rel_path="memory/result.md",
+                before_hash=None,
+                after_hash="e" * 64,
+                note_id="01J00000000000000000000001",
+            ),
+        ),
+    )
+    return bundle, result
+
+
+@pytest.mark.asyncio
+async def test_committed_batch_reports_reconcile_failure_as_committed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, result = _organization_finalize_case()
+
+    async def removed_ids(_result: BatchApplyResult) -> tuple[str, ...]:
+        return ()
+
+    async def fail_reconcile(
+        _app: Any,
+        *,
+        removed_identity_ids: tuple[str, ...],
+    ) -> ReconcileStats:
+        assert removed_identity_ids == ()
+        raise RuntimeError("synthetic reconcile failure")
+
+    monkeypatch.setattr(organization_tools, "_reconcile_batch_locked", fail_reconcile)
+    payload, stats, final_hash = await organization_tools._finalize_committed_batch(
+        cast(
+            "Any",
+            SimpleNamespace(
+                vault_writer=SimpleNamespace(
+                    get_organization_removed_identity_ids=removed_ids,
+                )
+            ),
+        ),
+        cast("Any", bundle),
+        result,
+        None,
+        started=0.0,
+        mode="apply",
+    )
+
+    assert payload is not None
+    assert payload["status"] == "committed_index_incomplete"
+    assert payload["indexed"] is False
+    assert payload["batch_id"] == result.batch_id
+    assert payload["identity_sidecar_case_canonicalization_count"] == 0
+    assert (
+        payload["identity_sidecar_case_canonicalization_sha256"]
+        == result.identity_sidecar_case_canonicalization_sha256
+    )
+    assert stats is None
+    assert final_hash is None
+
+
+@pytest.mark.asyncio
+async def test_committed_batch_reports_final_planner_mismatch_as_committed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, result = _organization_finalize_case()
+    reconcile_stats: ReconcileStats = {
+        "checked_notes": 0,
+        "indexed_notes_before": 0,
+        "reindexed_notes": 0,
+        "deleted_notes": 0,
+        "skipped_notes": 0,
+    }
+
+    async def removed_ids(_result: BatchApplyResult) -> tuple[str, ...]:
+        return ()
+
+    async def finish_reconcile(
+        _app: Any,
+        *,
+        removed_identity_ids: tuple[str, ...],
+    ) -> ReconcileStats:
+        assert removed_identity_ids == ()
+        return reconcile_stats
+
+    monkeypatch.setattr(organization_tools, "_reconcile_batch_locked", finish_reconcile)
+    monkeypatch.setattr(organization_tools, "_current_report_hash", lambda _app: "f" * 64)
+    payload, stats, final_hash = await organization_tools._finalize_committed_batch(
+        cast(
+            "Any",
+            SimpleNamespace(
+                vault_writer=SimpleNamespace(
+                    get_organization_removed_identity_ids=removed_ids,
+                )
+            ),
+        ),
+        cast("Any", bundle),
+        result,
+        None,
+        started=0.0,
+        mode="apply",
+    )
+
+    assert payload is not None
+    assert payload["status"] == "committed_report_mismatch"
+    assert payload["indexed"] is True
+    assert payload["final_report_sha256"] == "f" * 64
+    assert payload["identity_sidecar_case_canonicalization_count"] == 0
+    assert (
+        payload["identity_sidecar_case_canonicalization_sha256"]
+        == result.identity_sidecar_case_canonicalization_sha256
+    )
+    assert stats == reconcile_stats
+    assert final_hash == "f" * 64
+
+
+@pytest.mark.asyncio
+async def test_validate_refuses_unrepresentable_receipt_before_returning_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    app = build_app(
+        settings=Settings(read_paths=[vault], write_paths=[vault], vault_root=vault),
+        vault_root=vault,
+    )
+    bundle = SimpleNamespace(
+        manifest_sha256="a" * 64,
+        payload_set_sha256="b" * 64,
+        total_payload_bytes=0,
+        manifest=SimpleNamespace(operations=(), config=None),
+    )
+    validated = SimpleNamespace(
+        manifest_sha256="a" * 64,
+        payload_set_sha256="b" * 64,
+        scope_digest="c" * 64,
+        operations=(),
+        config_payload=None,
+        identity_sidecar_after_bytes=None,
+        total_payload_bytes=0,
+    )
+    preview = SimpleNamespace(
+        validated=validated,
+        config_before_sha256="d" * 64,
+        projected_report_sha256="e" * 64,
+        confirmation_token="f" * 64,
+    )
+
+    monkeypatch.setattr(organization_tools, "_load_expected_bundle", lambda *_args: bundle)
+    monkeypatch.setattr(organization_tools, "_build_preview", lambda *_args: preview)
+
+    async def reject_capacity(*_args: Any, **_kwargs: Any) -> None:
+        raise BatchConflictError("pending receipt exceeds limit")
+
+    monkeypatch.setattr(
+        app.vault_writer,
+        "validate_organization_manifest_capacity",
+        reject_capacity,
+    )
+    response = await organization_tools._apply_organization_manifest_impl(
+        app,
+        manifest_path=str((tmp_path / "manifest.json").resolve()),
+        expected_manifest_sha256="a" * 64,
+        mode="validate",
+    )
+
+    assert "error" in response
+    assert "confirmation_token" not in response
 
 
 @pytest.mark.asyncio
@@ -301,6 +657,7 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         "delete_note_section",
         "rename_note_section",
         "revert_note",
+        "apply_organization_manifest",
     }
 
     for name in structured_names:
@@ -343,7 +700,43 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     assert "actionable" not in health_description
     delete_tool = tools["delete_note_section"]
     rename_tool = tools["rename_note_section"]
-    assert len(tools) == 17
+    assert len(tools) == 18
+    organization_tool = tools["apply_organization_manifest"]
+    organization_description = organization_tool.description or ""
+    assert "crash-consistently apply" in organization_description
+    assert "Each file replacement is atomic" in organization_description
+    assert "multi-path visibility is not instantaneous" in organization_description
+    assert "stop other Datacron clients and servers first" in organization_description
+    assert set(organization_tool.input_schema["properties"]) == {
+        "manifest_path",
+        "expected_manifest_sha256",
+        "mode",
+        "confirmation_token",
+    }
+    assert organization_tool.input_schema["required"] == [
+        "manifest_path",
+        "expected_manifest_sha256",
+        "mode",
+    ]
+    assert organization_tool.input_schema["properties"]["mode"]["enum"] == [
+        "validate",
+        "apply",
+    ]
+    assert organization_tool.input_schema["properties"]["confirmation_token"]["default"] is None
+    organization_output_schema = organization_tool.output_schema
+    assert organization_output_schema is not None
+    assert "confirmation_token" in organization_output_schema["properties"]
+    assert "projected_report_sha256" in organization_output_schema["properties"]
+    assert "final_report_sha256" in organization_output_schema["properties"]
+    assert "derived_operation_count" in organization_output_schema["properties"]
+    assert "identity_sidecar_replaced" in organization_output_schema["properties"]
+    assert (
+        "identity_sidecar_case_canonicalization_count" in organization_output_schema["properties"]
+    )
+    assert (
+        "identity_sidecar_case_canonicalization_sha256" in organization_output_schema["properties"]
+    )
+    assert "committed_error_code" in organization_output_schema["properties"]
     preamble_tool = tools["patch_note_preamble"]
     assert set(preamble_tool.input_schema["properties"]) == {
         "rel_path",

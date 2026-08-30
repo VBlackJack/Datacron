@@ -1,6 +1,6 @@
 ---
 title: User guide
-verified: 2026-08-11
+verified: 2026-08-30
 tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
@@ -43,8 +43,8 @@ a list value matches when any element matches. A request can contain at most eig
 ### Write (if enabled)
 
 These tools only work if `DATACRON_WRITE_PATHS` is set (see
-[Installation guide, §8](setup.md#8-enable-writing-optional)). They are confined, atomic,
-versioned, and audited.
+[Installation guide, §8](setup.md#8-enable-writing-optional)). Ordinary writes are confined,
+atomic per file, versioned, and audited.
 
 | Tool | What it does |
 |---|---|
@@ -56,6 +56,32 @@ versioned, and audited.
 | `delete_note_section` | Explicitly removes an ATX H2-H6 section and its subtree. |
 | `rename_note_section` | Renames an ATX H2-H6 section heading without changing its content. |
 | `revert_note` | Restores the exact bytes of a version kept in history. |
+| `apply_organization_manifest` | Validates and then applies a local content-addressed bundle containing at least one exact note operation and/or an exact `organization` configuration replacement. |
+
+`apply_organization_manifest` always uses two calls. `mode="validate"` authenticates the manifest
+and payloads, checks every CAS, projects the organization report, and returns a
+`confirmation_token` without writing. `mode="apply"` requires that exact token and revalidates the
+same authenticated organization pre-state under the global lock before the first mutation. That
+pre-state covers every admitted Markdown note inside `organization.scope`, the exact vault
+configuration and identity sidecars, and the projected report, but not unrelated note bytes outside
+the scope. Each file replacement is atomic and the transaction is crash-consistent; the different
+paths do not become visible at one instant. `history_mode=full` is required at validation time.
+Note sources and targets must remain inside the unchanged live `organization.scope`, pass the live
+note-admission policy, and stay inside `DATACRON_WRITE_PATHS`. Only the exact
+`.datacron/VAULT.yaml` target may sit outside that allowlist as a declared member, under CAS, and
+only to replace the top-level `organization` mapping without changing `organization.scope`.
+Datacron may also add one derived internal `.datacron/ulids.json` member, strictly limited to key
+migrations required by validated moves and mechanically proven obsolete case collisions. Validate
+mode exposes their count and a content-free SHA-256, both token-bound; the durable receipt retains
+the exact evidence needed for recovery and index cleanup. An existing source must carry its `id`
+in frontmatter;
+sources whose identity exists only in the sidecar are unsupported in v1. Stop every other Datacron
+client and server during this maintenance window.
+
+The receipt distinguishes manifest operations from derived internal members. If bytes are already
+durably committed but reconciliation or the planner oracle fails, status becomes
+`committed_index_incomplete` or `committed_report_mismatch`: do not infer that no write occurred,
+and retry the same call with the same token.
 
 ### Supervise
 
@@ -171,6 +197,8 @@ examples:
 ## Best practices
 
 - **Keep a single writer** on the vault: concurrent multi-machine writing is not supported.
+- **Close every other client and server** before applying an organization manifest; never confirm
+  a token produced for another hash or another vault state.
 - **Leave writing disabled** until you need it; enable it on a targeted subfolder (`_memory`,
   for example), not on the whole vault.
 - **Edit freely by hand**: Datacron repairs the index on read, so your manual changes are

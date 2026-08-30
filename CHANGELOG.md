@@ -9,6 +9,30 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0830.00] - 2026-08-30
+
+### Added
+
+- A new `apply_organization_manifest` MCP tool validates a local content-addressed bundle without
+  writing, returns a confirmation token bound to the exact admitted vault state, and applies the
+  same note, organization-configuration, and derived identity-sidecar changes only after that
+  token is presented.
+- Organization batches keep durable pending and committed receipts so an interrupted application
+  can be recovered or replayed deterministically without silently repeating completed mutations.
+
+### Changed
+
+- Organization planning and application now share strict path, scope, admission, naming, and
+  identity checks, including case-insensitive collision handling on Windows and exact before/after
+  hashes for every declared or derived member.
+- Operational guidance now requires a single-writer maintenance window and a verified byte-exact
+  backup outside the vault before applying an organization manifest.
+
+### Fixed
+
+- Ordinary note writers now fail closed while an organization batch is pending instead of
+  observing or extending a partially applied global reorganization.
+
 ## [2026.0829.01] - 2026-08-29
 
 ### Added

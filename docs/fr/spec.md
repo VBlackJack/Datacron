@@ -1,6 +1,6 @@
 ---
 title: Datacron - Contrat public du vault et du serveur MCP
-verified: 2026-08-11
+verified: 2026-08-30
 tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
@@ -8,9 +8,9 @@ tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 
 **Français** | [English](../en/spec.md)
 
-> **Statut** : Spec v2.0 - normative, synchronisée avec `main`
+> **Statut** : Spec v2.0 - normative pour l'implémentation livrée par cette version
 > **Auteur** : Julien Bombled
-> **Date** : 2026-08-11
+> **Date** : 2026-08-30
 > **Remplace** : v1.1 (2026-05-17)
 > **Licence** : [Apache 2.0](../../LICENSE)
 > **Portée** : Ce document définit les formats, invariants et surfaces observables de
@@ -61,6 +61,7 @@ l'utilise.
 | `.datacron/history/<sha256>` | Octets antérieurs adressés par contenu en mode d'historique `full` |
 | `.datacron/oplog/operations.jsonl` | Journal JSONL des écritures validées |
 | `.datacron/oplog/pending/` | Manifestes récupérables des écritures en cours |
+| `.datacron/oplog/batches/` | Payloads préparés et reçus `pending`/`committed` des batches d'organisation récupérables |
 | `.datacron/locks/` | Verrous consultatifs locaux créés lors des écritures |
 | `.datacron/scrubber/` | Checkpoint et canaries du contrôle d'intégrité |
 | `.datacron/logs/` | Répertoire vault-local créé par l'initialisation mais non choisi par défaut pour les logs runtime |
@@ -70,7 +71,7 @@ sélectionner un autre emplacement.
 
 `VAULT.yaml` accepte notamment `datacron_version`, `vault_id`, `created`, `encoding`,
 `line_endings`, `history_retention_days`, `history_mode`, `folders`, `excluded_folders`,
-`excluded_files` et `query_expansion`. `line_endings` vaut `lf` ou `crlf`; `history_mode` vaut
+`excluded_files`, `query_expansion` et `organization`. `line_endings` vaut `lf` ou `crlf`; `history_mode` vaut
 `full` ou `redacted`. `datacron_version` est une estampille de provenance du build qui a écrit
 le fichier, pas un gate de compatibilité de format.
 
@@ -99,6 +100,11 @@ optionnels restent absents tant qu'aucune valeur ne leur est donnée.
 | `valid_from` | Date ISO optionnelle, validée mais sans effet direct sur le ranking actuel |
 | `invalid_at` | Datetime ISO 8601 UTC optionnel; la note devient historique dans le ranking par défaut |
 | `invalidated_by` | ULID optionnel validé, conservé comme provenance sans effet direct sur le ranking actuel |
+
+Toute création par `create_note_ai` ou `create_exact` exige un ULID Crockford canonique. Pour
+remplacer ou déplacer une note existante, le manifeste accepte aussi son identifiant historique
+borné à 26 caractères alphanumériques majuscules, mais impose de le préserver strictement dans le
+résultat : ce canal ne migre jamais une identité.
 
 `set_frontmatter` peut modifier `origin`, `confidence`, `last_verified`, `supersedes`,
 `rejected`, `valid_from`, `invalid_at` et `invalidated_by`; il met aussi `updated` à jour et
@@ -193,6 +199,14 @@ hashes avant et après, l'acteur, les paramètres expurgés et l'indication `his
 L'append du journal est flushé et fsync. Les manifestes `pending` permettent de terminer ou de
 réconcilier une opération interrompue sans dupliquer un enregistrement déjà validé.
 
+Un batch d'organisation prépare ses payloads et historiques avant de publier son reçu `pending`.
+La reprise n'invente aucun contenu : elle ne poursuit en roll-forward que si chaque chemin porte
+encore exactement son hash avant ou après attendu. Tout troisième hash bloque tous les writers et
+apparaît dans les preuves de récupération jusqu'à une intervention explicite. Les suppressions de
+sources d'un déplacement sont effectuées après les créations et remplacements de cibles. Le reçu
+`committed` conserve le hash du manifeste, le jeton de confirmation, le hash du rapport projeté et
+les hashes bornés de chaque membre ; il ne conserve aucun payload de note.
+
 ---
 
 ## 8. Compatibilité et version du format
@@ -235,6 +249,7 @@ seuls les tools de lecture, advisory et opérationnels restent exposés.
 | Écriture | `delete_note_section` | Supprime explicitement une section ATX H2-H6 et son sous-arbre |
 | Écriture | `rename_note_section` | Renomme un titre ATX H2-H6 sans modifier son contenu |
 | Écriture | `revert_note` | Restaure les octets exacts d'une version d'historique adressée par hash |
+| Écriture | `apply_organization_manifest` | Valide puis applique, après confirmation exacte, un bundle d'organisation adressé par contenu |
 | Opérationnel | `get_note_history` | Liste les métadonnées d'opérations validées d'une note sans lire les anciens octets |
 | Opérationnel | `audit_query` | Filtre le journal validé par période, tool ou note sans le modifier |
 
@@ -254,6 +269,15 @@ Les write tools sont opt-in au niveau des effets:
 - chaque cible doit être dans le vault et sous au moins une racine de l'allowlist;
 - le mode de durabilité doit autoriser l'écriture.
 
+Deux exceptions de chemin sont internes à `apply_organization_manifest`. Chaque source et cible
+note doit rester dans l'intersection du `organization.scope` live inchangé, de la politique live
+d'admission des notes et de `DATACRON_WRITE_PATHS`. `.datacron/VAULT.yaml` peut être remplacé hors
+de cette allowlist sous CAS exact, uniquement si le mapping top-level `organization` est la seule
+différence sémantique ; `organization.scope` lui-même reste inchangé en v1. Datacron peut aussi
+dériver un membre `.datacron/ulids.json` sous CAS exact, uniquement pour déplacer la clé sidecar
+d'une source vers la cible du même `move_replace_exact` ; le manifeste ne fournit jamais
+arbitrairement ce payload.
+
 Chaque mutation de note prend en charge le compare-and-swap (CAS) par `expected_hash`.
 `patch_note_preamble` exige toujours ce hash ; les autres tools le rendent optionnel sauf quand
 leur sélecteur d'occurrence l'exige. Lorsque le hash est fourni, l'écriture échoue si le SHA-256
@@ -268,6 +292,45 @@ relire une version historique. La rétention vaut 30 jours par défaut et est co
 
 Après une écriture MCP réussie, Datacron réconcilie l'index de façon synchrone. La réponse porte
 `indexed: true` seulement après cette réconciliation.
+
+`apply_organization_manifest` est le seul mutateur multi-fichiers public. Son `manifest_path`
+absolu désigne un bundle local hors du vault : `manifest.json` référence uniquement des payloads
+frères sous `payloads/` par leur SHA-256. Le manifeste déclare au moins une opération exacte sur une
+note et/ou un remplacement exact de la configuration `organization` ; aucune catégorie n'est
+obligatoire lorsque l'autre est présente. Le mode `validate` est sans effet et vérifie strictement
+les tailles, hashes, chemins, CAS, identités/alias, scope d'organisation, seul changement permis
+dans `VAULT.yaml` et rapport planner projeté. Il retourne un jeton qui signe l'ensemble de ces
+préconditions sans exposer le contenu. Le digest de scope couvre toutes les notes Markdown admises
+dans `organization.scope` et le pré-état exact des sidecars d'identité ; le pré-hash exact de la
+configuration est lié séparément. Les octets de notes sans rapport situées hors de ce scope ne font
+pas partie du token. Le mode `apply` exige ce jeton exact, recharge et revalide le bundle sous le
+verrou global de mutation, puis accepte seulement `create_exact`, `replace_exact`,
+`move_replace_exact` et le remplacement CAS exact de `.datacron/VAULT.yaml` où seul le mapping
+top-level `organization` peut changer sémantiquement et où `organization.scope` reste inchangé.
+Une source existante doit porter l'`id` attendu dans son frontmatter ; une note identifiée
+uniquement par sidecar est hors du schéma v1. Si un déplacement possède aussi une entrée redondante
+dans `ulids.json`, Datacron dérive sa migration comme membre interne. Il peut aussi supprimer une
+collision de casse obsolète seulement si l'inventaire live prouve mécaniquement la clé exacte et
+l'ID non réutilisé. Le mode validate expose le nombre de ces canonicalisations et leur SHA-256
+content-free ; le token, le journal et le reçu durable lient les preuves exactes utilisées par la
+recovery et la purge d'index.
+
+Le mode `validate` refuse déjà le bundle si `history_mode` n'est pas `full`; aucun jeton exécutable
+n'est émis quand les octets antérieurs ne pourraient pas être conservés.
+
+Le batch est récupérable après incident et chaque remplacement de fichier est atomique. Il ne
+promet pas que plusieurs chemins deviennent visibles au même instant. Tous les autres clients et
+serveurs Datacron doivent donc être arrêtés pendant cette fenêtre de maintenance. Une réussite
+fraîche effectue exactement une réconciliation d'index et invalide le cache d'alias ; le hash du
+rapport planner final doit égaler le hash projeté. Un réappel du même manifeste validé rend le reçu
+durable sans réécrire les notes. `operation_count` compte les opérations déclarées et le membre
+config ; `derived_operation_count` et `identity_sidecar_replaced` rendent explicite tout membre
+interne ; `identity_sidecar_case_canonicalization_count` et son SHA-256 bornent son nettoyage de
+casse.
+`total_payload_bytes` décrit les payloads externes du bundle. Après commit durable, une panne de
+réconciliation ou un oracle planner différent retourne respectivement
+`committed_index_incomplete` ou `committed_report_mismatch`, avec `already_committed: true|false`
+selon qu'il s'agit d'un replay ; ce n'est jamais présenté comme une absence de mutation.
 
 ---
 

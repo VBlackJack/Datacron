@@ -1,6 +1,6 @@
 ---
 title: Operational health, certified read-only mode, and durability policy
-verified: 2026-08-28
+verified: 2026-08-30
 tested_on: "Datacron 2026.0828.01 / MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
@@ -42,6 +42,22 @@ The response contains:
 
 The scan is intentionally uncached and O(Markdown paths + total readable Markdown bytes + indexed
 rows). Do not poll it as a high-frequency metrics endpoint.
+
+### Blocked organization batches
+
+Before `apply_organization_manifest`, stop every Datacron client and server and make a verified,
+byte-exact backup outside the vault of the affected notes and the complete `.datacron` directory.
+Keep it until the apply response, index reconcile, planner oracle, and health checks are all green.
+
+`datacron ops inspect --vault PATH` reports ordinary and organization-batch recovery blockers.
+A reason beginning with `pending_batch_` belongs to a whole transaction: both actions are reported
+as unavailable because the single-note `ops repair` command cannot safely resolve one member while
+the rest of its batch remains pending. Stop all writers and do not delete or edit the pending
+receipt, stage, operation log, or content-addressed history. Preserve a forensic copy, then restore
+the complete verified pre-apply backup as one offline maintenance rollback. If no such backup is
+available, stop and preserve the evidence for manual recovery; never force or quarantine only one
+member. Restart Datacron, run `datacron ops inspect` again, then reconcile or reindex and verify
+`get_health` before resuming writes.
 
 ### Index staleness definition
 
@@ -89,10 +105,12 @@ index use the policy captured at server startup, so restart the server and recon
 after changing those settings before expecting all three views to agree. A defect inside an
 excluded folder is not reported, and `get_note` refuses such a path with `note_not_admitted`.
 
-Exclusion is a read/admission policy, not a write ACL. Write tools authorize paths independently
-through `DATACRON_WRITE_PATHS`; an excluded path that is also write-authorized can still be reached
-by a direct mutator call. Keep write paths disjoint from excluded content when exclusion must also
-mean non-writable.
+Exclusion is a read/admission policy, not a write ACL. Ordinary single-note tools authorize
+paths independently through `DATACRON_WRITE_PATHS`; an excluded path that is also write-authorized
+can still be reached by a direct ordinary mutator call. `apply_organization_manifest` is stricter:
+every note source and target must also pass the live admission policy and stay inside the unchanged
+live `organization.scope`. Keep write paths disjoint from excluded content when exclusion must also
+mean non-writable for ordinary mutators.
 
 `vault_checksum` is the deliberate exception. It stays exhaustive and carries its own
 `notes_count`, so the two numbers differ when at least one readable Markdown note is actually
@@ -209,8 +227,8 @@ DATACRON_READ_ONLY=true
 ```
 
 The live MCP registry then omits `create_note_ai`, `append_journal`, `set_frontmatter`,
-`patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`, and
-`revert_note`. Direct calls also fail with `ReadOnlyModeError`.
+`patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`,
+`revert_note`, and `apply_organization_manifest`. Direct calls also fail with `ReadOnlyModeError`.
 
 The guarantee includes the `.datacron` sidecar: startup recovery is skipped, the
 prebuilt SQLite index opens with `mode=ro`, and search read-repair is disabled. The
