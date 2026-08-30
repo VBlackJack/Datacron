@@ -399,6 +399,7 @@ class FilesystemVaultWriter:
     ) -> BatchApplyResult:
         self._write_policy.ensure_writable()
         with self._advisory_lock("mutation"):
+            self._batch_transaction.validate_journal_roots()
             recovery = self._recover_operations_sync(purge_history=False)
             self._raise_if_recovery_blocked(recovery)
             sanitized = self._sanitize_organization_operation(operation)

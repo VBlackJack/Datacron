@@ -467,6 +467,7 @@ class OrganizationBatchTransaction:
         """Validate batch receipt capacity and live path policy without writing."""
         _require_hash(confirmation_token, "confirmation_token")
         _require_hash(projected_report_sha256, "projected_report_sha256")
+        self.validate_journal_roots()
         if self.has_pending_batches():
             raise BatchConflictError("pending organization batch requires recovery before preview")
         pending, _payloads = self._prepare_pending(
@@ -479,6 +480,15 @@ class OrganizationBatchTransaction:
         policy_error = self._pending_policy_error(pending)
         if policy_error is not None:
             raise BatchConflictError(policy_error)
+
+    def validate_journal_roots(self) -> None:
+        """Reject linked journal roots before any durable batch state is created."""
+        for rel_path in (_HISTORY_REL_ROOT, ".datacron/oplog"):
+            assert_path_chain_without_links(
+                self._vault_root / Path(rel_path),
+                anchor=self._vault_root,
+                allow_missing=True,
+            )
 
     def has_pending_batches(self) -> bool:
         """Return whether a durable organization batch is pending recovery."""

@@ -2498,6 +2498,14 @@ async def test_linked_organization_journal_root_is_rejected_before_stage(
     writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
 
     with pytest.raises(PermissionError, match="Linked path component is forbidden"):
+        await writer.validate_organization_manifest_capacity(
+            bundle,
+            confirmation_token=_CONFIRMATION_TOKEN,
+            projected_report_sha256=_PROJECTED_REPORT_SHA256,
+            operation=_context(bundle),
+        )
+
+    with pytest.raises(PermissionError, match="Linked path component is forbidden"):
         await _apply(writer, bundle)
 
     assert not list(outside.iterdir())
