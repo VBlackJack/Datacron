@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0831.00] - 2026-08-31
+
 ### Fixed
 
 - Reading a note now absorbs the transient Windows sharing violation raised while another
