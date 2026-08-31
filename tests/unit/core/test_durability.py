@@ -169,6 +169,91 @@ def test_replace_retry_exhaustion_is_bounded_and_reraises_last_error(
     assert sum(sleeps) < 1.0
 
 
+@pytest.mark.parametrize("winerror", [5, 32, 33])
+def test_read_bytes_retries_transient_windows_sharing_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, winerror: int
+) -> None:
+    target = tmp_path / "note.md"
+    target.write_bytes(b"exact bytes")
+    real_read_bytes = Path.read_bytes
+    attempts = 0
+    sleeps: list[float] = []
+
+    def flaky_read(current: Path) -> bytes:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise _windows_os_error(winerror)
+        return real_read_bytes(current)
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+    monkeypatch.setattr(Path, "read_bytes", flaky_read)
+
+    assert durability.read_bytes_with_windows_retry(target) == b"exact bytes"
+    assert attempts == 2
+    assert sleeps == [durability._READ_RETRY_INITIAL_SLEEP_SECONDS]
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "winerror"),
+    [("win32", 2), ("linux", 5)],
+)
+def test_read_bytes_does_not_retry_non_transient_or_non_windows_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform_name: str,
+    winerror: int,
+) -> None:
+    attempts = 0
+    sleeps: list[float] = []
+
+    def failing_read(_current: Path) -> bytes:
+        nonlocal attempts
+        attempts += 1
+        raise _windows_os_error(winerror)
+
+    monkeypatch.setattr(sys, "platform", platform_name)
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+    monkeypatch.setattr(Path, "read_bytes", failing_read)
+
+    with pytest.raises(PermissionError) as raised:
+        durability.read_bytes_with_windows_retry(tmp_path / "note.md")
+
+    assert getattr(raised.value, "winerror", None) == winerror
+    assert attempts == 1
+    assert sleeps == []
+
+
+def test_read_bytes_retry_exhaustion_is_bounded_and_reraises_last_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempts = 0
+    sleeps: list[float] = []
+    raised_errors: list[OSError] = []
+
+    def failing_read(_current: Path) -> bytes:
+        nonlocal attempts
+        attempts += 1
+        error = _windows_os_error(32)
+        raised_errors.append(error)
+        raise error
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+    monkeypatch.setattr(Path, "read_bytes", failing_read)
+
+    with pytest.raises(PermissionError) as raised:
+        durability.read_bytes_with_windows_retry(tmp_path / "note.md")
+
+    assert raised.value is raised_errors[-1]
+    assert attempts == durability._READ_RETRY_MAX_ATTEMPTS
+    assert len(sleeps) == durability._READ_RETRY_MAX_ATTEMPTS - 1
+    assert sleeps == sorted(sleeps)
+    assert max(sleeps) == durability._READ_RETRY_MAX_SLEEP_SECONDS
+    assert sum(sleeps) < 1.0
+
+
 @pytest.mark.parametrize(
     (
         "read_only",

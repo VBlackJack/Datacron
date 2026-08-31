@@ -9,6 +9,15 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Fixed
+
+- Reading a note now absorbs the transient Windows sharing violation raised while another
+  writer atomically replaces that same path, instead of surfacing it as an internal error.
+  Two concurrent appends to one note could make the post-write index reconciliation fail its
+  re-read and report failure for a mutation that had already been committed durably. Only the
+  transient codes are retried, with bounded exponential backoff; a durable permission failure
+  and every non-Windows platform still fail on the first attempt.
+
 ## [2026.0830.00] - 2026-08-30
 
 ### Added

@@ -40,6 +40,7 @@ from datacron.core.config import (
     VaultConfig,
     load_vault_config,
 )
+from datacron.core.durability import read_bytes_with_windows_retry
 from datacron.core.frontmatter import (
     FrontmatterError,
     build_tiered_alias_index,
@@ -291,7 +292,7 @@ class FilesystemVaultReader:
         if not self._is_inside_vault(resolved):
             raise ValueError(f"Path {resolved} is outside the vault root {self._vault_root}.")
 
-        raw_bytes = await asyncio.to_thread(resolved.read_bytes)
+        raw_bytes = await asyncio.to_thread(read_bytes_with_windows_retry, resolved)
         raw_text = raw_bytes.decode("utf-8", errors="strict")
         stat = await asyncio.to_thread(resolved.stat)
         metadata: dict[str, Any]

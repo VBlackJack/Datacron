@@ -44,14 +44,20 @@ __all__ = [
     "durable_flush_directory",
     "flush_directory_entry",
     "probe_directory_durability",
+    "read_bytes_with_windows_retry",
 ]
 
 _LOGGER = get_logger(__name__)
 _WINDOWS_MAX_PATH: Final[int] = 32768
-_WINDOWS_REPLACE_TRANSIENT_ERRORS: Final[frozenset[int]] = frozenset({5, 32, 33})
+# Shared by both sides of the same race: a Windows atomic replace and a read of
+# the destination it is replacing report the identical transient codes.
+_WINDOWS_TRANSIENT_SHARING_ERRORS: Final[frozenset[int]] = frozenset({5, 32, 33})
 _REPLACE_RETRY_MAX_ATTEMPTS: Final[int] = 10
 _REPLACE_RETRY_INITIAL_SLEEP_SECONDS: Final[float] = 0.005
 _REPLACE_RETRY_MAX_SLEEP_SECONDS: Final[float] = 0.1
+_READ_RETRY_MAX_ATTEMPTS: Final[int] = 10
+_READ_RETRY_INITIAL_SLEEP_SECONDS: Final[float] = 0.005
+_READ_RETRY_MAX_SLEEP_SECONDS: Final[float] = 0.1
 RECOVERY_REQUIRED_CODE: Final[str] = "recovery_required"
 FaultInjector = Callable[[str], None]
 
@@ -121,7 +127,7 @@ def _replace_with_windows_retry(source: Path, destination: Path) -> None:
             winerror = getattr(exc, "winerror", None)
             should_retry = (
                 sys.platform == "win32"
-                and winerror in _WINDOWS_REPLACE_TRANSIENT_ERRORS
+                and winerror in _WINDOWS_TRANSIENT_SHARING_ERRORS
                 and attempt < _REPLACE_RETRY_MAX_ATTEMPTS
             )
             if not should_retry:
@@ -137,6 +143,45 @@ def _replace_with_windows_retry(source: Path, destination: Path) -> None:
             )
             time.sleep(sleep_seconds)
             sleep_seconds = min(sleep_seconds * 2, _REPLACE_RETRY_MAX_SLEEP_SECONDS)
+
+
+def read_bytes_with_windows_retry(path: Path) -> bytes:
+    """Read a file's exact bytes, retrying only transient Windows sharing errors.
+
+    This is the read-side twin of :func:`_replace_with_windows_retry`. While one
+    writer atomically replaces a note, Windows denies an open of that same path
+    for a few milliseconds, and the loser observes ``winerror`` 5, 32 or 33. The
+    write itself is already committed, so failing the reader turns a durable,
+    successful mutation into a caller-visible error.
+
+    Only that window is absorbed. A durable permission failure, a non-transient
+    code and every non-Windows platform are re-raised on the first attempt, so a
+    genuinely unreadable note never looks like a slow one.
+    """
+    sleep_seconds = _READ_RETRY_INITIAL_SLEEP_SECONDS
+    for attempt in range(1, _READ_RETRY_MAX_ATTEMPTS + 1):
+        try:
+            return path.read_bytes()
+        except OSError as exc:
+            winerror = getattr(exc, "winerror", None)
+            should_retry = (
+                sys.platform == "win32"
+                and winerror in _WINDOWS_TRANSIENT_SHARING_ERRORS
+                and attempt < _READ_RETRY_MAX_ATTEMPTS
+            )
+            if not should_retry:
+                raise
+            _LOGGER.debug(
+                "Retrying note read path=%s winerror=%s failed_attempt=%d/%d delay_seconds=%.3f",
+                path,
+                winerror,
+                attempt,
+                _READ_RETRY_MAX_ATTEMPTS,
+                sleep_seconds,
+            )
+            time.sleep(sleep_seconds)
+            sleep_seconds = min(sleep_seconds * 2, _READ_RETRY_MAX_SLEEP_SECONDS)
+    raise RuntimeError(f"read retry loop exited without a result for {path}")
 
 
 def durable_flush_directory(path: Path) -> None:

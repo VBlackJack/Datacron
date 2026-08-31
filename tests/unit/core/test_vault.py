@@ -9,13 +9,24 @@
 
 from __future__ import annotations
 
+import errno
 import json
+import sys
+import time
 from pathlib import Path
 
 import pytest
 
 from datacron.core.hashing import sha256_bytes
 from datacron.core.vault import FilesystemVaultReader, JsonIdStore, build_configured_reader
+
+
+class _SimulatedSharingViolationError(PermissionError):
+    """Windows reports a transient sharing violation while another writer replaces a path."""
+
+    def __init__(self, winerror: int) -> None:
+        super().__init__(errno.EACCES, f"simulated Windows error {winerror}")
+        self.winerror = winerror
 
 
 @pytest.mark.asyncio
@@ -30,6 +41,37 @@ class TestReadNote:
         assert len(note.id) == 26
         assert note.content_hash != ""
         assert len(note.content_hash) == 64
+
+    async def test_read_note_absorbs_a_transient_windows_sharing_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A concurrent atomic replace must not turn a committed write into an error.
+
+        This asserts the wiring, not the retry helper: reverting ``read_note`` to a
+        bare ``read_bytes`` makes this fail while the helper's own tests still pass.
+        """
+        raw = b"# Concurrent\n\nBody\n"
+        target = tmp_path / "concurrent.md"
+        target.write_bytes(raw)
+        real_read_bytes = Path.read_bytes
+        attempts = 0
+
+        def flaky_read(current: Path) -> bytes:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise _SimulatedSharingViolationError(32)
+            return real_read_bytes(current)
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+        monkeypatch.setattr(Path, "read_bytes", flaky_read)
+        reader = FilesystemVaultReader(tmp_path)
+
+        note = await reader.read_note(target)
+
+        assert note.raw_content == raw.decode("utf-8")
+        assert attempts == 2
 
     async def test_content_hash_uses_exact_disk_bytes(self, tmp_path: Path) -> None:
         raw = b"\xef\xbb\xbf# Exact\r\n\r\nBody\r\n"
