@@ -158,6 +158,13 @@ flowchart TB
 | Opérationnel | `audit_query` | Requête read-only du journal par période, tool ou note. | Operation journal |
 | Advisory (expérimental) | `contradiction_scan` | Scan live borné et déterministe des sections indexées. Les propositions et confirmations read-only retournent un appel d'écriture CAS explicite sans jamais l'exécuter. | Index FTS + lectures confinées du vault |
 
+`apply_organization_manifest` applique un lot d'organisation; il ne le calcule pas. L'écart
+entre le vault et l'organisation déclarée dans `VAULT.yaml` est mesuré hors MCP, par la
+commande CLI `datacron reorganize --dry-run`, en lecture seule. Le planner qui la sert ne
+partage avec le manifeste que les contrôles de chemin, de portée et d'admission : mesure et
+application restent deux surfaces distinctes, et aucune des deux ne déduit l'autre. Voir
+[Organisation du vault](organization.md).
+
 ### 5.2 Resources (3)
 
 | URI | Description | Taille typique |

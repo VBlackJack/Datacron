@@ -158,6 +158,13 @@ flowchart TB
 | Operational | `audit_query` | Read-only query of the journal by period, tool, or note. | Operation journal |
 | Advisory (experimental) | `contradiction_scan` | Bounded deterministic live scan over indexed sections. Read-only proposals and confirmations return an explicit CAS write-tool call but never execute it. | FTS index + scoped vault reads |
 
+`apply_organization_manifest` applies an organization batch; it does not compute one. The gap
+between the vault and the organization declared in `VAULT.yaml` is measured outside MCP, by the
+`datacron reorganize --dry-run` CLI command, read-only. The planner behind it shares only the
+path, scope, and admission checks with the manifest: measurement and application remain two
+distinct surfaces, and neither infers the other. See
+[Vault organization](organization.md).
+
 ### 5.2 Resources (3)
 
 | URI | Description | Typical size |

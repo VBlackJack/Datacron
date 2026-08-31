@@ -240,6 +240,35 @@ nouvelle génération complète. La commande échoue en mode fermé si un sideca
 vivant existe. Exécute-la comme une opération de maintenance hors ligne, avec les écrivains de
 notes au repos et une sauvegarde `.datacron` vérifiée hors du vault.
 
+## Mesurer l'organisation en intégration continue
+
+`datacron reorganize --dry-run` rapporte l'écart entre le vault et le bloc `organization` de
+`VAULT.yaml`. La commande est en lecture seule par construction : elle ne déplace, ne renomme
+et ne réécrit jamais une note. `--dry-run` est obligatoire et ne doit jamais devenir implicite.
+
+| Code de sortie | Signification |
+|---|---|
+| `0` | Aucun écart |
+| `1` | Le rapport n'est pas vide |
+| `2` | Le vault ou sa configuration n'a pas pu être lu |
+
+`1` n'est pas une erreur. La séparation entre `1` et `2` existe précisément pour qu'un rapport
+non vide reste détectable en intégration continue sans faire échouer le job pour une mauvaise
+raison : un job distingue une dérive d'organisation d'une configuration cassée par le seul code
+de sortie.
+
+```text
+datacron reorganize --vault /path/to/vault --dry-run --json
+```
+
+`--json` rend un document stable identifié par `organization-plan-v1`, sérialisé de façon
+déterministe : deux exécutions sur un vault inchangé produisent le même rapport. Les compteurs
+vérifient toujours `scanned = governed + unmatched`, et une note qu'aucune règle ne réclame est
+comptée dans `unmatched` sans être un écart.
+
+Schéma complet, gabarits de nom et contrat de rapport :
+[Organisation du vault](organization.md).
+
 ## Mode lecture seule certifié
 
 Définis :

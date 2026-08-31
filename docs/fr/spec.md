@@ -79,6 +79,13 @@ Le mapping `folders` est chargé comme métadonnée de configuration. Il ne déf
 à états, ni les limites d'écriture. Les limites d'écriture viennent exclusivement de
 `DATACRON_WRITE_PATHS`.
 
+Le bloc `organization` est facultatif; un vault qui ne le déclare pas n'est pas affecté. Il
+porte une portée et des règles associant un tag de frontmatter à un dossier, avec un gabarit
+de nom et un plafond de taille optionnels. Il ne modifie ni les limites d'écriture, ni
+l'admission des notes : il sert uniquement à mesurer l'écart entre le vault et l'organisation
+qu'il déclare. Schéma complet, gabarits de nom et contrat de rapport :
+[Organisation du vault](organization.md).
+
 ---
 
 ## 3. Frontmatter mémoire et cycle de vie

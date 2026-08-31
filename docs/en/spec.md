@@ -73,6 +73,12 @@ not a format compatibility gate.
 The `folders` mapping is loaded as configuration metadata. It defines neither a state machine nor
 write boundaries. Write boundaries come exclusively from `DATACRON_WRITE_PATHS`.
 
+The `organization` block is optional; a vault that does not declare it is unaffected. It holds
+a scope and rules binding a frontmatter tag to a folder, with an optional naming template and
+size ceiling. It changes neither write boundaries nor note admission: it exists only to measure
+the gap between the vault and the organization it declares. Full schema, naming templates, and
+report contract: [Vault organization](organization.md).
+
 ---
 
 ## 3. Memory frontmatter and lifecycle

@@ -98,6 +98,11 @@ absence de write, et rejoue le même appel avec le même token.
 Trois ressources MCP complètent ces outils : `datacron://vault/map` (carte du vault),
 `datacron://vault/info` (métadonnées) et `datacron://policy/active` (politique active).
 
+Si le vault déclare un bloc `organization`, la commande `datacron reorganize --dry-run`
+mesure l'écart entre son état réel et l'organisation déclarée. Elle est en lecture seule :
+elle mesure, et n'applique rien. C'est `apply_organization_manifest` qui applique, et
+seulement après validation. Voir [Organisation du vault](organization.md).
+
 ## Comment fonctionne la recherche
 
 `search_text` combine plusieurs signaux, ce qui explique pourquoi les résultats ne sont pas

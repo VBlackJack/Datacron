@@ -21,6 +21,7 @@ a Markdown vault from Claude, without sending the whole vault into the context.
 | Document | For what |
 |---|---|
 | [Vault conventions (SPEC)](spec.md) | Vault contract: `.datacron/` sidecar, frontmatter, trust model, wikilinks, chunks, audit, versioning. |
+| [Vault organization](organization.md) | The `organization` block in `VAULT.yaml`: tags, folders, naming templates, size ceilings, and `datacron reorganize`, which measures the gap read-only. |
 | [Architecture and public surface](architecture.md) | Technical architecture and exposed surface. |
 | [Freshness contract v1](freshness-contract-v1.md) | Index freshness guarantees. |
 

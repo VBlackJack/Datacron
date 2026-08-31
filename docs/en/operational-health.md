@@ -218,6 +218,34 @@ complete generation; a failure after replacement exposes the new complete genera
 fails closed if a live `-wal` or `-shm` sidecar exists. Run it as an offline maintenance operation
 with note writers quiesced and a verified `.datacron` backup outside the vault.
 
+## Measuring organization in continuous integration
+
+`datacron reorganize --dry-run` reports the gap between the vault and the `organization` block
+in `VAULT.yaml`. The command is read-only by construction: it never moves, renames, or rewrites
+a note. `--dry-run` is required and must never become implicit.
+
+| Exit code | Meaning |
+|---|---|
+| `0` | No deviation |
+| `1` | The report is not empty |
+| `2` | The vault or its configuration could not be read |
+
+`1` is not an error. The split between `1` and `2` exists precisely so a non-empty report stays
+detectable in continuous integration without failing the job for the wrong reason: a job tells
+organization drift from a broken configuration by the exit code alone.
+
+```text
+datacron reorganize --vault /path/to/vault --dry-run --json
+```
+
+`--json` emits a stable document identified by `organization-plan-v1`, serialized
+deterministically: two runs over an unchanged vault produce the same report. The counters always
+satisfy `scanned = governed + unmatched`, and a note no rule claims is counted in `unmatched`
+without being a deviation.
+
+Full schema, naming templates, and report contract:
+[Vault organization](organization.md).
+
 ## Certified read-only mode
 
 Set:

@@ -21,6 +21,7 @@ et maintient un vault Markdown depuis Claude, sans envoyer le vault complet dans
 | Document | Pour quoi |
 |---|---|
 | [Conventions du vault (SPEC)](spec.md) | Contrat vault : sidecar `.datacron/`, frontmatter, modèle de confiance, wikilinks, chunks, audit, versioning. |
+| [Organisation du vault](organization.md) | Bloc `organization` de `VAULT.yaml` : tags, dossiers, gabarits de nom, plafonds de taille, et `datacron reorganize` qui mesure l'écart en lecture seule. |
 | [Architecture et surface publique](architecture.md) | Architecture technique et surface exposée. |
 | [Contrat de fraîcheur v1](freshness-contract-v1.md) | Garanties de fraîcheur de l'index. |
 

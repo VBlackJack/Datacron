@@ -25,6 +25,7 @@ les logs, les ULID internes, l'historique et le journal d'opérations.
 | Écriture | 8 tools de note + 1 lot d'organisation, confinés et journalisés, désactivés par défaut sans `DATACRON_WRITE_PATHS` |
 | Transport MCP | SDK Python MCP v2 via `MCPServer`, stdio local uniquement ; protocole moderne `2026-07-28` et compatibilité legacy `2025-11-25`, sans listener HTTP |
 | Index | `datacron index` incrémental, `datacron reindex` complet, réparation automatique à la lecture |
+| Organisation | Bloc `organization` facultatif dans `VAULT.yaml` ; `datacron reorganize --dry-run` mesure l'écart en lecture seule, `apply_organization_manifest` applique |
 | Évaluation | `datacron eval` sur le pipeline MCP réel : recall@k, MRR, nDCG, fraîcheur, latence et payload tokens |
 | Setup guidé | `datacron setup` : init + index + enregistrement MCP en une commande |
 | Clients | Auto-détection et enregistrement via `datacron setup --client all` : Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, LM Studio, Codex CLI, Windsurf, VS Code |
@@ -345,6 +346,8 @@ datacron index --vault /path/to/vault
 datacron reindex --vault /path/to/vault
 datacron scrub-init --vault /path/to/vault
 datacron scrub --vault /path/to/vault
+datacron reorganize --vault /path/to/vault --dry-run          # mesure l'organisation, lecture seule
+datacron reorganize --vault /path/to/vault --dry-run --json   # rapport machine stable
 datacron eval --questions examples/eval-questions.example.yaml --vault /path/to/vault
 datacron eval --questions local/golden.yaml --vault /path/to/vault --save-baseline
 datacron eval --questions local/golden.yaml --vault /path/to/vault --compare --json
@@ -380,6 +383,7 @@ Pour démarrer :
 Références techniques :
 
 - [Conventions du vault (SPEC)](docs/fr/spec.md)
+- [Organisation du vault](docs/fr/organization.md)
 - [Architecture et surface publique](docs/fr/architecture.md)
 - [Frontière de sécurité](docs/fr/security-boundary.md)
 - [Scrubber d'intégrité](docs/fr/integrity-scrubber.md)

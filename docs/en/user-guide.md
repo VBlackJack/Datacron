@@ -95,6 +95,11 @@ and retry the same call with the same token.
 Three MCP resources round out these tools: `datacron://vault/map` (vault map),
 `datacron://vault/info` (metadata), and `datacron://policy/active` (active policy).
 
+When the vault declares an `organization` block, `datacron reorganize --dry-run` measures the
+gap between its actual state and the declared organization. It is read-only: it measures and
+applies nothing. `apply_organization_manifest` is what applies, and only after validation. See
+[Vault organization](organization.md).
+
 ## How search works
 
 `search_text` combines several signals, which is why results are not a plain "word match":
