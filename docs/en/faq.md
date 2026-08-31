@@ -119,6 +119,30 @@ datacron reindex --vault "VAULT_PATH"
 `reindex` is offline maintenance. It validates and atomically publishes a complete replacement,
 and fails closed while live SQLite `-wal` or `-shm` sidecars exist.
 
+## Why is my note not governed by the organization?
+
+Because no rule claims it. `datacron reorganize` governs a note only when it carries a tag
+declared in `organization.rules`. A note with no governed tag is not at fault: it is counted in
+`unmatched`, never reported as a deviation, and Datacron invents no placement for it.
+
+Three causes, told apart by the report counters:
+
+- **It carries none of the declared tags.** It then shows up in `unmatched`. This includes a note
+  with no frontmatter at all: it is admitted and counted in `scanned`, but with no tag it can
+  match no rule.
+- **It is outside the scope.** Only the subtree declared in `organization.scope` is walked; the
+  rest of the vault is never opened, and the note appears in no counter.
+- **It is excluded at admission.** A folder listed in `excluded_folders`, a file listed in
+  `excluded_files`, and any directory starting with a dot are never traversed.
+
+To tell the first case from the other two, compare `scanned` with the real number of `.md` files
+in the scope: if the note is missing from `scanned`, it is excluded or out of scope rather than
+merely unmatched.
+
+One case often surprises: a `#tag` written in the note body counts as much as a frontmatter tag.
+It can therefore make a different rule win than the one expected, and change the expected folder.
+See [Vault organization](organization.md).
+
 ## What does `datacron setup --reset` remove and preserve?
 
 Reset deletes exactly two allowlisted targets under the selected vault: `.datacron/VAULT.yaml`

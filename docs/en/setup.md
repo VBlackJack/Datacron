@@ -299,7 +299,32 @@ datacron scrub --vault /path/to/vault
 [Integrity scrubber](integrity-scrubber.md) and
 [Operational health](operational-health.md).
 
-## 10. Final verification
+## 10. Organization (optional)
+
+A vault can declare where its notes belong and how they are named, in an `organization`
+block inside `.datacron/VAULT.yaml`. Without that block nothing changes: the feature is
+entirely optional. Tags and folders come from your vault; Datacron ships none of them.
+
+```yaml
+organization:
+  scope: knowledge
+  rules:
+    - tag: kind/meeting
+      folder: knowledge/meetings
+      naming: "{iso_date}-{slug}"
+```
+
+Then measure the gap between the vault and that declaration:
+
+```bash
+datacron reorganize --vault /path/to/vault --dry-run
+```
+
+`reorganize` is read-only: it never moves, renames, or rewrites a note. It exits with code 1
+when the report is not empty, which is not an error. See
+[Vault organization](organization.md).
+
+## 11. Final verification
 
 From your MCP client (Claude), ask for a `get_health` call: it returns the real state of
 index freshness, integrity, checksum, durability, and invariants. If everything is green and

@@ -307,7 +307,33 @@ datacron scrub --vault /chemin/vers/vault
 détectées. Voir [Scrubber d'intégrité](integrity-scrubber.md) et
 [Santé opérationnelle](operational-health.md).
 
-## 10. Vérification finale
+## 10. Organisation (optionnel)
+
+Un vault peut déclarer où ses notes appartiennent et comment elles sont nommées, dans un
+bloc `organization` de `.datacron/VAULT.yaml`. Sans ce bloc, rien ne change : la
+fonctionnalité est entièrement facultative. Les tags et les dossiers viennent de ton vault,
+Datacron n'en fournit aucun.
+
+```yaml
+organization:
+  scope: knowledge
+  rules:
+    - tag: kind/meeting
+      folder: knowledge/meetings
+      naming: "{iso_date}-{slug}"
+```
+
+Mesure ensuite l'écart entre le vault et cette déclaration :
+
+```bash
+datacron reorganize --vault /chemin/vers/vault --dry-run
+```
+
+`reorganize` est en lecture seule : il ne déplace, ne renomme et ne réécrit jamais une note.
+Il sort en code 1 quand le rapport n'est pas vide, ce qui n'est pas une erreur. Voir
+[Organisation du vault](organization.md).
+
+## 11. Vérification finale
 
 Depuis ton client MCP (Claude), demande un appel à `get_health` : il renvoie l'état réel
 de fraîcheur de l'index, d'intégrité, de checksum, de durabilité et des invariants. Si tout

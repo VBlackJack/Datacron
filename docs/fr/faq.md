@@ -127,6 +127,30 @@ datacron reindex --vault "CHEMIN_VAULT"
 `reindex` est une maintenance hors ligne. Il valide et publie atomiquement un remplacement
 complet, et échoue de manière fermée tant que des sidecars SQLite `-wal` ou `-shm` actifs existent.
 
+## Pourquoi ma note n'est-elle pas gouvernée par l'organisation ?
+
+Parce qu'aucune règle ne la réclame. `datacron reorganize` ne gouverne une note que si elle porte
+un tag déclaré dans `organization.rules`. Une note sans tag gouverné n'est pas en faute : elle est
+comptée dans `unmatched`, jamais signalée comme écart, et Datacron ne lui invente aucun placement.
+
+Trois causes, à distinguer par les compteurs du rapport :
+
+- **Elle ne porte aucun des tags déclarés.** Elle apparaît alors dans `unmatched`. C'est aussi le
+  cas d'une note sans frontmatter du tout : elle est bien admise et comptée dans `scanned`, mais
+  sans tag elle ne peut correspondre à aucune règle.
+- **Elle est hors de la portée.** Seul le sous-arbre déclaré dans `organization.scope` est
+  balayé ; le reste du vault n'est même pas ouvert, et la note n'apparaît dans aucun compteur.
+- **Elle est exclue à l'admission.** Un dossier listé dans `excluded_folders`, un fichier listé
+  dans `excluded_files` ou tout répertoire commençant par un point ne sont jamais parcourus.
+
+Pour trancher entre le premier cas et les deux autres, compare `scanned` au nombre réel de
+fichiers `.md` de la portée : si la note manque à `scanned`, elle est exclue ou hors portée, pas
+simplement non appariée.
+
+Un cas surprend souvent : un `#tag` écrit dans le corps de la note compte autant qu'un tag de
+frontmatter. Il peut donc faire gagner une autre règle que celle attendue, et changer le dossier
+attendu. Voir [Organisation du vault](organization.md).
+
 ## Que supprime et que préserve `datacron setup --reset` ?
 
 Reset supprime exactement deux cibles autorisées sous le vault sélectionné :
