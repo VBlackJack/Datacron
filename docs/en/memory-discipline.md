@@ -92,6 +92,22 @@ cannot be certified by file inspection. Refresh owned blocks with the existing i
 restart the server/client so cached tool catalogs and instructions are reloaded. The previous
 server can still fall back to `get_note` until it is upgraded.
 
+## Upgrade to 2026.0905.01
+
+Install the new Datacron version, then refresh the selected client block with
+`datacron protocol install --client codex-cli --scope user` (adjust the client as needed).
+Reconnect the MCP server in the application: an existing session may retain old tools and
+instructions. Verify that `session_context`, `prepare_follow_up`, and `get_follow_up` are
+available in the tool list.
+
+Run `datacron protocol status --client all --scope user` to inspect distribution, then open a
+fresh session and request project context. A current file does not certify loading or model
+behavior.
+
+No Markdown note migration is required. Existing prose actions remain available in their
+sources and do not automatically become structured revisions. Existing write permissions
+continue to apply. This upgrade does not schedule reminders.
+
 ## Validation boundaries
 
 `tests/fixtures/memory_discipline/scenarios.json` contains eight synthetic workflows. Integration

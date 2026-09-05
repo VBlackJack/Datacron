@@ -213,6 +213,10 @@ clients détectés :
 datacron protocol install --client all
 ```
 
+Verifier la version du contrat avec `datacron protocol status --client all --scope user`.
+Voir [la discipline memoire](memory-discipline.md) pour la mise a jour, la reconnexion
+et le suivi des personnes et engagements.
+
 Ou cible `claude-code`, `cursor`, `gemini-cli`, `antigravity`, `codex-cli`, `windsurf` ou
 `vscode`. Datacron installe automatiquement les règles globales de Claude Code, Gemini CLI,
 Codex, Windsurf et VS Code. Antigravity est limité au scope projet : la commande

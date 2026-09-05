@@ -84,6 +84,23 @@ preservant les autres consignes. Redemarrer serveur et client pour recharger les
 Cursor global demande une installation manuelle ; un client sans fichier ne peut pas etre
 certifie par inspection locale. Le repli get_note reste utilisable avec l'ancien serveur.
 
+## Mise a jour vers 2026.0905.01
+
+Installer la nouvelle version de Datacron, puis actualiser le bloc du client utilise avec
+`datacron protocol install --client codex-cli --scope user` (adapter le client si necessaire).
+Reconnecter le serveur MCP dans l'application : une session deja ouverte peut conserver
+les anciens outils et consignes. Verifier que `session_context`, `prepare_follow_up` et
+`get_follow_up` figurent dans les outils disponibles.
+
+Executer `datacron protocol status --client all --scope user` pour verifier la distribution,
+puis ouvrir une session neuve et demander un contexte de projet. La presence du fichier
+ne certifie pas le chargement ni le comportement du modele.
+
+Aucune migration des notes Markdown n'est requise. Les anciennes actions en prose restent
+a consulter dans leurs sources ; elles ne deviennent pas automatiquement des revisions
+structurees. Les droits d'ecriture existants restent applicables. Aucun rappel n'est programme
+par cette mise a jour.
+
 ## Recette
 
 Huit scenarios synthetiques et des tests d'integration couvrent preparation, ecriture,
