@@ -446,7 +446,7 @@ Technical references:
 
 ## Development
 
-CI runs the invariants and the entire regression suite on Linux/Python 3.12 for changes limited to the READMEs, CHANGELOG, and Markdown pages under `docs/fr/` or `docs/en/`. All other changes retain the six Linux/Windows and Python 3.11–3.13 combinations. Publications require the full matrix, as do empty or unverifiable diffs. ShellCheck, the dependency audit, and the required `Quality gate` remain active in both paths.
+CI runs the invariants and the entire regression suite on Linux/Python 3.12 for changes limited to the READMEs, CHANGELOG, and Markdown pages under `docs/fr/` or `docs/en/`. All other changes retain the six Linux/Windows and Python 3.11–3.13 combinations. Publications require the full matrix, as do empty or unverifiable diffs. ShellCheck, the dependency audit, and the required `Quality gate` remain active in both paths. The first push of a new branch also uses the full matrix because no previous comparison point is available.
 
 ```bash
 python -m pip install -e ".[dev]"
