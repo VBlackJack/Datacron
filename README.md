@@ -445,6 +445,8 @@ Références techniques :
 
 ## Développement
 
+La CI exécute les invariants et toute la suite de régression sur Linux/Python 3.12 pour les changements limités aux README, au CHANGELOG et aux pages Markdown de `docs/fr/` ou `docs/en/`. Tout autre changement conserve les six combinaisons Linux/Windows et Python 3.11–3.13. Les publications imposent la matrice complète ; un diff vide ou invérifiable aussi. ShellCheck, l’audit des dépendances et le contrôle obligatoire `Quality gate` restent actifs dans les deux parcours.
+
 ```bash
 python -m pip install -e ".[dev]"
 ruff check .

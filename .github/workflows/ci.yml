@@ -9,6 +9,11 @@ name: ci
 
 on:
   workflow_call:
+    inputs:
+      force-full:
+        description: Require the complete platform matrix for reusable callers
+        type: boolean
+        default: true
   push:
     branches: [main, "claude-code/**", "codex/**"]
   pull_request:
@@ -19,14 +24,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  scope:
+    name: Select validation scope
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.scope.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+        with:
+          fetch-depth: 0
+      - name: Classify exact changed paths
+        id: scope
+        env:
+          FORCE_FULL: ${{ inputs.force-full }}
+        run: python scripts/ci_scope.py
+
   lint-type-test:
     name: Invariant gate (Py${{ matrix.python-version }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    needs: scope
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+      matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
@@ -96,7 +115,7 @@ jobs:
   quality-gate:
     name: Quality gate
     if: always()
-    needs: [lint-type-test, shellcheck, dependency-audit]
+    needs: [scope, lint-type-test, shellcheck, dependency-audit]
     runs-on: ubuntu-latest
     steps:
       - name: Require every validation job to succeed
