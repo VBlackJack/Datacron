@@ -95,9 +95,8 @@ async def session_context(
     try:
         paths = list(dict.fromkeys([*app.settings.session_context_paths, *(note_paths or [])]))
         if subject and subject.strip():
-            # A literal OR query broadens recall without executing arbitrary FTS syntax.
-            query = " OR ".join('"' + word.replace('"', '""') + '"' for word in subject.split())
-            hits = await app.store.search(query, limit=app.settings.max_result_count)
+            # The store tokenizes plain text and implements its own AND/OR fallback.
+            hits = await app.store.search(subject, limit=app.settings.max_result_count)
             for hit in hits:
                 if hit.chunk.note_rel_path not in paths and app.scope.allows_note_rel_path(
                     hit.chunk.note_rel_path

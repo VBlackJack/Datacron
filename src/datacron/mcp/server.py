@@ -155,6 +155,8 @@ class _StructuredToolPayloadError(Exception):
 class DatacronMCPServer(MCPServer[DatacronApp]):
     """MCPServer boundary preserving Datacron's public error contracts."""
 
+    error_redactor: SecretRedactor | None = None
+
     def tool(
         self,
         name: str | None = None,
@@ -182,6 +184,8 @@ class DatacronMCPServer(MCPServer[DatacronApp]):
                 pending = function(*args, **kwargs)
                 result = await pending if isawaitable(pending) else pending
                 if _is_structured_tool_error(result):
+                    if self.error_redactor is not None:
+                        result = self.error_redactor.redact_value(result)
                     raise _StructuredToolPayloadError(result)
                 return result
 
@@ -425,12 +429,14 @@ def create_server(app: DatacronApp) -> MCPServer[DatacronApp]:
             finally:
                 _LOGGER.info("datacron-mcp v%s shutting down", __version__)
 
-    server: MCPServer[DatacronApp] = DatacronMCPServer(
+    server = DatacronMCPServer(
         name=SERVER_NAME,
         version=__version__,
         instructions=SERVER_INSTRUCTIONS,
         lifespan=_lifespan,
     )
+    if app.secret_redactor.retrieval_enabled(app.settings):
+        server.error_redactor = app.secret_redactor
     register_tools(server, app)
     register_resources(server, app)
     return server

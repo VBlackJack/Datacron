@@ -295,7 +295,7 @@ les logs, les ULID internes, l'historique et le journal d'opérations.
 |---|---|
 | `session_context` | Contexte initial borné et protocole commun versionné. |
 | `prepare_follow_up` | Prépare les suivis sourcés sans écrire. |
-| `get_follow_up` | Dernières révisions des suivis structurés. |
+| `get_follow_up` | Dernières révisions des suivis structurés avec pagination liée à un instantané. |
 | `list_notes` | retourne une liste paginée, filtrable par dossier, tags et paires frontmatter clé/valeur, avec ULID, titre, tags, alias et dates |
 | `get_note` | lit une note par ULID, chunk id ou chemin relatif, en contenu paginé, chunk ou plan de headings |
 | `search_text` | effectue une recherche BM25 sur l'index FTS5 avec snippets classés et notes obsolètes démotées par défaut |

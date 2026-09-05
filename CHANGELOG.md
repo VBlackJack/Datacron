@@ -9,6 +9,15 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Fixed
+
+- Follow-up owner metadata is sandboxed during preparation and retrieval, including older
+  revisions, while historical hashes and replay compatibility remain intact.
+- Current follow-up reads expose snapshot-bound pagination and an actionable error when
+  one record exceeds the response budget, preventing unreachable trailing commitments.
+- Session context passes plain search text to the index without adding a spurious `OR` term.
+- Public structured tool errors respect the configured retrieval secret-redaction policy.
+
 ## [2026.0905.01] - 2026-09-05
 
 ### Added

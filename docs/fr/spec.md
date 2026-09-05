@@ -243,7 +243,7 @@ seuls les tools de lecture, advisory et opérationnels restent exposés.
 |---|---|---|
 | Lecture | `session_context` | Contexte initial borné et protocole commun versionné. |
 | Lecture | `prepare_follow_up` | Prépare les suivis sourcés sans écrire. |
-| Lecture | `get_follow_up` | Dernières révisions des suivis structurés. |
+| Lecture | `get_follow_up` | Dernières révisions des suivis structurés avec pagination liée à un instantané. |
 | Lecture | `list_notes` | Liste paginée, filtrable par dossier, tags et frontmatter de premier niveau |
 | Lecture | `get_note` | Lecture par ULID, chunk ID ou chemin, en format `full`, `chunk` ou `map` |
 | Lecture | `search_text` | Recherche BM25 FTS5 avec ranking temporel optionnellement historique |
@@ -487,6 +487,18 @@ Cette spec et l'implémentation de référence [Datacron](../../README.md) sont 
 
 
 ## Garanties de lecture et erreurs après écriture
+
+`get_follow_up` retourne `total`, `offset`, `next_offset`, `omitted` et `snapshot_hash`.
+Commencer à zéro, puis continuer avec `offset=next_offset` et
+`expected_snapshot=snapshot_hash`, en conservant `note_paths` et `include_closed`.
+Une modification d'une note demandée ou du filtre retourne `follow_up_snapshot_changed` :
+recommencer à zéro. Un enregistrement trop volumineux retourne `follow_up_record_too_large` :
+augmenter `DATACRON_MAX_RESULT_TOKENS` ou lire la source avec `get_note`. Le budget couvre
+la réponse de suivi sérialisée complète. Voir [Discipline mémoire](memory-discipline.md).
+
+Les erreurs structurées publiques masquent les secrets détectés avec la politique
+`all` ou `retrieval` ; `log` et `off` n'activent pas le masquage en lecture. Les codes
+d'erreur et le statut d'échec restent disponibles.
 
 Le masquage examine le texte source avant surlignage. Si un secret est détecté, la réponse
 utilise l'extrait source masqué sans surlignage ; les autres extraits restent surlignés.

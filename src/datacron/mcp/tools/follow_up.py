@@ -33,7 +33,7 @@ from datacron.core.memory_protocol import (
 from datacron.core.models import Note
 from datacron.core.paths import PathConfinementError
 from datacron.core.scope import NoteAdmissionError
-from datacron.mcp.sandbox import wrap_vault_content
+from datacron.mcp.sandbox import sanitize_metadata_value, wrap_vault_content
 from datacron.mcp.tools.follow_up_read import follow_up_entries
 from datacron.mcp.tools.payloads import _audit, _error_response, _internal_error_response
 from datacron.mcp.tools.session import rendered_size
@@ -219,6 +219,12 @@ def _render_entry(
     )
     raw["source_excerpt"] = wrap_vault_content(source.rel_path, record.source_excerpt)
     raw["summary"] = wrap_vault_content(target.rel_path, record.summary)
+    # Retain replay compatibility with existing envelopes without rewriting history.
+    legacy_digest = sha256(
+        json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=2).encode()
+    ).hexdigest()
+    if record.owner is not None:
+        raw["owner"] = sanitize_metadata_value(record.owner)
     rendered = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=2)
     # Prepared output is a write payload, not a retrieval snippet: refuse rather than
     # silently modify sensitive text and invalidate the source evidence.
@@ -239,7 +245,7 @@ def _render_entry(
     ]
     prior = dict(known)
     if record.revision in prior:
-        if prior[record.revision] != digest:
+        if prior[record.revision] not in {digest, legacy_digest}:
             raise FollowUpValidationError("revision already exists with different content")
         return None
     if known and record.previous_revision != known[-1][0]:

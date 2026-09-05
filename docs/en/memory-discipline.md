@@ -72,6 +72,16 @@ Source freshness is labelled `not_revalidated`; reread original evidence when ne
 The note's `updated` and operation history provide capture evidence; they do not replace the
 record's event date. Output truncation is explicit. A malformed/tampered envelope causes refusal.
 
+When `next_offset` is not null, repeat the call with `offset=next_offset` and
+`expected_snapshot=snapshot_hash`, keeping `note_paths` and `include_closed` unchanged.
+`total` counts matching current records; `omitted` counts records after this page. Continue
+until `next_offset` is null. Any requested-note or filter change invalidates the snapshot;
+restart at offset zero without `expected_snapshot` on `follow_up_snapshot_changed`.
+If a single record cannot fit, `follow_up_record_too_large` requests a larger
+`DATACRON_MAX_RESULT_TOKENS` budget or a paginated `get_note` read instead of returning
+an empty page that cannot advance. Returned text is sandboxed even for older revisions;
+stored bytes and revision integrity remain unchanged.
+
 For weekly reviews, interviews, handovers and recurring meetings, collect relevant canonical
 notes, read current records, then consult the dated original sources and legacy prose. Keep
 observations separate from evaluations. A stored deadline is not a scheduled reminder.

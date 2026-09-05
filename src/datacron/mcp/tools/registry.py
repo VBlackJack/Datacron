@@ -174,13 +174,17 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
             "Completed/cancelled records are hidden by default; history remains intact. "
             "Legacy prose is not parsed and source freshness is not revalidated. "
             "Use get_note for legacy notes and original evidence; absence is not proof "
-            "that no commitments exist."
+            "that no commitments exist. Continue with next_offset and expected_snapshot="
+            "snapshot_hash, keeping note_paths and include_closed unchanged. "
+            "Restart from offset 0 if sources change."
         ),
         annotations=_READ_ANNOTATIONS,
     )
     async def get_follow_up(
         note_paths: list[str],
         include_closed: bool = False,
+        offset: int = 0,
+        expected_snapshot: str | None = None,
     ) -> GetFollowUpOutput:
         return cast(
             "GetFollowUpOutput",
@@ -188,6 +192,8 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 app,
                 note_paths,
                 include_closed=include_closed,
+                offset=offset,
+                expected_snapshot=expected_snapshot,
             ),
         )
 

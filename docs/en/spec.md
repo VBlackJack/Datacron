@@ -234,7 +234,7 @@ read, advisory, and operational tools remain exposed.
 |---|---|---|
 | Read | `session_context` | Bounded session context and versioned common protocol. |
 | Read | `prepare_follow_up` | Prepare sourced follow-up plans without writing. |
-| Read | `get_follow_up` | Latest structured follow-up revisions. |
+| Read | `get_follow_up` | Latest structured follow-up revisions with snapshot-bound pagination. |
 | Read | `list_notes` | Paginated list, filterable by folder, tags, and top-level frontmatter |
 | Read | `get_note` | Read by ULID, chunk ID, or path, in `full`, `chunk`, or `map` format |
 | Read | `search_text` | FTS5 BM25 search with optionally historical temporal ranking |
@@ -469,6 +469,18 @@ This spec and the reference [Datacron](../../README.en.md) implementation are pu
 
 
 ## Retrieval and write failure guarantees
+
+`get_follow_up` returns `total`, `offset`, `next_offset`, `omitted`, and `snapshot_hash`.
+Start at offset zero. Continue with `offset=next_offset` and
+`expected_snapshot=snapshot_hash`, keeping `note_paths` and `include_closed` unchanged.
+A changed requested note or filter returns `follow_up_snapshot_changed`; restart at zero.
+A record that cannot fit returns `follow_up_record_too_large`: increase
+`DATACRON_MAX_RESULT_TOKENS` or read the source with `get_note`. The budget covers the
+complete serialized follow-up response. See [Memory discipline](memory-discipline.md).
+
+Public structured tool errors mask detected secrets when the redaction policy is
+`all` or `retrieval`; `log` and `off` do not enable retrieval masking. Error codes and
+failure status remain available.
 
 Search redaction examines undecorated source text. When it detects sensitive text, the
 response uses the masked source excerpt without query highlighting; ordinary excerpts keep

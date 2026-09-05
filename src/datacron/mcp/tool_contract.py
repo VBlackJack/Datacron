@@ -99,6 +99,10 @@ class GetFollowUpOutput(TypedDict, total=False):
     coverage: str
     truncated: bool
     omitted: int
+    total: int
+    offset: int
+    next_offset: int | None
+    snapshot_hash: str
 
 
 class ListNotesOutput(TypedDict):

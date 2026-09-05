@@ -68,6 +68,16 @@ ne signifie pas zéro engagement. Les sources portent `source_freshness=not_reva
 les relire lorsque nécessaire. Le journal d'opérations et updated documentent la capture,
 sans remplacer la date d'événement. Budget et troncature explicites ; bloc altéré refusé.
 
+Si `next_offset` n'est pas nul, poursuivre avec `offset=next_offset` et
+`expected_snapshot=snapshot_hash`, en conservant `note_paths` et `include_closed`.
+`total` compte les révisions courantes correspondantes ; `omitted` compte les éléments
+après cette page. Continuer jusqu'à `next_offset=null`. Un changement de note ou de filtre
+invalide le snapshot : sur `follow_up_snapshot_changed`, recommencer à zéro sans
+`expected_snapshot`. Si un seul élément dépasse le budget, `follow_up_record_too_large`
+demande d'augmenter `DATACRON_MAX_RESULT_TOKENS` ou de lire la note par pages avec
+`get_note`, au lieu de retourner une page vide sans progression. Le texte restitué est
+protégé même pour les anciennes révisions, sans modifier leurs octets ni leur intégrité.
+
 Pour une revue de semaine, un entretien, une passation ou un rendez-vous récurrent : réunir
 les notes pertinentes, lire les états structurés, puis les sources datées et la prose ancienne.
 Les rappels programmés, messages externes et collectes automatiques restent hors de ce lot.
