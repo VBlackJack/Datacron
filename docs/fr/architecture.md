@@ -135,10 +135,13 @@ flowchart TB
 
 ## 5. Catalogue MCP
 
-### 5.1 Tools (18)
+### 5.1 Tools (21)
 
 | Groupe | Tool | Description | Implémentation |
 |---|---|---|---|
+| Lecture | `session_context` | Contexte initial borne et protocole commun versionne. | MCP memory tools |
+| Lecture | `prepare_follow_up` | Prepare les suivis sources sans ecrire. | MCP memory tools |
+| Lecture | `get_follow_up` | Dernieres revisions des suivis structures. | MCP memory tools |
 | Lecture | `list_notes` | Liste paginée, filtrable par dossier et tags, avec identité et métadonnées. | VaultReader filesystem |
 | Lecture | `get_note` | Note par ULID, chunk id ou chemin ; contenu paginé, chunk ou plan de headings. | VaultReader + index de chunks |
 | Lecture | `search_text` | Recherche BM25 avec snippets classés et démotion des notes supersédées. | SQLite FTS5 |

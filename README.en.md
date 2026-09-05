@@ -269,6 +269,9 @@ operational-health guide rather than repairing or quarantining one member.
 
 | Tool | Description |
 |---|---|
+| `session_context` | Bounded session context and versioned common protocol. |
+| `prepare_follow_up` | Prepare sourced follow-up plans without writing. |
+| `get_follow_up` | Latest structured follow-up revisions. |
 | `list_notes` | returns a paginated list, filterable by folder, tags, and frontmatter key/value pairs, with ULID, title, tags, aliases, and dates |
 | `get_note` | reads a note by ULID, chunk id, or relative path, as paginated content, chunk, or heading outline |
 | `search_text` | runs a BM25 search on the FTS5 index with ranked snippets and stale notes demoted by default |

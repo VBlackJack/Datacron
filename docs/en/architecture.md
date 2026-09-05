@@ -135,10 +135,13 @@ flowchart TB
 
 ## 5. MCP catalog
 
-### 5.1 Tools (18)
+### 5.1 Tools (21)
 
 | Group | Tool | Description | Implementation |
 |---|---|---|---|
+| Read | `session_context` | Bounded session context and versioned common protocol. | MCP memory tools |
+| Read | `prepare_follow_up` | Prepare sourced follow-up plans without writing. | MCP memory tools |
+| Read | `get_follow_up` | Latest structured follow-up revisions. | MCP memory tools |
 | Read | `list_notes` | Paginated list, filterable by folder and tags, with identity and metadata. | VaultReader filesystem |
 | Read | `get_note` | Note by ULID, chunk id, or path; paginated content, chunk, or heading outline. | VaultReader + chunk index |
 | Read | `search_text` | BM25 search with ranked snippets and demotion of superseded notes. | SQLite FTS5 |

@@ -30,6 +30,9 @@ returns only the relevant notes or fragments (chunks) to Claude. Concretely:
 
 | Tool | What it does |
 |---|---|
+| `session_context` | Bounded session context and versioned common protocol. |
+| `prepare_follow_up` | Prepare sourced follow-up plans without writing. |
+| `get_follow_up` | Latest structured follow-up revisions. |
 | `list_notes` | Paginated list of notes, filterable by folder, tags, and top-level frontmatter; returns ULID, title, tags, aliases, and dates. |
 | `get_note` | Reads a specific note by ULID, chunk id, or relative path; paginated content, single chunk, or heading outline. |
 | `search_text` | BM25 search over the FTS5 index: ranked snippets, stale notes demoted by default. |
@@ -233,6 +236,19 @@ Search redaction examines undecorated source text. When it detects sensitive tex
 response uses the masked source excerpt without query highlighting; ordinary excerpts keep
 highlighting. Physical chunk line coordinates account for frontmatter, LF/CRLF and UTF-8 BOM.
 Reading by ULID validates the current file identity instead of trusting a stale path mapping.
+
+Secrets spanning multiple chunks stay concealed: Datacron checks the complete parent note
+and masks a fragment that contains only part of a secret. Public chunks elsewhere in the note
+remain readable; the file and its hashes do not change.
+
+Search budgets include the serialized results and their metadata/envelopes, using the project's
+four-characters-per-token estimate; outer tool fields and the echoed query are separate.
+`truncated_for_tokens=true` signals cropped excerpts or omitted results. Regex excerpts keep the
+matching region when it fits, and frontmatter matches no longer consume the result limit.
+
+For unusually large lines, `regex_frame_too_large` means one ripgrep JSON frame exceeded
+`DATACRON_REGEX_MAX_FRAME_BYTES` (8 MiB by default). Narrow the glob, or increase this setting
+deliberately for trusted input. The search stops cleanly and subsequent calls remain available.
 
 If an ordinary note write succeeds but index reconciliation fails, the MCP result is an error
 with `error.code="committed_index_incomplete"`, `error.committed=true`, `error.indexed=false`,

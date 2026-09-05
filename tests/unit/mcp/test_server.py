@@ -700,7 +700,7 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     assert "actionable" not in health_description
     delete_tool = tools["delete_note_section"]
     rename_tool = tools["rename_note_section"]
-    assert len(tools) == 18
+    assert len(tools) == 21
     organization_tool = tools["apply_organization_manifest"]
     organization_description = organization_tool.description or ""
     assert "crash-consistently apply" in organization_description

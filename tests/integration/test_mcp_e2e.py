@@ -206,7 +206,7 @@ class TestMcpE2E:
             client_info=Implementation(name="bl0002-read-test", version="2.0"),
         ) as client:
             tools = await client.list_tools()
-            assert len(tools.tools) == 18
+            assert len(tools.tools) == 21
             get_note_tool = next(tool for tool in tools.tools if tool.name == "get_note")
             assert get_note_tool.output_schema is not None
             encoded_schema = json.dumps(
@@ -267,7 +267,7 @@ class TestMcpE2E:
         try:
             response = await session.list_tools()
             tool_names = {t.name for t in response.tools}
-            assert len(response.tools) == 18
+            assert len(response.tools) == 21
             assert {
                 "list_notes",
                 "get_note",

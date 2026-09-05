@@ -241,6 +241,9 @@ seuls les tools de lecture, advisory et opérationnels restent exposés.
 
 | Catégorie | Tool | Contrat observable |
 |---|---|---|
+| Lecture | `session_context` | Contexte initial borne et protocole commun versionne. |
+| Lecture | `prepare_follow_up` | Prepare les suivis sources sans ecrire. |
+| Lecture | `get_follow_up` | Dernieres revisions des suivis structures. |
 | Lecture | `list_notes` | Liste paginée, filtrable par dossier, tags et frontmatter de premier niveau |
 | Lecture | `get_note` | Lecture par ULID, chunk ID ou chemin, en format `full`, `chunk` ou `map` |
 | Lecture | `search_text` | Recherche BM25 FTS5 avec ranking temporel optionnellement historique |
@@ -489,6 +492,25 @@ Le masquage examine le texte source avant surlignage. Si un secret est détecté
 utilise l'extrait source masqué sans surlignage ; les autres extraits restent surlignés.
 Les lignes des chunks correspondent au fichier physique, avec frontmatter, LF/CRLF et BOM UTF-8.
 Une lecture par ULID vérifie l'identité du fichier courant plutôt que de croire un ancien chemin.
+
+Le masquage des chunks et recherches examine aussi les zones sensibles de la note parente
+complete. Un fragment qui ne contient qu'une partie du secret est masque par `[REDACTED]` ;
+les chunks publics independants restent lisibles. Les octets et hashes restent inchanges.
+Chaque fragment indexe est compare aux chunks recalcules sur le parent courant avant masquage.
+Les fragments inchanges restent utilisables en lecture seule ; un fragment non verifiable est refuse.
+
+`DATACRON_MAX_RESULT_TOKENS` borne le tableau de resultats serialise selon l'estimation de quatre
+caracteres par token, echappement JSON, metadonnees et enveloppes compris. Les champs externes
+du tool et la requete repetee sont separes. `token_count` decrit toujours le chunk indexe, pas
+l'extrait rendu. Une coupe ou une omission active `truncated_for_tokens=true`. L'extrait regex
+conserve la zone correspondante si elle tient ; si les metadonnees seules depassent le budget,
+moins de resultats sont retournes.
+
+La limite regex compte les correspondances resolues et admises, pas les occurrences brutes du
+frontmatter ou des fichiers. Les trames ripgrep sont lues progressivement et bornees chacune
+par `DATACRON_REGEX_MAX_FRAME_BYTES` (8 Mio par defaut). Un depassement termine le processus enfant
+et retourne `error.code="regex_frame_too_large"`. Reduire le glob ou augmenter deliberement
+cette limite pour de grandes entrees de confiance.
 
 Si une écriture ordinaire réussit mais que la réconciliation échoue, le résultat MCP est une
 erreur portant `error.code="committed_index_incomplete"`, `error.committed=true`,

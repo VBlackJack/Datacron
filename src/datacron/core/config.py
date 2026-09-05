@@ -31,6 +31,11 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from datacron.core.memory_protocol import (
+    SESSION_DEFAULT_PATHS,
+    SESSION_MAX_NOTES,
+    SESSION_NOTE_CHARS,
+)
 from datacron.core.query_expansion import default_query_expansion, normalize_term_map
 
 DEFAULT_LOG_LEVEL: Final[str] = "INFO"
@@ -57,6 +62,8 @@ CONFIDENCE_PENALTY: Final[dict[str, float]] = {"low": 0.7, "needs_verification":
 DEFAULT_RIPGREP_PATH: Final[str] = "rg"
 DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH: Final[int] = 512
 DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS: Final[float] = 2.0
+DEFAULT_REGEX_MAX_FRAME_BYTES: Final[int] = 8 * 1024 * 1024
+REGEX_STREAM_READ_BYTES: Final[int] = 64 * 1024
 # Bounded wait for a contended vault advisory lock (and the sidecar index
 # busy-wait) before giving up. Mirrors the historical 5s SQLite busy timeout so
 # a single source of truth governs "how long to wait on a busy vault resource".
@@ -393,6 +400,11 @@ class Settings(BaseSettings):
     write_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
     vault_root: Path | None = Field(default=None)
     max_result_tokens: int = Field(default=DEFAULT_MAX_RESULT_TOKENS, ge=1)
+    session_context_paths: list[str] = Field(
+        default_factory=lambda: list(SESSION_DEFAULT_PATHS),
+        max_length=SESSION_MAX_NOTES,
+    )
+    session_note_chars: int = Field(default=SESSION_NOTE_CHARS, ge=1)
     max_result_count: int = Field(default=DEFAULT_MAX_RESULT_COUNT, ge=1)
     repair_min_interval_seconds: float = Field(
         default=DEFAULT_REPAIR_MIN_INTERVAL_SECONDS,
@@ -420,6 +432,7 @@ class Settings(BaseSettings):
         ge=1,
     )
     ripgrep_path: str = Field(default=DEFAULT_RIPGREP_PATH)
+    regex_max_frame_bytes: int = Field(default=DEFAULT_REGEX_MAX_FRAME_BYTES, ge=1)
     regex_fallback_max_pattern_length: int = Field(
         default=DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH,
         ge=1,

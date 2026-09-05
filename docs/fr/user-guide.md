@@ -31,6 +31,9 @@ il renvoie à Claude uniquement les notes ou fragments (chunks) pertinents. Conc
 
 | Outil | À quoi il sert |
 |---|---|
+| `session_context` | Contexte initial borne et protocole commun versionne. |
+| `prepare_follow_up` | Prepare les suivis sources sans ecrire. |
+| `get_follow_up` | Dernieres revisions des suivis structures. |
 | `list_notes` | Liste paginée des notes, filtrable par dossier, par tags et par frontmatter de premier niveau ; renvoie ULID, titre, tags, alias et dates. |
 | `get_note` | Lit une note précise par ULID, par identifiant de chunk ou par chemin relatif ; contenu paginé, chunk isolé, ou plan des titres. |
 | `search_text` | Recherche BM25 sur l'index FTS5 : snippets classés, notes obsolètes démotées par défaut. |
@@ -239,6 +242,20 @@ Le masquage examine le texte source avant surlignage. Si un secret est détecté
 utilise l'extrait source masqué sans surlignage ; les autres extraits restent surlignés.
 Les lignes des chunks correspondent au fichier physique, avec frontmatter, LF/CRLF et BOM UTF-8.
 Une lecture par ULID vérifie l'identité du fichier courant plutôt que de croire un ancien chemin.
+
+Un secret reparti sur plusieurs chunks reste masque : Datacron examine la note parente complete
+et masque un fragment qui ne contient qu'une partie du secret. Les chunks publics independants
+restent lisibles ; le fichier et ses hashes ne changent pas.
+
+Le budget de recherche comprend les resultats serialises, leurs metadonnees et enveloppes,
+avec l'estimation de quatre caracteres par token ; les champs externes et la requete repetee
+sont separes. `truncated_for_tokens=true` signale une coupe ou une omission. Les extraits regex
+conservent la zone correspondante si elle tient, et le frontmatter ne consomme plus leur limite.
+
+Sur une ligne inhabituellement grande, `regex_frame_too_large` indique qu'une trame JSON ripgrep
+depasse `DATACRON_REGEX_MAX_FRAME_BYTES` (8 Mio par defaut). Reduis le glob ou augmente ce parametre
+deliberement pour une entree de confiance. La recherche s'arrete proprement ; les appels suivants
+restent disponibles.
 
 Si une écriture ordinaire réussit mais que la réconciliation échoue, le résultat MCP est une
 erreur portant `error.code="committed_index_incomplete"`, `error.committed=true`,

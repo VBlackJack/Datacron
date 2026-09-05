@@ -24,6 +24,9 @@ MCP_TOOL_CAPABILITIES: Final[MappingProxyType[str, ToolCapabilities]] = MappingP
     {
         "list_notes": frozenset({"vault_read"}),
         "get_note": frozenset({"vault_read"}),
+        "session_context": frozenset({"vault_read", "indexed_vault_read"}),
+        "prepare_follow_up": frozenset({"vault_read"}),
+        "get_follow_up": frozenset({"vault_read"}),
         "search_text": frozenset({"indexed_vault_read"}),
         "search_regex": frozenset({"indexed_vault_read", "fixed_ripgrep_process"}),
         "get_backlinks": frozenset({"indexed_vault_read"}),

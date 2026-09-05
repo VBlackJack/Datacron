@@ -63,6 +63,44 @@ class NoteSummaryOutput(TypedDict):
     updated: str
 
 
+class SessionContextOutput(TypedDict, total=False):
+    """Bounded initialization; returned context is not a behavior attestation."""
+
+    contract: dict[str, str]
+    capabilities: dict[str, bool]
+    evidence: str
+    sources: list[dict[str, Any]]
+    unavailable: int
+    omitted: int
+    coverage: str
+    index_repaired: bool
+    identity: str
+    truncated: bool
+
+
+class PreparedFollowUpOutput(TypedDict, total=False):
+    """Read-only validation and existing-writer plans, never a committed receipt."""
+
+    status: str
+    committed: bool
+    writes_enabled: bool
+    validation: str
+    plans: list[dict[str, Any]]
+    already_recorded: list[str]
+    next_action: str
+
+
+class GetFollowUpOutput(TypedDict, total=False):
+    """Latest structured revisions within explicitly requested live notes."""
+
+    records: list[dict[str, Any]]
+    returned: int
+    legacy_notes: int
+    coverage: str
+    truncated: bool
+    omitted: int
+
+
 class ListNotesOutput(TypedDict):
     """Successful ``list_notes`` payload."""
 

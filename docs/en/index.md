@@ -15,6 +15,7 @@ a Markdown vault from Claude, without sending the whole vault into the context.
 | [Windows installation (installer)](installation-windows.md) | The `Datacron-Setup.exe` installer: double-click, no Python, automatic client registration, reinstall, silent mode, uninstall. |
 | [Frequently asked questions](faq.md) | Symptom-first fixes for vault selection, write access, clients, index freshness, reset, uninstall, and logs. |
 | [User guide](user-guide.md) | Day-to-day use from Claude: search, read, write, supervise, example requests. |
+| [Memory discipline](memory-discipline.md) | Common initialization, people enrichment, sourced follow-up and client diagnostics. |
 
 ## Understand how it works
 

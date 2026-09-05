@@ -232,6 +232,9 @@ read, advisory, and operational tools remain exposed.
 
 | Category | Tool | Observable contract |
 |---|---|---|
+| Read | `session_context` | Bounded session context and versioned common protocol. |
+| Read | `prepare_follow_up` | Prepare sourced follow-up plans without writing. |
+| Read | `get_follow_up` | Latest structured follow-up revisions. |
 | Read | `list_notes` | Paginated list, filterable by folder, tags, and top-level frontmatter |
 | Read | `get_note` | Read by ULID, chunk ID, or path, in `full`, `chunk`, or `map` format |
 | Read | `search_text` | FTS5 BM25 search with optionally historical temporal ranking |
@@ -471,6 +474,23 @@ Search redaction examines undecorated source text. When it detects sensitive tex
 response uses the masked source excerpt without query highlighting; ordinary excerpts keep
 highlighting. Physical chunk line coordinates account for frontmatter, LF/CRLF and UTF-8 BOM.
 Reading by ULID validates the current file identity instead of trusting a stale path mapping.
+
+Chunk and search masking also examines secret spans in the complete current parent note.
+A fragment intersecting only part of a secret is concealed as `[REDACTED]`; independent public
+chunks remain readable. Source bytes and hashes are unchanged. Search verifies each indexed
+fragment against chunks recomputed from the live parent before applying its redaction context.
+Unchanged fragments remain usable in read-only mode; unverifiable fragments cause a refusal.
+
+`DATACRON_MAX_RESULT_TOKENS` bounds the serialized results array using the four-characters-per-token
+estimate, including JSON escaping, result metadata and sandbox envelopes. The outer tool fields
+and echoed query are separate. `token_count` still describes the indexed chunk, not the rendered
+excerpt. Cropping or omitted results set `truncated_for_tokens=true`; cropped regex excerpts retain
+the matching region when it fits. If metadata alone does not fit, fewer results are returned.
+
+Regex `limit` counts resolved, admitted matches rather than raw frontmatter/file occurrences.
+Large ripgrep frames are read progressively. `DATACRON_REGEX_MAX_FRAME_BYTES` (default 8 MiB)
+bounds each JSON frame; exceeding it returns `error.code="regex_frame_too_large"` and terminates
+the child process. Narrow the glob or deliberately increase that bound for trusted large inputs.
 
 If an ordinary note write succeeds but index reconciliation fails, the MCP result is an error
 with `error.code="committed_index_incomplete"`, `error.committed=true`, `error.indexed=false`,

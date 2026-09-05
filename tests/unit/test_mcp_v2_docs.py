@@ -208,9 +208,9 @@ def test_mcp_v2_docs_readme_catalogs_match_runtime_manifest(
     table_tools = _table_tool_names(content)
     table_mutators = _table_tool_names(_section(content, write_heading, operational_heading))
 
-    assert len(MCP_TOOL_CAPABILITIES) == 18
+    assert len(MCP_TOOL_CAPABILITIES) == 21
     assert len(MUTATING_TOOL_NAMES) == 9
-    assert len(READ_ONLY_TOOL_NAMES) == 9
+    assert len(READ_ONLY_TOOL_NAMES) == 12
     assert available_tools == set(MUTATING_TOOL_NAMES)
     assert table_tools == set(MCP_TOOL_CAPABILITIES)
     assert table_mutators == set(MUTATING_TOOL_NAMES)
@@ -304,9 +304,9 @@ def test_mcp_v2_docs_public_catalog_matches_runtime_manifest(relative_path: Path
         if f"`{tool_name}`" in line
     }
 
-    assert len(MCP_TOOL_CAPABILITIES) == 18
+    assert len(MCP_TOOL_CAPABILITIES) == 21
     assert len(MUTATING_TOOL_NAMES) == 9
-    assert len(READ_ONLY_TOOL_NAMES) == 9
+    assert len(READ_ONLY_TOOL_NAMES) == 12
     assert documented_tools == set(MCP_TOOL_CAPABILITIES)
     assert documented_mutators == set(MUTATING_TOOL_NAMES)
     assert documented_tools >= BL0038_TOOL_NAMES

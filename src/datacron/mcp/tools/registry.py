@@ -31,6 +31,7 @@ from datacron.mcp.tool_contract import (
     ContradictionScanOutput,
     CreateNoteOutput,
     DeleteNoteSectionOutput,
+    GetFollowUpOutput,
     GetHealthOutput,
     GetNoteFormat,
     GetNoteOutput,
@@ -41,16 +42,23 @@ from datacron.mcp.tool_contract import (
     OrganizationManifestMode,
     PatchNotePreambleOutput,
     PatchNoteSectionOutput,
+    PreparedFollowUpOutput,
     RenameNoteSectionOutput,
     RevertNoteOutput,
     SearchTextOutput,
+    SessionContextOutput,
     SetFrontmatterOutput,
 )
 from datacron.mcp.tools.advisory import _contradiction_scan_impl
+from datacron.mcp.tools.follow_up import FollowUpRecord
+from datacron.mcp.tools.follow_up import prepare_follow_up as build_follow_up
+from datacron.mcp.tools.follow_up_read import get_follow_up as read_follow_up
 from datacron.mcp.tools.ops import _audit_query_impl, _get_health_impl, _get_note_history_impl
 from datacron.mcp.tools.organization import _apply_organization_manifest_impl
 from datacron.mcp.tools.read import _get_note_impl, _list_notes_impl
 from datacron.mcp.tools.search import _get_backlinks_impl, _search_regex_impl, _search_text_impl
+from datacron.mcp.tools.session import SessionDomain
+from datacron.mcp.tools.session import session_context as build_session_context
 from datacron.mcp.tools.write import (
     _append_journal_impl,
     _create_note_ai_impl,
@@ -115,6 +123,73 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
     ``app`` is the :class:`DatacronApp` bundle; typed loosely to avoid a
     circular import with :mod:`datacron.mcp.server`.
     """
+
+    @server.tool(
+        name="session_context",
+        title="Start a memory session",
+        description=(
+            "Start memory-dependent work here. Return the versioned common "
+            "discipline, effective write capability and bounded live notes. Optional "
+            "subject finds ranked candidates without repairing the index. Coverage is"
+            " explicit; candidates never establish a person's identity. Read next "
+            "pages before relying on incomplete context."
+        ),
+        annotations=_READ_ANNOTATIONS,
+    )
+    async def session_context(
+        subject: str | None = None,
+        domain: SessionDomain = "all",
+        note_paths: list[str] | None = None,
+        max_tokens: int | None = None,
+    ) -> SessionContextOutput:
+        return cast(
+            "SessionContextOutput",
+            await build_session_context(
+                app, subject=subject, domain=domain, note_paths=note_paths, max_tokens=max_tokens
+            ),
+        )
+
+    @server.tool(
+        name="prepare_follow_up",
+        title="Prepare sourced follow-up",
+        description=(
+            "Validate sourced actions, interactions, objectives and state revisions "
+            "against live note IDs/hashes and exact source excerpts. Existing target "
+            "history headings are required. Person targets require contextual "
+            "identity confirmation; clarify homonyms first. Returns bounded "
+            "append_journal plans, never writes. Validation is structural, not a "
+            "truth verdict. Use stable record/revision IDs, then apply with existing "
+            "writers and verify receipts."
+        ),
+        annotations=_READ_ANNOTATIONS,
+    )
+    async def prepare_follow_up(records: list[FollowUpRecord]) -> PreparedFollowUpOutput:
+        return cast("PreparedFollowUpOutput", await build_follow_up(app, records))
+
+    @server.tool(
+        name="get_follow_up",
+        title="Read current follow-up",
+        description=(
+            "Read latest structured follow-up revisions in explicit canonical notes. "
+            "Completed/cancelled records are hidden by default; history remains intact. "
+            "Legacy prose is not parsed and source freshness is not revalidated. "
+            "Use get_note for legacy notes and original evidence; absence is not proof "
+            "that no commitments exist."
+        ),
+        annotations=_READ_ANNOTATIONS,
+    )
+    async def get_follow_up(
+        note_paths: list[str],
+        include_closed: bool = False,
+    ) -> GetFollowUpOutput:
+        return cast(
+            "GetFollowUpOutput",
+            await read_follow_up(
+                app,
+                note_paths,
+                include_closed=include_closed,
+            ),
+        )
 
     @server.tool(
         name="list_notes",

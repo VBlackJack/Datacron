@@ -53,6 +53,9 @@ _SUPPORTED: Final[DurabilityStatus] = DurabilityStatus(
 READ_ONLY_CALLS: Final[Mapping[str, Mapping[str, object]]] = MappingProxyType(
     {
         "list_notes": MappingProxyType({"limit": _MAX_RESULT_COUNT}),
+        "session_context": MappingProxyType({"note_paths": ["source.md"]}),
+        "prepare_follow_up": MappingProxyType({"records": []}),
+        "get_follow_up": MappingProxyType({"note_paths": ["source.md"]}),
         "get_note": MappingProxyType({"id_or_path": "source.md", "format": "full"}),
         "search_text": MappingProxyType({"query": _STABLE_TERM, "limit": 20}),
         "search_regex": MappingProxyType({"pattern": _STABLE_TERM, "limit": 20}),
@@ -87,6 +90,9 @@ _MIXED_READ_SEQUENCES: Final[tuple[tuple[str, ...], ...]] = (
         "search_regex",
         "contradiction_scan",
         "audit_query",
+        "session_context",
+        "prepare_follow_up",
+        "get_follow_up",
     ),
 )
 

@@ -1,0 +1,10 @@
+[
+  {"name":"meeting","source":"Alex will send the report. Sam will check it. A workshop is only proposed.","records":[{"record_id":"report","kind":"action","status":"waiting","summary":"Awaiting report","owner":"Alex"},{"record_id":"check","kind":"action","status":"open","summary":"Check report","owner":"Sam"},{"record_id":"workshop","kind":"action","status":"proposed","summary":"Workshop suggestion"}]},
+  {"name":"project_resume","source":"Option A was rejected. The delivery is completed.","records":[{"record_id":"option","kind":"decision","status":"cancelled","summary":"Option A rejected"},{"record_id":"delivery","kind":"action","status":"completed","summary":"Delivery completed"}]},
+  {"name":"professional_review","source":"The training objective was agreed. Completion evidence is still missing.","records":[{"record_id":"training","kind":"objective","status":"open","summary":"Agreed training objective; outcome unverified"}]},
+  {"name":"conversation_preparation","source":"Alex from team A is waiting for the report on project X.","records":[{"record_id":"alex-x","kind":"interaction","status":"waiting","summary":"Discuss the report for project X","owner":"Alex"}]},
+  {"name":"waiting_for","source":"The supplier has not answered yet. No reminder has been scheduled.","records":[{"record_id":"supplier","kind":"action","status":"waiting","summary":"Awaiting supplier response"}]},
+  {"name":"interruption","source":"Implementation is done. Validation is still pending.","records":[{"record_id":"validation","kind":"action","status":"open","summary":"Validate implementation"}]},
+  {"name":"weekly_review","source":"Project X is waiting for approval; project Y is in progress. No deadlines were agreed.","records":[{"record_id":"x","kind":"project_state","status":"waiting","summary":"Project X awaiting approval"},{"record_id":"y","kind":"project_state","status":"in_progress","summary":"Project Y in progress"}]},
+  {"name":"decision_history","source":"Option B supersedes option A following the documented review.","records":[{"record_id":"choice","kind":"decision","status":"completed","summary":"Option B selected after review"}]}
+]

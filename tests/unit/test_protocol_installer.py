@@ -748,7 +748,9 @@ def test_protocol_block_has_single_marked_source() -> None:
 
     assert lines[0] == PROTOCOL_MARKER_BEGIN
     assert lines[-1] == PROTOCOL_MARKER_END
-    assert 14 <= len(lines) <= 22
+    assert "datacron:contract id=datacron-memory version=" in PROTOCOL_BLOCK
+    assert "session_context" in PROTOCOL_BLOCK
+    assert "identity" in PROTOCOL_BLOCK
     assert "search_text" in PROTOCOL_BLOCK
     assert "create_note_ai" in PROTOCOL_BLOCK
     assert "contradiction_scan" in PROTOCOL_BLOCK

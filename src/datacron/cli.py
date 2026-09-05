@@ -86,6 +86,7 @@ from datacron.installers.protocol import (
     install_memory_protocol,
     uninstall_memory_protocol,
 )
+from datacron.installers.protocol_status import protocol_status
 from datacron.scrubber import CanaryInitializationError, ScrubState, initialize_canaries
 from datacron.setup_wizard import (
     CLIENT_ALL,
@@ -1965,6 +1966,25 @@ def unregister(
 # ---------------------------------------------------------------------------
 # `datacron protocol ...`
 # ---------------------------------------------------------------------------
+
+
+@protocol_app.command("status")
+def protocol_status_command(
+    client: str = typer.Option(PROTOCOL_ALL, "--client", help="Client identifier or all."),
+    scope: str = typer.Option(SCOPE_USER, "--scope", help="user or project"),
+    project: Path | None = typer.Option(None, "--project", help="Project root."),
+) -> None:
+    """Inspect protocol distribution as JSON without modifying client files."""
+
+    try:
+        result = protocol_status(
+            client,
+            scope=scope,
+            project_dir=(project or Path.cwd()) if scope == SCOPE_PROJECT else None,
+        )
+    except ValueError as exc:
+        _error(str(exc))
+    typer.echo(json.dumps(result, indent=2))
 
 
 @protocol_app.command("install")

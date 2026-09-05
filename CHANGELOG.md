@@ -9,6 +9,26 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- A shared, versioned memory discipline for server and client instructions, with read-only
+  `protocol status` diagnostics that distinguish distribution from observed behavior.
+- Bounded `session_context`, sourced `prepare_follow_up` plans using existing journal writers,
+  and integrity-checked `get_follow_up` projections for current commitments and people history.
+- Synthetic daily-follow-up scenarios covering meetings, projects, professional objectives,
+  conversation preparation, waiting-for replies, interruption, weekly reviews and decisions.
+
+### Fixed
+
+- Retrieval checks secret spans in the complete parent note before exposing split chunks
+  or search excerpts. Fragments crossing a secret boundary are concealed; raw hashes stay intact.
+- Search budgets account for serialized result metadata, escaping and sandbox envelopes.
+  Oversized excerpts retain the matching region and report truncation.
+- Regex search reads large JSON frames progressively, with an explicit configurable byte
+  ceiling and actionable `regex_frame_too_large` errors instead of a hidden stream limit.
+- Regex result limits count resolved, admitted matches; frontmatter and excluded matches
+  no longer hide valid body results.
+
 ## [2026.0905.00] - 2026-09-05
 
 ### Added
