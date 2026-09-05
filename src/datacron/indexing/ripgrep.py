@@ -29,13 +29,16 @@ import json
 import os
 import re
 from asyncio.subprocess import PIPE
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, final
 
 from datacron.core.config import (
     DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH,
     DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS,
+    DEFAULT_REGEX_MAX_FRAME_BYTES,
     DEFAULT_RIPGREP_PATH,
+    REGEX_STREAM_READ_BYTES,
 )
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, SearchResult
@@ -65,6 +68,12 @@ class RegexFallbackError(RuntimeError):
     """Raised when the best-effort Python regex fallback declines or times out."""
 
 
+class RipgrepOutputError(RuntimeError):
+    """A bounded subprocess frame was refused before JSON decoding."""
+
+    code = "regex_frame_too_large"
+
+
 @final
 class RipgrepWrapper:
     """Run ``rg --json`` and resolve matches to indexed chunks."""
@@ -79,6 +88,8 @@ class RipgrepWrapper:
         rg_path: str | None = None,
         fallback_max_pattern_length: int | None = None,
         fallback_timeout_seconds: float | None = None,
+        admit: Callable[[str], bool] | None = None,
+        max_frame_bytes: int | None = None,
     ) -> list[SearchResult]:
         """Search with ripgrep, falling back to indexed chunks if the binary is absent.
 
@@ -120,6 +131,7 @@ class RipgrepWrapper:
                     if fallback_timeout_seconds is None
                     else fallback_timeout_seconds
                 ),
+                admit=admit,
             )
 
         if proc.stdout is None or proc.stderr is None:
@@ -135,6 +147,8 @@ class RipgrepWrapper:
                 vault_root=vault_root,
                 store=store,
                 limit=limit,
+                admit=admit,
+                max_frame_bytes=max_frame_bytes or DEFAULT_REGEX_MAX_FRAME_BYTES,
             )
             if killed_for_limit and proc.returncode is None:
                 proc.kill()
@@ -166,10 +180,11 @@ async def _collect_results(
     vault_root: Path,
     store: FTS5Store,
     limit: int,
+    admit: Callable[[str], bool] | None = None,
+    max_frame_bytes: int = DEFAULT_REGEX_MAX_FRAME_BYTES,
 ) -> tuple[list[SearchResult], bool]:
     results: list[SearchResult] = []
-    match_count = 0
-    async for raw_line in stdout:
+    async for raw_line in _read_frames(stdout, max_frame_bytes):
         parsed = _parse_json_line(raw_line)
         if parsed is None or parsed.get("type") != "match":
             continue
@@ -178,14 +193,31 @@ async def _collect_results(
             parsed,
             vault_root=vault_root,
             store=store,
-            rank_index=match_count,
+            rank_index=len(results),
         )
-        match_count += 1
-        if result is not None:
+        if result is not None and (admit is None or admit(result.chunk.note_rel_path)):
             results.append(result)
-        if match_count >= limit:
+        if len(results) >= limit:
             return results, True
     return results, False
+
+
+async def _read_frames(stdout: asyncio.StreamReader, maximum: int) -> AsyncIterator[bytes]:
+    """Read JSON frames without StreamReader.readline's implicit 64 KiB ceiling."""
+    pending = bytearray()
+    while block := await stdout.read(REGEX_STREAM_READ_BYTES):
+        for part in block.splitlines(keepends=True):
+            pending.extend(part)
+            if len(pending) > maximum:
+                raise RipgrepOutputError(
+                    f"ripgrep JSON frame exceeds {maximum} bytes; narrow the glob or "
+                    "increase DATACRON_REGEX_MAX_FRAME_BYTES"
+                )
+            if pending.endswith(b"\n"):
+                yield bytes(pending)
+                pending.clear()
+    if pending:
+        yield bytes(pending)
 
 
 def _build_command(
@@ -195,7 +227,7 @@ def _build_command(
     glob: str | None,
     limit: int,
 ) -> list[str]:
-    command = [rg_path, "--json", "--max-count", str(limit)]
+    command = [rg_path, "--json"]
     if glob:
         command.extend(["--glob", glob])
     command.extend(["--", pattern, str(vault_root)])
@@ -210,6 +242,7 @@ async def _fallback_indexed_regex_search(
     store: FTS5Store,
     max_pattern_length: int,
     timeout_seconds: float,
+    admit: Callable[[str], bool] | None = None,
 ) -> list[SearchResult]:
     """Run the best-effort indexed fallback when supported ripgrep is unavailable.
 
@@ -224,7 +257,11 @@ async def _fallback_indexed_regex_search(
         )
     try:
         async with asyncio.timeout(timeout_seconds):
-            chunks = [chunk async for chunk in store.iter_all_chunks()]
+            chunks = [
+                chunk
+                async for chunk in store.iter_all_chunks()
+                if admit is None or admit(chunk.note_rel_path)
+            ]
             return await asyncio.to_thread(
                 _scan_indexed_chunks,
                 pattern,

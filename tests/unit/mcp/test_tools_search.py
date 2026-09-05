@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any, Final
 
@@ -491,6 +491,8 @@ class _StubRipgrep:
         rg_path: str | None = None,
         fallback_max_pattern_length: int | None = None,
         fallback_timeout_seconds: float | None = None,
+        admit: Callable[[str], bool] | None = None,
+        max_frame_bytes: int | None = None,
     ) -> list[SearchResult]:
         self.calls.append(
             {
@@ -713,6 +715,8 @@ class TestSearchRegex:
                 rg_path: str | None = None,
                 fallback_max_pattern_length: int | None = None,
                 fallback_timeout_seconds: float | None = None,
+                admit: Callable[[str], bool] | None = None,
+                max_frame_bytes: int | None = None,
             ) -> list[SearchResult]:
                 raise RegexFallbackError("regex fallback timed out -- install ripgrep")
 

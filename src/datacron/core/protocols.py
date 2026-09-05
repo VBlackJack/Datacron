@@ -234,6 +234,8 @@ class RipgrepWrapper(Protocol):
         rg_path: str | None = None,
         fallback_max_pattern_length: int | None = None,
         fallback_timeout_seconds: float | None = None,
+        admit: Callable[[str], bool] | None = None,
+        max_frame_bytes: int | None = None,
     ) -> list[SearchResult]:
         """Run ripgrep against ``vault_root`` and resolve matches."""
         ...

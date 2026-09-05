@@ -98,6 +98,30 @@ class SecretRedactor:
             return tuple(self.redact_value(item) for item in value)
         return value
 
+    def redact_fragment(self, value: str, source: str, line_start: int, line_end: int) -> str:
+        """Redact a fragment using its physical lines in the complete parent note.
+
+        Whole secrets present in the fragment are replaced directly. If a secret
+        crosses a chunk boundary (including a synthetic code fence/table header),
+        conceal that fragment rather than guessing an unsafe partial span. Source
+        bytes and chunk hashes remain unchanged.
+        """
+        lines = source.splitlines(keepends=True)
+        start = sum(map(len, lines[: line_start - 1]))
+        end = start + sum(map(len, lines[line_start - 1 : line_end]))
+        protected = value
+        for pattern in (*self._patterns, *self._custom_patterns):
+            for match in pattern.finditer(source):
+                group = "secret" if "secret" in pattern.groupindex else 0
+                left, right = match.span(group)
+                if left >= end or right <= start:
+                    continue
+                secret = source[left:right]
+                if not secret or secret not in value:
+                    return REDACTED
+                protected = protected.replace(secret, REDACTED)
+        return self.redact_text(protected)
+
     @staticmethod
     def _replace_secret_group(match: re.Match[str]) -> str:
         start, end = match.span("secret")

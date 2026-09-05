@@ -31,8 +31,10 @@ from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.ripgrep import (
     RegexFallbackError,
     RipgrepError,
+    RipgrepOutputError,
     RipgrepWrapper,
     _build_command,
+    _read_frames,
 )
 
 NoteFactory = Callable[..., Note]
@@ -53,6 +55,17 @@ class _AsyncBytes:
     def __init__(self, lines: list[bytes]) -> None:
         self._lines = lines
         self._index = 0
+
+    async def read(self, size: int) -> bytes:
+        if self._index >= len(self._lines):
+            return b""
+        line = self._lines[self._index]
+        block, remaining = line[:size], line[size:]
+        if remaining:
+            self._lines[self._index] = remaining
+        else:
+            self._index += 1
+        return block
 
     def __aiter__(self) -> AsyncIterator[bytes]:
         return self
@@ -234,7 +247,7 @@ def test_build_command_inserts_separator_before_dash_pattern() -> None:
 
     command = _build_command("rg", "-foo", vault_root, glob=None, limit=20)
 
-    assert command == ["rg", "--json", "--max-count", "20", "--", "-foo", str(vault_root)]
+    assert command == ["rg", "--json", "--", "-foo", str(vault_root)]
 
 
 def test_build_command_places_separator_after_glob_options() -> None:
@@ -296,6 +309,52 @@ async def test_limit_enforcement_kills_process_after_limit(
     assert len(results) == 3
     assert process.killed is True
     process.kill.assert_called_once_with()
+    process.wait.assert_awaited_once()
+
+
+async def test_unadmitted_match_does_not_consume_limit(
+    indexed: _IndexedFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess(
+        [
+            _match(indexed.vault_root / "alpha.md", 2, "kafka\n", [(0, 5)]),
+            _match(indexed.vault_root / "folder/beta.md", 2, "kafka\n", [(0, 5)]),
+        ]
+    )
+    _install_process(monkeypatch, process)
+    results = await RipgrepWrapper().search(
+        "kafka",
+        indexed.vault_root,
+        limit=1,
+        store=indexed.store,
+        admit=lambda path: path == "folder/beta.md",
+    )
+    assert [result.chunk for result in results] == [indexed.chunks["beta"]]
+
+
+@pytest.mark.parametrize("overflow", [False, True])
+async def test_frame_byte_ceiling_is_explicit(overflow: bool) -> None:
+    frame = ('{"text":"' + "é" * 40000 + '"}\n').encode()
+    reader = asyncio.StreamReader()
+    reader.feed_data(frame)
+    reader.feed_eof()
+    if overflow:
+        with pytest.raises(RipgrepOutputError, match="DATACRON_REGEX_MAX_FRAME_BYTES"):
+            _ = [item async for item in _read_frames(reader, len(frame) - 1)]
+    else:
+        assert [item async for item in _read_frames(reader, len(frame))] == [frame]
+
+
+async def test_frame_refusal_terminates_child(
+    indexed: _IndexedFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess([_match(indexed.vault_root / "alpha.md", 2, "kafka" * 1000, [(0, 5)])])
+    _install_process(monkeypatch, process)
+    with pytest.raises(RipgrepOutputError):
+        await RipgrepWrapper().search(
+            "kafka", indexed.vault_root, store=indexed.store, max_frame_bytes=100
+        )
+    process.kill.assert_called_once()
     process.wait.assert_awaited_once()
 
 
@@ -560,9 +619,9 @@ async def test_glob_filter_is_passed_to_subprocess(
     )
 
     command = calls[0][0]
-    assert command[:7] == ("rg", "--json", "--max-count", "7", "--glob", "*.md", "--")
-    assert command[7] == "kafka"
-    assert command[8] == str(indexed.vault_root)
+    assert command[:5] == ("rg", "--json", "--glob", "*.md", "--")
+    assert command[5] == "kafka"
+    assert command[6] == str(indexed.vault_root)
 
 
 async def test_invalid_utf8_json_line_is_skipped(

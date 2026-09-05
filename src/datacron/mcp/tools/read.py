@@ -531,7 +531,11 @@ def _build_chunk_payload(
         "line_end": chunk.line_end,
         "content": wrap_vault_content(
             _redact_retrieval_text(app, chunk.note_rel_path),
-            _redact_retrieval_text(app, chunk.content),
+            app.secret_redactor.redact_fragment(
+                chunk.content, note.raw_content, chunk.line_start, chunk.line_end
+            )
+            if app.secret_redactor.retrieval_enabled(app.settings)
+            else chunk.content,
         ),
         "content_hash": note.content_hash,
         "note_content_hash": note.content_hash,

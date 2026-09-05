@@ -23,7 +23,7 @@ from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
 from datacron.core.models import SearchResult
 from datacron.core.temporal import rerank_temporal
 from datacron.indexing.reconcile import ReconcileStats, reconcile
-from datacron.indexing.ripgrep import RegexFallbackError, RipgrepError
+from datacron.indexing.ripgrep import RegexFallbackError, RipgrepError, RipgrepOutputError
 from datacron.mcp.sandbox import (
     wrap_vault_content,
 )
@@ -37,6 +37,7 @@ from datacron.mcp.tools.payloads import (
     _sanitize_optional_retrieval_metadata,
     _sanitize_retrieval_metadata,
 )
+from datacron.mcp.tools.retrieval import bound_results, protect_results
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -87,19 +88,21 @@ async def _search_text_impl(
             include_superseded=include_superseded,
         )[:bounded_limit]
         timings_ms["rerank"] = _elapsed_ms(stage_started)
+        raw_results = await protect_results(app, raw_results)
     except Exception:
         return _internal_error_response("search_text", started, query=query)
 
     stage_started = time.perf_counter()
-    results, truncated_for_tokens = _apply_token_budget(
-        raw_results, max_tokens=app.settings.max_result_tokens
+    results, truncated_for_tokens = bound_results(
+        [_search_result_summary(app, result) for result in raw_results],
+        max_tokens=app.settings.max_result_tokens,
     )
     timings_ms["budget"] = _elapsed_ms(stage_started)
 
     stage_started = time.perf_counter()
     payload: dict[str, Any] = {
         "query": _redact_retrieval_text(app, cleaned),
-        "results": [_search_result_summary(app, result) for result in results],
+        "results": results,
         "returned": len(results),
         "limit_applied": bounded_limit,
         "truncated_for_tokens": truncated_for_tokens,
@@ -176,9 +179,12 @@ async def _search_regex_impl(
             rg_path=app.settings.ripgrep_path,
             fallback_max_pattern_length=app.settings.regex_fallback_max_pattern_length,
             fallback_timeout_seconds=app.settings.regex_fallback_timeout_seconds,
+            admit=app.scope.allows_note_rel_path,
+            max_frame_bytes=app.settings.regex_max_frame_bytes,
         )
         raw_results = _filter_admitted_results(app, raw_results)
-    except (FileNotFoundError, RegexFallbackError) as exc:
+        raw_results = await protect_results(app, raw_results)
+    except (FileNotFoundError, RegexFallbackError, RipgrepOutputError) as exc:
         mapped_exc = ValueError(str(exc)) if isinstance(exc, RegexFallbackError) else exc
         return _error_response("search_regex", mapped_exc, started, pattern=pattern, glob=glob)
     except RipgrepError as exc:
@@ -193,13 +199,14 @@ async def _search_regex_impl(
     except Exception:
         return _internal_error_response("search_regex", started, pattern=pattern, glob=glob)
 
-    results, truncated_for_tokens = _apply_token_budget(
-        raw_results, max_tokens=app.settings.max_result_tokens
+    results, truncated_for_tokens = bound_results(
+        [_search_result_summary(app, result) for result in raw_results],
+        max_tokens=app.settings.max_result_tokens,
     )
     payload: dict[str, Any] = {
         "pattern": _redact_retrieval_text(app, pattern),
         "glob": _sanitize_optional_retrieval_metadata(app, glob),
-        "results": [_search_result_summary(app, result) for result in results],
+        "results": results,
         "returned": len(results),
         "limit_applied": bounded_limit,
         "truncated_for_tokens": truncated_for_tokens,
@@ -287,22 +294,6 @@ async def _get_backlinks_impl(
         deleted_notes=repair["deleted_notes"],
     )
     return payload
-
-
-def _apply_token_budget(
-    results: list[SearchResult],
-    *,
-    max_tokens: int,
-) -> tuple[list[SearchResult], bool]:
-    """Keep results in order until their cumulative token_count exceeds ``max_tokens``."""
-    kept: list[SearchResult] = []
-    running_total = 0
-    for result in results:
-        running_total += max(1, result.chunk.token_count)
-        if kept and running_total > max_tokens:
-            return kept, True
-        kept.append(result)
-    return kept, False
 
 
 def _search_result_summary(app: DatacronApp, result: SearchResult) -> dict[str, Any]:
