@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0905.00] - 2026-09-05
+
 ### Added
 
 - Optional `request_id` on all eight ordinary note writers binds exact arguments to a
