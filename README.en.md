@@ -12,47 +12,28 @@
 
 [Français](README.md) | **English**
 
-Datacron indexes a folder of Markdown notes, exposes a local MCP server, then returns the
-relevant notes or chunks to the client instead of a full dump. The vault stays an ordinary
-Markdown folder: Datacron only adds a `.datacron/` sidecar for the index, logs, internal
-ULIDs, history, and the operation journal.
+## What can you do with Datacron?
 
-## What is in place
+Recover project context, prepare for a conversation, and keep track of commitments.
+Datacron gives your assistant durable memory in readable, editable Markdown. Your notes
+remain usable independently of the client you choose.
 
-| Surface | Current state |
+| Need | Example request to your assistant |
 |---|---|
-| Vault reading | `list_notes`, `get_note`, resources `datacron://vault/map`, `vault/info`, `policy/active` |
-| Search | SQLite FTS5/BM25, FR↔EN query expansion, temporal re-rank, `ripgrep` via `search_regex` |
-| Local graph | Wikilinks and backlinks via `get_backlinks` |
-| Writing | 8 confined note tools + 1 organization batch, journaled and disabled by default without `DATACRON_WRITE_PATHS` |
-| MCP transport | Python MCP SDK v2 through `MCPServer`, local stdio only; modern `2026-07-28` protocol and legacy `2025-11-25` compatibility, with no HTTP listener |
-| Index | `datacron index` incremental, `datacron reindex` full, automatic repair on read |
-| Organization | Optional `organization` block in `VAULT.yaml`; `datacron reorganize --dry-run` measures the gap read-only, `apply_organization_manifest` applies |
-| Evaluation | `datacron eval` over the real MCP pipeline: recall@k, MRR, nDCG, freshness, latency, and payload tokens |
-| Guided setup | `datacron setup`: init + index + MCP registration in one command |
-| Clients | Auto-detect and register via `datacron setup --client all`: Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, LM Studio, Codex CLI, Windsurf, VS Code |
-| Memory protocol | Universal MCP instructions plus native global rules installed for supported clients |
-| Distribution | Windows installer (`Datacron-Setup.exe`), standalone executable (PyInstaller) with no Python required, or installation from source |
+| Resume a project | “Where did we leave off? Find the decisions and next actions.” |
+| Prepare a meeting | “Summarize our recent conversations and open points, with sources.” |
+| Remember a person | “Who is this person, how have we interacted, and what should we follow up on?” |
+| Track objectives | “Find the commitments and achievements relevant to my next review.” |
+| Preserve a reliable record | “Save this decision, link it to the project, and verify that it was stored.” |
 
-Local measurement of the `tool/impl` pipeline actually received by the agent, 19 questions,
-8k-token / 20-result configuration, July 17, 2026:
+The assistant orchestrates these requests using the available tools and granted permissions.
+A shared protocol guides reading, people updates, and write verification. Ambiguous identities
+require clarification; storing a deadline does not schedule a reminder.
+[Explore daily follow-up](docs/en/memory-discipline.md).
 
-```text
-recall@5       0.89
-recall@10      0.95
-recall@20      0.95
-MRR            0.73
-nDCG@10        0.79
-latency p50    57 ms
-latency p95    276 ms
-payload tokens 90567
-```
-
-The tool now matches the raw store at recall@5 (0.89): the previous gap came from globally
-comparing scores produced by separate AND and OR queries, not from the response budget or a
-BM25 limitation. Repair-on-read throttling brings its own p50 down to 0.009 ms; the first
-full sweep of the session remains visible in p95. The golden set does not yet contain a
-`forbidden_paths` case and the vault has no indexed `supersedes` relationship.
+**Start here:** [install](#installation) · [first session](#first-session) ·
+[user guide](docs/en/user-guide.md) · [MCP reference](#mcp-tools) ·
+[privacy](#privacy-and-security).
 
 ## Installation
 
@@ -63,6 +44,13 @@ The easiest way on Windows: download `Datacron-Setup.exe` from the
 and pick your vault. No Python, no terminal, no administrator rights; Datacron registers
 itself with your AI clients automatically. Full guide:
 [Windows installation](docs/en/installation-windows.md).
+
+### Python: from PyPI
+
+```bash
+python -m pip install datacron
+datacron setup
+```
 
 ### From source
 
@@ -84,6 +72,20 @@ Runtime prerequisites:
 - `ripgrep` available on the `PATH` for `search_regex`
 - a folder of Markdown notes
 - a supported stdio MCP client, such as Claude Desktop, Codex CLI, or Gemini CLI
+
+## First session
+
+1. Choose your notes folder with the installer or `datacron setup`.
+2. Reconnect Datacron in your MCP client to load the tools and instructions.
+3. Ask: “Find the notes for my project and summarize its status with sources.”
+
+For memory sessions, `session_context` returns bounded context and the shared protocol.
+`prepare_follow_up` prepares sourced updates; existing writers apply them according to
+permissions. `get_follow_up` retrieves the latest structured revisions. Existing prose notes
+remain readable and are not automatically converted.
+
+The server operates locally. Your client may send returned excerpts to its model provider;
+see [privacy and security](#privacy-and-security).
 
 ## Quick start
 
@@ -214,10 +216,10 @@ Available write tools:
 - `create_note_ai`: creates a typed Markdown note, without overwrite.
 - `append_journal`: adds an entry under a heading of an existing note.
 - `set_frontmatter`: updates lifecycle fields and the `rejected` options list without modifying the Markdown body.
-- `patch_note_preamble`: replaces or removes the Markdown preamble before the first ATX heading, with mandatory CAS control.
+- `patch_note_preamble`: replaces or removes the Markdown preamble before the first recognized Markdown heading (ATX or Setext), with mandatory CAS control.
 - `patch_note_section`: replaces the content under an existing heading with CAS control.
-- `delete_note_section`: explicitly deletes an ATX H2-H6 section and its subtree.
-- `rename_note_section`: renames only the title of an ATX H2-H6 section.
+- `delete_note_section`: explicitly deletes an H2-H6 section (ATX or Setext) and its subtree.
+- `rename_note_section`: renames only the title of an H2-H6 section (ATX or Setext).
 - `revert_note`: restores the exact bytes of a version kept in history.
 - `apply_organization_manifest`: validates and then applies a local content-addressed bundle
   after confirmation bound to the exact admitted organization pre-state.
@@ -263,6 +265,29 @@ An organization-batch blocker is reported by `datacron ops inspect` with a `pend
 and both single-note repair actions unavailable; use the full offline rollback procedure in the
 operational-health guide rather than repairing or quarantining one member.
 
+## Available capabilities
+
+Datacron indexes a folder of Markdown notes, exposes a local MCP server, then returns the
+relevant notes or chunks to the client instead of a full dump. The vault stays an ordinary
+Markdown folder: Datacron only adds a `.datacron/` sidecar for the index, logs, internal
+ULIDs, history, and the operation journal.
+
+| Surface | Current state |
+|---|---|
+| Vault reading | `list_notes`, `get_note`, resources `datacron://vault/map`, `vault/info`, `policy/active` |
+| Search | SQLite FTS5/BM25, FR↔EN query expansion, temporal re-rank, `ripgrep` via `search_regex` |
+| Local graph | Wikilinks and backlinks via `get_backlinks` |
+| Writing | 8 confined note tools + 1 organization batch, journaled and disabled by default without `DATACRON_WRITE_PATHS` |
+| MCP transport | Python MCP SDK v2 through `MCPServer`, local stdio only; modern `2026-07-28` protocol and legacy `2025-11-25` compatibility, with no HTTP listener |
+| Index | `datacron index` incremental, `datacron reindex` full, conditional repair on read |
+| Organization | Optional `organization` block in `VAULT.yaml`; `datacron reorganize --dry-run` measures the gap read-only, `apply_organization_manifest` applies |
+| Evaluation | `datacron eval` over the real MCP pipeline: recall@k, MRR, nDCG, freshness, latency, and payload tokens |
+| Guided setup | `datacron setup`: init + index + MCP registration in one command |
+| Clients | Auto-detect and register via `datacron setup --client all`: Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, LM Studio, Codex CLI, Windsurf, VS Code |
+| Daily memory | `session_context`, `prepare_follow_up`, `get_follow_up`: bounded context, sourced follow-up, and structured state |
+| Memory protocol | Shared versioned server/client contract; `protocol status` checks distribution, not model behavior |
+| Distribution | Windows installer (`Datacron-Setup.exe`), standalone executable (PyInstaller) with no Python required, or installation from source |
+
 ## MCP Tools
 
 ### Reading
@@ -285,10 +310,10 @@ operational-health guide rather than repairing or quarantining one member.
 | `create_note_ai` | creates a new typed `_memory` note, confined to allowed paths, without overwrite and with a durable journal |
 | `append_journal` | adds a Markdown entry under a heading, with confinement, exact history, and atomic write |
 | `set_frontmatter` | updates only the lifecycle fields, the `rejected` list, and the `updated` date, preserving the Markdown body |
-| `patch_note_preamble` | replaces or removes the preamble before the first ATX heading, with mandatory CAS and suffix preservation |
+| `patch_note_preamble` | replaces or removes the preamble before the first recognized Markdown heading (ATX or Setext), with mandatory CAS and suffix preservation |
 | `patch_note_section` | replaces the content of an existing heading with CAS, exact history, and preservation of other sections |
-| `delete_note_section` | explicitly deletes an ATX H2-H6 section and its subtree, with optional CAS and exact history |
-| `rename_note_section` | renames an ATX H2-H6 section title without modifying its content or subtree |
+| `delete_note_section` | explicitly deletes an H2-H6 section (ATX or Setext) and its subtree, with optional CAS and exact history |
+| `rename_note_section` | renames the title of an H2-H6 section (ATX or Setext) without modifying its content or subtree |
 | `revert_note` | restores a note from its content-addressed history; the operation stays durable, reversible, and audited |
 | `apply_organization_manifest` | validates a local content-addressed bundle containing at least one exact note operation and/or an exact `organization` configuration replacement, then applies its declared members and any required derived ULID-sidecar migration under CAS; application is journaled and crash-consistent |
 
@@ -325,6 +350,31 @@ MCP resources:
 
 `search_regex` stays literal: it applies neither query expansion nor temporal re-rank.
 
+<details>
+<summary>Historical search measurements — July 17, 2026</summary>
+
+These measurements cover 19 questions and one configuration. They are not a benchmark of
+the current release or a guarantee for another vault.
+
+Local measurement of the `tool/impl` pipeline actually received by the agent, 19 questions,
+8k-token / 20-result configuration, July 17, 2026:
+
+```text
+recall@5       0.89
+recall@10      0.95
+recall@20      0.95
+MRR            0.73
+nDCG@10        0.79
+latency p50    57 ms
+latency p95    276 ms
+payload tokens 90567
+```
+
+On this historical set, tool-level recall@5 matched the BM25 store. Use `datacron eval`
+with a suitable question set to measure behavior on your own notes.
+
+</details>
+
 ## Privacy and security
 
 - Datacron does no telemetry.
@@ -344,6 +394,7 @@ datacron setup --yes                # all defaults, no prompts
 datacron setup --client all --scope both --vault /path/to/vault
 datacron setup --protocol           # also install client memory rules
 datacron protocol install --client all
+datacron protocol status --client all --scope user
 datacron init /path/to/vault
 datacron status --vault /path/to/vault
 datacron index --vault /path/to/vault
@@ -363,9 +414,7 @@ datacron protocol uninstall --client all
 
 ## Current limitations
 
-- No vector search / embeddings: the spike is ruled out on the current golden because
-  tool-level recall@5 at 0.89 matches the BM25 store. Re-evaluate if an expanded golden
-  falls below 0.85 with the same evaluation.
+- Lexical search only: no vector search or embeddings.
 - No autonomous agent: the MCP client orchestrates.
 - No GUI.
 - No concurrent multi-machine writes.
@@ -383,6 +432,7 @@ To get started:
 - [Use Datacron with Ollama](docs/en/ollama.md)
 - [Frequently asked questions](docs/en/faq.md)
 - [User guide](docs/en/user-guide.md)
+- [Daily memory, people, and commitments](docs/en/memory-discipline.md)
 
 Technical references:
 
