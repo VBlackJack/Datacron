@@ -51,10 +51,10 @@ atomic per file, versioned, and audited.
 | `create_note_ai` | Creates a new typed note without overwriting any existing file. |
 | `append_journal` | Adds an entry under an existing heading of a note. |
 | `set_frontmatter` | Updates lifecycle fields without touching the Markdown body. |
-| `patch_note_preamble` | Replaces or removes the preamble before the first ATX heading, with version control. |
+| `patch_note_preamble` | Replaces or removes the preamble before the first Markdown heading, with version control. |
 | `patch_note_section` | Replaces the content under an existing heading, with compare-and-set (CAS). |
-| `delete_note_section` | Explicitly removes an ATX H2-H6 section and its subtree. |
-| `rename_note_section` | Renames an ATX H2-H6 section heading without changing its content. |
+| `delete_note_section` | Explicitly removes an H2-H6 section and its subtree. |
+| `rename_note_section` | Renames an H2-H6 section heading without changing its content. |
 | `revert_note` | Restores the exact bytes of a version kept in history. |
 | `apply_organization_manifest` | Validates and then applies a local content-addressed bundle containing at least one exact note operation and/or an exact `organization` configuration replacement. |
 
@@ -242,3 +242,6 @@ The hash records this write, not a guarantee that no later writer changed the fi
 with the original expected hash is rejected by CAS; omitting the hash can duplicate an append.
 Failures before a confirmed commit retain their existing error contracts. Cancellation or a
 lost transport response still requires checking the note/history before deciding what to do.
+
+
+See [Reliability improvements](improvements.md) for request replay, targeted indexing, shared Markdown selection and quality gates.

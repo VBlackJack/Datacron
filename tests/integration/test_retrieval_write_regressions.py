@@ -14,6 +14,7 @@ import shutil
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from mcp.types import CallToolResult, TextContent
@@ -130,11 +131,12 @@ async def test_indexed_identity_never_returns_replacement_note(
 
 async def test_mcp_write_error_preserves_committed_hash_and_cas(
     regression_app: DatacronApp,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = regression_app
     path = _write(app, "# Sample\n\n## Journal\n\nInitial\n")
     before_hash = sha256_bytes(path.read_bytes())
-    (app.vault_root / "invalid.md").write_bytes(b"\xff")
+    monkeypatch.setattr(app.store, "upsert_note", AsyncMock(side_effect=OSError("index fault")))
     server = create_server(app)
     result = await server.call_tool(
         "append_journal",
@@ -179,6 +181,7 @@ async def test_mcp_write_error_preserves_committed_hash_and_cas(
 async def test_all_ordinary_writes_report_post_commit_index_failure(
     regression_app: DatacronApp,
     tool: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = regression_app
     path = _write(app, "Old preamble\n\n# Sample\n\n## Journal\n\nInitial\n")
@@ -210,7 +213,8 @@ async def test_all_ordinary_writes_report_post_commit_index_failure(
         arguments.update(heading="Journal")
     else:
         arguments = {"note": "sample.md", "to_hash": original_hash}
-    (app.vault_root / "invalid.md").write_bytes(b"\xff")
+    monkeypatch.setattr(app.store, "upsert_note", AsyncMock(side_effect=OSError("index fault")))
+    arguments["request_id"] = "all-writers-replay"
     result = await create_server(app).call_tool(tool, arguments)
     assert isinstance(result, CallToolResult)
     assert result.is_error
@@ -218,6 +222,16 @@ async def test_all_ordinary_writes_report_post_commit_index_failure(
     error = json.loads(result.content[0].text)["error"]
     assert error["code"] == "committed_index_incomplete"
     assert error["content_hash"] == sha256_bytes(path.read_bytes())
+    assert len(await app.vault_writer.list_operations()) == 2
+
+    replay = await create_server(app).call_tool(tool, arguments)
+    assert isinstance(replay, CallToolResult)
+    assert not replay.is_error
+    assert isinstance(replay.content[0], TextContent)
+    receipt = json.loads(replay.content[0].text)
+    assert receipt["replayed"] is True
+    assert receipt["operation_id"] == error["operation_id"]
+    assert receipt["content_hash"] == error["content_hash"]
     assert len(await app.vault_writer.list_operations()) == 2
 
 

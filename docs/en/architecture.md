@@ -147,10 +147,10 @@ flowchart TB
 | Write | `create_note_ai` | Confined creation of a `_memory` note, without overwrite and with a durable journal. | VaultWriter + operation log |
 | Write | `append_journal` | Append under a heading with exact history and atomic write. | VaultWriter + operation log |
 | Write | `set_frontmatter` | Update lifecycle fields while preserving the Markdown body. | VaultWriter + frontmatter parser |
-| Write | `patch_note_preamble` | CAS replacement of the preamble before the first recognized ATX heading. | VaultWriter + operation log |
+| Write | `patch_note_preamble` | CAS replacement of the preamble before the first recognized Markdown heading. | VaultWriter + operation log |
 | Write | `patch_note_section` | CAS replacement of a section while preserving other sections. | VaultWriter + operation log |
-| Write | `delete_note_section` | Explicit deletion of an ATX H2-H6 section and its subtree. | VaultWriter + operation log |
-| Write | `rename_note_section` | Rename an ATX H2-H6 heading while preserving its content. | VaultWriter + operation log |
+| Write | `delete_note_section` | Explicit deletion of an H2-H6 section and its subtree. | VaultWriter + operation log |
+| Write | `rename_note_section` | Rename an H2-H6 heading while preserving its content. | VaultWriter + operation log |
 | Write | `revert_note` | Durable, reversible restore from content-addressed history. | History store + VaultWriter |
 | Write | `apply_organization_manifest` | Validate, then crash-consistently apply an exact organization bundle; multi-path visibility is not instantaneous. | Manifest validator + batch journal + VaultWriter |
 | Operational | `get_health` | Freshness, integrity, checksum, durability, and invariant evidence. | Read-only health scanner |
@@ -552,3 +552,6 @@ and releases; this section publishes no unmeasured remote status or counter.
 
 *v2.2 document verified on 2026-08-30 against the implementation delivered by this version. The
 research reports and v2.1 decisions remain arbitration archives.*
+
+
+See [Reliability improvements](improvements.md) for request replay, targeted indexing, shared Markdown selection and quality gates.

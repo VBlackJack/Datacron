@@ -25,6 +25,7 @@ from mistletoe import block_token
 from datacron.core.config import DEFAULT_CHUNK_MAX_TOKENS, TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
+from datacron.core.markdown_headings import token_text
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.indexing.wikilinks import extract_wikilink_targets
 
@@ -399,20 +400,7 @@ def _join_without_outer_blank_lines(lines: list[str]) -> str:
 
 
 def _token_text(token: Any) -> str:
-    parts: list[str] = []
-    _append_token_text(token, parts)
-    return "".join(parts).strip()
-
-
-def _append_token_text(token: Any, parts: list[str]) -> None:
-    children = getattr(token, "children", None) or []
-    if children:
-        for child in children:
-            _append_token_text(child, parts)
-        return
-    content = getattr(token, "content", None)
-    if isinstance(content, str):
-        parts.append(content)
+    return token_text(token).strip()
 
 
 # Structural conformance check for mypy.

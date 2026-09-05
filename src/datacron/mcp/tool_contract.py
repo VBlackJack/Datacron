@@ -397,12 +397,22 @@ class CreatedNoteOutput(TypedDict):
     title: str
 
 
-class CreateNoteOutput(TypedDict):
-    """Successful ``create_note_ai`` payload."""
+class SuccessfulWriteOutput(TypedDict):
+    """Required fields shared by ordinary writes and historical receipts."""
 
-    created: CreatedNoteOutput
     content_hash: str
     indexed: bool
+
+
+class CreateNoteOutput(SuccessfulWriteOutput, total=False):
+    """Successful ``create_note_ai`` payload."""
+
+    created: CreatedNoteOutput | None
+
+    operation_id: str | None
+    committed: bool | None
+    replayed: bool | None
+    rel_path: str | None
 
 
 class AppendedNoteOutput(TypedDict):
@@ -412,12 +422,15 @@ class AppendedNoteOutput(TypedDict):
     heading: str
 
 
-class AppendJournalOutput(TypedDict):
+class AppendJournalOutput(SuccessfulWriteOutput, total=False):
     """Successful ``append_journal`` payload."""
 
-    appended: AppendedNoteOutput
-    content_hash: str
-    indexed: bool
+    appended: AppendedNoteOutput | None
+
+    operation_id: str | None
+    committed: bool | None
+    replayed: bool | None
+    rel_path: str | None
 
 
 class UpdatedFrontmatterOutput(TypedDict):
@@ -427,12 +440,15 @@ class UpdatedFrontmatterOutput(TypedDict):
     fields: list[str]
 
 
-class SetFrontmatterOutput(TypedDict):
+class SetFrontmatterOutput(SuccessfulWriteOutput, total=False):
     """Successful ``set_frontmatter`` payload."""
 
-    updated: UpdatedFrontmatterOutput
-    content_hash: str
-    indexed: bool
+    updated: UpdatedFrontmatterOutput | None
+
+    operation_id: str | None
+    committed: bool | None
+    replayed: bool | None
+    rel_path: str | None
 
 
 class PatchedPreambleOutput(TypedDict):
@@ -441,12 +457,15 @@ class PatchedPreambleOutput(TypedDict):
     rel_path: str
 
 
-class PatchNotePreambleOutput(TypedDict):
+class PatchNotePreambleOutput(SuccessfulWriteOutput, total=False):
     """Successful ``patch_note_preamble`` payload."""
 
-    patched: PatchedPreambleOutput
-    content_hash: str
-    indexed: bool
+    patched: PatchedPreambleOutput | None
+
+    operation_id: str | None
+    committed: bool | None
+    replayed: bool | None
+    rel_path: str | None
 
 
 class PatchedSectionOutput(TypedDict):
@@ -458,12 +477,15 @@ class PatchedSectionOutput(TypedDict):
     heading_occurrence: NotRequired[int]
 
 
-class PatchNoteSectionOutput(TypedDict):
+class PatchNoteSectionOutput(SuccessfulWriteOutput, total=False):
     """Successful ``patch_note_section`` payload."""
 
-    patched: PatchedSectionOutput
-    content_hash: str
-    indexed: bool
+    patched: PatchedSectionOutput | None
+
+    operation_id: str | None
+    committed: bool | None
+    replayed: bool | None
+    rel_path: str | None
 
 
 class DeletedSectionOutput(TypedDict):
@@ -475,12 +497,15 @@ class DeletedSectionOutput(TypedDict):
     heading_occurrence: NotRequired[int]
 
 
-class DeleteNoteSectionOutput(TypedDict):
+class DeleteNoteSectionOutput(SuccessfulWriteOutput, total=False):
     """Successful ``delete_note_section`` payload."""
 
-    deleted: DeletedSectionOutput
-    content_hash: str
-    indexed: bool
+    deleted: DeletedSectionOutput | None
+
+    operation_id: str | None
+    committed: bool | None
+    replayed: bool | None
+    rel_path: str | None
 
 
 class RenamedSectionOutput(TypedDict):
@@ -493,12 +518,15 @@ class RenamedSectionOutput(TypedDict):
     heading_occurrence: NotRequired[int]
 
 
-class RenameNoteSectionOutput(TypedDict):
+class RenameNoteSectionOutput(SuccessfulWriteOutput, total=False):
     """Successful ``rename_note_section`` payload."""
 
-    renamed: RenamedSectionOutput
-    content_hash: str
-    indexed: bool
+    renamed: RenamedSectionOutput | None
+
+    operation_id: str | None
+    committed: bool | None
+    replayed: bool | None
+    rel_path: str | None
 
 
 class RevertedNoteOutput(TypedDict):
@@ -509,12 +537,15 @@ class RevertedNoteOutput(TypedDict):
     to_hash: str
 
 
-class RevertNoteOutput(TypedDict):
+class RevertNoteOutput(SuccessfulWriteOutput, total=False):
     """Successful ``revert_note`` payload."""
 
-    reverted: RevertedNoteOutput
-    content_hash: str
-    indexed: bool
+    reverted: RevertedNoteOutput | None
+
+    operation_id: str | None
+    committed: bool | None
+    replayed: bool | None
+    rel_path: str | None
 
 
 class ApplyOrganizationManifestOutput(TypedDict):

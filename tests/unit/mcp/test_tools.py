@@ -1491,7 +1491,7 @@ class TestCreateNoteAi:
         assert metadata["created"] == metadata["updated"]
         assert isinstance(metadata["last_verified"], str)
         assert "durabletoken" in body
-        assert stat_calls == 1
+        assert stat_calls == 0
 
         search = await _search_text_impl(writable_app, query="durabletoken", limit=5)
         assert "error" not in search
@@ -3370,7 +3370,7 @@ class TestPatchNotePreamble:
             (
                 "Preamble only.\n",
                 "Replacement.",
-                "no ATX heading found; refusing to replace the entire note body",
+                "no Markdown heading found; refusing to replace the entire note body",
             ),
             (
                 "Same.\n\n# Root\n\nBody.\n",

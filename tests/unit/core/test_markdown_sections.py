@@ -45,7 +45,7 @@ def test_patch_note_preamble_refuses_body_without_recognized_atx_heading() -> No
 
     with pytest.raises(
         ValueError,
-        match=r"^no ATX heading found; refusing to replace the entire note body$",
+        match=r"^no Markdown heading found; refusing to replace the entire note body$",
     ):
         patch_note_preamble("Preamble only.\n", "Replacement.")
 

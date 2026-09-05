@@ -113,14 +113,14 @@ def test_server_instructions_include_memory_protocol() -> None:
     assert "rename_note_section" in SERVER_INSTRUCTIONS
     assert "patch_note_preamble" in SERVER_INSTRUCTIONS
     assert "current write selector" in SERVER_INSTRUCTIONS
-    assert "heading-like lines in fenced code" in SERVER_INSTRUCTIONS
+    assert "fenced-code headings are ignored" in SERVER_INSTRUCTIONS
     assert "1-based heading_occurrence" in SERVER_INSTRUCTIONS
     assert "exact expected_hash" in SERVER_INSTRUCTIONS
     assert "document order" in SERVER_INSTRUCTIONS
     assert "chunk_id" in SERVER_INSTRUCTIONS
     assert "Setext" in SERVER_INSTRUCTIONS
-    assert "heading-like lines in fenced code" in SERVER_INSTRUCTIONS
-    assert "closing-ATX" in SERVER_INSTRUCTIONS
+    assert "fenced-code headings are ignored" in SERVER_INSTRUCTIONS
+    assert "closing hashes are normalized" in SERVER_INSTRUCTIONS
     assert "dominant-EOL" in SERVER_INSTRUCTIONS
     assert "INIT.md" in SERVER_INSTRUCTIONS
     assert "sandbox-wrapped" in SERVER_INSTRUCTIONS
@@ -739,6 +739,7 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     assert "committed_error_code" in organization_output_schema["properties"]
     preamble_tool = tools["patch_note_preamble"]
     assert set(preamble_tool.input_schema["properties"]) == {
+        "request_id",
         "rel_path",
         "new_content",
         "expected_hash",
@@ -754,14 +755,21 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     preamble_output_schema = preamble_tool.output_schema
     assert preamble_output_schema is not None
     assert set(preamble_output_schema["properties"]) == {
+        "operation_id",
+        "committed",
+        "replayed",
+        "rel_path",
         "patched",
         "content_hash",
         "indexed",
     }
-    assert preamble_output_schema["required"] == ["patched", "content_hash", "indexed"]
-    preamble_ref = preamble_output_schema["properties"]["patched"]["$ref"].split("/")[-1]
+    assert preamble_output_schema["required"] == ["content_hash", "indexed"]
+    preamble_ref = preamble_output_schema["properties"]["patched"]["anyOf"][0]["$ref"].split("/")[
+        -1
+    ]
     assert preamble_output_schema["$defs"][preamble_ref]["required"] == ["rel_path"]
     assert set(delete_tool.input_schema["properties"]) == {
+        "request_id",
         "rel_path",
         "heading",
         "expected_hash",
@@ -779,13 +787,18 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     assert delete_output_schema is not None
     assert patch_output_schema is not None
     assert set(delete_output_schema["properties"]) == {
+        "operation_id",
+        "committed",
+        "replayed",
+        "rel_path",
         "deleted",
         "content_hash",
         "indexed",
     }
-    assert delete_output_schema["required"] == ["deleted", "content_hash", "indexed"]
+    assert delete_output_schema["required"] == ["content_hash", "indexed"]
     patch_tool = tools["patch_note_section"]
     assert set(patch_tool.input_schema["properties"]) == {
+        "request_id",
         "rel_path",
         "heading",
         "new_content",
@@ -799,11 +812,11 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         "new_content",
     ]
     assert patch_output_schema["required"] == [
-        "patched",
         "content_hash",
         "indexed",
     ]
     assert set(rename_tool.input_schema["properties"]) == {
+        "request_id",
         "rel_path",
         "heading",
         "new_heading",
@@ -821,11 +834,15 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     rename_output_schema = rename_tool.output_schema
     assert rename_output_schema is not None
     assert set(rename_output_schema["properties"]) == {
+        "operation_id",
+        "committed",
+        "replayed",
+        "rel_path",
         "renamed",
         "content_hash",
         "indexed",
     }
-    assert rename_output_schema["required"] == ["renamed", "content_hash", "indexed"]
+    assert rename_output_schema["required"] == ["content_hash", "indexed"]
     for tool_name, output_name, required in (
         (
             "patch_note_section",
@@ -849,7 +866,7 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         assert occurrence_schema["anyOf"] == [{"type": "integer"}, {"type": "null"}]
         output_schema = tool.output_schema
         assert output_schema is not None
-        reference = output_schema["properties"][output_name]["$ref"].split("/")[-1]
+        reference = output_schema["properties"][output_name]["anyOf"][0]["$ref"].split("/")[-1]
         selected_schema = output_schema["$defs"][reference]
         assert selected_schema["properties"]["heading_occurrence"]["type"] == "integer"
         assert selected_schema["required"] == required
@@ -958,11 +975,11 @@ async def test_rename_note_section_write_descriptions_lead_with_usage_trigger(
     assert "refuses a level-1 heading that contains subsections" in patch_description
     preamble_description = descriptions["patch_note_preamble"]
     assert preamble_description is not None
-    assert "strictly before the first ATX heading" in preamble_description
+    assert "strictly before the first Markdown heading" in preamble_description
     assert "current write selector" in preamble_description
     assert "Setext" in preamble_description
-    assert "heading-like lines in fenced code" in preamble_description
-    assert "closing-ATX" in preamble_description
+    assert "ignores headings inside fenced code" in preamble_description
+    assert "normalizes closing hashes" in preamble_description
     assert "dominant-EOL" in preamble_description
     assert "exact expected_hash" in preamble_description
     delete_description = descriptions["delete_note_section"]
@@ -971,12 +988,12 @@ async def test_rename_note_section_write_descriptions_lead_with_usage_trigger(
     assert "lifecycle invalidation" in delete_description
     rename_description = descriptions["rename_note_section"]
     assert rename_description is not None
-    assert "ATX H2-H6" in rename_description
+    assert "H2-H6" in rename_description
     assert "Setext" in rename_description
     assert "frontmatter title" in rename_description
     assert "current write selector" in rename_description
-    assert "collisions recognized by the same selector" in rename_description
-    assert "heading-like lines in fenced code" in rename_description
+    assert "collisions recognized by the same AST selector" in rename_description
+    assert "fenced-code headings are ignored" in rename_description
     for description in (patch_description, delete_description, rename_description):
         assert "1-based heading_occurrence" in description
         assert "heading_level" in description

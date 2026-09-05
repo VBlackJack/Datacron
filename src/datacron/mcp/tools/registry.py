@@ -314,6 +314,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         rejected: list[str] | None = None,
         last_verified: str | None = None,
         expected_hash: str | None = None,
+        request_id: str | None = None,
     ) -> CreateNoteOutput:
         return cast(
             "CreateNoteOutput",
@@ -330,6 +331,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 last_verified=last_verified,
                 expected_hash=expected_hash,
                 actor=app.identity_provider.identify(ctx).actor,
+                request_id=request_id,
             ),
         )
 
@@ -351,6 +353,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         entry: str,
         ctx: Context[Any, Any],
         expected_hash: str | None = None,
+        request_id: str | None = None,
     ) -> AppendJournalOutput:
         return cast(
             "AppendJournalOutput",
@@ -361,6 +364,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 entry=entry,
                 expected_hash=expected_hash,
                 actor=app.identity_provider.identify(ctx).actor,
+                request_id=request_id,
             ),
         )
 
@@ -392,6 +396,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         invalid_at: str | None = None,
         invalidated_by: str | None = None,
         expected_hash: str | None = None,
+        request_id: str | None = None,
     ) -> SetFrontmatterOutput:
         return cast(
             "SetFrontmatterOutput",
@@ -408,6 +413,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 invalidated_by=invalidated_by,
                 expected_hash=expected_hash,
                 actor=app.identity_provider.identify(ctx).actor,
+                request_id=request_id,
             ),
         )
 
@@ -415,14 +421,14 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         name="patch_note_preamble",
         title="Patch note preamble",
         description=(
-            "Use this to replace or remove content strictly before the first ATX heading "
+            "Use this to replace or remove content strictly before the first Markdown heading "
             "recognized by the current write selector. Pass the note's exact expected_hash "
             "for CAS. Empty or whitespace-only new_content removes the preamble. The first "
             "heading and all following content preserve exact bytes when the file uses "
             "uniform line endings; mixed-EOL files follow the existing global dominant-EOL "
-            "normalization. Notes without a recognized ATX heading are refused fail-closed. "
-            "Setext headings, heading-like lines in fenced code, and closing-ATX "
-            "normalization are outside the supported guarantee."
+            "normalization. Notes without a recognized Markdown heading are refused fail-closed. "
+            "The shared AST selector supports ATX and Setext headings, normalizes "
+            "closing hashes, and ignores headings inside fenced code."
         ),
         annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
     )
@@ -431,6 +437,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         new_content: str,
         expected_hash: str,
         ctx: Context[Any, Any],
+        request_id: str | None = None,
     ) -> PatchNotePreambleOutput:
         return cast(
             "PatchNotePreambleOutput",
@@ -440,6 +447,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 new_content=new_content,
                 expected_hash=expected_hash,
                 actor=app.identity_provider.identify(ctx).actor,
+                request_id=request_id,
             ),
         )
 
@@ -465,6 +473,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         new_content: str,
         ctx: Context[Any, Any],
         expected_hash: str | None = None,
+        request_id: str | None = None,
         heading_level: int | None = None,
         heading_occurrence: int | None = None,
     ) -> PatchNoteSectionOutput:
@@ -479,6 +488,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 heading_level=heading_level,
                 heading_occurrence=heading_occurrence,
                 actor=app.identity_provider.identify(ctx).actor,
+                request_id=request_id,
             ),
         )
 
@@ -486,13 +496,13 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         name="rename_note_section",
         title="Rename note section",
         description=(
-            "Use this only to rename an outdated ATX H2-H6 Markdown section title "
+            "Use this only to rename an outdated H2-H6 Markdown section title "
             "recognized by the current write selector, without changing its level, "
             "content, or subordinate headings. Pass the note's current content_hash as "
             "expected_hash for CAS. It refuses H1 because frontmatter title "
             "synchronization is outside this tool and refuses collisions recognized by "
-            "the same selector. Setext headings and heading-like lines in fenced code "
-            "are outside the supported guarantee."
+            "the same AST selector. ATX and Setext headings are supported; fenced-code "
+            "headings are ignored."
             " For duplicate titles, pass 1-based heading_occurrence with heading_level "
             "and the exact expected_hash; the ordinal follows document order for those "
             "hashed bytes. Do not use chunk_id."
@@ -505,6 +515,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         new_heading: str,
         ctx: Context[Any, Any],
         expected_hash: str | None = None,
+        request_id: str | None = None,
         heading_level: int | None = None,
         heading_occurrence: int | None = None,
     ) -> RenameNoteSectionOutput:
@@ -519,6 +530,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 heading_level=heading_level,
                 heading_occurrence=heading_occurrence,
                 actor=app.identity_provider.identify(ctx).actor,
+                request_id=request_id,
             ),
         )
 
@@ -542,6 +554,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         heading: str,
         ctx: Context[Any, Any],
         expected_hash: str | None = None,
+        request_id: str | None = None,
         heading_level: int | None = None,
         heading_occurrence: int | None = None,
     ) -> DeleteNoteSectionOutput:
@@ -555,6 +568,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 heading_level=heading_level,
                 heading_occurrence=heading_occurrence,
                 actor=app.identity_provider.identify(ctx).actor,
+                request_id=request_id,
             ),
         )
 
@@ -574,6 +588,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         to_hash: str,
         ctx: Context[Any, Any],
         expected_hash: str | None = None,
+        request_id: str | None = None,
     ) -> RevertNoteOutput:
         return cast(
             "RevertNoteOutput",
@@ -583,6 +598,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 to_hash=to_hash,
                 expected_hash=expected_hash,
                 actor=app.identity_provider.identify(ctx).actor,
+                request_id=request_id,
             ),
         )
 
@@ -626,13 +642,18 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         name="get_note_history",
         title="Get note operation history",
         description=(
+            "Filter by request_id to retrieve an ordinary-write receipt. "
             "List committed operation metadata for one note without reading history "
             "content or modifying the journal."
         ),
         annotations=_READ_ANNOTATIONS,
     )
-    async def get_note_history(note: str, limit: int = 100) -> dict[str, Any]:
-        return await _get_note_history_impl(app, note=note, limit=limit)
+    async def get_note_history(
+        note: str,
+        limit: int = 100,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await _get_note_history_impl(app, note=note, limit=limit, request_id=request_id)
 
     @server.tool(
         name="audit_query",

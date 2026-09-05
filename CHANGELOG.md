@@ -9,6 +9,25 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- Optional `request_id` on all eight ordinary note writers binds exact arguments to a
+  durable operation receipt. Identical retries after restart return the historical receipt;
+  conflicting reuse is refused under the existing cross-process mutation lock.
+- `get_note_history` accepts `request_id` to locate a receipt without repeating a mutation.
+- A versioned 32-question bilingual retrieval corpus covers ambiguity, superseded notes,
+  excluded paths and absent answers. Eval reports separate empty-query accuracy and gate
+  its regression alongside freshness. `scripts/benchmark_writes.py` measures disposable vaults.
+
+### Changed
+
+- Ordinary writes index only the committed target; global read repair and health remain
+  responsible for vault-wide consistency. Unrelated malformed files do not break write receipts.
+- Maps and section mutations share AST heading identities. Setext and closing ATX headings
+  are supported, code-block headings ignored, and ambiguous journal headings refused.
+- Publication reuses the complete six-platform/Python CI matrix, dependency audit and
+  ShellCheck; an aggregate Quality gate fails if any required job fails or is skipped.
+
 ### Fixed
 
 - Search detects secrets on undecorated source text before returning highlighted excerpts.

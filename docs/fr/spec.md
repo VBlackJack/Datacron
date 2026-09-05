@@ -251,10 +251,10 @@ seuls les tools de lecture, advisory et opérationnels restent exposés.
 | Écriture | `create_note_ai` | Crée une note mémoire sans overwrite |
 | Écriture | `append_journal` | Ajoute une entrée sous un heading d'une note existante |
 | Écriture | `set_frontmatter` | Modifie uniquement les champs de cycle de vie autorisés et `updated` |
-| Écriture | `patch_note_preamble` | Remplace ou supprime le préambule avant le premier titre ATX reconnu |
+| Écriture | `patch_note_preamble` | Remplace ou supprime le préambule avant le premier titre Markdown reconnu |
 | Écriture | `patch_note_section` | Remplace le contenu sous un heading existant en conservant la ligne du heading |
-| Écriture | `delete_note_section` | Supprime explicitement une section ATX H2-H6 et son sous-arbre |
-| Écriture | `rename_note_section` | Renomme un titre ATX H2-H6 sans modifier son contenu |
+| Écriture | `delete_note_section` | Supprime explicitement une section H2-H6 et son sous-arbre |
+| Écriture | `rename_note_section` | Renomme un titre H2-H6 sans modifier son contenu |
 | Écriture | `revert_note` | Restaure les octets exacts d'une version d'historique adressée par hash |
 | Écriture | `apply_organization_manifest` | Valide puis applique, après confirmation exacte, un bundle d'organisation adressé par contenu |
 | Opérationnel | `get_note_history` | Liste les métadonnées d'opérations validées d'une note sans lire les anciens octets |
@@ -498,3 +498,6 @@ Le hash décrit cette écriture, sans garantir qu'aucun autre écrivain n'a modi
 Une relance avec l'ancien hash est refusée par CAS ; sans hash, un ajout peut être dupliqué.
 Les erreurs avant commit confirmé conservent leur contrat existant. Une annulation ou une réponse
 perdue impose toujours de vérifier la note et son historique avant de décider de la suite.
+
+
+Voir [Améliorations de fiabilité](improvements.md) pour le rejeu des écritures, l’indexation ciblée, la sélection Markdown commune et les contrôles qualité.

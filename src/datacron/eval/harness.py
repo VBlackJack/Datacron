@@ -142,6 +142,8 @@ class LocalEvalHarness:
             self._console.print("[yellow]No eval questions supplied.[/yellow]")
             return
 
+        if summary.empty_accuracy is not None:
+            self._console.print(f"Empty-query accuracy: {summary.empty_accuracy:.2%}")
         table = Table(
             title=f"Datacron Eval Summary ({summary.pipeline.value}/{summary.transport.value})"
         )
@@ -243,6 +245,8 @@ def _evaluate_payload(
         }
     return EvalResult(
         question_id=question.id,
+        category=question.category,
+        empty_correct=(not raw_results) if question.expected_empty else None,
         retrieved_chunk_ids=retrieved_chunk_ids,
         retrieved_paths=retrieved_paths,
         recall_at_k={k: recall_at_k(question.expected_paths, retrieved_paths, k) for k in k_values},
@@ -271,6 +275,8 @@ def _summarize(
     transport: EvalTransport,
 ) -> EvalSummary:
     """Aggregate an eval run without losing optional chunk/freshness semantics."""
+    positive_results = [result for result in results if result.empty_correct is None]
+    empty_results = [result for result in results if result.empty_correct is not None]
     chunk_results = [result for result in results if result.chunk_recall_at_k is not None]
     chunk_recall = None
     if chunk_results:
@@ -290,13 +296,19 @@ def _summarize(
         pipeline=pipeline,
         transport=transport,
         question_count=len(results),
+        empty_accuracy=(
+            _average([float(result.empty_correct is True) for result in empty_results])
+            if empty_results
+            else None
+        ),
         note_recall_at_k={
-            k: _average([result.recall_at_k.get(k, 0.0) for result in results]) for k in k_values
+            k: _average([result.recall_at_k.get(k, 0.0) for result in positive_results])
+            for k in k_values
         },
         chunk_recall_at_k=chunk_recall,
-        mrr=_average([result.reciprocal_rank for result in results]),
-        ndcg_at_10=_average([result.ndcg_at_10 for result in results]),
-        citation_precision=_average([result.citation_precision for result in results]),
+        mrr=_average([result.reciprocal_rank for result in positive_results]),
+        ndcg_at_10=_average([result.ndcg_at_10 for result in positive_results]),
+        citation_precision=_average([result.citation_precision for result in positive_results]),
         forbidden_violation_rate=(
             _average([float(result.forbidden_violation) for result in freshness_results])
             if freshness_results

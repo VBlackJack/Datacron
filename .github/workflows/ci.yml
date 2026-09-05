@@ -8,13 +8,14 @@
 name: ci
 
 on:
+  workflow_call:
   push:
     branches: [main, "claude-code/**", "codex/**"]
   pull_request:
     branches: [main]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-quality-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -91,3 +92,15 @@ jobs:
 
       - name: Audit dependencies for known CVEs
         run: uv run --python 3.12 --with pip-audit pip-audit
+
+  quality-gate:
+    name: Quality gate
+    if: always()
+    needs: [lint-type-test, shellcheck, dependency-audit]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every validation job to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python -c 'import json, os, sys; jobs=json.loads(os.environ["RESULTS"]); sys.exit(0 if all(j["result"] == "success" for j in jobs.values()) else 1)'

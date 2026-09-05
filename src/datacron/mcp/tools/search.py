@@ -369,6 +369,32 @@ async def _repair_index_on_read(app: DatacronApp) -> ReconcileStats:
     return stats
 
 
+async def _reconcile_note_serialized(
+    app: DatacronApp, rel_path: str, content_hash: str
+) -> ReconcileStats:
+    """Refresh only a committed note; leave global freshness to read repair/health."""
+    async with app.reconcile_lock:
+        path = app.scope.authorize_note_rel_path(rel_path)
+        note = await app.vault_reader.read_note(path)
+        if note.content_hash != content_hash:
+            raise ValueError("committed note changed before targeted index refresh")
+        old_id = await app.store.get_note_id(rel_path)
+        deleted = 0
+        if old_id is not None and old_id != note.id:
+            await app.store.delete_note(old_id)
+            deleted = 1
+        # Do not attach an mtime observed after the read: it could hide a concurrent edit.
+        await app.store.upsert_note(note, app.chunker.chunk(note))
+        await app.store.increment_generation()
+        return {
+            "checked_notes": 1,
+            "indexed_notes_before": int(old_id is not None),
+            "reindexed_notes": 1,
+            "deleted_notes": deleted,
+            "skipped_notes": 0,
+        }
+
+
 async def _reconcile_serialized(app: DatacronApp) -> ReconcileStats:
     """Serialize a write-triggered reconcile and reset the repair interval."""
     async with app.reconcile_lock:

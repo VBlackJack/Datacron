@@ -53,10 +53,10 @@ sont confinées, atomiques par fichier, historisées et auditées.
 | `create_note_ai` | Crée une nouvelle note typée, sans écraser de fichier existant. |
 | `append_journal` | Ajoute une entrée sous un titre existant d'une note. |
 | `set_frontmatter` | Met à jour les champs de cycle de vie sans toucher au corps Markdown. |
-| `patch_note_preamble` | Remplace ou supprime le préambule avant le premier titre ATX, avec contrôle de version. |
+| `patch_note_preamble` | Remplace ou supprime le préambule avant le premier titre Markdown, avec contrôle de version. |
 | `patch_note_section` | Remplace le contenu sous un titre existant, avec contrôle de version (CAS). |
-| `delete_note_section` | Supprime explicitement une section ATX H2-H6 et son sous-arbre. |
-| `rename_note_section` | Renomme un titre de section ATX H2-H6 sans modifier son contenu. |
+| `delete_note_section` | Supprime explicitement une section H2-H6 et son sous-arbre. |
+| `rename_note_section` | Renomme un titre de section H2-H6 sans modifier son contenu. |
 | `revert_note` | Restaure les octets exacts d'une version conservée dans l'historique. |
 | `apply_organization_manifest` | Valide puis applique un bundle local adressé par contenu contenant au moins une opération exacte sur une note et/ou un remplacement exact de la configuration `organization`. |
 
@@ -248,3 +248,6 @@ Le hash décrit cette écriture, sans garantir qu'aucun autre écrivain n'a modi
 Une relance avec l'ancien hash est refusée par CAS ; sans hash, un ajout peut être dupliqué.
 Les erreurs avant commit confirmé conservent leur contrat existant. Une annulation ou une réponse
 perdue impose toujours de vérifier la note et son historique avant de décider de la suite.
+
+
+Voir [Améliorations de fiabilité](improvements.md) pour le rejeu des écritures, l’indexation ciblée, la sélection Markdown commune et les contrôles qualité.

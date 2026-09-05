@@ -748,7 +748,7 @@ def test_protocol_block_has_single_marked_source() -> None:
 
     assert lines[0] == PROTOCOL_MARKER_BEGIN
     assert lines[-1] == PROTOCOL_MARKER_END
-    assert 14 <= len(lines) <= 21
+    assert 14 <= len(lines) <= 22
     assert "search_text" in PROTOCOL_BLOCK
     assert "create_note_ai" in PROTOCOL_BLOCK
     assert "contradiction_scan" in PROTOCOL_BLOCK
@@ -759,11 +759,13 @@ def test_protocol_block_has_single_marked_source() -> None:
     assert "ATX" in PROTOCOL_BLOCK
     assert "Setext" in PROTOCOL_BLOCK
     assert "note title" in PROTOCOL_BLOCK
-    assert "current write selector" in PROTOCOL_BLOCK
-    assert "heading-like lines in fenced code" in PROTOCOL_BLOCK
-    assert "closing-ATX" in PROTOCOL_BLOCK
+    assert "shared AST selector" in PROTOCOL_BLOCK
+    assert "ignores headings inside fenced code" in PROTOCOL_BLOCK
+    assert "normalizes closing hashes" in PROTOCOL_BLOCK
+    assert "request_id" in PROTOCOL_BLOCK
+    assert "historical" in PROTOCOL_BLOCK
     assert "dominant-EOL" in PROTOCOL_BLOCK
-    assert "strictly before the first ATX heading" in PROTOCOL_BLOCK
+    assert "strictly before the first Markdown heading" in PROTOCOL_BLOCK
     assert "heading_occurrence" in PROTOCOL_BLOCK
     assert "1-based" in PROTOCOL_BLOCK
     assert "heading_level" in PROTOCOL_BLOCK

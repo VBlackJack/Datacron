@@ -1,0 +1,74 @@
+[
+  {
+    "path": "public/backup.md",
+    "body": "# Backup\n\nDatabase backup restoration recovery nightly snapshot.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/sauvegarde.md",
+    "body": "# Sauvegarde\n\nSauvegarde restauration base quotidienne instantane.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/keys.md",
+    "body": "# Key rotation\n\nRotation certificates keys renewal security.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/logs.md",
+    "body": "# Log rotation\n\nRotation logs retention archive logging.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/current.md",
+    "body": "# Retention\n\nRetentionpolicy current approved duration thirty days.\n",
+    "frontmatter": {
+      "id": "01J00000000000000000000081",
+      "supersedes": [
+        "01J00000000000000000000082"
+      ]
+    }
+  },
+  {
+    "path": "public/old.md",
+    "body": "# Retention\n\nRetentionpolicy obsolete duration seven days.\n",
+    "frontmatter": {
+      "id": "01J00000000000000000000082"
+    }
+  },
+  {
+    "path": "public/context-0.md",
+    "body": "# Retention context 0\n\nRetentionpolicy context reference 0.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/context-1.md",
+    "body": "# Retention context 1\n\nRetentionpolicy context reference 1.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/context-2.md",
+    "body": "# Retention context 2\n\nRetentionpolicy context reference 2.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/context-3.md",
+    "body": "# Retention context 3\n\nRetentionpolicy context reference 3.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/context-4.md",
+    "body": "# Retention context 4\n\nRetentionpolicy context reference 4.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/context-5.md",
+    "body": "# Retention context 5\n\nRetentionpolicy context reference 5.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "private/restricted.md",
+    "body": "# Restricted\n\nRestrictedmarker private credentials instructions.\n",
+    "frontmatter": {}
+  }
+]

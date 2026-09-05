@@ -19,6 +19,8 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from datacron.core.config import Settings, VaultConfig
 from datacron.core.models import (
     EvalPipeline,
@@ -51,6 +53,33 @@ def _summary(*, recall_5: float, ndcg: float) -> EvalSummary:
         total_tokens_returned=100,
         avg_tokens_returned=50.0,
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("empty_accuracy", 0.5, "empty_accuracy"),
+        ("empty_accuracy", None, "empty_accuracy_missing"),
+        ("forbidden_violation_rate", 0.5, "forbidden_violation_rate"),
+        ("forbidden_violation_rate", None, "forbidden_violation_rate_missing"),
+    ],
+)
+def test_quality_gate_rejects_negative_or_freshness_regression(
+    field: str,
+    value: float | None,
+    expected: str,
+) -> None:
+    previous = _summary(recall_5=1.0, ndcg=1.0).model_copy(update={"empty_accuracy": 1.0})
+    baseline = EvalBaseline(
+        datacron_version="2026.0831.00",
+        created_at=datetime.now(UTC),
+        config_hash="same",
+        summary=previous,
+    )
+    current = EvalReport(summary=previous.model_copy(update={field: value}), results=[])
+    comparison = compare_with_baseline(current, baseline, tolerance=0.0, config_hash="same")
+    assert comparison.passed is False
+    assert expected in comparison.regressions
 
 
 def test_save_and_load_baseline_persists_only_aggregate_metrics(tmp_path: Path) -> None:

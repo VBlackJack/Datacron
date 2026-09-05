@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from typing import Final
 
+from datacron.core.markdown_headings import markdown_headings
+
 __all__ = [
     "append_entry_to_heading",
     "find_section_span",
@@ -58,26 +60,17 @@ def find_section_span(
     heading_occurrence: int | None = None,
 ) -> tuple[int, int]:
     """Return the content span for one unambiguous matching heading."""
-    matches: list[tuple[int, int]] = []
-    for index, line in enumerate(lines):
-        parsed = parse_heading_line(line)
-        if parsed is None:
-            continue
-        level, text = parsed
-        if text != heading:
-            continue
-        if heading_level is not None and level != heading_level:
-            continue
-        matches.append((index, level))
-
-    heading_index, level = _select_heading_match(matches, heading_occurrence)
-    content_start = heading_index + 1
-    content_end = len(lines)
-    for next_index in range(content_start, len(lines)):
-        next_heading = parse_heading_line(lines[next_index])
-        if next_heading is not None and next_heading[0] <= level:
-            content_end = next_index
-            break
+    headings = markdown_headings(lines)
+    matches = [
+        (item.end, item.level)
+        for item in headings
+        if item.text == heading and (heading_level is None or item.level == heading_level)
+    ]
+    content_start, level = _select_heading_match(matches, heading_occurrence)
+    content_end = next(
+        (item.start for item in headings if item.start >= content_start and item.level <= level),
+        len(lines),
+    )
     return content_start, content_end
 
 
@@ -109,16 +102,12 @@ def _select_heading_match(
 
 def parse_heading_line(line: str) -> tuple[int, str] | None:
     """Return a Markdown ATX heading's level and text, or ``None``."""
-    match = _HEADING_HASH_PATTERN.match(line)
-    if match is None:
-        return None
-    level = len(match.group(1))
-    text = line[match.end() :].strip()
-    return level, text
+    headings = markdown_headings([line])
+    return (headings[0].level, headings[0].text) if headings else None
 
 
 def patch_note_preamble(body: str, new_content: str) -> str:
-    """Replace content strictly before the first recognized ATX heading.
+    """Replace content strictly before the first recognized Markdown heading.
 
     Args:
         body: Markdown body without frontmatter.
@@ -128,15 +117,13 @@ def patch_note_preamble(body: str, new_content: str) -> str:
         The body with a normalized preamble and the original heading suffix.
 
     Raises:
-        ValueError: If no ATX heading exists or the rendered body is unchanged.
+        ValueError: If no Markdown heading exists or the rendered body is unchanged.
     """
     lines = body.splitlines(keepends=True)
-    heading_index = next(
-        (index for index, line in enumerate(lines) if parse_heading_line(line) is not None),
-        None,
-    )
+    headings = markdown_headings(lines)
+    heading_index = headings[0].start if headings else None
     if heading_index is None:
-        raise ValueError("no ATX heading found; refusing to replace the entire note body")
+        raise ValueError("no Markdown heading found; refusing to replace the entire note body")
 
     normalized = new_content.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
     if not normalized.strip():
@@ -172,7 +159,9 @@ def rename_atx_heading_line(line: str, new_heading: str) -> str:
         line_ending = line[-1]
     else:
         line_ending = ""
-    return f"{line[: match.end()]}{new_heading}{line_ending}"
+    closing = re.search(r"[ \t]+#+[ \t]*$", line.rstrip("\r\n"))
+    suffix = closing.group(0) if closing is not None else ""
+    return f"{line[: match.end()]}{new_heading}{suffix}{line_ending}"
 
 
 def section_replacement_block(new_content: str, *, prefix: str, suffix: str) -> str:
@@ -184,22 +173,12 @@ def section_replacement_block(new_content: str, *, prefix: str, suffix: str) -> 
 
 
 def _find_heading_section(lines: list[str], heading: str) -> tuple[int, int, int] | None:
-    for index, line in enumerate(lines):
-        parsed = parse_heading_line(line)
-        if parsed is None:
-            continue
-        level, text = parsed
-        if text != heading:
-            continue
-        insert_at = len(lines)
-        for next_index in range(index + 1, len(lines)):
-            next_heading = parse_heading_line(lines[next_index])
-            if next_heading is not None and next_heading[0] <= level:
-                insert_at = next_index
-                break
-        insert_at = _trim_trailing_blank_lines(lines, index + 1, insert_at)
-        return index, level, insert_at
-    return None
+    matches = [item for item in markdown_headings(lines) if item.text == heading]
+    if not matches:
+        return None
+    start, end = find_section_span(lines, heading, None)
+    selected = matches[0]
+    return selected.start, selected.level, _trim_trailing_blank_lines(lines, start, end)
 
 
 def _trim_trailing_blank_lines(lines: list[str], start: int, end: int) -> int:

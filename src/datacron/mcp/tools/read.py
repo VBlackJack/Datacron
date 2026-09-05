@@ -23,10 +23,12 @@ from typing import TYPE_CHECKING, Any, Final
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.frontmatter import matches_frontmatter_filter
 from datacron.core.hashing import FRESHNESS_CONTRACT_ID
+from datacron.core.markdown_headings import markdown_headings
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.core.paths import PathConfinementError, read_ulid_mappings, sidecar_dir
 from datacron.core.scope import NoteAdmissionError
 from datacron.core.vault import ULID_SIDECAR_FILENAME
+from datacron.indexing.chunker import _content_line_offset
 from datacron.mcp.sandbox import (
     sanitize_payload_strings,
     wrap_vault_content,
@@ -548,11 +550,17 @@ def _build_chunk_payload(
 def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
     chunks = app.chunker.chunk(note)
     headings: list[dict[str, Any]] = []
+    selected_headings = markdown_headings(note.content.splitlines(keepends=True))
+    line_offset = _content_line_offset(note)
     for chunk in chunks:
         if chunk.chunk_type is not ChunkType.HEADING:
             continue
-        match = _HEADING_HASH_PATTERN.match(chunk.content)
-        level = len(match.group(1)) if match else 1
+        selected = next(
+            item
+            for item in reversed(selected_headings)
+            if item.start < chunk.line_start - line_offset
+        )
+        level = selected.level
         headings.append(
             {
                 "level": level,

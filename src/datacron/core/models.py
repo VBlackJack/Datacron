@@ -25,7 +25,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = [
     "Chunk",
@@ -240,6 +240,15 @@ class EvalQuestion(BaseModel):
     expected_chunk_ids: list[str] = Field(default_factory=list)
     expected_paths: list[str] = Field(default_factory=list)
     forbidden_paths: list[str] = Field(default_factory=list)
+    category: str = "general"
+    expected_empty: bool = False
+
+    @model_validator(mode="after")
+    def validate_empty_expectation(self) -> EvalQuestion:
+        """Refuse contradictory ground truth for negative queries."""
+        if self.expected_empty and (self.expected_paths or self.expected_chunk_ids):
+            raise ValueError("expected_empty cannot accompany expected paths or chunks")
+        return self
 
 
 class EvalResult(BaseModel):
@@ -272,6 +281,8 @@ class EvalResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     question_id: str
+    category: str = "general"
+    empty_correct: bool | None = None
     retrieved_chunk_ids: list[str]
     retrieved_paths: list[str] = Field(default_factory=list)
     recall_at_k: dict[int, float] = Field(default_factory=dict)
@@ -304,6 +315,7 @@ class EvalSummary(BaseModel):
     pipeline: EvalPipeline
     transport: EvalTransport
     question_count: int = Field(ge=0)
+    empty_accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
     note_recall_at_k: dict[int, float] = Field(default_factory=dict)
     chunk_recall_at_k: dict[int, float] | None = None
     mrr: float = Field(ge=0.0, le=1.0)

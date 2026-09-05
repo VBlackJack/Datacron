@@ -19,6 +19,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from datacron.core.hashing import hash_text
 from datacron.core.operation_log import (
     OperationLogError,
     OperationRecord,
@@ -74,6 +75,7 @@ async def _get_note_history_impl(
     *,
     note: str,
     limit: int,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     cleaned_note = note.strip()
@@ -95,6 +97,12 @@ async def _get_note_history_impl(
         # and user name included.
         return _internal_error_response("get_note_history", started, note=cleaned_note)
     matching = [record for record in records if cleaned_note in (record.rel_path, record.note_id)]
+    if request_id is not None:
+        matching = [
+            record
+            for record in matching
+            if record.parameters.get("request_key_hash") == hash_text(request_id)
+        ]
     returned = matching[-bounded_limit:]
     payload = {
         "note": cleaned_note,

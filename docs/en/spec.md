@@ -242,10 +242,10 @@ read, advisory, and operational tools remain exposed.
 | Write | `create_note_ai` | Creates a memory note without overwrite |
 | Write | `append_journal` | Appends an entry under a heading in an existing note |
 | Write | `set_frontmatter` | Changes only allowed lifecycle fields and `updated` |
-| Write | `patch_note_preamble` | Replaces or removes the preamble before the first recognized ATX heading |
+| Write | `patch_note_preamble` | Replaces or removes the preamble before the first recognized Markdown heading |
 | Write | `patch_note_section` | Replaces content under an existing heading while preserving its heading line |
-| Write | `delete_note_section` | Explicitly deletes an ATX H2-H6 section and its subtree |
-| Write | `rename_note_section` | Renames an ATX H2-H6 heading without changing its content |
+| Write | `delete_note_section` | Explicitly deletes an H2-H6 section and its subtree |
+| Write | `rename_note_section` | Renames an H2-H6 heading without changing its content |
 | Write | `revert_note` | Restores exact bytes from a content-addressed history version |
 | Write | `apply_organization_manifest` | Validates and then applies a content-addressed organization bundle after exact confirmation |
 | Operational | `get_note_history` | Lists committed operation metadata for a note without reading prior bytes |
@@ -286,7 +286,7 @@ creates the note, appends the chained journal, then removes the manifest. `redac
 hashes and the journal but not prior bytes, so `revert_note` cannot read a historical version.
 Retention defaults to 30 days and is configurable through `history_retention_days`.
 
-After a successful MCP write, Datacron reconciles the index synchronously. The response carries
+After a successful MCP write, Datacron refreshes the written note in the index synchronously. The response carries
 `indexed: true` only after that reconciliation.
 
 `apply_organization_manifest` is the only public multi-file mutator. Its absolute
@@ -425,7 +425,7 @@ state.
 The observable freshness contract is `freshness-contract-v1`; its calculation details are
 defined in [freshness-contract-v1.md](freshness-contract-v1.md).
 
-- A write performed by a write tool reconciles the index before returning `indexed: true`.
+- A write performed by a write tool refreshes the written note in the index before returning `indexed: true`.
 - Before an index-backed read, Datacron attempts a serialized incremental repair with an `mtime`
   gate and `content_hash` authority. Sweeps are spaced 30 seconds apart by default. A policy
   that forbids index mutations performs no such repair.
@@ -480,3 +480,6 @@ The hash records this write, not a guarantee that no later writer changed the fi
 with the original expected hash is rejected by CAS; omitting the hash can duplicate an append.
 Failures before a confirmed commit retain their existing error contracts. Cancellation or a
 lost transport response still requires checking the note/history before deciding what to do.
+
+
+See [Reliability improvements](improvements.md) for request replay, targeted indexing, shared Markdown selection and quality gates.

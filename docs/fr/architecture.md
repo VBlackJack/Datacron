@@ -147,10 +147,10 @@ flowchart TB
 | Écriture | `create_note_ai` | Création confinée d'une note `_memory`, sans overwrite et avec journal durable. | VaultWriter + operation log |
 | Écriture | `append_journal` | Ajout sous un heading avec historique exact et écriture atomique. | VaultWriter + operation log |
 | Écriture | `set_frontmatter` | Mise à jour des champs de cycle de vie en préservant le corps Markdown. | VaultWriter + frontmatter parser |
-| Écriture | `patch_note_preamble` | Remplacement CAS du préambule avant le premier titre ATX reconnu. | VaultWriter + operation log |
+| Écriture | `patch_note_preamble` | Remplacement CAS du préambule avant le premier titre Markdown reconnu. | VaultWriter + operation log |
 | Écriture | `patch_note_section` | Remplacement CAS d'une section avec préservation des autres sections. | VaultWriter + operation log |
-| Écriture | `delete_note_section` | Suppression explicite d'une section ATX H2-H6 et de son sous-arbre. | VaultWriter + operation log |
-| Écriture | `rename_note_section` | Renommage d'un titre ATX H2-H6 en préservant le contenu. | VaultWriter + operation log |
+| Écriture | `delete_note_section` | Suppression explicite d'une section H2-H6 et de son sous-arbre. | VaultWriter + operation log |
+| Écriture | `rename_note_section` | Renommage d'un titre H2-H6 en préservant le contenu. | VaultWriter + operation log |
 | Écriture | `revert_note` | Restauration durable et réversible depuis l'historique adressé par contenu. | History store + VaultWriter |
 | Écriture | `apply_organization_manifest` | Valide, puis applique de façon crash-consistent un lot d'organisation exact ; la visibilité multi-chemins n'est pas instantanée. | Manifest validator + batch journal + VaultWriter |
 | Opérationnel | `get_health` | Fraîcheur, intégrité, checksum, durabilité et preuves d'invariants. | Health scanner read-only |
@@ -565,3 +565,6 @@ remesuré.
 
 *Document v2.2 vérifié le 2026-08-30 par rapport à l'implémentation livrée par cette version. Les
 rapports de recherche et décisions v2.1 restent des archives d'arbitrage.*
+
+
+Voir [Améliorations de fiabilité](improvements.md) pour le rejeu des écritures, l’indexation ciblée, la sélection Markdown commune et les contrôles qualité.

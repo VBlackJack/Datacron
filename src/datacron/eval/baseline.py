@@ -163,6 +163,14 @@ def compare_with_baseline(
     ndcg_delta = deltas["ndcg_at_10"]
     if ndcg_delta < -tolerance:
         regressions.append("ndcg_at_10")
+    if deltas.get("empty_accuracy", 0.0) < -tolerance:
+        regressions.append("empty_accuracy")
+    if deltas.get("forbidden_violation_rate", 0.0) > tolerance:
+        regressions.append("forbidden_violation_rate")
+    if previous.empty_accuracy is not None and current.empty_accuracy is None:
+        regressions.append("empty_accuracy_missing")
+    if previous.forbidden_violation_rate is not None and current.forbidden_violation_rate is None:
+        regressions.append("forbidden_violation_rate_missing")
     return BaselineComparison(
         baseline_version=baseline.datacron_version,
         current_version=__version__,
@@ -204,6 +212,8 @@ def _metric_deltas(current: EvalSummary, previous: EvalSummary) -> dict[str, flo
         deltas["forbidden_violation_rate"] = (
             current.forbidden_violation_rate - previous.forbidden_violation_rate
         )
+    if current.empty_accuracy is not None and previous.empty_accuracy is not None:
+        deltas["empty_accuracy"] = current.empty_accuracy - previous.empty_accuracy
     _add_chunk_recall_deltas(deltas, current, previous)
     return deltas
 

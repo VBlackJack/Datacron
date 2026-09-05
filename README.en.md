@@ -406,3 +406,5 @@ pytest
 Copyright 2026 Julien Bombled.
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
+
+[Reliable writes and quality gates](docs/en/improvements.md)

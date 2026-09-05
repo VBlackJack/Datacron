@@ -73,6 +73,7 @@ from datacron.core.recovery import (
 )
 from datacron.core.scope import assert_path_chain_without_links
 from datacron.core.security import SecretRedactor
+from datacron.core.write_request import ACTIVE_WRITE_REQUEST, ReplayedWriteError
 from datacron.organization.manifest import ValidatedOrganizationBundle
 
 __all__ = [
@@ -527,6 +528,7 @@ class FilesystemVaultWriter:
         )
         self._raise_if_recovery_blocked(recovery)
         target, safe_rel_path = self._resolve_target(rel_path)
+        self._check_request_replay(safe_rel_path)
         if note_id is not None and not _ULID_PATTERN.fullmatch(note_id):
             raise ValueError("note_id must be a canonical 26-character ULID")
 
@@ -584,6 +586,7 @@ class FilesystemVaultWriter:
         )
         self._raise_if_recovery_blocked(recovery)
         target, safe_rel_path = self._resolve_target(rel_path)
+        self._check_request_replay(safe_rel_path)
         with self._advisory_lock(f"note:{self._lock_key(target)}"):
             current_bytes = target.read_bytes() if target.is_file() else None
             _check_expected_hash(expected_hash, current_bytes)
@@ -637,6 +640,7 @@ class FilesystemVaultWriter:
         )
         self._raise_if_recovery_blocked(recovery)
         target, safe_rel_path = self._resolve_target(rel_path)
+        self._check_request_replay(safe_rel_path)
         with self._advisory_lock(f"note:{self._lock_key(target)}"):
             current_bytes = target.read_bytes() if target.is_file() else None
             _check_expected_hash(expected_hash, current_bytes)
@@ -665,6 +669,24 @@ class FilesystemVaultWriter:
                     None,
                     operation,
                 )
+
+    def _check_request_replay(self, safe_rel_path: Path) -> None:
+        """Check durable receipts under the mutation lock, after recovery and confinement."""
+        request = ACTIVE_WRITE_REQUEST.get()
+        if request is None:
+            return
+        with self._advisory_lock("oplog"):
+            records = self._operation_journal.read_records()
+        for record in records:
+            if record.parameters.get("request_key_hash") != request.key_hash:
+                continue
+            if (
+                record.parameters.get("request_fingerprint") != request.fingerprint
+                or record.rel_path != safe_rel_path.as_posix()
+            ):
+                raise WriteConflictError("request_id was already used with different arguments")
+            request.record = record
+            raise ReplayedWriteError(record)
 
     def _check_committed_baseline(
         self,
@@ -715,6 +737,15 @@ class FilesystemVaultWriter:
             rel_path=safe_rel_path,
         )
         history_stored = before_bytes is not None and self._operation_journal.history_enabled
+        request = ACTIVE_WRITE_REQUEST.get()
+        request_parameters = (
+            {}
+            if request is None
+            else {
+                "request_key_hash": request.key_hash,
+                "request_fingerprint": request.fingerprint,
+            }
+        )
         record = OperationRecord(
             operation_id=uuid4().hex,
             timestamp=self._operation_journal.next_timestamp(),
@@ -727,8 +758,13 @@ class FilesystemVaultWriter:
             actor=self._secret_redactor.redact_text(operation.actor.strip())
             or "mcp-client:unidentified",
             parameters={
-                key: self._secret_redactor.redact_text(value) if isinstance(value, str) else value
-                for key, value in operation.parameters.items()
+                **{
+                    key: self._secret_redactor.redact_text(value)
+                    if isinstance(value, str)
+                    else value
+                    for key, value in operation.parameters.items()
+                },
+                **request_parameters,
             },
             history_stored=history_stored,
         )
@@ -746,6 +782,8 @@ class FilesystemVaultWriter:
         self._operation_journal.append_record(record)
         _inject(self._operation_fault_injector, "after_oplog_write")
         self._operation_journal.remove_pending(record.operation_id)
+        if request is not None:
+            request.record = record
         _inject(self._operation_fault_injector, "after_pending_cleanup")
         removed = self._operation_journal.purge_history()
         _LOGGER.info(

@@ -1,0 +1,278 @@
+[
+  {
+    "id": "english-01",
+    "category": "english",
+    "question": "backup",
+    "expected_paths": [
+      "public/backup.md"
+    ]
+  },
+  {
+    "id": "english-02",
+    "category": "english",
+    "question": "database backup",
+    "expected_paths": [
+      "public/backup.md"
+    ]
+  },
+  {
+    "id": "english-03",
+    "category": "english",
+    "question": "restoration",
+    "expected_paths": [
+      "public/backup.md"
+    ]
+  },
+  {
+    "id": "english-04",
+    "category": "english",
+    "question": "nightly snapshot",
+    "expected_paths": [
+      "public/backup.md"
+    ]
+  },
+  {
+    "id": "english-05",
+    "category": "english",
+    "question": "recovery",
+    "expected_paths": [
+      "public/backup.md"
+    ]
+  },
+  {
+    "id": "english-06",
+    "category": "english",
+    "question": "backup restoration",
+    "expected_paths": [
+      "public/backup.md"
+    ]
+  },
+  {
+    "id": "french-07",
+    "category": "french",
+    "question": "sauvegarde",
+    "expected_paths": [
+      "public/sauvegarde.md"
+    ]
+  },
+  {
+    "id": "french-08",
+    "category": "french",
+    "question": "restauration",
+    "expected_paths": [
+      "public/sauvegarde.md"
+    ]
+  },
+  {
+    "id": "french-09",
+    "category": "french",
+    "question": "sauvegarde base",
+    "expected_paths": [
+      "public/sauvegarde.md"
+    ]
+  },
+  {
+    "id": "french-10",
+    "category": "french",
+    "question": "quotidienne",
+    "expected_paths": [
+      "public/sauvegarde.md"
+    ]
+  },
+  {
+    "id": "french-11",
+    "category": "french",
+    "question": "instantane",
+    "expected_paths": [
+      "public/sauvegarde.md"
+    ]
+  },
+  {
+    "id": "french-12",
+    "category": "french",
+    "question": "sauvegarde restauration",
+    "expected_paths": [
+      "public/sauvegarde.md"
+    ]
+  },
+  {
+    "id": "ambiguous-13",
+    "category": "ambiguous",
+    "question": "rotation",
+    "expected_paths": [
+      "public/keys.md",
+      "public/logs.md"
+    ]
+  },
+  {
+    "id": "ambiguous-14",
+    "category": "ambiguous",
+    "question": "rotation archive certificates",
+    "expected_paths": [
+      "public/keys.md",
+      "public/logs.md"
+    ]
+  },
+  {
+    "id": "ambiguous-15",
+    "category": "ambiguous",
+    "question": "rotation logs keys",
+    "expected_paths": [
+      "public/keys.md",
+      "public/logs.md"
+    ]
+  },
+  {
+    "id": "ambiguous-16",
+    "category": "ambiguous",
+    "question": "rotation renewal retention",
+    "expected_paths": [
+      "public/keys.md",
+      "public/logs.md"
+    ]
+  },
+  {
+    "id": "disambiguation-17",
+    "category": "disambiguation",
+    "question": "rotation certificates",
+    "expected_paths": [
+      "public/keys.md"
+    ]
+  },
+  {
+    "id": "disambiguation-18",
+    "category": "disambiguation",
+    "question": "keys renewal",
+    "expected_paths": [
+      "public/keys.md"
+    ]
+  },
+  {
+    "id": "disambiguation-19",
+    "category": "disambiguation",
+    "question": "logs archive",
+    "expected_paths": [
+      "public/logs.md"
+    ]
+  },
+  {
+    "id": "disambiguation-20",
+    "category": "disambiguation",
+    "question": "logging retention",
+    "expected_paths": [
+      "public/logs.md"
+    ]
+  },
+  {
+    "id": "freshness-21",
+    "category": "freshness",
+    "question": "retentionpolicy",
+    "expected_paths": [
+      "public/current.md"
+    ],
+    "forbidden_paths": [
+      "public/old.md"
+    ]
+  },
+  {
+    "id": "freshness-22",
+    "category": "freshness",
+    "question": "retentionpolicy duration",
+    "expected_paths": [
+      "public/current.md"
+    ],
+    "forbidden_paths": [
+      "public/old.md"
+    ]
+  },
+  {
+    "id": "freshness-23",
+    "category": "freshness",
+    "question": "retentionpolicy days",
+    "expected_paths": [
+      "public/current.md"
+    ],
+    "forbidden_paths": [
+      "public/old.md"
+    ]
+  },
+  {
+    "id": "freshness-24",
+    "category": "freshness",
+    "question": "retentionpolicy approved",
+    "expected_paths": [
+      "public/current.md"
+    ],
+    "forbidden_paths": [
+      "public/old.md"
+    ]
+  },
+  {
+    "id": "restricted-25",
+    "category": "restricted",
+    "question": "restrictedmarker",
+    "expected_paths": [],
+    "expected_empty": true,
+    "forbidden_paths": [
+      "private/restricted.md"
+    ]
+  },
+  {
+    "id": "restricted-26",
+    "category": "restricted",
+    "question": "restrictedmarker private",
+    "expected_paths": [],
+    "expected_empty": true,
+    "forbidden_paths": [
+      "private/restricted.md"
+    ]
+  },
+  {
+    "id": "restricted-27",
+    "category": "restricted",
+    "question": "restrictedmarker credentials",
+    "expected_paths": [],
+    "expected_empty": true,
+    "forbidden_paths": [
+      "private/restricted.md"
+    ]
+  },
+  {
+    "id": "restricted-28",
+    "category": "restricted",
+    "question": "restrictedmarker instructions",
+    "expected_paths": [],
+    "expected_empty": true,
+    "forbidden_paths": [
+      "private/restricted.md"
+    ]
+  },
+  {
+    "id": "no-answer-29",
+    "category": "no-answer",
+    "question": "unrecordedquasar",
+    "expected_paths": [],
+    "expected_empty": true
+  },
+  {
+    "id": "no-answer-30",
+    "category": "no-answer",
+    "question": "missingnebula",
+    "expected_paths": [],
+    "expected_empty": true
+  },
+  {
+    "id": "no-answer-31",
+    "category": "no-answer",
+    "question": "unknownpulsar",
+    "expected_paths": [],
+    "expected_empty": true
+  },
+  {
+    "id": "no-answer-32",
+    "category": "no-answer",
+    "question": "absentasteroid",
+    "expected_paths": [],
+    "expected_empty": true
+  }
+]

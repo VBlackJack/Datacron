@@ -28,10 +28,10 @@ from datacron.core.durability import (
     RecoveryRequiredError,
 )
 from datacron.core.frontmatter import FrontmatterError, serialize
+from datacron.core.markdown_headings import heading_before, markdown_headings
 from datacron.core.markdown_sections import (
     append_entry_to_heading,
     find_section_span,
-    parse_heading_line,
     patch_note_preamble,
     rename_atx_heading_line,
     section_replacement_block,
@@ -43,13 +43,15 @@ from datacron.core.operation_log import (
 )
 from datacron.core.paths import PathConfinementError
 from datacron.core.vault_writer import UlidCollisionError
+from datacron.core.write_request import ReplayedWriteError
 from datacron.indexing.reconcile import ReconcileStats
 from datacron.mcp.tools.payloads import _LOGGER, _audit, _error_response, _internal_error_response
 from datacron.mcp.tools.read import _resolve_note
 from datacron.mcp.tools.search import (
     _invalidate_alias_cache_if_index_changed,
-    _reconcile_serialized,
+    _reconcile_note_serialized,
 )
+from datacron.mcp.tools.write_requests import replayable_write
 from datacron.mcp.tools.write_validation import (
     _RENAME_H1_REFUSAL_MESSAGE,
     _clean_string_list,
@@ -85,13 +87,13 @@ class CommittedIndexError(RuntimeError):
 
 
 async def _reconcile_committed_write(
-    app: DatacronApp, content_hash: str, *, invalidated_by: str | None = None
+    app: DatacronApp, content_hash: str, rel_path: str, *, invalidated_by: str | None = None
 ) -> ReconcileStats:
     """Preserve the committed byte hash if reconciliation or cache refresh fails."""
     try:
         if invalidated_by is not None and await app.store.get_note_rel_path(invalidated_by) is None:
             _LOGGER.warning("invalidated_by target note is not indexed: %s", invalidated_by)
-        stats = await _reconcile_serialized(app)
+        stats = await _reconcile_note_serialized(app, rel_path, content_hash)
         await _invalidate_alias_cache_if_index_changed(app, stats)
         return stats
     except Exception as exc:
@@ -112,6 +114,8 @@ async def _execute_write_tool(
     """Execute one write action and map its failures to stable tool payloads."""
     try:
         return await action()
+    except ReplayedWriteError:
+        raise
     except CommittedIndexError as exc:
         payload = _internal_error_response(tool, started, **audit_fields)
         payload["error"].update(
@@ -139,6 +143,7 @@ async def _execute_write_tool(
         return _internal_error_response(tool, started, **audit_fields)
 
 
+@replayable_write
 async def _create_note_ai_impl(
     app: DatacronApp,
     *,
@@ -153,6 +158,7 @@ async def _create_note_ai_impl(
     last_verified: str | None = None,
     expected_hash: str | None = None,
     actor: str = "direct-call",
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     audit_fields = {"rel_path": rel_path, "title": title}
@@ -214,7 +220,7 @@ async def _create_note_ai_impl(
             except UlidCollisionError:
                 if attempt == _ULID_CREATE_ATTEMPTS - 1:
                     raise
-        index_stats = await _reconcile_committed_write(app, content_hash)
+        index_stats = await _reconcile_committed_write(app, content_hash, cleaned["rel_path"])
         payload: dict[str, Any] = {
             "created": {
                 "id": note_id,
@@ -259,6 +265,7 @@ async def _create_note_ai_impl(
     )
 
 
+@replayable_write
 async def _append_journal_impl(
     app: DatacronApp,
     *,
@@ -267,6 +274,7 @@ async def _append_journal_impl(
     entry: str,
     expected_hash: str | None = None,
     actor: str = "direct-call",
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     audit_fields = {"rel_path": rel_path, "heading": heading}
@@ -304,7 +312,7 @@ async def _append_journal_impl(
                 },
             ),
         )
-        index_stats = await _reconcile_committed_write(app, content_hash)
+        index_stats = await _reconcile_committed_write(app, content_hash, cleaned_rel_path)
         payload: dict[str, Any] = {
             "appended": {"rel_path": cleaned_rel_path, "heading": cleaned_heading},
             "content_hash": content_hash,
@@ -342,6 +350,7 @@ async def _append_journal_impl(
     )
 
 
+@replayable_write
 async def _set_frontmatter_impl(
     app: DatacronApp,
     *,
@@ -356,6 +365,7 @@ async def _set_frontmatter_impl(
     invalidated_by: str | None = None,
     expected_hash: str | None = None,
     actor: str = "direct-call",
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     audit_fields = {"rel_path": rel_path}
@@ -479,7 +489,7 @@ async def _set_frontmatter_impl(
             ),
         )
         index_stats = await _reconcile_committed_write(
-            app, content_hash, invalidated_by=cleaned_invalidated_by
+            app, content_hash, cleaned_rel_path, invalidated_by=cleaned_invalidated_by
         )
         payload: dict[str, Any] = {
             "updated": {"rel_path": cleaned_rel_path, "fields": changed_fields},
@@ -533,16 +543,15 @@ def _reject_destructive_h1_patch(
     if matched_level != 1:
         return
     if any(
-        parsed_heading is not None and parsed_heading[0] > matched_level
-        for parsed_heading in (
-            parse_heading_line(line) for line in lines[content_start:content_end]
-        )
+        item.level > matched_level and content_start <= item.start < content_end
+        for item in markdown_headings(lines)
     ):
         raise ValueError(
             "level-1 patching would replace subsections; patch a lower-level heading instead"
         )
 
 
+@replayable_write
 async def _patch_note_preamble_impl(
     app: DatacronApp,
     *,
@@ -550,6 +559,7 @@ async def _patch_note_preamble_impl(
     new_content: str,
     expected_hash: str | None = None,
     actor: str = "direct-call",
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     audit_fields = {"rel_path": rel_path}
@@ -581,7 +591,7 @@ async def _patch_note_preamble_impl(
                 parameters={"new_content_chars": len(cleaned_new_content)},
             ),
         )
-        index_stats = await _reconcile_committed_write(app, content_hash)
+        index_stats = await _reconcile_committed_write(app, content_hash, cleaned_rel_path)
         payload: dict[str, Any] = {
             "patched": {"rel_path": cleaned_rel_path},
             "content_hash": content_hash,
@@ -613,6 +623,7 @@ async def _patch_note_preamble_impl(
     )
 
 
+@replayable_write
 async def _patch_note_section_impl(
     app: DatacronApp,
     *,
@@ -623,6 +634,7 @@ async def _patch_note_section_impl(
     heading_level: int | None = None,
     heading_occurrence: int | None = None,
     actor: str = "direct-call",
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     audit_fields = {"rel_path": rel_path, "heading": heading}
@@ -657,10 +669,8 @@ async def _patch_note_section_impl(
                 cleaned_heading_level,
                 heading_occurrence=cleaned_heading_occurrence,
             )
-            matched_heading = parse_heading_line(lines[content_start - 1])
-            if matched_heading is None:
-                raise RuntimeError("section span does not follow a heading")
-            matched_level, matched_text = matched_heading
+            selected = heading_before(lines, content_start)
+            matched_level, matched_text = selected.level, selected.text
             _reject_destructive_h1_patch(
                 lines,
                 matched_level=matched_level,
@@ -695,7 +705,7 @@ async def _patch_note_section_impl(
                 parameters=operation_parameters,
             ),
         )
-        index_stats = await _reconcile_committed_write(app, content_hash)
+        index_stats = await _reconcile_committed_write(app, content_hash, cleaned_rel_path)
         payload: dict[str, Any] = {
             "patched": {
                 "rel_path": cleaned_rel_path,
@@ -741,6 +751,7 @@ async def _patch_note_section_impl(
     )
 
 
+@replayable_write
 async def _rename_note_section_impl(
     app: DatacronApp,
     *,
@@ -751,6 +762,7 @@ async def _rename_note_section_impl(
     heading_level: int | None = None,
     heading_occurrence: int | None = None,
     actor: str = "direct-call",
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     audit_fields = {"rel_path": rel_path}
@@ -797,29 +809,30 @@ async def _rename_note_section_impl(
                 if str(exc) == "heading not found; nothing to patch":
                     raise ValueError("heading not found; nothing to rename") from exc
                 raise
-            heading_index = content_start - 1
-            matched_heading = parse_heading_line(lines[heading_index])
-            if matched_heading is None:
-                raise RuntimeError("section span does not follow a heading")
-            matched_level, matched_text = matched_heading
+            selected = heading_before(lines, content_start)
+            heading_index = selected.start
+            matched_level, matched_text = selected.level, selected.text
             if matched_level == 1:
                 raise ValueError(_RENAME_H1_REFUSAL_MESSAGE)
             if cleaned_new_heading == matched_text:
                 raise ValueError("new_heading must differ from the current heading")
             if any(
-                index != heading_index
-                and (parsed := parse_heading_line(line)) is not None
-                and parsed[1] == cleaned_new_heading
-                for index, line in enumerate(lines)
+                item.start != heading_index and item.text == cleaned_new_heading
+                for item in markdown_headings(lines)
             ):
                 raise ValueError(
                     "new_heading already exists in the note; "
                     "refusing to create an ambiguous heading"
                 )
-            lines[heading_index] = rename_atx_heading_line(
-                lines[heading_index],
-                cleaned_new_heading,
-            )
+            if selected.end == selected.start + 1:
+                lines[heading_index] = rename_atx_heading_line(
+                    lines[heading_index],
+                    cleaned_new_heading,
+                )
+            else:
+                first_line = lines[heading_index]
+                eol = "\r\n" if first_line.endswith("\r\n") else "\n"
+                lines[heading_index : selected.end - 1] = [cleaned_new_heading + eol]
             operation_parameters.update(
                 old_heading=matched_text,
                 heading_level=matched_level,
@@ -838,7 +851,7 @@ async def _rename_note_section_impl(
                 parameters=operation_parameters,
             ),
         )
-        index_stats = await _reconcile_committed_write(app, content_hash)
+        index_stats = await _reconcile_committed_write(app, content_hash, cleaned_rel_path)
         payload: dict[str, Any] = {
             "renamed": {
                 "rel_path": cleaned_rel_path,
@@ -880,6 +893,7 @@ async def _rename_note_section_impl(
     )
 
 
+@replayable_write
 async def _delete_note_section_impl(
     app: DatacronApp,
     *,
@@ -889,6 +903,7 @@ async def _delete_note_section_impl(
     heading_level: int | None = None,
     heading_occurrence: int | None = None,
     actor: str = "direct-call",
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     audit_fields = {"rel_path": rel_path, "heading": heading}
@@ -921,11 +936,9 @@ async def _delete_note_section_impl(
                 cleaned_heading_level,
                 heading_occurrence=cleaned_heading_occurrence,
             )
-            heading_index = content_start - 1
-            matched_heading = parse_heading_line(lines[heading_index])
-            if matched_heading is None:
-                raise RuntimeError("section span does not follow a heading")
-            matched_level, matched_text = matched_heading
+            selected = heading_before(lines, content_start)
+            heading_index = selected.start
+            matched_level, matched_text = selected.level, selected.text
             if matched_level == 1:
                 raise ValueError(
                     "delete_note_section only supports heading levels 2 through 6; "
@@ -954,7 +967,7 @@ async def _delete_note_section_impl(
                 parameters=operation_parameters,
             ),
         )
-        index_stats = await _reconcile_committed_write(app, content_hash)
+        index_stats = await _reconcile_committed_write(app, content_hash, cleaned_rel_path)
         payload: dict[str, Any] = {
             "deleted": {
                 "rel_path": cleaned_rel_path,
@@ -1000,6 +1013,7 @@ async def _delete_note_section_impl(
     )
 
 
+@replayable_write
 async def _revert_note_impl(
     app: DatacronApp,
     *,
@@ -1007,6 +1021,7 @@ async def _revert_note_impl(
     to_hash: str,
     expected_hash: str | None = None,
     actor: str = "direct-call",
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     audit_fields = {"note": note, "to_hash": to_hash}
@@ -1031,7 +1046,7 @@ async def _revert_note_impl(
                 parameters={"to_hash": cleaned_to_hash},
             ),
         )
-        index_stats = await _reconcile_committed_write(app, content_hash)
+        index_stats = await _reconcile_committed_write(app, content_hash, resolved.rel_path)
         payload: dict[str, Any] = {
             "reverted": {
                 "id": resolved.id,
