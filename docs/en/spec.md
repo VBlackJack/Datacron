@@ -476,10 +476,12 @@ If an ordinary note write succeeds but index reconciliation fails, the MCP resul
 with `error.code="committed_index_incomplete"`, `error.committed=true`, `error.indexed=false`,
 `error.content_hash` (the committed bytes), and a diagnostic `error.correlation_id`.
 **Do not repeat the mutation.** Re-read the note, diagnose/repair the index, and verify health.
-The hash records this write, not a guarantee that no later writer changed the file. A retry
-with the original expected hash is rejected by CAS; omitting the hash can duplicate an append.
-Failures before a confirmed commit retain their existing error contracts. Cancellation or a
-lost transport response still requires checking the note/history before deciding what to do.
+The hash records this write, not a guarantee that no later writer changed the file.
+Without `request_id`, a retry with the original expected hash is rejected by CAS; omitting
+the hash can duplicate an append. Failures before a confirmed commit retain their existing
+error contracts. Without `request_id`, cancellation or a lost transport response requires
+checking the note/history before deciding what to do. With a stable `request_id`, retry the
+exact same arguments to recover the historical receipt without repeating a committed edit.
 
 
 See [Reliability improvements](improvements.md) for request replay, targeted indexing, shared Markdown selection and quality gates.
