@@ -308,9 +308,18 @@ def _apply_token_budget(
 def _search_result_summary(app: DatacronApp, result: SearchResult) -> dict[str, Any]:
     chunk = result.chunk
     returned_rel_path = _redact_retrieval_text(app, chunk.note_rel_path)
+    source = result.redaction_source if result.redaction_source is not None else chunk.content
+    redacted_source = _redact_retrieval_text(app, source)
+    # Decorated/truncated snippets can hide the label or split a secret. When
+    # source redaction changes text, render that safe source without decoration.
+    redacted_chunk = _redact_retrieval_text(app, chunk.content)
+    if redacted_chunk != chunk.content:
+        snippet = redacted_chunk
+    else:
+        snippet = redacted_source if redacted_source != source else result.snippet
     wrapped_snippet = wrap_vault_content(
         returned_rel_path,
-        _redact_retrieval_text(app, result.snippet),
+        _redact_retrieval_text(app, snippet),
     )
     return {
         "chunk_id": _redact_retrieval_text(app, chunk.chunk_id),

@@ -9,6 +9,18 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Fixed
+
+- Search detects secrets on undecorated source text before returning highlighted excerpts.
+  Sensitive excerpts use the masked source without highlighting, including FTS, ripgrep and
+  the indexed fallback.
+- Chunk line coordinates remain aligned with physical LF/CRLF files and UTF-8 BOM notes.
+- Indexed ULID lookups validate the live identity and resolve moved notes instead of returning
+  an unrelated replacement at the old path.
+- Ordinary note writes return `error.code=committed_index_incomplete`, the committed
+  `content_hash`, `committed=true` and `indexed=false` when post-commit reconciliation fails.
+  Callers must re-read and repair the index rather than repeat the mutation.
+
 ## [2026.0831.00] - 2026-08-31
 
 ### Fixed

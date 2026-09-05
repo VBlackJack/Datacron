@@ -190,6 +190,7 @@ class SearchResult(BaseModel):
         snippet: A short highlighted excerpt suitable for inclusion in the
             MCP tool response. Plain text, no HTML; query terms surrounded by
             ``**term**`` markers for client display.
+        redaction_source: Original undecorated excerpt for redaction before display.
         tier: Retrieval tier. ``0`` is an AND match; ``1`` is an OR fallback.
     """
 
@@ -198,6 +199,7 @@ class SearchResult(BaseModel):
     chunk: Chunk
     score: float
     snippet: str
+    redaction_source: str | None = None
     tier: int = Field(default=0, ge=0, le=1)
 
 

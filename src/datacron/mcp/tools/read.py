@@ -365,14 +365,14 @@ async def _resolve_note_by_ulid(app: DatacronApp, note_id: str) -> Note | None:
         indexed_rel_path = None
     if indexed_rel_path is not None:
         indexed_note = await _try_read_note_by_rel_path(app, indexed_rel_path)
-        if indexed_note is not None:
+        if indexed_note is not None and indexed_note.id == note_id:
             return indexed_note
 
     # The sidecar is authoritative when it covers every live note path. A
     # healthy complete mapping can reject an unknown ULID after a stat-only
     # sweep, without parsing and hashing the whole vault.
     sidecar_note, sidecar_is_conclusive = await _resolve_note_from_sidecar(app, note_id)
-    if sidecar_note is not None or sidecar_is_conclusive:
+    if sidecar_note is not None or (sidecar_is_conclusive and indexed_rel_path is None):
         return sidecar_note
 
     # Fallback: fresh notes can exist on disk before the next reindex.

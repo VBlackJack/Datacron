@@ -378,10 +378,14 @@ def _block_line_range(source_lines: list[str], blocks: list[Any], index: int) ->
 def _content_line_offset(note: Note) -> int:
     if not note.content:
         return 0
-    content_start = note.raw_content.find(note.content)
+    # Frontmatter parsing normalizes EOLs and strips surrounding whitespace.
+    # The final occurrence is the body, even when YAML contains identical text.
+    raw = note.raw_content.replace("\r\n", "\n").replace("\r", "\n")
+    content = note.content.replace("\r\n", "\n").replace("\r", "\n")
+    content_start = raw.rfind(content)
     if content_start < 0:
         return 0
-    return note.raw_content[:content_start].count("\n")
+    return raw[:content_start].count("\n")
 
 
 def _join_without_outer_blank_lines(lines: list[str]) -> str:

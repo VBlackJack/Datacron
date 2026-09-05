@@ -333,6 +333,7 @@ async def _result_from_match(
         chunk=chunk,
         score=1.0 / (1.0 + rank_index),
         snippet=_highlight_submatches(line, submatches),
+        redaction_source=line,
     )
 
 

@@ -225,3 +225,20 @@ Datacron never sends it the whole vault, only the relevant, bounded fragments. D
 - [Architecture and public surface](architecture.md)
 - [Vault conventions (SPEC)](spec.md)
 - [Documentation index](index.md)
+
+
+## Retrieval and write failure guarantees
+
+Search redaction examines undecorated source text. When it detects sensitive text, the
+response uses the masked source excerpt without query highlighting; ordinary excerpts keep
+highlighting. Physical chunk line coordinates account for frontmatter, LF/CRLF and UTF-8 BOM.
+Reading by ULID validates the current file identity instead of trusting a stale path mapping.
+
+If an ordinary note write succeeds but index reconciliation fails, the MCP result is an error
+with `error.code="committed_index_incomplete"`, `error.committed=true`, `error.indexed=false`,
+`error.content_hash` (the committed bytes), and a diagnostic `error.correlation_id`.
+**Do not repeat the mutation.** Re-read the note, diagnose/repair the index, and verify health.
+The hash records this write, not a guarantee that no later writer changed the file. A retry
+with the original expected hash is rejected by CAS; omitting the hash can duplicate an append.
+Failures before a confirmed commit retain their existing error contracts. Cancellation or a
+lost transport response still requires checking the note/history before deciding what to do.

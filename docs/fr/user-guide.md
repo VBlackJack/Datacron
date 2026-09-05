@@ -231,3 +231,20 @@ fragments pertinents et bornés. Détails : [Frontière de sécurité](security-
 - [Architecture et surface publique](architecture.md)
 - [Conventions du vault (SPEC)](spec.md)
 - [Index de la documentation](index.md)
+
+
+## Garanties de lecture et erreurs après écriture
+
+Le masquage examine le texte source avant surlignage. Si un secret est détecté, la réponse
+utilise l'extrait source masqué sans surlignage ; les autres extraits restent surlignés.
+Les lignes des chunks correspondent au fichier physique, avec frontmatter, LF/CRLF et BOM UTF-8.
+Une lecture par ULID vérifie l'identité du fichier courant plutôt que de croire un ancien chemin.
+
+Si une écriture ordinaire réussit mais que la réconciliation échoue, le résultat MCP est une
+erreur portant `error.code="committed_index_incomplete"`, `error.committed=true`,
+`error.indexed=false`, `error.content_hash` (octets validés) et `error.correlation_id` pour le diagnostic.
+**Ne répète pas la mutation.** Relis la note, diagnostique/répare l'index et vérifie sa santé.
+Le hash décrit cette écriture, sans garantir qu'aucun autre écrivain n'a modifié le fichier depuis.
+Une relance avec l'ancien hash est refusée par CAS ; sans hash, un ajout peut être dupliqué.
+Les erreurs avant commit confirmé conservent leur contrat existant. Une annulation ou une réponse
+perdue impose toujours de vérifier la note et son historique avant de décider de la suite.

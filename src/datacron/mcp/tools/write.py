@@ -43,6 +43,7 @@ from datacron.core.operation_log import (
 )
 from datacron.core.paths import PathConfinementError
 from datacron.core.vault_writer import UlidCollisionError
+from datacron.indexing.reconcile import ReconcileStats
 from datacron.mcp.tools.payloads import _LOGGER, _audit, _error_response, _internal_error_response
 from datacron.mcp.tools.read import _resolve_note
 from datacron.mcp.tools.search import (
@@ -72,6 +73,31 @@ if TYPE_CHECKING:
 _ULID_CREATE_ATTEMPTS: Final[int] = 5
 
 
+class CommittedIndexError(RuntimeError):
+    """A known durable write whose post-commit index refresh failed."""
+
+    def __init__(self, content_hash: str) -> None:
+        super().__init__(
+            "note was committed but index refresh failed; do not repeat the write; "
+            "re-read the note and repair the index"
+        )
+        self.content_hash = content_hash
+
+
+async def _reconcile_committed_write(
+    app: DatacronApp, content_hash: str, *, invalidated_by: str | None = None
+) -> ReconcileStats:
+    """Preserve the committed byte hash if reconciliation or cache refresh fails."""
+    try:
+        if invalidated_by is not None and await app.store.get_note_rel_path(invalidated_by) is None:
+            _LOGGER.warning("invalidated_by target note is not indexed: %s", invalidated_by)
+        stats = await _reconcile_serialized(app)
+        await _invalidate_alias_cache_if_index_changed(app, stats)
+        return stats
+    except Exception as exc:
+        raise CommittedIndexError(content_hash) from exc
+
+
 async def _execute_write_tool(
     tool: str,
     started: float,
@@ -86,6 +112,17 @@ async def _execute_write_tool(
     """Execute one write action and map its failures to stable tool payloads."""
     try:
         return await action()
+    except CommittedIndexError as exc:
+        payload = _internal_error_response(tool, started, **audit_fields)
+        payload["error"].update(
+            type=type(exc).__name__,
+            message=str(exc),
+            code="committed_index_incomplete",
+            committed=True,
+            indexed=False,
+            content_hash=exc.content_hash,
+        )
+        return payload
     except PathConfinementError as exc:
         mapped = _map_write_path_error(
             exc,
@@ -177,8 +214,7 @@ async def _create_note_ai_impl(
             except UlidCollisionError:
                 if attempt == _ULID_CREATE_ATTEMPTS - 1:
                     raise
-        index_stats = await _reconcile_serialized(app)
-        await _invalidate_alias_cache_if_index_changed(app, index_stats)
+        index_stats = await _reconcile_committed_write(app, content_hash)
         payload: dict[str, Any] = {
             "created": {
                 "id": note_id,
@@ -268,8 +304,7 @@ async def _append_journal_impl(
                 },
             ),
         )
-        index_stats = await _reconcile_serialized(app)
-        await _invalidate_alias_cache_if_index_changed(app, index_stats)
+        index_stats = await _reconcile_committed_write(app, content_hash)
         payload: dict[str, Any] = {
             "appended": {"rel_path": cleaned_rel_path, "heading": cleaned_heading},
             "content_hash": content_hash,
@@ -443,16 +478,9 @@ async def _set_frontmatter_impl(
                 parameters={"fields": ",".join(requested_fields)},
             ),
         )
-        if (
-            cleaned_invalidated_by is not None
-            and await app.store.get_note_rel_path(cleaned_invalidated_by) is None
-        ):
-            _LOGGER.warning(
-                "invalidated_by target note is not indexed: %s",
-                cleaned_invalidated_by,
-            )
-        index_stats = await _reconcile_serialized(app)
-        await _invalidate_alias_cache_if_index_changed(app, index_stats)
+        index_stats = await _reconcile_committed_write(
+            app, content_hash, invalidated_by=cleaned_invalidated_by
+        )
         payload: dict[str, Any] = {
             "updated": {"rel_path": cleaned_rel_path, "fields": changed_fields},
             "content_hash": content_hash,
@@ -553,8 +581,7 @@ async def _patch_note_preamble_impl(
                 parameters={"new_content_chars": len(cleaned_new_content)},
             ),
         )
-        index_stats = await _reconcile_serialized(app)
-        await _invalidate_alias_cache_if_index_changed(app, index_stats)
+        index_stats = await _reconcile_committed_write(app, content_hash)
         payload: dict[str, Any] = {
             "patched": {"rel_path": cleaned_rel_path},
             "content_hash": content_hash,
@@ -668,8 +695,7 @@ async def _patch_note_section_impl(
                 parameters=operation_parameters,
             ),
         )
-        index_stats = await _reconcile_serialized(app)
-        await _invalidate_alias_cache_if_index_changed(app, index_stats)
+        index_stats = await _reconcile_committed_write(app, content_hash)
         payload: dict[str, Any] = {
             "patched": {
                 "rel_path": cleaned_rel_path,
@@ -812,8 +838,7 @@ async def _rename_note_section_impl(
                 parameters=operation_parameters,
             ),
         )
-        index_stats = await _reconcile_serialized(app)
-        await _invalidate_alias_cache_if_index_changed(app, index_stats)
+        index_stats = await _reconcile_committed_write(app, content_hash)
         payload: dict[str, Any] = {
             "renamed": {
                 "rel_path": cleaned_rel_path,
@@ -929,8 +954,7 @@ async def _delete_note_section_impl(
                 parameters=operation_parameters,
             ),
         )
-        index_stats = await _reconcile_serialized(app)
-        await _invalidate_alias_cache_if_index_changed(app, index_stats)
+        index_stats = await _reconcile_committed_write(app, content_hash)
         payload: dict[str, Any] = {
             "deleted": {
                 "rel_path": cleaned_rel_path,
@@ -1007,8 +1031,7 @@ async def _revert_note_impl(
                 parameters={"to_hash": cleaned_to_hash},
             ),
         )
-        index_stats = await _reconcile_serialized(app)
-        await _invalidate_alias_cache_if_index_changed(app, index_stats)
+        index_stats = await _reconcile_committed_write(app, content_hash)
         payload: dict[str, Any] = {
             "reverted": {
                 "id": resolved.id,
