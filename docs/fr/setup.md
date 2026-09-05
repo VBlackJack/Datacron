@@ -213,8 +213,8 @@ clients détectés :
 datacron protocol install --client all
 ```
 
-Verifier la version du contrat avec `datacron protocol status --client all --scope user`.
-Voir [la discipline memoire](memory-discipline.md) pour la mise a jour, la reconnexion
+Vérifier la version du contrat avec `datacron protocol status --client all --scope user`.
+Voir [la discipline mémoire](memory-discipline.md) pour la mise à jour, la reconnexion
 et le suivi des personnes et engagements.
 
 Ou cible `claude-code`, `cursor`, `gemini-cli`, `antigravity`, `codex-cli`, `windsurf` ou

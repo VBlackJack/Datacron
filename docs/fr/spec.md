@@ -241,9 +241,9 @@ seuls les tools de lecture, advisory et opérationnels restent exposés.
 
 | Catégorie | Tool | Contrat observable |
 |---|---|---|
-| Lecture | `session_context` | Contexte initial borne et protocole commun versionne. |
-| Lecture | `prepare_follow_up` | Prepare les suivis sources sans ecrire. |
-| Lecture | `get_follow_up` | Dernieres revisions des suivis structures. |
+| Lecture | `session_context` | Contexte initial borné et protocole commun versionné. |
+| Lecture | `prepare_follow_up` | Prépare les suivis sourcés sans écrire. |
+| Lecture | `get_follow_up` | Dernières révisions des suivis structurés. |
 | Lecture | `list_notes` | Liste paginée, filtrable par dossier, tags et frontmatter de premier niveau |
 | Lecture | `get_note` | Lecture par ULID, chunk ID ou chemin, en format `full`, `chunk` ou `map` |
 | Lecture | `search_text` | Recherche BM25 FTS5 avec ranking temporel optionnellement historique |
@@ -494,23 +494,23 @@ Les lignes des chunks correspondent au fichier physique, avec frontmatter, LF/CR
 Une lecture par ULID vérifie l'identité du fichier courant plutôt que de croire un ancien chemin.
 
 Le masquage des chunks et recherches examine aussi les zones sensibles de la note parente
-complete. Un fragment qui ne contient qu'une partie du secret est masque par `[REDACTED]` ;
-les chunks publics independants restent lisibles. Les octets et hashes restent inchanges.
-Chaque fragment indexe est compare aux chunks recalcules sur le parent courant avant masquage.
-Les fragments inchanges restent utilisables en lecture seule ; un fragment non verifiable est refuse.
+complète. Un fragment qui ne contient qu'une partie du secret est masqué par `[REDACTED]` ;
+les chunks publics indépendants restent lisibles. Les octets et hashes restent inchangés.
+Chaque fragment indexé est comparé aux chunks recalculés sur le parent courant avant masquage.
+Les fragments inchangés restent utilisables en lecture seule ; un fragment non vérifiable est refusé.
 
-`DATACRON_MAX_RESULT_TOKENS` borne le tableau de resultats serialise selon l'estimation de quatre
-caracteres par token, echappement JSON, metadonnees et enveloppes compris. Les champs externes
-du tool et la requete repetee sont separes. `token_count` decrit toujours le chunk indexe, pas
+`DATACRON_MAX_RESULT_TOKENS` borne le tableau de résultats sérialisé selon l'estimation de quatre
+caractères par token, échappement JSON, métadonnées et enveloppes compris. Les champs externes
+du tool et la requête répétée sont séparés. `token_count` décrit toujours le chunk indexé, pas
 l'extrait rendu. Une coupe ou une omission active `truncated_for_tokens=true`. L'extrait regex
-conserve la zone correspondante si elle tient ; si les metadonnees seules depassent le budget,
-moins de resultats sont retournes.
+conserve la zone correspondante si elle tient ; si les métadonnées seules dépassent le budget,
+moins de résultats sont retournés.
 
-La limite regex compte les correspondances resolues et admises, pas les occurrences brutes du
-frontmatter ou des fichiers. Les trames ripgrep sont lues progressivement et bornees chacune
-par `DATACRON_REGEX_MAX_FRAME_BYTES` (8 Mio par defaut). Un depassement termine le processus enfant
-et retourne `error.code="regex_frame_too_large"`. Reduire le glob ou augmenter deliberement
-cette limite pour de grandes entrees de confiance.
+La limite regex compte les correspondances résolues et admises, pas les occurrences brutes du
+frontmatter ou des fichiers. Les trames ripgrep sont lues progressivement et bornées chacune
+par `DATACRON_REGEX_MAX_FRAME_BYTES` (8 Mio par défaut). Un dépassement termine le processus enfant
+et retourne `error.code="regex_frame_too_large"`. Réduire le glob ou augmenter délibérément
+cette limite pour de grandes entrées de confiance.
 
 Si une écriture ordinaire réussit mais que la réconciliation échoue, le résultat MCP est une
 erreur portant `error.code="committed_index_incomplete"`, `error.committed=true`,

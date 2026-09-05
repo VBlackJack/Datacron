@@ -268,9 +268,9 @@ rollback hors ligne complet du guide de santé opérationnelle, sans réparer ni
 
 | Tool | Description |
 |---|---|
-| `session_context` | Contexte initial borne et protocole commun versionne. |
-| `prepare_follow_up` | Prepare les suivis sources sans ecrire. |
-| `get_follow_up` | Dernieres revisions des suivis structures. |
+| `session_context` | Contexte initial borné et protocole commun versionné. |
+| `prepare_follow_up` | Prépare les suivis sourcés sans écrire. |
+| `get_follow_up` | Dernières révisions des suivis structurés. |
 | `list_notes` | retourne une liste paginée, filtrable par dossier, tags et paires frontmatter clé/valeur, avec ULID, titre, tags, alias et dates |
 | `get_note` | lit une note par ULID, chunk id ou chemin relatif, en contenu paginé, chunk ou plan de headings |
 | `search_text` | effectue une recherche BM25 sur l'index FTS5 avec snippets classés et notes obsolètes démotées par défaut |
