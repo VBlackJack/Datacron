@@ -63,7 +63,7 @@ def test_aggregate_gate_executes_fail_closed(job: str, result: str) -> None:
     ("paths", "event_name", "force_full", "expected_count"),
     [
         (["README.md", "docs/fr/setup.md"], "push", "", 1),
-        (["README.en.md"], "pull_request", "", 1),
+        (["README.fr.md"], "pull_request", "", 1),
         (["README.md", "src/code.py"], "push", "", 6),
         (["docs/fr/example.py"], "push", "", 6),
         ([".github/workflows/ci.yml"], "push", "", 6),

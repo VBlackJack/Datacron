@@ -88,7 +88,7 @@ datacron setup --yes --vault "CHEMIN_VAULT" --client lmstudio --scope user
 Redémarre LM Studio après le setup pour qu'il recharge le fichier. N'utilise pas
 `--scope project` : LM Studio ne possède aucune cible projet. Son absence de
 `datacron protocol install` est aussi volontaire, car la documentation officielle ne définit
-aucun fichier d'instructions globales. Le [deeplink du README](../../README.md#add-to-lm-studio)
+aucun fichier d'instructions globales. Le [deeplink du README](../../README.fr.md#add-to-lm-studio)
 est une alternative manuelle pour les installations Python, mais ses placeholders
 `<YOUR_VAULT>` doivent être remplacés dans l'éditeur MCP.
 

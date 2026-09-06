@@ -482,7 +482,7 @@ Cette spec est la référence des contrats observables. La topologie interne, le
 composants, les ADR, la sécurité de conception et les limites architecturales sont documentés
 dans [architecture.md](architecture.md); ils ne sont pas dupliqués ici.
 
-Cette spec et l'implémentation de référence [Datacron](../../README.md) sont publiées sous la
+Cette spec et l'implémentation de référence [Datacron](../../README.fr.md) sont publiées sous la
 [licence Apache, version 2.0](../../LICENSE).
 
 

@@ -41,8 +41,8 @@ BL0038_TOOL_NAMES = {
 }
 
 CURRENT_DOCUMENTATION_PATHS = (
+    Path("README.fr.md"),
     Path("README.md"),
-    Path("README.en.md"),
     Path("docs/fr/architecture.md"),
     Path("docs/en/architecture.md"),
     Path("docs/fr/spec.md"),
@@ -118,7 +118,7 @@ def _table_tool_names(content: str) -> set[str]:
     ("relative_path", "required", "forbidden"),
     [
         (
-            Path("README.en.md"),
+            Path("README.md"),
             "the current directory is accepted only when it contains `.datacron/VAULT.yaml`",
             "current directory or `--vault`",
         ),
@@ -128,7 +128,7 @@ def _table_tool_names(content: str) -> set[str]:
             "`--vault` or current directory",
         ),
         (
-            Path("README.md"),
+            Path("README.fr.md"),
             "le répertoire courant n'est accepté que s'il contient `.datacron/VAULT.yaml`",
             "répertoire courant ou `--vault`",
         ),
@@ -180,14 +180,14 @@ def _section(content: str, start: str, end: str) -> str:
     ),
     [
         (
-            Path("README.md"),
+            Path("README.fr.md"),
             "Tools d'écriture disponibles :",
             "Garanties :",
             "### Écriture",
             "### Opérationnel",
         ),
         (
-            Path("README.en.md"),
+            Path("README.md"),
             "Available write tools:",
             "Guarantees:",
             "### Writing",
@@ -249,7 +249,7 @@ def test_mcp_v2_docs_have_current_verification_metadata(
 
 @pytest.mark.parametrize(
     "relative_path",
-    [Path("README.md"), Path("README.en.md"), *ARCHITECTURE_PATHS, *SPEC_PATHS],
+    [Path("README.fr.md"), Path("README.md"), *ARCHITECTURE_PATHS, *SPEC_PATHS],
 )
 def test_mcp_v2_docs_state_the_measured_stdio_protocol_matrix(relative_path: Path) -> None:
     """Publish both measured protocol modes without implying an HTTP endpoint."""

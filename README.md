@@ -1,101 +1,103 @@
 # Datacron
 
-> Serveur MCP local pour interroger et maintenir un vault Markdown depuis Claude, Codex,
-> Gemini ou un autre client MCP stdio, sans envoyer tout le vault dans le contexte.
+> Local MCP server to query and maintain a Markdown vault from Claude, Codex, Gemini, or
+> another stdio MCP client, without sending the whole vault into the context.
+
+<!-- mcp-name: io.github.VBlackJack/datacron -->
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)](pyproject.toml)
 [![MCP: local stdio](https://img.shields.io/badge/MCP-local_stdio-purple)](#mcp-tools)
 [![CI](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml/badge.svg)](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml)
 
-**Français** | [English](README.en.md)
+**English** | [Français](README.fr.md)
 
-## À quoi sert Datacron ?
+## What can you do with Datacron?
 
-Retrouver le contexte d'un projet, préparer un échange et garder la trace des engagements :
-Datacron donne à ton assistant accès à une mémoire durable, lisible et modifiable en Markdown.
-Les notes restent utilisables indépendamment du client choisi.
+Recover project context, prepare for a conversation, and keep track of commitments.
+Datacron gives your assistant durable memory in readable, editable Markdown. Your notes
+remain usable independently of the client you choose.
 
-| Besoin | Exemple de demande à ton assistant |
+| Need | Example request to your assistant |
 |---|---|
-| Reprendre un projet | « Où en étions-nous ? Retrouve les décisions et les prochaines actions. » |
-| Préparer une réunion | « Résume nos derniers échanges et les points encore ouverts, avec leurs sources. » |
-| Retrouver une personne | « Qui est cette personne, dans quel contexte l'ai-je rencontrée et que devons-nous suivre ? » |
-| Suivre des objectifs | « Retrouve les engagements et les réalisations utiles à mon prochain entretien. » |
-| Garder une trace fiable | « Enregistre cette décision, rattache-la au projet et vérifie qu'elle est sauvegardée. » |
+| Resume a project | "Where did we leave off? Find the decisions and next actions." |
+| Prepare a meeting | "Summarize our recent conversations and open points, with sources." |
+| Remember a person | "Who is this person, how have we interacted, and what should we follow up on?" |
+| Track objectives | "Find the commitments and achievements relevant to my next review." |
+| Preserve a reliable record | "Save this decision, link it to the project, and verify that it was stored." |
 
-L'assistant orchestre ces demandes avec les outils disponibles et les droits accordés.
-Le protocole commun guide la lecture, l'enrichissement des fiches personnes et la vérification
-des écritures. Une identité ambiguë demande clarification ; une échéance enregistrée ne programme
-pas de rappel. [Découvrir le suivi quotidien](docs/fr/memory-discipline.md).
+The assistant orchestrates these requests using the available tools and granted permissions.
+A shared protocol guides reading, people updates, and write verification. Ambiguous identities
+require clarification; storing a deadline does not schedule a reminder.
+[Explore daily follow-up](docs/en/memory-discipline.md).
 
-**Commencer :** [installer](#installation) · [première session](#première-session) ·
-[guide utilisateur](docs/fr/user-guide.md) · [référence MCP](#mcp-tools) ·
-[vie privée](#vie-privée-et-sécurité).
+**Start here:** [install](#installation) · [first session](#first-session) ·
+[user guide](docs/en/user-guide.md) · [MCP reference](#mcp-tools) ·
+[privacy](#privacy-and-security).
 
 ## Installation
 
-### Windows : installeur en un double-clic
+### Windows: one double-click installer
 
-Le plus simple sous Windows : télécharge `Datacron-Setup.exe` depuis la
-[dernière Release](https://github.com/VBlackJack/datacron/releases/latest), double-clique,
-et choisis ton vault. Aucun Python, aucun terminal, aucun droit administrateur ; Datacron
-s'enregistre automatiquement dans tes clients IA. Guide détaillé :
-[Installation sous Windows](docs/fr/installation-windows.md).
+The easiest way on Windows: download `Datacron-Setup.exe` from the
+[latest Release](https://github.com/VBlackJack/datacron/releases/latest), double-click it,
+and pick your vault. No Python, no terminal, no administrator rights; Datacron registers
+itself with your AI clients automatically. Full guide:
+[Windows installation](docs/en/installation-windows.md).
 
-### Python : depuis PyPI
+### Python: from PyPI
 
 ```bash
 python -m pip install datacron
 datacron setup
 ```
 
-### Depuis les sources
+### From source
 
-Depuis un clone du repo :
+From a clone of the repository:
 
 ```bash
 python -m pip install -e ".[dev]"
 ```
 
-Ou, pour installer seulement l'application :
+Or, to install only the application:
 
 ```bash
 python -m pip install -e .
 ```
 
-Prérequis runtime :
+Runtime prerequisites:
 
 - Python 3.11+
-- `ripgrep` disponible dans le `PATH` pour `search_regex`
-- un dossier de notes Markdown
-- un client MCP stdio pris en charge, par exemple Claude Desktop, Codex CLI ou Gemini CLI
+- `ripgrep` available on the `PATH` for `search_regex`
+- a folder of Markdown notes
+- a supported stdio MCP client, such as Claude Desktop, Codex CLI, or Gemini CLI
 
-## Première session
+## First session
 
-1. Choisis ton dossier de notes avec l'installeur ou `datacron setup`.
-2. Reconnecte Datacron dans ton client MCP pour charger les outils et les instructions.
-3. Demande : « Retrouve les notes de mon projet et résume son état avec les sources. »
+1. Choose your notes folder with the installer or `datacron setup`.
+2. Reconnect Datacron in your MCP client to load the tools and instructions.
+3. Ask: "Find the notes for my project and summarize its status with sources."
 
-Pour les sessions de mémoire, `session_context` fournit un contexte borné et le protocole
-commun. `prepare_follow_up` prépare les mises à jour sourcées ; les outils d'écriture les
-appliquent selon les permissions. `get_follow_up` retrouve les dernières révisions structurées.
-Les anciennes notes en prose restent à consulter ; elles ne sont pas converties automatiquement.
+For memory sessions, `session_context` returns bounded context and the shared protocol.
+`prepare_follow_up` prepares sourced updates; existing writers apply them according to
+permissions. `get_follow_up` retrieves the latest structured revisions. Existing prose notes
+remain readable and are not automatically converted.
 
-Le serveur travaille localement. Ton client peut transmettre les extraits retournés à son
-fournisseur de modèle : voir [vie privée et sécurité](#vie-privée-et-sécurité).
+The server operates locally. Your client may send returned excerpts to its model provider;
+see [privacy and security](#privacy-and-security).
 
-## Démarrage rapide
+## Quick start
 
-Le plus simple - une commande détecte tes clients IA, initialise le vault, l'indexe et
-enregistre Datacron partout :
+The easy path - one command detects your AI clients, initializes the vault, indexes it, and
+registers Datacron everywhere:
 
 ```bash
-datacron setup            # interactif ; ajoute --yes pour tout par défaut
+datacron setup            # interactive; add --yes for all defaults
 ```
 
-Voir le [guide d'installation](docs/fr/setup.md) pour les options (`--client`, `--scope`,
-écriture, durabilité). Ou étape par étape :
+See the [installation guide](docs/en/setup.md) for options (`--client`, `--scope`, writing,
+durability). Or step by step:
 
 ```bash
 datacron init /path/to/vault
@@ -104,26 +106,25 @@ datacron status --vault /path/to/vault
 datacron mcp install --client claude-desktop --vault /path/to/vault
 ```
 
-La sous-commande `mcp install` ci-dessus est dédiée à Claude Desktop. Pour Codex CLI,
-Gemini CLI, Antigravity, LM Studio, Cursor et les autres clients, utilise le setup multi-client avec
-`datacron setup --client <identifiant>` ou l'auto-détection avec `--client all`.
+The `mcp install` subcommand above is dedicated to Claude Desktop. For Codex CLI, Gemini CLI,
+Antigravity, LM Studio, Cursor, and the other clients, use multi-client setup with
+`datacron setup --client <identifier>` or auto-detection with `--client all`.
 
-### Ajouter Datacron à LM Studio
+### Add to LM Studio
 
-LM Studio 0.3.17+ possède une configuration utilisateur unique et aucun scope projet. La
-commande recommandée est :
+LM Studio 0.3.17+ has one user configuration and no project scope. The preferred command is:
 
 ```bash
-datacron setup --yes --vault "CHEMIN_VAULT" --client lmstudio --scope user
+datacron setup --yes --vault "VAULT_PATH" --client lmstudio --scope user
 ```
 
-Pour une installation Python où `datacron-mcp` est dans le `PATH`, la configuration
-équivalente en lecture seule peut aussi être importée avec ce deeplink officiel :
+For a Python installation where `datacron-mcp` is on `PATH`, the equivalent read-only
+configuration can also be imported with this official deeplink:
 
 [Add to LM Studio](lmstudio://add_mcp?name=datacron&config=eyJjb21tYW5kIjoiZGF0YWNyb24tbWNwIiwiYXJncyI6W10sImVudiI6eyJEQVRBQ1JPTl9WQVVMVF9ST09UIjoiPFlPVVJfVkFVTFQ%2BIiwiREFUQUNST05fUkVBRF9QQVRIUyI6IjxZT1VSX1ZBVUxUPiIsIkRBVEFDUk9OX0RVUkFCSUxJVFkiOiJiZXN0LWVmZm9ydCJ9fQ%3D%3D)
 
-Le lien importe cet exemple. Ouvre l'éditeur MCP de LM Studio et remplace les deux
-placeholders `<YOUR_VAULT>` avant de démarrer le serveur :
+The link imports this example. Open LM Studio's MCP editor and replace both
+`<YOUR_VAULT>` placeholders before starting the server:
 
 ```json
 {
@@ -141,29 +142,29 @@ placeholders `<YOUR_VAULT>` avant de démarrer le serveur :
 }
 ```
 
-L'exemple n'active pas les outils d'écriture. Le setup CLI est plus sûr pour les
-installations packagées, car il écrit automatiquement le vrai chemin de l'exécutable.
+The example does not enable write tools. CLI setup is safer for packaged installations
+because it writes the actual executable path automatically.
 
-Redémarre le ou les clients configurés après l'installation.
+Restart the configured client or clients after installation.
 
-Pour lancer le serveur manuellement :
+To run the server manually:
 
 ```bash
 datacron mcp serve --vault /path/to/vault
 ```
 
-L'entrée script directe utilisée par l'installateur est aussi disponible :
+The direct script entry used by the installer is also available:
 
 ```bash
 datacron-mcp
 ```
 
-`datacron-mcp` lit le vault depuis `DATACRON_VAULT_ROOT`.
+`datacron-mcp` reads the vault from `DATACRON_VAULT_ROOT`.
 
 ## Configuration
 
-`datacron init` crée `.datacron/VAULT.yaml`. Ce fichier peut porter la configuration
-vault-local, notamment la query-expansion :
+`datacron init` creates `.datacron/VAULT.yaml`. That file can carry vault-local
+configuration, notably query expansion:
 
 ```yaml
 query_expansion:
@@ -176,28 +177,28 @@ query_expansion:
   certificat: [certificate]
 ```
 
-Variables d'environnement utiles :
+Useful environment variables:
 
-| Variable | Défaut | Rôle |
+| Variable | Default | Role |
 |---|---:|---|
-| `DATACRON_VAULT_ROOT` | non définie | fallback après `--vault` ; le répertoire courant n'est accepté que s'il contient `.datacron/VAULT.yaml` |
-| `DATACRON_READ_PATHS` | vide | allowlist de lecture ; le setup des clients la fixe au vault |
-| `DATACRON_WRITE_PATHS` | vide | allowlist d'écriture ; vide = write tools désactivés |
-| `DATACRON_MAX_RESULT_COUNT` | `20` | nombre max de résultats retournés |
-| `DATACRON_MAX_RESULT_TOKENS` | `8000` | budget token des résultats de recherche |
-| `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | intervalle minimal entre les sweeps repair-on-read ; `0` = chaque lecture |
-| `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | budget de `get_note(format="full")` |
-| `DATACRON_CHUNK_MAX_TOKENS` | `1024` | taille cible max des chunks |
-| `DATACRON_RIPGREP_PATH` | `rg` | binaire ripgrep |
+| `DATACRON_VAULT_ROOT` | unset | fallback after `--vault`; the current directory is accepted only when it contains `.datacron/VAULT.yaml` |
+| `DATACRON_READ_PATHS` | empty | read allowlist; client setup sets it to the vault |
+| `DATACRON_WRITE_PATHS` | empty | write allowlist; empty = write tools disabled |
+| `DATACRON_MAX_RESULT_COUNT` | `20` | maximum number of results returned |
+| `DATACRON_MAX_RESULT_TOKENS` | `8000` | token budget for search results |
+| `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | minimum interval between repair-on-read sweeps; `0` = every read |
+| `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | budget for `get_note(format="full")` |
+| `DATACRON_CHUNK_MAX_TOKENS` | `1024` | target maximum chunk size |
+| `DATACRON_RIPGREP_PATH` | `rg` | ripgrep binary |
 
-Les listes de chemins utilisent le séparateur de l'OS (`:` sous Unix, `;` sous Windows).
+Path lists use the OS separator (`:` on Unix, `;` on Windows).
 
-## Écriture
+## Writing
 
-Les writes sont volontairement OFF par défaut. Sans `DATACRON_WRITE_PATHS`, les tools
-d'écriture renvoient une erreur claire et ne créent aucun fichier.
+Writes are deliberately OFF by default. Without `DATACRON_WRITE_PATHS`, write tools return a
+clear error and create no file.
 
-Pour activer l'écriture sur un sous-dossier précis :
+To enable writing to a specific subfolder:
 
 ```powershell
 $env:DATACRON_VAULT_ROOT = "G:\_DATA"
@@ -206,157 +207,157 @@ $env:DATACRON_WRITE_PATHS = "G:\_DATA\_memory"
 datacron mcp serve --vault G:\_DATA
 ```
 
-`datacron setup` peut aussi poser l'allowlist au niveau du poste (variable
-d'environnement utilisateur, opt-in) pour que tous les clients MCP en héritent ;
-défaut : `_memory`, `_drafts`, `_journal`. Voir le [guide d'installation](docs/fr/setup.md).
+`datacron setup` can also apply the allowlist machine-wide (user environment
+variable, opt-in) so every MCP client inherits it; default: `_memory`, `_drafts`,
+`_journal`. See the [setup guide](docs/en/setup.md).
 
-Tools d'écriture disponibles :
+Available write tools:
 
-- `create_note_ai` : crée une note Markdown typée, sans overwrite.
-- `append_journal` : ajoute une entrée sous un heading d'une note existante.
-- `set_frontmatter` : met à jour les champs de cycle de vie et la liste `rejected` (options écartées) sans modifier le corps Markdown.
-- `patch_note_preamble` : remplace ou supprime le préambule Markdown avant le premier titre Markdown reconnu (ATX ou Setext), avec contrôle CAS obligatoire.
-- `patch_note_section` : remplace le contenu sous un heading existant avec contrôle CAS.
-- `delete_note_section` : supprime explicitement une section H2-H6 (ATX ou Setext) et son sous-arbre.
-- `rename_note_section` : renomme uniquement le titre d'une section H2-H6 (ATX ou Setext).
-- `revert_note` : restaure les octets exacts d'une version conservée dans l'historique.
-- `apply_organization_manifest` : valide puis applique un bundle local adressé par contenu,
-  après confirmation liée au pré-état exact admis de l'organisation.
+- `create_note_ai`: creates a typed Markdown note, without overwrite.
+- `append_journal`: adds an entry under a heading of an existing note.
+- `set_frontmatter`: updates lifecycle fields and the `rejected` options list without modifying the Markdown body.
+- `patch_note_preamble`: replaces or removes the Markdown preamble before the first recognized Markdown heading (ATX or Setext), with mandatory CAS control.
+- `patch_note_section`: replaces the content under an existing heading with CAS control.
+- `delete_note_section`: explicitly deletes an H2-H6 section (ATX or Setext) and its subtree.
+- `rename_note_section`: renames only the title of an H2-H6 section (ATX or Setext).
+- `revert_note`: restores the exact bytes of a version kept in history.
+- `apply_organization_manifest`: validates and then applies a local content-addressed bundle
+  after confirmation bound to the exact admitted organization pre-state.
 
-Garanties :
+Guarantees:
 
-- confinement strict des notes dans `DATACRON_WRITE_PATHS` ; les sources et cibles notes d'un batch
-  d'organisation doivent aussi rester dans le `organization.scope` live inchangé et passer la
-  politique live d'admission des notes, exclusions comprises
-- deux cibles internes sous CAS exact pour un batch d'organisation : `.datacron/VAULT.yaml`,
-  seulement pour modifier le mapping top-level `organization` sans changer `organization.scope`,
-  et `.datacron/ulids.json`, seulement quand Datacron dérive la migration de clé imposée par un
+- strict note confinement within `DATACRON_WRITE_PATHS`; organization-batch note sources and
+  targets must also stay inside the unchanged live `organization.scope` and pass the live
+  note-admission policy, including exclusions
+- two internal exact-CAS targets for an organization batch: `.datacron/VAULT.yaml`, only to change
+  the top-level `organization` mapping without changing `organization.scope`, and
+  `.datacron/ulids.json`, only when Datacron derives the key migration required by a
   `move_replace_exact`
-- overwrite atomique via fichier temporaire + `os.replace`
-- historique adressé par contenu avant modification d'une note existante
-- `reconcile()` synchrone après un write normal ; la disponibilité immédiate dans la recherche
-  n'est garantie que si cette réconciliation réussit
-- audit log local
-- pour un manifeste d'organisation : transaction récupérable après crash et remplacement
-  atomique de chaque fichier ; la visibilité simultanée de plusieurs chemins n'est pas garantie
+- atomic overwrite via temporary file + `os.replace`
+- content-addressed history before modifying an existing note
+- synchronous `reconcile()` after a normal write; immediate searchability is guaranteed only when
+  reconciliation succeeds
+- local audit log
+- for an organization manifest: crash-consistent recovery and atomic replacement of each file;
+  simultaneous visibility across several paths is not guaranteed
 
-Le mode concurrent multi-machines n'est pas supporté pour les écritures : garde une règle
-single-writer sur le vault.
+Concurrent multi-machine mode is not supported for writes: keep a single-writer rule on the
+vault.
 
-Pour `apply_organization_manifest`, arrête aussi les autres clients et serveurs Datacron pendant
-la fenêtre de maintenance. Avant l'application, conserve hors du vault une sauvegarde exacte aux
-octets et vérifiée des notes affectées et du répertoire `.datacron` complet jusqu'à ce que tous les
-contrôles post-commit soient verts. Appelle d'abord `mode="validate"`, contrôle les hashes bornés retournés,
-puis réutilise l'exact `confirmation_token` avec `mode="apply"`. Le token lie le manifeste et ses
-payloads, toutes les notes Markdown admises dans `organization.scope`, la configuration exacte du
-vault et les sidecars d'identité, ainsi que le rapport projeté. Il ne lie délibérément pas les
-octets de notes sans rapport situées hors de `organization.scope`. Toute modification d'un
-composant authentifié invalide la confirmation avant mutation. `history_mode=full` est requis dès
-la validation. Si Datacron dérive un nettoyage de collisions de casse du sidecar, contrôle aussi
-`identity_sidecar_case_canonicalization_count` et son SHA-256 content-free avant d'appliquer ; ces
-deux preuves sont liées au token et conservées dans le reçu durable.
-Une source existante de `replace_exact` ou `move_replace_exact` doit porter son `id` dans le
-frontmatter ; une identité disponible uniquement dans le sidecar n'est pas prise en charge par ce
-schéma v1. Si le batch a déjà atteint son commit durable mais que la réconciliation ou l'oracle
-planner échoue, la réponse le dit explicitement (`committed_index_incomplete` ou
-`committed_report_mismatch`) et le même appel peut être rejoué avec le même token.
-Un blocage de batch d'organisation est rapporté par `datacron ops inspect` avec une raison
-`pending_batch_` et les deux réparations limitées à une note indisponibles ; applique alors le
-rollback hors ligne complet du guide de santé opérationnelle, sans réparer ni isoler un seul membre.
+For `apply_organization_manifest`, also stop every other Datacron client and server during the
+maintenance window. Before applying, keep a verified byte-exact backup outside the vault of the
+affected notes and the complete `.datacron` directory until every post-commit check is green. Call
+`mode="validate"` first, review the bounded hashes it returns, then reuse
+the exact `confirmation_token` with `mode="apply"`. The token binds the manifest and payloads, all
+admitted Markdown notes inside `organization.scope`, the exact vault configuration and identity
+sidecars, and the projected report. It deliberately does not bind unrelated note bytes outside
+`organization.scope`. A change to any authenticated component invalidates the confirmation before
+mutation. `history_mode=full` is required at validation time. If Datacron derives identity-sidecar
+case-collision cleanup, also review `identity_sidecar_case_canonicalization_count` and its
+content-free SHA-256 before applying; both proofs are token-bound and retained in the durable
+receipt.
+An existing `replace_exact` or `move_replace_exact` source must carry its `id` in frontmatter; an
+identity available only from the sidecar is unsupported by this v1 schema. If the batch is already
+durably committed but index reconciliation or the planner oracle fails, the response says so
+explicitly (`committed_index_incomplete` or `committed_report_mismatch`) and the same call can be
+retried with the same token.
+An organization-batch blocker is reported by `datacron ops inspect` with a `pending_batch_` reason
+and both single-note repair actions unavailable; use the full offline rollback procedure in the
+operational-health guide rather than repairing or quarantining one member.
 
-## Fonctions disponibles
+## Available capabilities
 
-Datacron indexe un dossier de notes Markdown, expose un serveur MCP local, puis renvoie
-au client les notes ou chunks pertinents au lieu d'un dump complet. Le vault reste un
-dossier Markdown normal : Datacron ajoute seulement un sidecar `.datacron/` pour l'index,
-les logs, les ULID internes, l'historique et le journal d'opérations.
+Datacron indexes a folder of Markdown notes, exposes a local MCP server, then returns the
+relevant notes or chunks to the client instead of a full dump. The vault stays an ordinary
+Markdown folder: Datacron only adds a `.datacron/` sidecar for the index, logs, internal
+ULIDs, history, and the operation journal.
 
-| Surface | État actuel |
+| Surface | Current state |
 |---|---|
-| Lecture vault | `list_notes`, `get_note`, resources `datacron://vault/map`, `vault/info`, `policy/active` |
-| Recherche | SQLite FTS5/BM25, query-expansion FR↔EN, re-rank temporel, `ripgrep` via `search_regex` |
-| Graphe local | Wikilinks et backlinks via `get_backlinks` |
-| Écriture | 8 tools de note + 1 lot d'organisation, confinés et journalisés, désactivés par défaut sans `DATACRON_WRITE_PATHS` |
-| Transport MCP | SDK Python MCP v2 via `MCPServer`, stdio local uniquement ; protocole moderne `2026-07-28` et compatibilité legacy `2025-11-25`, sans listener HTTP |
-| Index | `datacron index` incrémental, `datacron reindex` complet, réparation conditionnelle à la lecture |
-| Organisation | Bloc `organization` facultatif dans `VAULT.yaml` ; `datacron reorganize --dry-run` mesure l'écart en lecture seule, `apply_organization_manifest` applique |
-| Évaluation | `datacron eval` sur le pipeline MCP réel : recall@k, MRR, nDCG, fraîcheur, latence et payload tokens |
-| Setup guidé | `datacron setup` : init + index + enregistrement MCP en une commande |
-| Clients | Auto-détection et enregistrement via `datacron setup --client all` : Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, LM Studio, Codex CLI, Windsurf, VS Code |
-| Mémoire quotidienne | `session_context`, `prepare_follow_up`, `get_follow_up` : contexte borné, suivis sourcés et états structurés |
-| Protocole mémoire | Contrat commun versionné pour le serveur et les clients ; `protocol status` vérifie sa distribution, pas le comportement du modèle |
-| Distribution | Installeur Windows (`Datacron-Setup.exe`), exécutable autonome (PyInstaller) sans Python requis, ou installation depuis les sources |
+| Vault reading | `list_notes`, `get_note`, resources `datacron://vault/map`, `vault/info`, `policy/active` |
+| Search | SQLite FTS5/BM25, FR↔EN query expansion, temporal re-rank, `ripgrep` via `search_regex` |
+| Local graph | Wikilinks and backlinks via `get_backlinks` |
+| Writing | 8 confined note tools + 1 organization batch, journaled and disabled by default without `DATACRON_WRITE_PATHS` |
+| MCP transport | Python MCP SDK v2 through `MCPServer`, local stdio only; modern `2026-07-28` protocol and legacy `2025-11-25` compatibility, with no HTTP listener |
+| Index | `datacron index` incremental, `datacron reindex` full, conditional repair on read |
+| Organization | Optional `organization` block in `VAULT.yaml`; `datacron reorganize --dry-run` measures the gap read-only, `apply_organization_manifest` applies |
+| Evaluation | `datacron eval` over the real MCP pipeline: recall@k, MRR, nDCG, freshness, latency, and payload tokens |
+| Guided setup | `datacron setup`: init + index + MCP registration in one command |
+| Clients | Auto-detect and register via `datacron setup --client all`: Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, LM Studio, Codex CLI, Windsurf, VS Code |
+| Daily memory | `session_context`, `prepare_follow_up`, `get_follow_up`: bounded context, sourced follow-up, and structured state |
+| Memory protocol | Shared versioned server/client contract; `protocol status` checks distribution, not model behavior |
+| Distribution | Windows installer (`Datacron-Setup.exe`), standalone executable (PyInstaller) with no Python required, or installation from source |
 
 ## MCP Tools
 
-### Lecture
+### Reading
 
 | Tool | Description |
 |---|---|
-| `session_context` | Contexte initial borné et protocole commun versionné. |
-| `prepare_follow_up` | Prépare les suivis sourcés sans écrire. |
-| `get_follow_up` | Dernières révisions des suivis structurés avec pagination liée à un instantané. |
-| `list_notes` | retourne une liste paginée, filtrable par dossier, tags et paires frontmatter clé/valeur, avec ULID, titre, tags, alias et dates |
-| `get_note` | lit une note par ULID, chunk id ou chemin relatif, en contenu paginé, chunk ou plan de headings |
-| `search_text` | effectue une recherche BM25 sur l'index FTS5 avec snippets classés et notes obsolètes démotées par défaut |
-| `search_regex` | effectue une recherche regex via ripgrep et résout les lignes trouvées vers les chunks indexés |
-| `get_backlinks` | retourne les chunks dont les wikilinks ciblent un ULID ou un alias résolu |
+| `session_context` | Bounded session context and versioned common protocol. |
+| `prepare_follow_up` | Prepare sourced follow-up plans without writing. |
+| `get_follow_up` | Latest structured follow-up revisions with snapshot-bound pagination. |
+| `list_notes` | returns a paginated list, filterable by folder, tags, and frontmatter key/value pairs, with ULID, title, tags, aliases, and dates |
+| `get_note` | reads a note by ULID, chunk id, or relative path, as paginated content, chunk, or heading outline |
+| `search_text` | runs a BM25 search on the FTS5 index with ranked snippets and stale notes demoted by default |
+| `search_regex` | runs a regex search via ripgrep and resolves the found lines to indexed chunks |
+| `get_backlinks` | returns chunks whose wikilinks target a ULID or a resolved alias |
 
-### Écriture
-
-| Tool | Description |
-|---|---|
-| `create_note_ai` | crée une nouvelle note `_memory` typée, confinée aux chemins autorisés, sans overwrite et avec journal durable |
-| `append_journal` | ajoute une entrée Markdown sous un heading, avec confinement, historique exact et écriture atomique |
-| `set_frontmatter` | modifie uniquement les champs de cycle de vie, la liste `rejected` et la date `updated`, en préservant le corps Markdown |
-| `patch_note_preamble` | remplace ou supprime le préambule avant le premier titre Markdown reconnu (ATX ou Setext), avec CAS obligatoire et préservation du suffixe |
-| `patch_note_section` | remplace le contenu d'un heading existant avec CAS, historique exact et préservation des autres sections |
-| `delete_note_section` | supprime explicitement une section H2-H6 (ATX ou Setext) et son sous-arbre, avec CAS optionnel et historique exact |
-| `rename_note_section` | renomme le titre d'une section H2-H6 (ATX ou Setext) sans modifier son contenu ni son sous-arbre |
-| `revert_note` | restaure une note depuis son historique adressé par contenu ; l'opération reste durable, réversible et auditée |
-| `apply_organization_manifest` | valide un bundle local content-addressed contenant au moins une opération exacte sur une note et/ou un remplacement exact de la configuration `organization`, puis applique ses membres déclarés et, si nécessaire, la migration dérivée du sidecar ULID sous CAS ; l'application est journalisée et récupérable après crash |
-
-### Opérationnel
+### Writing
 
 | Tool | Description |
 |---|---|
-| `get_health` | retourne l'état réel de fraîcheur de l'index, d'intégrité, de checksum, de durabilité et des invariants |
-| `get_note_history` | liste les métadonnées d'opérations validées d'une note sans lire le contenu historique ni modifier le journal |
-| `audit_query` | interroge les métadonnées d'opérations par période, tool ou note sans modifier le journal ni le vault |
+| `create_note_ai` | creates a new typed `_memory` note, confined to allowed paths, without overwrite and with a durable journal |
+| `append_journal` | adds a Markdown entry under a heading, with confinement, exact history, and atomic write |
+| `set_frontmatter` | updates only the lifecycle fields, the `rejected` list, and the `updated` date, preserving the Markdown body |
+| `patch_note_preamble` | replaces or removes the preamble before the first recognized Markdown heading (ATX or Setext), with mandatory CAS and suffix preservation |
+| `patch_note_section` | replaces the content of an existing heading with CAS, exact history, and preservation of other sections |
+| `delete_note_section` | explicitly deletes an H2-H6 section (ATX or Setext) and its subtree, with optional CAS and exact history |
+| `rename_note_section` | renames the title of an H2-H6 section (ATX or Setext) without modifying its content or subtree |
+| `revert_note` | restores a note from its content-addressed history; the operation stays durable, reversible, and audited |
+| `apply_organization_manifest` | validates a local content-addressed bundle containing at least one exact note operation and/or an exact `organization` configuration replacement, then applies its declared members and any required derived ULID-sidecar migration under CAS; application is journaled and crash-consistent |
 
-### Advisory (expérimental)
+### Operational
 
 | Tool | Description |
 |---|---|
-| `contradiction_scan` | scan live, déterministe et borné des contradictions/raffinements entre sections ; propose puis confirme en lecture seule un appel CAS explicite, sans jamais écrire automatiquement |
+| `get_health` | returns the real state of index freshness, integrity, checksum, durability, and invariants |
+| `get_note_history` | lists the committed operation metadata of a note without reading historical content or modifying the journal |
+| `audit_query` | queries operation metadata by period, tool, or note without modifying the journal or the vault |
 
-Resources MCP :
+### Advisory (experimental)
+
+| Tool | Description |
+|---|---|
+| `contradiction_scan` | live, deterministic, bounded scan of contradictions/refinements between sections; proposes and confirms an explicit CAS call read-only, without ever writing automatically |
+
+MCP resources:
 
 - `datacron://vault/map`
 - `datacron://vault/info`
 - `datacron://policy/active`
 
-## Recherche
+## Search
 
-`search_text` combine plusieurs signaux :
+`search_text` combines several signals:
 
-- FTS5/BM25 pour le score lexical de base
-- query-expansion FR↔EN configurée dans `VAULT.yaml`
-- re-rank temporel conservateur :
-  - une note citée dans le `supersedes` d'une autre est fortement démotée
-  - `confidence: low` et `confidence: needs_verification` appliquent une pénalité légère
-  - `include_superseded=true` permet de remonter les notes historiques
+- FTS5/BM25 for the base lexical score
+- FR↔EN query expansion configured in `VAULT.yaml`
+- conservative temporal re-rank:
+  - a note referenced in another note's `supersedes` is strongly demoted
+  - `confidence: low` and `confidence: needs_verification` apply a light penalty
+  - `include_superseded=true` brings historical notes back up
 
-`search_regex` reste littéral : il n'applique ni query-expansion ni re-rank temporel.
+`search_regex` stays literal: it applies neither query expansion nor temporal re-rank.
 
 <details>
-<summary>Mesures historiques de recherche — 17 juillet 2026</summary>
+<summary>Historical search measurements - July 17, 2026</summary>
 
-Ces mesures portent sur un jeu de 19 questions et une configuration précise. Elles ne
-constituent pas un benchmark de la version courante ni une garantie sur un autre vault.
+These measurements cover 19 questions and one configuration. They are not a benchmark of
+the current release or a guarantee for another vault.
 
-Mesure locale du pipeline `tool/impl` réellement reçu par l'agent, 19 questions,
-configuration 8k tokens / 20 résultats, 17 juillet 2026 :
+Local measurement of the `tool/impl` pipeline actually received by the agent, 19 questions,
+8k-token / 20-result configuration, July 17, 2026:
 
 ```text
 recall@5       0.89
@@ -364,34 +365,34 @@ recall@10      0.95
 recall@20      0.95
 MRR            0.73
 nDCG@10        0.79
-latence p50    57 ms
-latence p95    276 ms
+latency p50    57 ms
+latency p95    276 ms
 payload tokens 90567
 ```
 
-Sur ce jeu historique, le recall@5 du tool atteignait celui du store BM25. Pour mesurer
-le comportement sur tes propres notes, utilise `datacron eval` et un jeu de questions adapté.
+On this historical set, tool-level recall@5 matched the BM25 store. Use `datacron eval`
+with a suitable question set to measure behavior on your own notes.
 
 </details>
 
-## Vie privée et sécurité
+## Privacy and security
 
-- Datacron ne fait pas de télémétrie.
-- Datacron n'appelle pas de LLM cloud.
-- Le client MCP, par exemple Claude, Codex ou Gemini, peut envoyer à son fournisseur les
-  chunks que Datacron lui retourne. Datacron ne lui envoie pas le vault complet.
-- Le contenu retourné aux clients est enveloppé dans `<vault_content>...</vault_content>`.
-- Les résultats sont bornés par nombre et par budget token.
-- Les accès filesystem sont confinés par `DATACRON_READ_PATHS` et `DATACRON_WRITE_PATHS`.
-- Les opérations MCP sont auditées dans les logs locaux.
+- Datacron does no telemetry.
+- Datacron calls no cloud LLM.
+- The MCP client, for example Claude, Codex, or Gemini, may send the chunks that Datacron
+  returns to its provider. Datacron does not send it the full vault.
+- Content returned to clients is wrapped in `<vault_content>...</vault_content>`.
+- Results are bounded by count and by token budget.
+- Filesystem access is confined by `DATACRON_READ_PATHS` and `DATACRON_WRITE_PATHS`.
+- MCP operations are audited in the local logs.
 
-## Commandes CLI
+## CLI commands
 
 ```bash
-datacron setup                      # parcours guidé : init + index + config client
-datacron setup --yes                # tout par défaut, sans question
+datacron setup                      # guided path: init + index + client config
+datacron setup --yes                # all defaults, no prompts
 datacron setup --client all --scope both --vault /path/to/vault
-datacron setup --protocol           # installe aussi les règles mémoire des clients
+datacron setup --protocol           # also install client memory rules
 datacron protocol install --client all
 datacron protocol status --client all --scope user
 datacron init /path/to/vault
@@ -400,52 +401,52 @@ datacron index --vault /path/to/vault
 datacron reindex --vault /path/to/vault
 datacron scrub-init --vault /path/to/vault
 datacron scrub --vault /path/to/vault
-datacron reorganize --vault /path/to/vault --dry-run          # mesure l'organisation, lecture seule
-datacron reorganize --vault /path/to/vault --dry-run --json   # rapport machine stable
+datacron reorganize --vault /path/to/vault --dry-run          # measure organization, read-only
+datacron reorganize --vault /path/to/vault --dry-run --json   # stable machine-readable report
 datacron eval --questions examples/eval-questions.example.yaml --vault /path/to/vault
 datacron eval --questions local/golden.yaml --vault /path/to/vault --save-baseline
 datacron eval --questions local/golden.yaml --vault /path/to/vault --compare --json
 datacron mcp serve --vault /path/to/vault
-datacron mcp install --client claude-desktop --vault /path/to/vault  # dédié Claude Desktop
+datacron mcp install --client claude-desktop --vault /path/to/vault  # Claude Desktop only
 datacron unregister --client all --scope both --vault /path/to/vault
 datacron protocol uninstall --client all
 ```
 
-## Limites actuelles
+## Current limitations
 
-- Recherche lexicale : pas de recherche vectorielle ni d’embeddings.
-- Pas d'agent autonome : le client MCP orchestre.
-- Pas de GUI.
-- Pas de writes concurrents multi-machines.
-- La détection des clients par `datacron setup` est best-effort (présence d'un dossier de config
-  ou d'un binaire sur le `PATH`) ; une installation dans un emplacement non standard peut être
-  manquée et se configure alors à la main.
+- Lexical search only: no vector search or embeddings.
+- No autonomous agent: the MCP client orchestrates.
+- No GUI.
+- No concurrent multi-machine writes.
+- Client detection in `datacron setup` is best-effort (a config directory or a binary on the
+  `PATH`); an install in a non-standard location may be missed and can then be configured by
+  hand.
 
 ## Documentation
 
-Sommaire complet : [docs/fr/index.md](docs/fr/index.md) | [English index](docs/en/index.md).
+Full index: [docs/en/index.md](docs/en/index.md) | [Index français](docs/fr/index.md).
 
-Pour démarrer :
+To get started:
 
-- [Guide d'installation et de configuration](docs/fr/setup.md)
-- [Utiliser Datacron avec Ollama](docs/fr/ollama.md)
-- [Questions fréquentes](docs/fr/faq.md)
-- [Guide utilisateur](docs/fr/user-guide.md)
-- [Mémoire quotidienne, personnes et engagements](docs/fr/memory-discipline.md)
+- [Installation and configuration guide](docs/en/setup.md)
+- [Use Datacron with Ollama](docs/en/ollama.md)
+- [Frequently asked questions](docs/en/faq.md)
+- [User guide](docs/en/user-guide.md)
+- [Daily memory, people, and commitments](docs/en/memory-discipline.md)
 
-Références techniques :
+Technical references:
 
-- [Conventions du vault (SPEC)](docs/fr/spec.md)
-- [Organisation du vault](docs/fr/organization.md)
-- [Architecture et surface publique](docs/fr/architecture.md)
-- [Frontière de sécurité](docs/fr/security-boundary.md)
-- [Scrubber d'intégrité](docs/fr/integrity-scrubber.md)
-- [Santé opérationnelle et durabilité](docs/fr/operational-health.md)
-- [Contrat de fraîcheur](docs/fr/freshness-contract-v1.md)
+- [Vault conventions (SPEC)](docs/en/spec.md)
+- [Vault organization](docs/en/organization.md)
+- [Architecture and public surface](docs/en/architecture.md)
+- [Security boundary](docs/en/security-boundary.md)
+- [Integrity scrubber](docs/en/integrity-scrubber.md)
+- [Operational health and durability](docs/en/operational-health.md)
+- [Freshness contract](docs/en/freshness-contract-v1.md)
 
-## Développement
+## Development
 
-La CI exécute les invariants et toute la suite de régression sur Linux/Python 3.12 pour les changements limités aux README, au CHANGELOG et aux pages Markdown de `docs/fr/` ou `docs/en/`. Tout autre changement conserve les six combinaisons Linux/Windows et Python 3.11–3.13. Les publications imposent la matrice complète ; un diff vide ou invérifiable aussi. ShellCheck, l’audit des dépendances et le contrôle obligatoire `Quality gate` restent actifs dans les deux parcours. La première poussée d’une nouvelle branche utilise également la matrice complète, faute de point de comparaison précédent.
+CI runs the invariants and the entire regression suite on Linux/Python 3.12 for changes limited to the READMEs, CHANGELOG, and Markdown pages under `docs/fr/` or `docs/en/`. All other changes retain the six Linux/Windows and Python 3.11-3.13 combinations. Publications require the full matrix, as do empty or unverifiable diffs. ShellCheck, the dependency audit, and the required `Quality gate` remain active in both paths. The first push of a new branch also uses the full matrix because no previous comparison point is available.
 
 ```bash
 python -m pip install -e ".[dev]"
@@ -455,10 +456,10 @@ mypy
 pytest
 ```
 
-## Licence
+## License
 
 Copyright 2026 Julien Bombled.
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
 
-[Écritures fiables et contrôles qualité](docs/fr/improvements.md)
+[Reliable writes and quality gates](docs/en/improvements.md)

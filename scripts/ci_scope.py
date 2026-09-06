@@ -17,7 +17,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-_DOC_FILES = frozenset({"README.md", "README.en.md", "CHANGELOG.md"})
+_DOC_FILES = frozenset({"README.md", "README.fr.md", "CHANGELOG.md"})
 _DOC_ROOTS = ("docs/fr/", "docs/en/")
 _FULL_MATRIX = {
     "os": ["ubuntu-latest", "windows-latest"],

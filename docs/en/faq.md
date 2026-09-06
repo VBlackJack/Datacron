@@ -83,7 +83,7 @@ datacron setup --yes --vault "VAULT_PATH" --client lmstudio --scope user
 Restart LM Studio after setup so it reloads the file. Do not use `--scope project`: LM Studio
 has no project target. Its absence from `datacron protocol install` is also intentional,
 because the official documentation defines no global instruction file. The
-[README deeplink](../../README.en.md#add-to-lm-studio) is a manual alternative for Python
+[README deeplink](../../README.md#add-to-lm-studio) is a manual alternative for Python
 installations, but its `<YOUR_VAULT>` placeholders must be replaced in the MCP editor.
 
 ## Why does the CLI say "Unknown client X" when the documentation lists it?

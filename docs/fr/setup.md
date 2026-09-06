@@ -3,7 +3,7 @@
 **Français** | [English](../en/setup.md)
 
 Ce guide t'amène d'un dossier de notes Markdown à un serveur Datacron opérationnel,
-branché sur Claude Desktop ou Claude Code. Il complète le [README](../../README.md) et le
+branché sur Claude Desktop ou Claude Code. Il complète le [README](../../README.fr.md) et le
 [guide utilisateur](user-guide.md). Pour un dépannage par symptôme, consulte les
 [questions fréquentes](faq.md).
 

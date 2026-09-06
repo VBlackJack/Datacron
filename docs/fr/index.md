@@ -9,7 +9,7 @@ et maintient un vault Markdown depuis Claude, sans envoyer le vault complet dans
 
 | Document | Pour quoi |
 |---|---|
-| [README](../../README.md) | Vue d'ensemble, capacités, mesures actuelles. |
+| [README](../../README.fr.md) | Vue d'ensemble, capacités, mesures actuelles. |
 | [Guide d'installation et de configuration](setup.md) | Installer, initialiser un vault, brancher Claude Desktop / Claude Code, variables d'env, activer l'écriture. |
 | [Utiliser Datacron avec Ollama](ollama.md) | Relier Ollama au serveur MCP stdio de Datacron avec un pont explicite et des limites de preuve documentées. |
 | [Installation sous Windows (installeur)](installation-windows.md) | Installeur `Datacron-Setup.exe` : double-clic, sans Python, enregistrement automatique des clients, réinstallation, silencieux, désinstallation. |

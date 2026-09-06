@@ -44,8 +44,8 @@ def _read(path: Path) -> str:
 @pytest.mark.parametrize(
     ("navigation_path", "expected_link"),
     [
-        (REPOSITORY_ROOT / "README.md", "docs/fr/ollama.md"),
-        (REPOSITORY_ROOT / "README.en.md", "docs/en/ollama.md"),
+        (REPOSITORY_ROOT / "README.fr.md", "docs/fr/ollama.md"),
+        (REPOSITORY_ROOT / "README.md", "docs/en/ollama.md"),
         (REPOSITORY_ROOT / "docs" / "fr" / "index.md", "ollama.md"),
         (REPOSITORY_ROOT / "docs" / "en" / "index.md", "ollama.md"),
     ],
@@ -134,5 +134,5 @@ def test_ollama_docs_local_relative_links_resolve() -> None:
 
 def test_ollama_docs_readme_write_tool_count_is_current() -> None:
     """Keep the public write-tool inventory aligned with the measured registry."""
-    assert "| Écriture | 8 tools" in _read(REPOSITORY_ROOT / "README.md")
-    assert "| Writing | 8 confined" in _read(REPOSITORY_ROOT / "README.en.md")
+    assert "| Écriture | 8 tools" in _read(REPOSITORY_ROOT / "README.fr.md")
+    assert "| Writing | 8 confined" in _read(REPOSITORY_ROOT / "README.md")

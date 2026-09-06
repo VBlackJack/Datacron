@@ -464,7 +464,7 @@ This spec is the reference for observable contracts. Internal topology, componen
 design security, and architectural limits are documented in [architecture.md](architecture.md);
 they are not duplicated here.
 
-This spec and the reference [Datacron](../../README.en.md) implementation are published under the
+This spec and the reference [Datacron](../../README.md) implementation are published under the
 [Apache License, Version 2.0](../../LICENSE).
 
 

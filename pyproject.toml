@@ -14,7 +14,7 @@ build-backend = "hatchling.build"
 name = "datacron"
 dynamic = ["version"]
 description = "Local-first MCP server that exposes a Markdown vault through MCP."
-readme = "README.en.md"
+readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -91,7 +91,7 @@ packages = ["src/datacron"]
 include = [
     "src/datacron",
     "README.md",
-    "README.en.md",
+    "README.fr.md",
     "LICENSE",
     "docs/fr/spec.md",
     "pyproject.toml",
