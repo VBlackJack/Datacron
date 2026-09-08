@@ -20,12 +20,18 @@ import json
 import re
 import sqlite3
 from collections.abc import AsyncIterator, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Final, cast, final
 
 import aiosqlite
 
+from datacron.core.config import (
+    CHUNK_CONTEXT_SEPARATOR,
+    SEARCH_CONTENT_WEIGHT,
+    SEARCH_CONTEXT_WEIGHT,
+)
 from datacron.core.frontmatter import (
     coerce_string_list,
     extract_tags,
@@ -77,9 +83,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     line_end UNINDEXED,
     wikilinks_out_json UNINDEXED,
     lang UNINDEXED,
+    context,
     tokenize = 'unicode61 remove_diacritics 2'
 );
 """
+
+# Column positions inside ``chunks_fts``; bm25() weights are positional.
+_FTS_CONTENT_COLUMN: Final[int] = 6
+_FTS_CONTEXT_COLUMN: Final[int] = 14
+_FTS_COLUMN_COUNT: Final[int] = 15
+_LEGACY_CHUNKS_TABLE: Final[str] = "chunks_fts_legacy"
+_FTS_CONTEXT_COLUMN_NAME: Final[str] = "context"
 
 _CREATE_ULID_PATHS_SQL: Final[str] = """
 CREATE TABLE IF NOT EXISTS ulid_paths (
@@ -137,12 +151,78 @@ INSERT INTO chunks_fts (
     line_start,
     line_end,
     wikilinks_out_json,
-    lang
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    lang,
+    context
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
-_SEARCH_SQL: Final[str] = """
-SELECT
+_SEARCH_COLUMNS_SQL: Final[str] = """
+    chunks_fts.chunk_id,
+    chunks_fts.note_id,
+    chunks_fts.note_rel_path,
+    chunks_fts.header_path,
+    chunks_fts.section_title,
+    chunks_fts.chunk_type,
+    chunks_fts.content,
+    chunks_fts.ordinal,
+    chunks_fts.content_hash,
+    chunks_fts.token_count,
+    chunks_fts.line_start,
+    chunks_fts.line_end,
+    chunks_fts.wikilinks_out_json,
+    chunks_fts.lang,
+"""
+
+_SEARCH_SNIPPET_SQL: Final[str] = f"""
+    snippet(
+        chunks_fts,
+        {_FTS_CONTENT_COLUMN},
+        '**',
+        '**',
+        '...',
+        32
+    ) AS snippet
+"""
+
+# Scope filters mirror ``_NOTE_PATH_FILTER_SQL``: same folder prefix rule, same
+# required-tags rule, plus an optional explicit note identity allowlist.
+_SEARCH_SCOPE_SQL: Final[str] = """
+JOIN notes ON notes.note_id = chunks_fts.note_id
+WHERE chunks_fts MATCH ?
+  AND (? IS NULL OR substr(notes.rel_path, 1, length(?) + 1) = ? || '/')
+  AND NOT EXISTS (
+      SELECT 1
+      FROM json_each(?) AS required
+      WHERE NOT EXISTS (
+          SELECT 1
+          FROM json_each(notes.tags_json) AS actual
+          WHERE actual.value = required.value
+      )
+  )
+  AND (? IS NULL OR notes.note_id IN (SELECT value FROM json_each(?)))
+"""
+
+_LEGACY_SCORE_SQL: Final[str] = "bm25(chunks_fts)"
+
+
+def _weighted_score_sql() -> str:
+    weights = ["0"] * _FTS_COLUMN_COUNT
+    weights[_FTS_CONTENT_COLUMN] = repr(float(SEARCH_CONTENT_WEIGHT))
+    weights[_FTS_CONTEXT_COLUMN] = repr(float(SEARCH_CONTEXT_WEIGHT))
+    return f"bm25(chunks_fts, {', '.join(weights)})"
+
+
+def _search_sql(*, weighted: bool, scoped: bool) -> str:
+    score = _weighted_score_sql() if weighted else _LEGACY_SCORE_SQL
+    scope = _SEARCH_SCOPE_SQL if scoped else "WHERE chunks_fts MATCH ?"
+    return (
+        f"SELECT {_SEARCH_COLUMNS_SQL} {score} AS raw_score, {_SEARCH_SNIPPET_SQL}"
+        f"FROM chunks_fts\n{scope}\nORDER BY raw_score\nLIMIT ?;"
+    )
+
+
+_MIGRATE_CHUNK_CONTEXT_SQL: Final[str] = """
+INSERT INTO chunks_fts (
     chunk_id,
     note_id,
     note_rel_path,
@@ -157,19 +237,36 @@ SELECT
     line_end,
     wikilinks_out_json,
     lang,
-    bm25(chunks_fts) AS raw_score,
-    snippet(
-        chunks_fts,
-        6,
-        '**',
-        '**',
-        '...',
-        32
-    ) AS snippet
-FROM chunks_fts
-WHERE chunks_fts MATCH ?
-ORDER BY raw_score
-LIMIT ?;
+    context
+)
+SELECT
+    legacy.chunk_id,
+    legacy.note_id,
+    legacy.note_rel_path,
+    legacy.header_path,
+    legacy.section_title,
+    legacy.chunk_type,
+    legacy.content,
+    legacy.ordinal,
+    legacy.content_hash,
+    legacy.token_count,
+    legacy.line_start,
+    legacy.line_end,
+    legacy.wikilinks_out_json,
+    legacy.lang,
+    CASE
+        WHEN legacy.header_path = '' THEN COALESCE(notes.title, '')
+        ELSE COALESCE(notes.title, '') || ? || legacy.header_path
+    END
+FROM chunks_fts_legacy AS legacy
+LEFT JOIN notes ON notes.note_id = legacy.note_id
+ORDER BY legacy.rowid;
+"""
+
+_LIST_NOTE_FRONTMATTER_SQL: Final[str] = """
+SELECT note_id, frontmatter_json
+FROM notes
+ORDER BY sort_key COLLATE BINARY;
 """
 
 _GET_CHUNK_SQL: Final[str] = """
@@ -322,6 +419,24 @@ ORDER BY rowid;
 """
 
 
+_EMPTY_JSON_LIST: Final[str] = "[]"
+
+
+@dataclass(frozen=True)
+class _SearchScope:
+    """Bound parameters narrowing one search to a subset of indexed notes."""
+
+    folder: str | None
+    tags_json: str
+    note_ids_json: str | None
+
+
+async def _has_context_column(connection: aiosqlite.Connection) -> bool:
+    async with connection.execute("PRAGMA table_info(chunks_fts);") as cursor:
+        rows = await cursor.fetchall()
+    return any(str(row[1]) == _FTS_CONTEXT_COLUMN_NAME for row in rows)
+
+
 @final
 class SQLiteFTS5Store:
     """Persistent SQLite-backed implementation of the FTS5Store contract."""
@@ -332,6 +447,8 @@ class SQLiteFTS5Store:
         self._read_only = False
         self._term_map = normalize_term_map(term_map or {})
         self._temporal_metadata_cache: tuple[int, dict[str, TemporalMeta]] | None = None
+        # ``None`` until the open index has been inspected for the ``context`` column.
+        self._context_indexed: bool | None = None
 
     async def open(
         self,
@@ -381,6 +498,7 @@ class SQLiteFTS5Store:
         self._conn = None
         self._read_only = False
         self._temporal_metadata_cache = None
+        self._context_indexed = None
         if connection is not None:
             await connection.close()
 
@@ -418,7 +536,13 @@ class SQLiteFTS5Store:
                 "INSERT INTO ulid_paths(rel_path, note_id) VALUES (?, ?)",
                 (note.rel_path, note.id),
             )
-            await connection.executemany(_INSERT_CHUNK_SQL, [_chunk_row(chunk) for chunk in chunks])
+            await connection.executemany(
+                _INSERT_CHUNK_SQL,
+                [
+                    _chunk_row(chunk, _chunk_context(note.title, chunk.header_path))
+                    for chunk in chunks
+                ],
+            )
         except Exception:
             await connection.rollback()
             raise
@@ -452,8 +576,24 @@ class SQLiteFTS5Store:
             raise
         await connection.commit()
 
-    async def search(self, query: str, limit: int = 20) -> list[SearchResult]:
-        """Run BM25 search over chunk content."""
+    async def search(
+        self,
+        query: str,
+        limit: int = 20,
+        *,
+        folder: str | None = None,
+        tags: Sequence[str] | None = None,
+        frontmatter: Mapping[str, str] | None = None,
+    ) -> list[SearchResult]:
+        """Run BM25 search over chunk content and heading context.
+
+        ``folder``, ``tags`` and ``frontmatter`` narrow the searched notes with
+        the same semantics as :meth:`list_note_paths`: folder prefix, every
+        required tag present, and case-insensitive top-level frontmatter
+        matches. Chunk text receives the content weight and the note title plus
+        heading trail receive the context weight; a legacy index that predates
+        the context column falls back to unweighted scoring until it is rebuilt.
+        """
         if limit <= 0 or not query.strip():
             return []
 
@@ -461,6 +601,12 @@ class SQLiteFTS5Store:
         terms = _fts5_terms(query)
         if not terms:
             return []
+        scope = await self._search_scope(
+            connection, folder=folder, tags=tags, frontmatter=frontmatter
+        )
+        if scope is not None and scope.note_ids_json == _EMPTY_JSON_LIST:
+            return []
+        weighted = await self._is_context_indexed(connection)
         if self._term_map:
             groups = expand_terms(terms, self._term_map)
             and_query = _join_fts5_groups(groups)
@@ -468,12 +614,16 @@ class SQLiteFTS5Store:
         else:
             and_query = _join_fts5_terms(terms, operator=" ")
             fallback_terms = terms
-        and_rows = await _fetch_search_rows(connection, and_query, limit)
+        and_rows = await _fetch_search_rows(
+            connection, and_query, limit, weighted=weighted, scope=scope
+        )
         ranked_rows = [(row, 0) for row in and_rows]
         if len(ranked_rows) < limit and len(terms) > 1:
             or_query = _join_fts5_terms(fallback_terms, operator=" OR ")
             seen_chunk_ids = {str(row["chunk_id"]) for row in and_rows}
-            for row in await _fetch_search_rows(connection, or_query, limit):
+            for row in await _fetch_search_rows(
+                connection, or_query, limit, weighted=weighted, scope=scope
+            ):
                 chunk_id = str(row["chunk_id"])
                 if chunk_id in seen_chunk_ids:
                     continue
@@ -704,7 +854,69 @@ class SQLiteFTS5Store:
             "INSERT OR IGNORE INTO index_meta(key, value) VALUES ('generation', '0');"
         )
         await self._migrate_notes_columns(connection)
+        await self._migrate_chunk_context(connection)
         await connection.commit()
+        self._context_indexed = True
+
+    async def _migrate_chunk_context(self, connection: aiosqlite.Connection) -> None:
+        """Add the indexed ``context`` column to a legacy ``chunks_fts`` table.
+
+        FTS5 virtual tables cannot be altered in place, so the legacy table is
+        renamed, recreated with the new column, and refilled from its own rows
+        joined with the indexed note titles. Chunk identities, hashes and
+        ordinals are copied verbatim; only the searchable context is new. The
+        copy runs inside the caller's transaction and is idempotent.
+        """
+        if await _has_context_column(connection):
+            return
+        _LOGGER.info("Migrating chunks_fts to the context-indexed schema")
+        await connection.execute(f"ALTER TABLE chunks_fts RENAME TO {_LEGACY_CHUNKS_TABLE};")
+        await connection.execute(_CREATE_CHUNKS_FTS_SQL)
+        await connection.execute(_MIGRATE_CHUNK_CONTEXT_SQL, (CHUNK_CONTEXT_SEPARATOR,))
+        await connection.execute(f"DROP TABLE {_LEGACY_CHUNKS_TABLE};")
+
+    async def _is_context_indexed(self, connection: aiosqlite.Connection) -> bool:
+        if self._context_indexed is None:
+            self._context_indexed = await _has_context_column(connection)
+            if not self._context_indexed:
+                _LOGGER.warning(
+                    "Index predates the context column; scoring stays unweighted until rebuilt"
+                )
+        return self._context_indexed
+
+    async def _search_scope(
+        self,
+        connection: aiosqlite.Connection,
+        *,
+        folder: str | None,
+        tags: Sequence[str] | None,
+        frontmatter: Mapping[str, str] | None,
+    ) -> _SearchScope | None:
+        """Translate list-style filters into bound search parameters, or ``None``."""
+        normalized_folder = folder.rstrip("/") if folder else None
+        required_tags = sorted({tag.strip().lower() for tag in (tags or []) if tag.strip()})
+        if not normalized_folder and not required_tags and not frontmatter:
+            return None
+        note_ids_json: str | None = None
+        if frontmatter:
+            async with connection.execute(_LIST_NOTE_FRONTMATTER_SQL) as cursor:
+                rows = await cursor.fetchall()
+            allowed: list[str] = []
+            for row in rows:
+                metadata_raw = json.loads(str(row["frontmatter_json"]))
+                metadata = (
+                    cast("dict[str, object]", metadata_raw)
+                    if isinstance(metadata_raw, dict)
+                    else {}
+                )
+                if matches_frontmatter_filter(metadata, frontmatter):
+                    allowed.append(str(row["note_id"]))
+            note_ids_json = json.dumps(allowed)
+        return _SearchScope(
+            folder=normalized_folder or None,
+            tags_json=json.dumps(required_tags, ensure_ascii=False),
+            note_ids_json=note_ids_json,
+        )
 
     def _require_writable(self) -> None:
         if self._read_only:
@@ -800,9 +1012,34 @@ async def _fetch_search_rows(
     connection: aiosqlite.Connection,
     fts_query: str,
     limit: int,
+    *,
+    weighted: bool,
+    scope: _SearchScope | None,
 ) -> list[sqlite3.Row]:
-    async with connection.execute(_SEARCH_SQL, (fts_query, limit)) as cursor:
+    sql = _search_sql(weighted=weighted, scoped=scope is not None)
+    parameters: tuple[object, ...]
+    if scope is None:
+        parameters = (fts_query, limit)
+    else:
+        parameters = (
+            fts_query,
+            scope.folder,
+            scope.folder,
+            scope.folder,
+            scope.tags_json,
+            scope.note_ids_json,
+            scope.note_ids_json,
+            limit,
+        )
+    async with connection.execute(sql, parameters) as cursor:
         return cast("list[sqlite3.Row]", await cursor.fetchall())
+
+
+def _chunk_context(note_title: str, header_path: str) -> str:
+    """Return the searchable context of one chunk: note title plus heading trail."""
+    if not header_path:
+        return note_title
+    return f"{note_title}{CHUNK_CONTEXT_SEPARATOR}{header_path}"
 
 
 def _fts5_terms(query: str) -> list[str]:
@@ -880,7 +1117,8 @@ def _vault_order_key(rel_path: str) -> str:
 
 def _chunk_row(
     chunk: Chunk,
-) -> tuple[str, str, str, str, str | None, str, str, int, str, int, int, int, str, str | None]:
+    context: str,
+) -> tuple[str, str, str, str, str | None, str, str, int, str, int, int, int, str, str | None, str]:
     return (
         chunk.chunk_id,
         chunk.note_id,
@@ -896,6 +1134,7 @@ def _chunk_row(
         chunk.line_end,
         json.dumps(chunk.wikilinks_out, ensure_ascii=False),
         chunk.lang,
+        context,
     )
 
 

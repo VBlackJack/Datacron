@@ -112,6 +112,13 @@ seulement après validation. Voir [Organisation du vault](organization.md).
 un simple "match de mots" :
 
 - **FTS5 / BM25** pour le score lexical de base.
+- **Poids du titre et des en-têtes** : le titre de la note et le chemin des titres au-dessus
+  d'un chunk sont indexés avec son corps et pèsent trois fois plus. Demander "datacron
+  backlog" classe la note qui porte le nom du projet devant celles qui citent seulement le mot.
+- **Filtres de périmètre** : `folder`, `tags` et `frontmatter` restreignent les notes
+  cherchées avec les règles de `list_notes` (préfixe de dossier, tous les tags présents,
+  frontmatter de premier niveau insensible à la casse). La réponse rappelle les filtres
+  appliqués sous `filters`.
 - **Query-expansion FR↔EN** configurée dans `VAULT.yaml` : par exemple "sauvegarde"
   remonte aussi les notes qui parlent de "backup".
 - **Re-rank temporel conservateur** :

@@ -164,8 +164,10 @@ async def test_compact_profile_only_changes_search_text_description(tmp_path: Pa
     assert standard["search_text"]["description"] == (
         "First stop for any question about the user's notes, projects, decisions, "
         "or past work - search before saying you do not know. Full-text BM25 search "
-        "over the FTS5 index. Returns ranked sandbox-wrapped snippets with **term** "
-        "highlighting. Requires `datacron index` to have been run first. By default, "
+        "over the FTS5 index; note titles and heading trails carry extra weight. "
+        "Returns ranked sandbox-wrapped snippets with **term** highlighting. Narrow "
+        "the scope with `folder`, `tags`, or `frontmatter` (same semantics as "
+        "list_notes). Requires `datacron index` to have been run first. By default, "
         "explicitly superseded notes are demoted; set include_superseded=true to "
         "inspect historical notes."
     )
@@ -174,9 +176,11 @@ async def test_compact_profile_only_changes_search_text_description(tmp_path: Pa
         "configuration, release, incident, or past-work query, even when the prompt is "
         "terse or seems answerable from general knowledge. Search before answering, "
         "refusing, or asking for clarification; use get_note after a hit. Full-text BM25 "
-        "search over the FTS5 index. Returns ranked sandbox-wrapped snippets with **term** "
-        "highlighting. Requires `datacron index` to have been run first. By default, "
-        "explicitly superseded notes are demoted; set include_superseded=true to inspect "
+        "search over the FTS5 index; note titles and heading trails carry extra weight. "
+        "Returns ranked sandbox-wrapped snippets with **term** highlighting. Narrow the "
+        "scope with `folder`, `tags`, or `frontmatter` (same semantics as list_notes). "
+        "Requires `datacron index` to have been run first. By default, explicitly "
+        "superseded notes are demoted; set include_superseded=true to inspect "
         "historical notes."
     )
 

@@ -30,7 +30,7 @@ Silent drift between this module and the contract breaks consumers.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -137,11 +137,20 @@ class FTS5Store(Protocol):
         """
         ...
 
-    async def search(self, query: str, limit: int = 20) -> list[SearchResult]:
-        """BM25 search over chunk content.
+    async def search(
+        self,
+        query: str,
+        limit: int = 20,
+        *,
+        folder: str | None = None,
+        tags: Sequence[str] | None = None,
+        frontmatter: Mapping[str, str] | None = None,
+    ) -> list[SearchResult]:
+        """BM25 search over chunk content and heading context.
 
-        Empty results = empty list, never ``None``. Snippets must
-        highlight matched terms with ``**term**`` markers.
+        ``folder``, ``tags`` and ``frontmatter`` narrow the searched notes with
+        the ``list_note_paths`` semantics. Empty results = empty list, never
+        ``None``. Snippets must highlight matched terms with ``**term**`` markers.
         """
         ...
 

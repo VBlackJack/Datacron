@@ -867,3 +867,85 @@ class TestStaleNoteAdmission:
         assert result["resolved_note_id"] == target_id
         assert result["returned"] == 0
         assert result["results"] == []
+
+
+_SCOPE_PROJECT_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXC"
+_SCOPE_PERSON_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXD"
+_SCOPE_ANCHOR: Final[str] = "scopetoolanchor"
+
+
+@pytest.mark.asyncio
+async def test_search_text_scopes_by_folder_tags_and_frontmatter(tmp_vault: Path) -> None:
+    _write_temporal_note(
+        tmp_vault,
+        rel_path="projects/alpha.md",
+        note_id=_SCOPE_PROJECT_ID,
+        title="Alpha project",
+        confidence="high",
+        supersedes=[],
+        body=f"{_SCOPE_ANCHOR} project body",
+    )
+    _write_temporal_note(
+        tmp_vault,
+        rel_path="people/bob.md",
+        note_id=_SCOPE_PERSON_ID,
+        title="Bob",
+        confidence="low",
+        supersedes=[],
+        body=f"{_SCOPE_ANCHOR} person body",
+    )
+    settings = Settings(
+        read_paths=[tmp_vault],
+        vault_root=tmp_vault,
+        max_result_count=20,
+        max_result_tokens=8000,
+    )
+    store = SQLiteFTS5Store()
+    await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+    app = build_app(settings=settings, vault_root=tmp_vault, chunker=MarkdownChunker(), store=store)
+    try:
+        unscoped = await _search_text_impl(app, query=_SCOPE_ANCHOR, limit=10)
+        assert "filters" not in unscoped
+        assert sorted(result["note_rel_path"] for result in unscoped["results"]) == [
+            "people/bob.md",
+            "projects/alpha.md",
+        ]
+
+        scoped = await _search_text_impl(
+            app,
+            query=_SCOPE_ANCHOR,
+            limit=10,
+            folder="projects/",
+            tags=["Memory"],
+            frontmatter={"confidence": "high"},
+        )
+        assert scoped["filters"] == {
+            "folder": "projects",
+            "tags": ["memory"],
+            "frontmatter": {"confidence": "high"},
+        }
+        assert [result["note_rel_path"] for result in scoped["results"]] == ["projects/alpha.md"]
+
+        empty = await _search_text_impl(
+            app,
+            query=_SCOPE_ANCHOR,
+            limit=10,
+            folder="projects",
+            frontmatter={"confidence": "low"},
+        )
+        assert empty["returned"] == 0
+        assert empty["filters"] == {"folder": "projects", "frontmatter": {"confidence": "low"}}
+
+        root_scope = await _search_text_impl(app, query=_SCOPE_ANCHOR, limit=10, folder="")
+        assert "filters" not in root_scope
+        assert root_scope["returned"] == 2
+
+        escape = await _search_text_impl(app, query=_SCOPE_ANCHOR, limit=10, folder="..")
+        assert escape["error"]["type"] == "PathConfinementError"
+
+        invalid = await _search_text_impl(
+            app, query=_SCOPE_ANCHOR, limit=10, frontmatter={"   ": "value"}
+        )
+        assert invalid["error"]["message"] == "frontmatter keys must be non-empty"
+    finally:
+        await store.close()

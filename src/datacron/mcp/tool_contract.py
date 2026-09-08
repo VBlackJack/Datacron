@@ -178,6 +178,14 @@ class SearchResultOutput(TypedDict):
     token_count: int
 
 
+class SearchFiltersOutput(TypedDict, total=False):
+    """Scope filters actually applied to one ``search_text`` call."""
+
+    folder: str | None
+    tags: list[str]
+    frontmatter: dict[str, str]
+
+
 class SearchTextOutput(TypedDict, total=False):
     """Successful ``search_text`` payload."""
 
@@ -186,6 +194,7 @@ class SearchTextOutput(TypedDict, total=False):
     returned: Required[int]
     limit_applied: Required[int]
     truncated_for_tokens: Required[bool]
+    filters: SearchFiltersOutput | None
     index_repair: ReconcileStatsOutput | None
     timings_ms: dict[str, float] | None
 

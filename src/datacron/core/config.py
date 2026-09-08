@@ -57,6 +57,10 @@ DEFAULT_CONTRADICTION_PROVENANCE_LABELS: Final[dict[str, str]] = {
 DEFAULT_CONTRADICTION_SOURCE_CONNECTOR: Final[str] = "Voir"
 TOKEN_ESTIMATE_CHARS_PER_TOKEN: Final[int] = 4
 TEMPORAL_OVERFETCH_FACTOR: Final[int] = 3
+# BM25 column weights: the chunk body and its context (note title plus heading trail).
+SEARCH_CONTENT_WEIGHT: Final[float] = 1.0
+SEARCH_CONTEXT_WEIGHT: Final[float] = 3.0
+CHUNK_CONTEXT_SEPARATOR: Final[str] = " / "
 SUPERSEDED_DEMOTION_FACTOR: Final[float] = 0.1
 CONFIDENCE_PENALTY: Final[dict[str, float]] = {"low": 0.7, "needs_verification": 0.5}
 DEFAULT_RIPGREP_PATH: Final[str] = "rg"

@@ -89,3 +89,42 @@ Les publications réutilisent la CI complète : Python 3.11 à 3.13 sur Windows 
 couverture, invariants, dépendances et ShellCheck. `Quality gate` exige le succès de tous
 ces jobs. Les règles du dépôt doivent exiger ce contrôle pour protéger réellement la branche ;
 les fichiers de workflow seuls ne suffisent pas. Ces modifications ne déclenchent pas de release.
+
+## Recherche ciblée et contexte des en-têtes
+
+`search_text` accepte trois filtres de périmètre optionnels avec exactement la sémantique de
+`list_notes` : `folder` (préfixe sur une frontière de dossier, confiné au vault), `tags` (chaque
+tag listé doit être présent, comparaison insensible à la casse) et `frontmatter` (paires
+clé/valeur de premier niveau, huit au plus, insensibles à la casse, une valeur liste correspond
+sur n'importe quel élément). La réponse rappelle les filtres appliqués sous `filters` ; un appel
+sans périmètre omet la clé. Le repli OR des requêtes à plusieurs termes s'exécute dans le même
+périmètre : une recherche restreinte ne laisse jamais passer de résultat extérieur.
+
+```json
+{
+  "query": "backlog",
+  "folder": "_memory/projects",
+  "tags": ["memory/project"],
+  "frontmatter": {"confidence": "high"}
+}
+```
+
+Chaque chunk indexé porte aussi une colonne `context` : le titre de la note, puis le chemin des
+titres au-dessus du chunk, joints par ` / `. BM25 pondère cette colonne trois fois plus que le
+corps du chunk (`SEARCH_CONTEXT_WEIGHT` et `SEARCH_CONTENT_WEIGHT`). Une note qui porte le nom
+d'un sujet passe donc devant une note qui ne fait que le citer, et un titre de section reste
+trouvable même quand son corps ne répète jamais ses mots. Les accents sont repliés des deux
+côtés, comme pour le corps.
+
+Une ouverture en écriture d'un index créé avant cette colonne renomme la table héritée, la
+recrée avec la colonne et la remplit depuis ses propres lignes jointes aux titres indexés, dans
+une seule transaction. Identités de chunks, hachés de contenu, ordinaux et plages de lignes sont
+copiés tels quels : les références `chunk_id`, les hachés CAS et les projections de suivi
+existants restent valides. Une ouverture certifiée en lecture seule ne migre jamais : elle
+détecte la colonne absente et continue de servir un BM25 non pondéré jusqu'à ce que
+`datacron reindex` reconstruise l'index.
+
+Sur le corpus de recherche versionné (32 questions, pipeline outil), le changement fait passer
+le rappel@5 par note de 0,958 à 1,0, le MRR de 0,944 à 0,979 et le nDCG@10 de 0,957 à 0,985,
+avec une exactitude des réponses vides et un taux de violation des chemins interdits inchangés
+à 1,0 et 0.

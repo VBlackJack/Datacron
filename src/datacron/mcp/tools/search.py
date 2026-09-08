@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
 from datacron.core.models import SearchResult
+from datacron.core.paths import PathConfinementError
 from datacron.core.temporal import rerank_temporal
 from datacron.indexing.reconcile import ReconcileStats, reconcile
 from datacron.indexing.ripgrep import RegexFallbackError, RipgrepError, RipgrepOutputError
@@ -36,6 +37,7 @@ from datacron.mcp.tools.payloads import (
     _redact_retrieval_text,
     _sanitize_optional_retrieval_metadata,
     _sanitize_retrieval_metadata,
+    _validate_frontmatter_filter,
 )
 from datacron.mcp.tools.retrieval import bound_results, protect_results
 
@@ -52,6 +54,9 @@ async def _search_text_impl(
     limit: int,
     include_superseded: bool = False,
     include_timings: bool = False,
+    folder: str | None = None,
+    tags: list[str] | None = None,
+    frontmatter: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     timings_ms: dict[str, float] = {}
@@ -63,7 +68,16 @@ async def _search_text_impl(
             started,
             query=query,
         )
+    validation_error = _validate_frontmatter_filter(frontmatter)
+    if validation_error is not None:
+        exc, context = validation_error
+        return _error_response("search_text", exc, started, query=query, **context)
     bounded_limit = _bounded_count(limit, app.settings.max_result_count)
+    try:
+        scope_folder = _authorized_search_folder(app, folder)
+    except (FileNotFoundError, ValueError, PathConfinementError) as exc:
+        return _error_response("search_text", exc, started, query=query, folder=folder)
+    filters = _search_filters(folder=scope_folder, tags=tags, frontmatter=frontmatter)
     try:
         stage_started = time.perf_counter()
         repair = await _repair_index_on_read(app)
@@ -73,6 +87,9 @@ async def _search_text_impl(
         raw_results = await app.store.search(
             cleaned,
             limit=bounded_limit * TEMPORAL_OVERFETCH_FACTOR,
+            folder=scope_folder,
+            tags=tags,
+            frontmatter=frontmatter,
         )
         timings_ms["fts"] = _elapsed_ms(stage_started)
 
@@ -107,6 +124,8 @@ async def _search_text_impl(
         "limit_applied": bounded_limit,
         "truncated_for_tokens": truncated_for_tokens,
     }
+    if filters:
+        payload["filters"] = filters
     if repair["reindexed_notes"] or repair["deleted_notes"]:
         payload["index_repair"] = repair
     timings_ms["serialization"] = _elapsed_ms(stage_started)
@@ -130,11 +149,42 @@ async def _search_text_impl(
         bounded_limit=bounded_limit,
         returned=len(results),
         include_superseded=include_superseded,
+        filters=filters or None,
         reindexed_notes=repair["reindexed_notes"],
         deleted_notes=repair["deleted_notes"],
         truncated_for_tokens=truncated_for_tokens,
     )
     return payload
+
+
+def _authorized_search_folder(app: DatacronApp, folder: str | None) -> str | None:
+    """Confine ``folder`` to the vault and return its vault-relative POSIX form.
+
+    Mirrors ``list_notes``: the vault root itself means no folder restriction.
+    """
+    if folder is None or not folder.strip():
+        return None
+    authorized = app.scope.authorize_rel_path(folder, "read")
+    relative = authorized.relative_to(app.vault_root)
+    return None if relative.name == "" else relative.as_posix()
+
+
+def _search_filters(
+    *,
+    folder: str | None,
+    tags: list[str] | None,
+    frontmatter: dict[str, str] | None,
+) -> dict[str, Any]:
+    """Return the scope filters that actually narrow the search, for the payload."""
+    filters: dict[str, Any] = {}
+    if folder:
+        filters["folder"] = folder
+    required_tags = sorted({tag.strip().lower() for tag in (tags or []) if tag.strip()})
+    if required_tags:
+        filters["tags"] = required_tags
+    if frontmatter:
+        filters["frontmatter"] = dict(frontmatter)
+    return filters
 
 
 def _elapsed_ms(started: float) -> float:

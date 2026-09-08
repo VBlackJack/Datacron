@@ -237,7 +237,7 @@ read, advisory, and operational tools remain exposed.
 | Read | `get_follow_up` | Latest structured follow-up revisions with snapshot-bound pagination. |
 | Read | `list_notes` | Paginated list, filterable by folder, tags, and top-level frontmatter |
 | Read | `get_note` | Read by ULID, chunk ID, or path, in `full`, `chunk`, or `map` format |
-| Read | `search_text` | FTS5 BM25 search with optionally historical temporal ranking |
+| Read | `search_text` | FTS5 BM25 search weighting titles and heading trails, scoped by folder, tags, or frontmatter, with optionally historical temporal ranking |
 | Read | `search_regex` | Ripgrep regex search with a bounded indexed fallback, filterable by glob |
 | Read | `get_backlinks` | Chunks whose wikilinks target a ULID or resolved alias |
 | Advisory | `contradiction_scan` | Deterministic candidates and a proposed write call; never writes |

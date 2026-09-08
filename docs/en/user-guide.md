@@ -108,6 +108,12 @@ applies nothing. `apply_organization_manifest` is what applies, and only after v
 `search_text` combines several signals, which is why results are not a plain "word match":
 
 - **FTS5 / BM25** for the base lexical score.
+- **Title and heading weight**: the note title and the heading trail above a chunk are
+  indexed alongside its body and weigh three times more. Asking for "datacron backlog" ranks
+  the note titled after that project above notes that only mention the word.
+- **Scope filters**: `folder`, `tags`, and `frontmatter` narrow the searched notes with the
+  same rules as `list_notes` (folder prefix, every tag present, case-insensitive top-level
+  frontmatter). The response repeats the filters it applied under `filters`.
 - **FR↔EN query expansion** configured in `VAULT.yaml`: for example "sauvegarde" also
   surfaces notes that mention "backup".
 - **Conservative temporal re-ranking**:

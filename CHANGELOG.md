@@ -9,6 +9,21 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- `search_text` accepts `folder`, `tags`, and `frontmatter` scope filters with the
+  `list_notes` semantics, and echoes the filters it applied. The OR fallback for multi-term
+  queries honours the same scope.
+
+### Changed
+
+- The FTS index carries a `context` column holding the note title and heading trail of each
+  chunk, weighted three times the chunk body in BM25 scoring. A writable open migrates a
+  legacy index in place, preserving chunk identities and hashes; a certified read-only open
+  keeps searching a legacy index with unweighted scoring until it is rebuilt.
+- On the versioned retrieval corpus, note recall@5 moves from 0.958 to 1.0 and MRR from
+  0.944 to 0.979.
+
 ### Fixed
 
 - Follow-up owner metadata is sandboxed during preparation and retrieval, including older

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
 _LOGGER = get_logger("datacron.mcp.tools")
 _INTERNAL_ERROR_CODE: Final[str] = "internal_error"
+MAX_FRONTMATTER_FILTER_PAIRS: Final[int] = 8
 
 
 def _estimate_tokens(text: str) -> int:
@@ -84,6 +85,26 @@ def _audit(tool: str, started: float, **fields: Any) -> None:
     duration_ms = (time.perf_counter() - started) * 1000.0
     rendered = " ".join(f"{key}={value!r}" for key, value in fields.items() if value is not None)
     _LOGGER.info("AUDIT tool=%s duration_ms=%.2f %s", tool, duration_ms, rendered)
+
+
+def _validate_frontmatter_filter(
+    frontmatter: dict[str, str] | None,
+) -> tuple[BaseException, dict[str, object]] | None:
+    """Return the validation error for a top-level frontmatter filter, or ``None``.
+
+    Shared by every tool that accepts the ``list_notes`` filter shape so the
+    pair ceiling and the non-empty key rule stay identical across tools.
+    """
+    if frontmatter and len(frontmatter) > MAX_FRONTMATTER_FILTER_PAIRS:
+        return (
+            ValueError(f"frontmatter must contain at most {MAX_FRONTMATTER_FILTER_PAIRS} pairs"),
+            {"frontmatter_pair_count": len(frontmatter)},
+        )
+    if frontmatter and any(not key.strip() for key in frontmatter):
+        return ValueError("frontmatter keys must be non-empty"), {
+            "frontmatter_pair_count": len(frontmatter)
+        }
+    return None
 
 
 def _redact_retrieval_text(app: DatacronApp, value: str) -> str:

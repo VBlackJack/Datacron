@@ -41,6 +41,7 @@ from datacron.mcp.tools.payloads import (
     _internal_error_response,
     _redact_retrieval_text,
     _sanitize_retrieval_metadata,
+    _validate_frontmatter_filter,
 )
 from datacron.mcp.tools.search import _repair_index_on_read
 
@@ -51,7 +52,6 @@ _VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map", "chunk"})
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
 _CHUNK_ID_SEPARATOR: Final[str] = "::"
-_MAX_FRONTMATTER_FILTER_PAIRS: Final[int] = 8
 
 
 class StaleChunkError(ValueError):
@@ -295,16 +295,7 @@ def _validate_list_notes_request(
 ) -> tuple[BaseException, dict[str, object]] | None:
     if offset < 0:
         return ValueError("offset must be >= 0"), {"offset": offset}
-    if frontmatter and len(frontmatter) > _MAX_FRONTMATTER_FILTER_PAIRS:
-        return (
-            ValueError(f"frontmatter must contain at most {_MAX_FRONTMATTER_FILTER_PAIRS} pairs"),
-            {"frontmatter_pair_count": len(frontmatter)},
-        )
-    if frontmatter and any(not key.strip() for key in frontmatter):
-        return ValueError("frontmatter keys must be non-empty"), {
-            "frontmatter_pair_count": len(frontmatter)
-        }
-    return None
+    return _validate_frontmatter_filter(frontmatter)
 
 
 def _filter_by_tags(notes: list[Note], tags: list[str] | None) -> list[Note]:

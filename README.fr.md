@@ -341,11 +341,15 @@ Resources MCP :
 `search_text` combine plusieurs signaux :
 
 - FTS5/BM25 pour le score lexical de base
+- un poids plus fort sur le titre de la note et le chemin des titres que sur le corps du
+  chunk : une note consacrée à un sujet passe devant une note qui ne fait que le citer
 - query-expansion FR↔EN configurée dans `VAULT.yaml`
 - re-rank temporel conservateur :
   - une note citée dans le `supersedes` d'une autre est fortement démotée
   - `confidence: low` et `confidence: needs_verification` appliquent une pénalité légère
   - `include_superseded=true` permet de remonter les notes historiques
+- périmètre optionnel : `folder`, `tags` et `frontmatter` restreignent les notes cherchées
+  avec la même sémantique que `list_notes` ; la réponse rappelle les filtres appliqués
 
 `search_regex` reste littéral : il n'applique ni query-expansion ni re-rank temporel.
 

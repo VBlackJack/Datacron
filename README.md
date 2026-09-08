@@ -342,11 +342,15 @@ MCP resources:
 `search_text` combines several signals:
 
 - FTS5/BM25 for the base lexical score
+- a heavier weight on the note title and heading trail than on the chunk body, so a
+  note about a subject outranks a note that merely mentions it
 - FR↔EN query expansion configured in `VAULT.yaml`
 - conservative temporal re-rank:
   - a note referenced in another note's `supersedes` is strongly demoted
   - `confidence: low` and `confidence: needs_verification` apply a light penalty
   - `include_superseded=true` brings historical notes back up
+- optional scope: `folder`, `tags`, and `frontmatter` narrow the searched notes with the
+  same semantics as `list_notes`; the response echoes the filters actually applied
 
 `search_regex` stays literal: it applies neither query expansion nor temporal re-rank.
 

@@ -88,3 +88,38 @@ Both publication workflows call the same CI workflow: Python 3.11-3.13 on Window
 coverage, invariants, dependency audit and ShellCheck. The aggregate `Quality gate` succeeds
 only when every dependency succeeds. Repository required-check rules must require that context;
 workflow files alone cannot enforce branch protection. No release is triggered by these changes.
+
+## Scoped search and heading context
+
+`search_text` accepts three optional scope filters with exactly the `list_notes` semantics:
+`folder` (prefix on a folder boundary, confined to the vault), `tags` (every listed tag must be
+present, compared case-insensitively) and `frontmatter` (top-level key/value pairs, at most
+eight, case-insensitive, list values match on any element). The response echoes the applied
+filters under `filters`; an unscoped call omits the key. The OR fallback for multi-term queries
+runs inside the same scope, so a narrowed search never leaks results from outside it.
+
+```json
+{
+  "query": "backlog",
+  "folder": "_memory/projects",
+  "tags": ["memory/project"],
+  "frontmatter": {"confidence": "high"}
+}
+```
+
+Each indexed chunk also carries a `context` column: the note title, then the heading trail
+above the chunk, joined by ` / `. BM25 weighs that column three times the chunk body
+(`SEARCH_CONTEXT_WEIGHT` and `SEARCH_CONTENT_WEIGHT`). A note titled after a subject therefore
+outranks a note that only mentions it, and a section heading is searchable even when its body
+never repeats the words. Diacritics are folded on both sides, as for the body.
+
+A writable open of an index created before this column renames the legacy table, recreates it
+with the column and refills it from its own rows joined with the indexed titles, inside one
+transaction. Chunk identities, content hashes, ordinals and line ranges are copied verbatim, so
+existing `chunk_id` references, CAS hashes and follow-up projections stay valid. A certified
+read-only open never migrates: it detects the missing column and keeps serving unweighted BM25
+until `datacron reindex` rebuilds the index.
+
+On the versioned retrieval corpus (32 questions, tool pipeline), the change moves note
+recall@5 from 0.958 to 1.0, MRR from 0.944 to 0.979 and nDCG@10 from 0.957 to 0.985, with
+empty-answer accuracy and forbidden-path violations unchanged at 1.0 and 0.

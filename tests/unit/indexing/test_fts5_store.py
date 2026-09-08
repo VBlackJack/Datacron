@@ -26,7 +26,7 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
-from datacron.core.models import Chunk, ChunkType, Note
+from datacron.core.models import Chunk, ChunkType, Note, SearchResult
 from datacron.core.temporal import TemporalMeta
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 
@@ -1029,3 +1029,254 @@ async def test_upsert_rejects_chunk_for_different_note(
         await store.upsert_note(note, [chunk])
 
     await store.close()
+
+
+_LEGACY_CHUNKS_FTS_SQL = """
+CREATE VIRTUAL TABLE chunks_fts USING fts5(
+    chunk_id UNINDEXED,
+    note_id UNINDEXED,
+    note_rel_path UNINDEXED,
+    header_path UNINDEXED,
+    section_title UNINDEXED,
+    chunk_type UNINDEXED,
+    content,
+    ordinal UNINDEXED,
+    content_hash UNINDEXED,
+    token_count UNINDEXED,
+    line_start UNINDEXED,
+    line_end UNINDEXED,
+    wikilinks_out_json UNINDEXED,
+    lang UNINDEXED,
+    tokenize = 'unicode61 remove_diacritics 2'
+);
+"""
+
+
+def _paths(results: list[SearchResult]) -> list[str]:
+    return sorted(result.chunk.note_rel_path for result in results)
+
+
+async def test_search_scope_filters_folder_tags_and_frontmatter(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    project = note_factory(
+        id=_NOTE_ID,
+        rel_path="projects/alpha.md",
+        tags=["memory/project"],
+        frontmatter={"confidence": "high"},
+    )
+    person = note_factory(
+        id=_OTHER_NOTE_ID,
+        rel_path="people/bob.md",
+        tags=["memory/person"],
+        frontmatter={"confidence": "low"},
+    )
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+    try:
+        await store.upsert_note(
+            project, [chunk_factory(note=project, content="scopeanchor in project")]
+        )
+        await store.upsert_note(
+            person, [chunk_factory(note=person, content="scopeanchor in person")]
+        )
+
+        assert _paths(await store.search("scopeanchor")) == ["people/bob.md", "projects/alpha.md"]
+        assert _paths(await store.search("scopeanchor", folder="projects")) == ["projects/alpha.md"]
+        assert _paths(await store.search("scopeanchor", folder="projects/")) == [
+            "projects/alpha.md"
+        ]
+        assert _paths(await store.search("scopeanchor", folder="proj")) == []
+        assert _paths(await store.search("scopeanchor", tags=["Memory/Person"])) == [
+            "people/bob.md"
+        ]
+        assert _paths(await store.search("scopeanchor", tags=["memory/person", "missing"])) == []
+        assert _paths(await store.search("scopeanchor", frontmatter={"confidence": "LOW"})) == [
+            "people/bob.md"
+        ]
+        assert _paths(await store.search("scopeanchor", frontmatter={"confidence": "none"})) == []
+        assert _paths(
+            await store.search(
+                "scopeanchor",
+                folder="people",
+                tags=["memory/person"],
+                frontmatter={"confidence": "low"},
+            )
+        ) == ["people/bob.md"]
+        assert (
+            _paths(
+                await store.search(
+                    "scopeanchor", folder="people", frontmatter={"confidence": "high"}
+                )
+            )
+            == []
+        )
+        # The OR fallback for multi-term queries honours the same scope.
+        assert _paths(await store.search("scopeanchor zzzabsent", folder="people")) == [
+            "people/bob.md"
+        ]
+    finally:
+        await store.close()
+
+
+async def test_search_weights_note_title_and_heading_trail(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    titled = note_factory(id=_NOTE_ID, rel_path="projects/datacron.md", title="Projet Datacron")
+    body_only = note_factory(id=_OTHER_NOTE_ID, rel_path="projects/other.md", title="Other")
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+    try:
+        await store.upsert_note(
+            titled,
+            [
+                chunk_factory(
+                    note=titled,
+                    header_path="Statut",
+                    content="release published and verified end to end",
+                )
+            ],
+        )
+        await store.upsert_note(
+            body_only,
+            [
+                chunk_factory(
+                    note=body_only,
+                    content="datacron is mentioned once in the body of another note",
+                )
+            ],
+        )
+
+        ranked = [result.chunk.note_rel_path for result in await store.search("datacron")]
+        assert ranked == ["projects/datacron.md", "projects/other.md"]
+        heading = [result.chunk.note_rel_path for result in await store.search("statut")]
+        assert heading == ["projects/datacron.md"]
+        accented = [result.chunk.note_rel_path for result in await store.search("projét")]
+        assert accented == ["projects/datacron.md"]
+    finally:
+        await store.close()
+
+
+async def _seed_legacy_context_free_index(
+    db_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> tuple[str, str]:
+    note = note_factory(id=_NOTE_ID, rel_path="legacy/migrated.md", title="Migrated Title")
+    chunk = chunk_factory(
+        note=note,
+        header_path="Section",
+        content="legacycontextanchor body",
+    )
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    await store.upsert_note(note, [chunk])
+    await store.close()
+
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("DROP TABLE chunks_fts;")
+        connection.execute(_LEGACY_CHUNKS_FTS_SQL)
+        connection.execute(
+            "INSERT INTO chunks_fts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+            (
+                chunk.chunk_id,
+                chunk.note_id,
+                chunk.note_rel_path,
+                chunk.header_path,
+                chunk.section_title,
+                chunk.chunk_type.value,
+                chunk.content,
+                chunk.ordinal,
+                chunk.content_hash,
+                chunk.token_count,
+                chunk.line_start,
+                chunk.line_end,
+                "[]",
+                chunk.lang,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    return chunk.chunk_id, chunk.content_hash
+
+
+def _fts_columns(db_path: Path) -> list[str]:
+    connection = sqlite3.connect(db_path)
+    try:
+        return [str(row[1]) for row in connection.execute("PRAGMA table_info(chunks_fts);")]
+    finally:
+        connection.close()
+
+
+async def test_writable_open_migrates_legacy_index_to_context_column(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    db_path = _db_path(tmp_path)
+    chunk_id, content_hash = await _seed_legacy_context_free_index(
+        db_path, note_factory, chunk_factory
+    )
+    assert "context" not in _fts_columns(db_path)
+
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    try:
+        assert "context" in _fts_columns(db_path)
+        body_hits = await store.search("legacycontextanchor")
+        assert [(hit.chunk.chunk_id, hit.chunk.content_hash) for hit in body_hits] == [
+            (chunk_id, content_hash)
+        ]
+        assert [hit.chunk.chunk_id for hit in await store.search("migrated")] == [chunk_id]
+        assert [hit.chunk.chunk_id for hit in await store.search("section")] == [chunk_id]
+    finally:
+        await store.close()
+
+    connection = sqlite3.connect(db_path)
+    try:
+        names = {
+            str(row[0])
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table';")
+        }
+        assert "chunks_fts_legacy" not in names
+        assert connection.execute("SELECT COUNT(*) FROM chunks_fts;").fetchone()[0] == 1
+    finally:
+        connection.close()
+
+    # A second open finds the column and leaves the rows untouched.
+    again = SQLiteFTS5Store()
+    await again.open(db_path)
+    try:
+        assert [hit.chunk.chunk_id for hit in await again.search("migrated")] == [chunk_id]
+    finally:
+        await again.close()
+
+
+async def test_read_only_open_keeps_legacy_index_searchable_without_weights(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    db_path = _db_path(tmp_path)
+    chunk_id, _ = await _seed_legacy_context_free_index(db_path, note_factory, chunk_factory)
+
+    reader = SQLiteFTS5Store()
+    await reader.open(db_path, read_only=True)
+    try:
+        assert [hit.chunk.chunk_id for hit in await reader.search("legacycontextanchor")] == [
+            chunk_id
+        ]
+        assert await reader.search("migrated") == []
+        assert [
+            hit.chunk.chunk_id
+            for hit in await reader.search("legacycontextanchor", folder="legacy")
+        ] == [chunk_id]
+    finally:
+        await reader.close()
+    assert "context" not in _fts_columns(db_path)
