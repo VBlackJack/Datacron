@@ -45,6 +45,10 @@ def _run(
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     merged_env = os.environ.copy()
+    # The throwaway repositories must not inherit the developer's global or system git
+    # configuration (hooks, signing, identity guards); each test sets what it needs.
+    merged_env["GIT_CONFIG_GLOBAL"] = os.devnull
+    merged_env["GIT_CONFIG_NOSYSTEM"] = "1"
     if env is not None:
         merged_env.update(env)
     return subprocess.run(
