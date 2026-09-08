@@ -79,8 +79,14 @@ def test_aggregate_gate_executes_fail_closed(job: str, result: str) -> None:
 def test_scope_uses_actual_git_diff(
     tmp_path: Path, paths: list[str], event_name: str, force_full: str, expected_count: int
 ) -> None:
+    # Ignore the developer's global and system git configuration (hooks, signing,
+    # identity guards) so the throwaway repository behaves the same on every machine.
+    isolated_env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
     def git(*args: str) -> str:
-        return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
+        return subprocess.check_output(
+            ["git", *args], cwd=tmp_path, text=True, env=isolated_env
+        ).strip()
 
     git("init", "-q")
     git("config", "user.name", "Test")
