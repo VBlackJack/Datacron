@@ -570,4 +570,4 @@ remesuré.
 rapports de recherche et décisions v2.1 restent des archives d'arbitrage.*
 
 
-Voir [Améliorations de fiabilité](improvements.md) pour le rejeu des écritures, l’indexation ciblée, la sélection Markdown commune et les contrôles qualité.
+Voir [Améliorations de fiabilité](improvements.md) pour le rejeu des écritures, l'indexation ciblée, la sélection Markdown commune et les contrôles qualité.

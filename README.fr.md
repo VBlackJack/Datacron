@@ -18,11 +18,11 @@ Les notes restent utilisables indépendamment du client choisi.
 
 | Besoin | Exemple de demande à ton assistant |
 |---|---|
-| Reprendre un projet | « Où en étions-nous ? Retrouve les décisions et les prochaines actions. » |
-| Préparer une réunion | « Résume nos derniers échanges et les points encore ouverts, avec leurs sources. » |
-| Retrouver une personne | « Qui est cette personne, dans quel contexte l'ai-je rencontrée et que devons-nous suivre ? » |
-| Suivre des objectifs | « Retrouve les engagements et les réalisations utiles à mon prochain entretien. » |
-| Garder une trace fiable | « Enregistre cette décision, rattache-la au projet et vérifie qu'elle est sauvegardée. » |
+| Reprendre un projet | "Où en étions-nous ? Retrouve les décisions et les prochaines actions." |
+| Préparer une réunion | "Résume nos derniers échanges et les points encore ouverts, avec leurs sources." |
+| Retrouver une personne | "Qui est cette personne, dans quel contexte l'ai-je rencontrée et que devons-nous suivre ?" |
+| Suivre des objectifs | "Retrouve les engagements et les réalisations utiles à mon prochain entretien." |
+| Garder une trace fiable | "Enregistre cette décision, rattache-la au projet et vérifie qu'elle est sauvegardée." |
 
 L'assistant orchestre ces demandes avec les outils disponibles et les droits accordés.
 Le protocole commun guide la lecture, l'enrichissement des fiches personnes et la vérification
@@ -75,7 +75,7 @@ Prérequis runtime :
 
 1. Choisis ton dossier de notes avec l'installeur ou `datacron setup`.
 2. Reconnecte Datacron dans ton client MCP pour charger les outils et les instructions.
-3. Demande : « Retrouve les notes de mon projet et résume son état avec les sources. »
+3. Demande : "Retrouve les notes de mon projet et résume son état avec les sources."
 
 Pour les sessions de mémoire, `session_context` fournit un contexte borné et le protocole
 commun. `prepare_follow_up` prépare les mises à jour sourcées ; les outils d'écriture les

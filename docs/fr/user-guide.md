@@ -276,4 +276,4 @@ historique. Avec un `request_id` stable, rejouer exactement les mêmes arguments
 de retrouver le reçu historique sans répéter une modification déjà effectuée.
 
 
-Voir [Améliorations de fiabilité](improvements.md) pour le rejeu des écritures, l’indexation ciblée, la sélection Markdown commune et les contrôles qualité.
+Voir [Améliorations de fiabilité](improvements.md) pour le rejeu des écritures, l'indexation ciblée, la sélection Markdown commune et les contrôles qualité.
