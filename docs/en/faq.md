@@ -7,7 +7,7 @@ These answers describe the current Datacron behavior. For the complete workflows
 [Windows installer guide](installation-windows.md), and
 [operational health and durability](operational-health.md).
 
-## Datacron configured the wrong folder-or my user profile-as the vault. Why, and how do I fix it?
+## Datacron configured the wrong folder - or my user profile - as the vault. Why, and how do I fix it?
 
 Interactive setup uses the vault path you select; its default is the current directory. Current
 releases explain that choice before prompting. Non-interactive `setup --yes` no longer adopts an

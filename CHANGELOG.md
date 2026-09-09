@@ -15,35 +15,53 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   `list_notes` semantics, and echoes the filters it applied. The OR fallback for multi-term
   queries honours the same scope.
 - `search_text` accepts `group_by_note`: the best-ranked chunk of each note survives and
-  carries `note_matches`; the response reports `grouped_by_note`. On the retrieval corpus the
-  returned tokens drop from 28661 to 17708 for the same 44 questions.
+  carries `note_matches`, the number of that note's matching chunks, asked of the index rather
+  than counted off the bounded result window; the response reports `grouped_by_note`. On the
+  retrieval corpus the returned tokens drop from 26382 to 15929 for the same 44 questions.
 - The index keeps a `note_frontmatter` table of casefolded top-level pairs, filled on write
-  and backfilled once on the first writable open, so a `frontmatter` filter is an index
-  lookup instead of a scan of every note. A read-only legacy index keeps the scan.
+  and rebuilt on every writable open, so a `frontmatter` filter is an index lookup instead of
+  a scan of every note. A read-only legacy index keeps the scan.
 - The retrieval corpus grows from 32 to 44 questions with hard cases: title against passing
   mentions, heading-only matches, duplicate section titles, bilingual queries, backlog and
   archive distractors, and an `invalid_at` note behind its replacement. The integration gate
-  now requires note recall@5 of 0.99, MRR of 0.96 and nDCG@10 of 0.97.
+  requires note recall@5 of 0.99, MRR of 0.94 and nDCG@10 of 0.95.
+- A documentation guard refuses a hyphen glued to a following conjunction, the damage an em
+  dash removal leaves behind, and requires every public page to link to its translation.
 
 ### Changed
 
 - `session_context` scopes its subject search to the domain tag, so project, people and
   meeting candidates are no longer crowded out by notes the domain filter discards.
 - Search excerpts fall back to the note title and heading trail when only that context
-  matched, instead of showing the unrelated start of the chunk body.
+  matched, instead of showing the unrelated start of the chunk body. Which column matched is
+  decided on private markers, so a body containing Markdown bold no longer counts as a match.
+- The chunk context holds the note title once. The heading trail starts at the H1 a title is
+  usually resolved from, so joining them naively applied an undeclared weight multiplier to
+  the notes whose H1 restates their title, and to no others.
 - The context-column migration logs the number of migrated chunks and its duration.
 - `pytest-xdist` joins the development dependencies; `pytest -n auto` runs the suite in
   parallel with one temporary directory per worker.
-
 - The FTS index carries a `context` column holding the note title and heading trail of each
   chunk, weighted three times the chunk body in BM25 scoring. A writable open migrates a
   legacy index in place, preserving chunk identities and hashes; a certified read-only open
   keeps searching a legacy index with unweighted scoring until it is rebuilt.
-- On the enriched retrieval corpus, note recall@5 moves from 0.972 to 1.0, MRR from 0.921 to
-  0.972 and nDCG@10 from 0.940 to 0.981.
+- On the enriched retrieval corpus, MRR moves from 0.922 to 0.950 and nDCG@10 from 0.944 to
+  0.964, with note recall@5, empty-answer accuracy and forbidden-path violations unchanged at
+  1.0, 1.0 and 0.
 
 ### Fixed
 
+- A secret carried by a note title or a section heading no longer reaches the client in clear
+  text. An excerpt taken from the context column now supplies its own undecorated redaction
+  source; the existing guard compares against the chunk body and could not see it.
+- `search_text` and `list_notes` answer a `frontmatter` filter identically. Filter pairs are
+  derived from the serialized metadata both tools compare against, so an unquoted YAML
+  timestamp is no longer indexed with a space where the other tool expects a `T`.
+- An index written by an older release is repaired on the next writable open instead of being
+  skipped forever by a one-shot marker: frontmatter pairs are rebuilt and chunks left without
+  a context are refilled.
+- Reindexing a note under a new identity at a stable path no longer leaves its former
+  frontmatter pairs behind.
 - Follow-up owner metadata is sandboxed during preparation and retrieval, including older
   revisions, while historical hashes and replay compatibility remain intact.
 - Current follow-up reads expose snapshot-bound pagination and an actionable error when

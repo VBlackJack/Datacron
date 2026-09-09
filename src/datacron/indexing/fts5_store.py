@@ -128,8 +128,13 @@ _INSERT_NOTE_FRONTMATTER_SQL: Final[str] = (
     "INSERT INTO note_frontmatter (note_id, key, value) VALUES (?, ?, ?);"
 )
 _DELETE_NOTE_FRONTMATTER_SQL: Final[str] = "DELETE FROM note_frontmatter WHERE note_id = ?;"
+# A note whose identity changes at a stable path replaces its ``notes`` row; its old pairs
+# would otherwise survive with no owner, exactly as the chunk delete already guards against.
+_DELETE_SUPERSEDED_FRONTMATTER_SQL: Final[str] = """
+DELETE FROM note_frontmatter
+WHERE note_id IN (SELECT note_id FROM notes WHERE rel_path = ? AND note_id != ?);
+"""
 _NOTE_FRONTMATTER_TABLE: Final[str] = "note_frontmatter"
-_FRONTMATTER_PAIRS_META_KEY: Final[str] = "frontmatter_pairs_backfilled"
 
 _INSERT_NOTE_SQL: Final[str] = """
 INSERT INTO notes (
@@ -198,13 +203,32 @@ _SEARCH_COLUMNS_SQL: Final[str] = """
 _SNIPPET_HIGHLIGHT: Final[str] = "**"
 _SNIPPET_ELLIPSIS: Final[str] = "..."
 _SNIPPET_TOKENS: Final[int] = 32
+# FTS5 returns a column's leading tokens when nothing matched in it, so the presence of a
+# marker is the only signal that a column actually matched. The public marker ``**`` is
+# also ordinary Markdown emphasis, so asking FTS5 for it directly makes every bolded body
+# look like a match. These control characters cannot occur in Markdown prose; the public
+# marker is restored in Python once the decision has been made.
+_SNIPPET_MARK_OPEN: Final[str] = "\x02"
+_SNIPPET_MARK_CLOSE: Final[str] = "\x03"
 
 
 def _snippet_sql(column: int, alias: str) -> str:
     return (
-        f"snippet(chunks_fts, {column}, '{_SNIPPET_HIGHLIGHT}', '{_SNIPPET_HIGHLIGHT}', "
+        f"snippet(chunks_fts, {column}, char(2), char(3), "
         f"'{_SNIPPET_ELLIPSIS}', {_SNIPPET_TOKENS}) AS {alias}"
     )
+
+
+def _render_snippet(text: str) -> str:
+    """Replace the private match markers with the public ``**term**`` decoration."""
+    return text.replace(_SNIPPET_MARK_OPEN, _SNIPPET_HIGHLIGHT).replace(
+        _SNIPPET_MARK_CLOSE, _SNIPPET_HIGHLIGHT
+    )
+
+
+def _undecorated_snippet(text: str) -> str:
+    """Strip the private match markers, leaving the excerpt's own bytes."""
+    return text.replace(_SNIPPET_MARK_OPEN, "").replace(_SNIPPET_MARK_CLOSE, "")
 
 
 _SEARCH_SNIPPET_SQL: Final[str] = _snippet_sql(_FTS_CONTENT_COLUMN, "snippet")
@@ -213,9 +237,9 @@ _SEARCH_CONTEXT_SNIPPET_SQL: Final[str] = _snippet_sql(_FTS_CONTEXT_COLUMN, "con
 
 # Scope filters mirror ``_NOTE_PATH_FILTER_SQL``: same folder prefix rule, same
 # required-tags rule, plus an optional explicit note identity allowlist.
-_SEARCH_SCOPE_SQL: Final[str] = """
-JOIN notes ON notes.note_id = chunks_fts.note_id
-WHERE chunks_fts MATCH ?
+_SEARCH_SCOPE_JOIN_SQL: Final[str] = "JOIN notes ON notes.note_id = chunks_fts.note_id"
+
+_SEARCH_SCOPE_PREDICATES_SQL: Final[str] = """
   AND (? IS NULL OR substr(notes.rel_path, 1, length(?) + 1) = ? || '/')
   AND NOT EXISTS (
       SELECT 1
@@ -228,6 +252,17 @@ WHERE chunks_fts MATCH ?
   )
   AND (? IS NULL OR notes.note_id IN (SELECT value FROM json_each(?)))
 """
+
+_SEARCH_SCOPE_SQL: Final[str] = (
+    f"{_SEARCH_SCOPE_JOIN_SQL}\nWHERE chunks_fts MATCH ?{_SEARCH_SCOPE_PREDICATES_SQL}"
+)
+
+_COUNT_BY_NOTE_HEAD_SQL: Final[str] = (
+    "SELECT chunks_fts.note_id AS note_id, COUNT(*) AS matches\nFROM chunks_fts\n"
+)
+_COUNT_BY_NOTE_TAIL_SQL: Final[str] = (
+    "\n  AND chunks_fts.note_id IN (SELECT value FROM json_each(?))\nGROUP BY chunks_fts.note_id;"
+)
 
 # One clause per requested frontmatter pair; every pair must match (AND semantics).
 _SEARCH_FRONTMATTER_PAIR_SQL: Final[str] = """
@@ -248,6 +283,13 @@ def _weighted_score_sql() -> str:
     return f"bm25(chunks_fts, {', '.join(weights)})"
 
 
+def _count_by_note_sql(*, scoped: bool, pair_count: int) -> str:
+    scope = "WHERE chunks_fts MATCH ?"
+    if scoped:
+        scope = _SEARCH_SCOPE_SQL + _SEARCH_FRONTMATTER_PAIR_SQL * pair_count
+    return f"{_COUNT_BY_NOTE_HEAD_SQL}{scope}{_COUNT_BY_NOTE_TAIL_SQL}"
+
+
 def _search_sql(*, weighted: bool, scoped: bool, pair_count: int = 0) -> str:
     score = _weighted_score_sql() if weighted else _LEGACY_SCORE_SQL
     snippets = _SEARCH_SNIPPET_SQL
@@ -262,14 +304,21 @@ def _search_sql(*, weighted: bool, scoped: bool, pair_count: int = 0) -> str:
     )
 
 
-def _row_snippet(row: sqlite3.Row) -> str:
-    """Prefer the body excerpt; fall back to the title/heading excerpt when only it matched."""
+def _row_snippet(row: sqlite3.Row) -> tuple[str, str | None]:
+    """Return the excerpt and, when it came from the context column, its undecorated source.
+
+    The body excerpt wins whenever the body itself matched. Falling back to the note title
+    and heading trail needs its own redaction source, because the caller's secret guard
+    compares against the chunk body and would never see a secret carried by a title.
+    """
     body = str(row["snippet"])
     columns = row.keys()
-    if _SNIPPET_HIGHLIGHT in body or "context_snippet" not in columns:
-        return body
+    if _SNIPPET_MARK_OPEN in body or "context_snippet" not in columns:
+        return _render_snippet(body), None
     context = str(row["context_snippet"])
-    return context if _SNIPPET_HIGHLIGHT in context else body
+    if _SNIPPET_MARK_OPEN not in context:
+        return _render_snippet(body), None
+    return _render_snippet(context), _undecorated_snippet(context)
 
 
 _MIGRATE_CHUNK_CONTEXT_SQL: Final[str] = """
@@ -307,12 +356,42 @@ SELECT
     legacy.lang,
     CASE
         WHEN legacy.header_path = '' THEN COALESCE(notes.title, '')
-        ELSE COALESCE(notes.title, '') || ? || legacy.header_path
+        WHEN legacy.header_path = COALESCE(notes.title, '') THEN COALESCE(notes.title, '')
+        WHEN substr(legacy.header_path, 1, length(COALESCE(notes.title, '')) + length(:sep))
+             = COALESCE(notes.title, '') || :sep
+            THEN legacy.header_path
+        ELSE COALESCE(notes.title, '') || :sep || legacy.header_path
     END
 FROM chunks_fts_legacy AS legacy
 LEFT JOIN notes ON notes.note_id = legacy.note_id
 ORDER BY legacy.rowid;
 """
+
+# Repairs rows written by a release that predates the column, which a downgrade can leave
+# behind on an already-migrated index. The CASE mirrors ``_chunk_context`` exactly.
+_REPAIR_CHUNK_CONTEXT_SQL: Final[str] = """
+UPDATE chunks_fts
+SET context = CASE
+        WHEN header_path = '' THEN COALESCE(
+            (SELECT title FROM notes WHERE notes.note_id = chunks_fts.note_id), '')
+        WHEN header_path = COALESCE(
+            (SELECT title FROM notes WHERE notes.note_id = chunks_fts.note_id), '')
+            THEN header_path
+        WHEN substr(header_path, 1, length(COALESCE(
+            (SELECT title FROM notes WHERE notes.note_id = chunks_fts.note_id), '')) + length(:sep))
+             = COALESCE(
+                 (SELECT title FROM notes WHERE notes.note_id = chunks_fts.note_id), '') || :sep
+            THEN header_path
+        ELSE COALESCE(
+            (SELECT title FROM notes WHERE notes.note_id = chunks_fts.note_id), '')
+            || :sep || header_path
+    END
+WHERE context IS NULL OR context = '';
+"""
+
+_COUNT_MISSING_CONTEXT_SQL: Final[str] = (
+    "SELECT COUNT(*) FROM chunks_fts WHERE context IS NULL OR context = '';"
+)
 
 _LIST_NOTE_FRONTMATTER_SQL: Final[str] = """
 SELECT note_id, frontmatter_json
@@ -590,6 +669,9 @@ class SQLiteFTS5Store:
                 "DELETE FROM chunks_fts WHERE note_id = ? OR note_rel_path = ?",
                 (note.id, note.rel_path),
             )
+            # Order matters: the superseded identity is read from ``notes`` and must be
+            # resolved before that row is deleted, or its pairs survive with no owner.
+            await connection.execute(_DELETE_SUPERSEDED_FRONTMATTER_SQL, (note.rel_path, note.id))
             await connection.execute(
                 "DELETE FROM notes WHERE rel_path = ? AND note_id != ?",
                 (note.rel_path, note.id),
@@ -597,7 +679,8 @@ class SQLiteFTS5Store:
             await connection.execute(_INSERT_NOTE_SQL, _note_row(note, indexed_at, fs_mtime_ns))
             await connection.execute(_DELETE_NOTE_FRONTMATTER_SQL, (note.id,))
             await connection.executemany(
-                _INSERT_NOTE_FRONTMATTER_SQL, _frontmatter_pair_rows(note.id, note.frontmatter)
+                _INSERT_NOTE_FRONTMATTER_SQL,
+                _frontmatter_pair_rows(note.id, _frontmatter_json(note.frontmatter)),
             )
             await connection.execute(
                 "DELETE FROM ulid_paths WHERE rel_path = ? OR note_id = ?",
@@ -704,15 +787,60 @@ class SQLiteFTS5Store:
                 if len(ranked_rows) >= limit:
                     break
 
-        return [
-            SearchResult(
-                chunk=_chunk_from_row(row),
-                score=-float(row["raw_score"]),
-                snippet=_row_snippet(row),
-                tier=tier,
+        results = []
+        for row, tier in ranked_rows:
+            snippet, context_source = _row_snippet(row)
+            results.append(
+                SearchResult(
+                    chunk=_chunk_from_row(row),
+                    score=-float(row["raw_score"]),
+                    snippet=snippet,
+                    redaction_source=context_source,
+                    tier=tier,
+                )
             )
-            for row, tier in ranked_rows
-        ]
+        return results
+
+    async def count_matches_by_note(
+        self,
+        query: str,
+        note_ids: Sequence[str],
+        *,
+        folder: str | None = None,
+        tags: Sequence[str] | None = None,
+        frontmatter: Mapping[str, str] | None = None,
+    ) -> dict[str, int]:
+        """Return how many chunks of each named note match ``query``, ignoring any limit.
+
+        :meth:`search` truncates to a bounded window, so counting the rows it returned
+        under-reports a note with more matching sections than the window holds. This
+        answers that question directly, under the same scope and the same AND/OR tiers.
+        """
+        wanted = [str(note_id) for note_id in dict.fromkeys(note_ids) if note_id]
+        terms = _fts5_terms(query)
+        if not wanted or not terms:
+            return {}
+
+        connection = self._require_connection()
+        scope = await self._search_scope(
+            connection, folder=folder, tags=tags, frontmatter=frontmatter
+        )
+        if scope is not None and scope.note_ids_json == _EMPTY_JSON_LIST:
+            return {}
+        if self._term_map:
+            groups = expand_terms(terms, self._term_map)
+            and_query = _join_fts5_groups(groups)
+            fallback_terms = _flatten_fts5_groups(groups)
+        else:
+            and_query = _join_fts5_terms(terms, operator=" ")
+            fallback_terms = terms
+
+        counts = await _fetch_note_match_counts(connection, and_query, wanted, scope)
+        missing = [note_id for note_id in wanted if note_id not in counts]
+        if missing and len(terms) > 1:
+            or_query = _join_fts5_terms(fallback_terms, operator=" OR ")
+            counts.update(await _fetch_note_match_counts(connection, or_query, missing, scope))
+        return counts
 
     async def get_chunk(self, chunk_id: str) -> Chunk | None:
         """Return one chunk by ID, or ``None`` if absent."""
@@ -929,7 +1057,8 @@ class SQLiteFTS5Store:
         )
         await self._migrate_notes_columns(connection)
         await self._migrate_chunk_context(connection)
-        await self._backfill_frontmatter_pairs(connection)
+        await self._rebuild_frontmatter_pairs(connection)
+        await self._repair_missing_context(connection)
         await connection.commit()
         self._context_indexed = True
         self._frontmatter_indexed = True
@@ -949,7 +1078,9 @@ class SQLiteFTS5Store:
         _LOGGER.info("Migrating chunks_fts to the context-indexed schema")
         await connection.execute(f"ALTER TABLE chunks_fts RENAME TO {_LEGACY_CHUNKS_TABLE};")
         await connection.execute(_CREATE_CHUNKS_FTS_SQL)
-        cursor = await connection.execute(_MIGRATE_CHUNK_CONTEXT_SQL, (CHUNK_CONTEXT_SEPARATOR,))
+        cursor = await connection.execute(
+            _MIGRATE_CHUNK_CONTEXT_SQL, {"sep": CHUNK_CONTEXT_SEPARATOR}
+        )
         migrated_rows = cursor.rowcount
         await connection.execute(f"DROP TABLE {_LEGACY_CHUNKS_TABLE};")
         _LOGGER.info(
@@ -1016,34 +1147,49 @@ class SQLiteFTS5Store:
                 )
         return self._frontmatter_indexed
 
-    async def _backfill_frontmatter_pairs(self, connection: aiosqlite.Connection) -> None:
-        """Populate ``note_frontmatter`` once from the indexed metadata of existing notes."""
-        async with connection.execute(
-            "SELECT value FROM index_meta WHERE key = ?;", (_FRONTMATTER_PAIRS_META_KEY,)
-        ) as cursor:
-            if await cursor.fetchone() is not None:
-                return
+    async def _rebuild_frontmatter_pairs(self, connection: aiosqlite.Connection) -> None:
+        """Rebuild ``note_frontmatter`` from the indexed metadata of every note.
+
+        This deliberately carries no one-shot marker. A release that predates the table
+        writes notes without pairs, and a marker would make the next upgrade skip the
+        repair forever, leaving ``search_text`` and ``list_notes`` answering the same
+        documented filter differently on the same vault. The table is derived data over
+        the ``notes`` rows already in memory, so rebuilding it is cheap and always right.
+        """
         started = time.perf_counter()
         await connection.execute("DELETE FROM note_frontmatter;")
         async with connection.execute("SELECT note_id, frontmatter_json FROM notes;") as cursor:
             rows = list(await cursor.fetchall())
-        inserted = 0
-        for row in rows:
-            metadata_raw = json.loads(str(row["frontmatter_json"]))
-            metadata = (
-                cast("dict[str, object]", metadata_raw) if isinstance(metadata_raw, dict) else {}
-            )
-            pair_rows = _frontmatter_pair_rows(str(row["note_id"]), metadata)
-            await connection.executemany(_INSERT_NOTE_FRONTMATTER_SQL, pair_rows)
-            inserted += len(pair_rows)
-        await connection.execute(
-            "INSERT OR REPLACE INTO index_meta(key, value) VALUES (?, '1');",
-            (_FRONTMATTER_PAIRS_META_KEY,),
-        )
+        pair_rows = [
+            pair
+            for row in rows
+            for pair in _frontmatter_pair_rows(str(row["note_id"]), str(row["frontmatter_json"]))
+        ]
+        await connection.executemany(_INSERT_NOTE_FRONTMATTER_SQL, pair_rows)
         _LOGGER.info(
-            "Backfilled %d frontmatter pairs for %d notes in %.0f ms",
-            inserted,
+            "Rebuilt %d frontmatter pairs for %d notes in %.0f ms",
+            len(pair_rows),
             len(rows),
+            (time.perf_counter() - started) * 1000.0,
+        )
+
+    async def _repair_missing_context(self, connection: aiosqlite.Connection) -> None:
+        """Refill the context column of chunks written by a release that predates it.
+
+        ``_migrate_chunk_context`` returns early once the column exists, so a downgrade
+        that writes notes through the older release would otherwise leave those chunks
+        permanently unweighted with no signal anywhere.
+        """
+        async with connection.execute(_COUNT_MISSING_CONTEXT_SQL) as cursor:
+            row = await cursor.fetchone()
+        missing = 0 if row is None else int(row[0])
+        if not missing:
+            return
+        started = time.perf_counter()
+        await connection.execute(_REPAIR_CHUNK_CONTEXT_SQL, {"sep": CHUNK_CONTEXT_SEPARATOR})
+        _LOGGER.info(
+            "Repaired the context of %d chunks in %.0f ms",
+            missing,
             (time.perf_counter() - started) * 1000.0,
         )
 
@@ -1147,35 +1293,72 @@ async def _fetch_search_rows(
 ) -> list[sqlite3.Row]:
     pair_count = 0 if scope is None else len(scope.frontmatter_pairs)
     sql = _search_sql(weighted=weighted, scoped=scope is not None, pair_count=pair_count)
-    parameters: tuple[object, ...]
-    if scope is None:
-        parameters = (fts_query, limit)
-    else:
-        parameters = (
-            fts_query,
-            scope.folder,
-            scope.folder,
-            scope.folder,
-            scope.tags_json,
-            scope.note_ids_json,
-            scope.note_ids_json,
-            *(item for pair in scope.frontmatter_pairs for item in pair),
-            limit,
-        )
+    parameters: tuple[object, ...] = (
+        (fts_query, limit) if scope is None else (fts_query, *_scope_parameters(scope), limit)
+    )
     async with connection.execute(sql, parameters) as cursor:
         return cast("list[sqlite3.Row]", await cursor.fetchall())
 
 
-def _frontmatter_pair_rows(
-    note_id: str, metadata: Mapping[str, object]
-) -> list[tuple[str, str, str]]:
+def _scope_parameters(scope: _SearchScope) -> tuple[object, ...]:
+    return (
+        scope.folder,
+        scope.folder,
+        scope.folder,
+        scope.tags_json,
+        scope.note_ids_json,
+        scope.note_ids_json,
+        *(item for pair in scope.frontmatter_pairs for item in pair),
+    )
+
+
+async def _fetch_note_match_counts(
+    connection: aiosqlite.Connection,
+    fts_query: str,
+    note_ids: list[str],
+    scope: _SearchScope | None,
+) -> dict[str, int]:
+    pair_count = 0 if scope is None else len(scope.frontmatter_pairs)
+    sql = _count_by_note_sql(scoped=scope is not None, pair_count=pair_count)
+    wanted = json.dumps(note_ids)
+    parameters: tuple[object, ...] = (
+        (fts_query, wanted) if scope is None else (fts_query, *_scope_parameters(scope), wanted)
+    )
+    async with connection.execute(sql, parameters) as cursor:
+        rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+    return {str(row["note_id"]): int(row["matches"]) for row in rows}
+
+
+def _frontmatter_json(frontmatter: Mapping[str, object]) -> str:
+    return json.dumps(frontmatter, sort_keys=True, ensure_ascii=False, default=_json_default)
+
+
+def _frontmatter_pair_rows(note_id: str, frontmatter_json: str) -> list[tuple[str, str, str]]:
+    """Derive the filter pairs of one note from its SERIALIZED frontmatter.
+
+    Every other consumer of the filter rule reads the JSON round trip: ``list_notes`` and
+    the read-only fallback both match against the decoded metadata, where a YAML timestamp
+    has already become its ISO string. Deriving the pairs from the live Python objects
+    instead would index ``str(datetime)``, whose separator is a space, and the two tools
+    would disagree on the same vault.
+    """
+    decoded = json.loads(frontmatter_json)
+    metadata = cast("dict[str, object]", decoded) if isinstance(decoded, dict) else {}
     return [(note_id, key, value) for key, value in frontmatter_filter_pairs(metadata)]
 
 
 def _chunk_context(note_title: str, header_path: str) -> str:
-    """Return the searchable context of one chunk: note title plus heading trail."""
-    if not header_path:
+    """Return the searchable context of one chunk: note title plus heading trail.
+
+    The heading trail starts at the note's H1, and a note's title is usually resolved from
+    that same H1, so joining them naively writes the title twice into a column weighted
+    above the body. That inflates term frequency for exactly the notes whose H1 restates
+    their frontmatter title, which is a ranking advantage bought by an artifact.
+    """
+    if not header_path or header_path == note_title:
         return note_title
+    if header_path.startswith(f"{note_title}{CHUNK_CONTEXT_SEPARATOR}"):
+        return header_path
     return f"{note_title}{CHUNK_CONTEXT_SEPARATOR}{header_path}"
 
 
@@ -1229,7 +1412,7 @@ def _note_row(
         note.id,
         note.rel_path,
         note.title,
-        json.dumps(note.frontmatter, sort_keys=True, ensure_ascii=False, default=_json_default),
+        _frontmatter_json(note.frontmatter),
         note.content_hash,
         note.created.isoformat(),
         note.updated.isoformat(),

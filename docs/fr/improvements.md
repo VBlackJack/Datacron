@@ -1,5 +1,7 @@
 # Écritures fiables et qualité de recherche
 
+**Français** | [English](../en/improvements.md)
+
 ## Rejouer une écriture
 
 Les huit outils ordinaires d'écriture acceptent `request_id`, facultatif : 1 à 128 caractères
@@ -76,6 +78,13 @@ de section jamais répété dans son corps, le même titre dans deux notes proje
 bilingues sans expansion configurée, un index de backlog et une note d'archive qui répètent le
 sujet, et une note `invalid_at` derrière sa remplaçante. Un cas de distracteur reste imparfait
 tant que la démotion des archives n'existe pas ; il documente ce manque au lieu de le masquer.
+
+Deux seuils ne sont volontairement pas relevés davantage. Une question de fraîcheur interroge
+un terme nu que cinq notes portent à l'identique : BM25 leur donne le même score au chiffre
+près et leur ordre revient à l'insertion ; fixer le MRR au-dessus de 0,94 ne ferait que figer
+ce départage. Les notes de remplissage qui poussent une note démotée hors des cinq premières
+sont dimensionnées sur cette fenêtre pour la même raison : un jeu plus grand que la fenêtre
+rendrait l'attente positive dépendante du départage elle aussi.
 `expected_empty: true` est incompatible avec des chemins ou chunks attendus. Son score
 `empty_accuracy` est séparé du rappel, du MRR, du nDCG et de la précision des cas positifs.
 Chaque résultat garde sa catégorie, sa latence et son coût en tokens. La comparaison à une
@@ -101,9 +110,11 @@ les fichiers de workflow seuls ne suffisent pas. Ces modifications ne déclenche
 `list_notes` : `folder` (préfixe sur une frontière de dossier, confiné au vault), `tags` (chaque
 tag listé doit être présent, comparaison insensible à la casse) et `frontmatter` (paires
 clé/valeur de premier niveau, huit au plus, insensibles à la casse, une valeur liste correspond
-sur n'importe quel élément). La réponse rappelle les filtres appliqués sous `filters` ; un appel
-sans périmètre omet la clé. Le repli OR des requêtes à plusieurs termes s'exécute dans le même
-périmètre : une recherche restreinte ne laisse jamais passer de résultat extérieur.
+sur n'importe quel élément). La réponse rappelle les filtres appliqués sous `filters`, et la
+charge structurée MCP matérialise cette clé à `null` quand aucun filtre n'a restreint la
+recherche, comme pour toute autre clé optionnelle. Le repli OR des requêtes à plusieurs termes
+s'exécute dans le même périmètre : une recherche restreinte ne laisse jamais passer de résultat
+extérieur.
 
 ```json
 {
@@ -121,6 +132,12 @@ d'un sujet passe donc devant une note qui ne fait que le citer, et un titre de s
 trouvable même quand son corps ne répète jamais ses mots. Les accents sont repliés des deux
 côtés, comme pour le corps.
 
+Le chemin des titres commence au H1 de la note, et un titre se résout d'ordinaire depuis ce
+même H1 : le titre n'est donc écrit qu'une fois. L'écrire deux fois appliquerait un
+multiplicateur de poids non déclaré aux seules notes dont le H1 reprend le titre de
+frontmatter, et en priverait celles dont le H1 diffère. L'emphase sur les titres appartient à
+`SEARCH_CONTEXT_WEIGHT`, où elle vaut pour toutes les notes et se lit dans la configuration.
+
 Une ouverture en écriture d'un index créé avant cette colonne renomme la table héritée, la
 recrée avec la colonne et la remplit depuis ses propres lignes jointes aux titres indexés, dans
 une seule transaction. Identités de chunks, hachés de contenu, ordinaux et plages de lignes sont
@@ -129,11 +146,11 @@ existants restent valides. Une ouverture certifiée en lecture seule ne migre ja
 détecte la colonne absente et continue de servir un BM25 non pondéré jusqu'à ce que
 `datacron reindex` reconstruise l'index.
 
-Sur le corpus de recherche versionné (44 questions, pipeline outil), le changement fait passer
-le rappel@5 par note de 0,972 à 1,0, le MRR de 0,921 à 0,972 et le nDCG@10 de 0,940 à 0,981,
-avec une exactitude des réponses vides et un taux de violation des chemins interdits inchangés
-à 1,0 et 0. Le test d'intégration échoue désormais sous un rappel@5 de 0,99, un MRR de 0,96 ou
-un nDCG@10 de 0,97 : une régression de classement ne peut plus passer en silence.
+Sur le corpus de recherche versionné (44 questions sur 24 notes, pipeline outil), la branche
+fait passer le MRR de 0,922 à 0,950 et le nDCG@10 de 0,944 à 0,964, avec un rappel@5 par note,
+une exactitude des réponses vides et un taux de violation des chemins interdits inchangés à
+1,0, 1,0 et 0. Le test d'intégration échoue sous un rappel@5 de 0,99, un MRR de 0,94 ou un
+nDCG@10 de 0,95 : une régression de classement ne peut plus passer en silence.
 
 `session_context` applique le même périmètre à sa recherche de sujet : quand un domaine
 correspond à un tag mémoire, la liste bornée de candidats n'est construite qu'à partir des notes
@@ -145,9 +162,14 @@ ensuite.
 `search_text(group_by_note=true)` garde le chunk le mieux classé de chaque note après le
 re-rank temporel et avant la limite de résultats, et ajoute `note_matches` à chaque résultat
 conservé. Les notes gardent leur ordre relatif ; la réponse porte `grouped_by_note: true`. Sur
-le corpus versionné, les mêmes 44 questions renvoient 17708 tokens regroupés contre 28661 à
-plat, pour 125 résultats au lieu de 215. Le regroupement est optionnel : les clients qui
+le corpus versionné, les mêmes 44 questions renvoient 15929 tokens regroupés contre 26382 à
+plat, pour 111 résultats au lieu de 199. Le regroupement est optionnel : les clients qui
 parcourent les chunks gardent la forme à plat.
+
+`note_matches` compte les chunks de la note qui correspondent, pas ceux que la réponse s'est
+trouvée porter. La liste classée est une fenêtre de surlecture bornée : compter ses lignes
+donnerait un nombre différent pour la même note à chaque `limit`. Le compte est demandé
+directement à l'index, sous le même périmètre et les mêmes paliers AND/OR que la recherche.
 
 Les extraits privilégient le corps du chunk. Quand le corps ne contient aucun terme surligné
 et que la colonne de contexte en contient, l'extrait est pris dans le titre de la note et le
@@ -155,13 +177,28 @@ chemin des en-têtes : une note trouvée par son titre montre `Projet Datacron /
 lieu d'une première phrase sans rapport. Un index hérité sans colonne de contexte garde
 l'extrait du corps.
 
+La colonne qui a correspondu se décide sur des marqueurs privés, pas sur la décoration
+publique `**`. FTS5 renvoie les premiers tokens d'une colonne quand rien n'y correspond, et
+`**` est aussi du gras Markdown ordinaire : un corps en gras passerait donc pour une
+correspondance et supprimerait l'extrait même que cette fonction sert à produire. Un extrait
+de contexte porte en outre sa propre source non décorée pour la rédaction : la garde des
+secrets compare au corps du chunk, et une comparaison au corps ne peut jamais voir un secret
+porté par un titre ou un en-tête.
+
 Le filtre de périmètre `frontmatter` est servi par une table `note_frontmatter` de paires
 clé/valeur repliées en casse, une ligne par scalaire ou par élément de liste, produite par la
-même règle d'aplatissement que la comparaison en mémoire. Les écritures ordinaires
-rafraîchissent les paires d'une note ; une ouverture en écriture remplit la table une fois
-depuis les métadonnées indexées et le consigne dans `index_meta`. Une ouverture certifiée en
-lecture seule d'un index sans cette table revient au balayage des métadonnées : le filtre reste
-exact dans les deux modes.
+même règle d'aplatissement que la comparaison en mémoire et dérivée des mêmes métadonnées
+sérialisées. Ce dernier point n'est pas un détail : `list_notes` compare au passage par JSON,
+où un horodatage YAML non quoté est déjà devenu sa chaîne ISO ; des paires construites depuis
+les objets Python vifs indexeraient une espace là où l'autre outil attend un `T`, et les deux
+outils se contrediraient sur un même vault.
+
+Une ouverture en écriture reconstruit la table depuis les métadonnées indexées, à chaque fois
+et sans marqueur. Une version antérieure à la table écrit des notes sans paires, et un marqueur
+à usage unique ferait sauter la réparation pour toujours à la mise à jour suivante : c'est une
+réponse fausse, pas une réponse lente. La même ouverture regarnit le contexte des chunks qui en
+manquent, pour la même raison. Une ouverture certifiée en lecture seule ne change rien et
+revient au balayage des métadonnées : le filtre reste exact dans les deux modes.
 
 La migration de la colonne de contexte consigne désormais son nombre de lignes et sa durée, et
 `pytest-xdist` fait partie des dépendances de développement :

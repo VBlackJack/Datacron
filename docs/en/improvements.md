@@ -1,5 +1,8 @@
 # Reliable writes and retrieval quality
 
+**English** | [Français](../fr/improvements.md)
+
+
 ## Replaying an ordinary write
 
 All eight ordinary note-writing tools accept an optional `request_id` (1-128 ASCII
@@ -76,6 +79,12 @@ never repeated in its body, the same heading in two project notes, bilingual que
 configured expansion, a backlog index and an archive note repeating the subject, and an
 `invalid_at` note behind its replacement. One distractor case is expected to stay imperfect
 until archive demotion exists; it documents that gap rather than hiding it.
+
+Two thresholds are deliberately not raised further. A freshness question asks a bare term that
+five notes carry identically, so BM25 scores them equal to the digit and their order falls to
+insertion; pinning MRR above 0.94 would only pin that tie-break. The filler notes that push a
+demoted note out of the top five are sized to the window for the same reason: a filler set
+larger than the window makes the positive expectation depend on the tie-break too.
 `expected_empty: true` cannot coexist with expected paths/chunks. Empty cases have a separate
 `empty_accuracy`, and are excluded from aggregate positive recall, MRR, nDCG and precision.
 Per-question results retain categories, latency and payload tokens. Baseline comparisons reject
@@ -100,8 +109,10 @@ workflow files alone cannot enforce branch protection. No release is triggered b
 `folder` (prefix on a folder boundary, confined to the vault), `tags` (every listed tag must be
 present, compared case-insensitively) and `frontmatter` (top-level key/value pairs, at most
 eight, case-insensitive, list values match on any element). The response echoes the applied
-filters under `filters`; an unscoped call omits the key. The OR fallback for multi-term queries
-runs inside the same scope, so a narrowed search never leaks results from outside it.
+filters under `filters`, and the MCP structured payload materializes that key as `null` when
+no filter narrowed the search, exactly as it does for every other optional key. The OR fallback
+for multi-term queries runs inside the same scope, so a narrowed search never leaks results
+from outside it.
 
 ```json
 {
@@ -118,6 +129,12 @@ above the chunk, joined by ` / `. BM25 weighs that column three times the chunk 
 outranks a note that only mentions it, and a section heading is searchable even when its body
 never repeats the words. Diacritics are folded on both sides, as for the body.
 
+The heading trail starts at the note's H1 and a title is usually resolved from that same H1,
+so the title is written once, not twice. Writing it twice would apply an undeclared weight
+multiplier to exactly the notes whose H1 restates their frontmatter title, and leave the notes
+whose H1 differs without it. The emphasis on titles belongs in `SEARCH_CONTEXT_WEIGHT`, where
+it applies to every note equally and can be read off the configuration.
+
 A writable open of an index created before this column renames the legacy table, recreates it
 with the column and refills it from its own rows joined with the indexed titles, inside one
 transaction. Chunk identities, content hashes, ordinals and line ranges are copied verbatim, so
@@ -125,11 +142,10 @@ existing `chunk_id` references, CAS hashes and follow-up projections stay valid.
 read-only open never migrates: it detects the missing column and keeps serving unweighted BM25
 until `datacron reindex` rebuilds the index.
 
-On the versioned retrieval corpus (44 questions, tool pipeline), the change moves note
-recall@5 from 0.972 to 1.0, MRR from 0.921 to 0.972 and nDCG@10 from 0.940 to 0.981, with
-empty-answer accuracy and forbidden-path violations unchanged at 1.0 and 0. The integration
-test now fails below recall@5 0.99, MRR 0.96 or nDCG@10 0.97, so a ranking regression cannot
-pass silently.
+On the versioned retrieval corpus (44 questions over 24 notes, tool pipeline), the branch moves
+MRR from 0.922 to 0.950 and nDCG@10 from 0.944 to 0.964, with note recall@5, empty-answer
+accuracy and forbidden-path violations unchanged at 1.0, 1.0 and 0. The integration test fails
+below recall@5 0.99, MRR 0.94 or nDCG@10 0.95, so a ranking regression cannot pass silently.
 
 `session_context` applies the same scope to its subject search: when a domain maps to a memory
 tag, the bounded candidate list is built only from notes carrying that tag, instead of being
@@ -140,20 +156,39 @@ filled by notes the domain filter would discard afterwards.
 `search_text(group_by_note=true)` keeps the best-ranked chunk of every note after temporal
 re-ranking and before the result limit, and adds `note_matches` to each surviving hit. Notes
 keep their relative order; the response carries `grouped_by_note: true`. On the versioned
-corpus the same 44 questions return 17708 tokens grouped against 28661 flat, for 125 hits
-instead of 215. Grouping is opt-in: clients that iterate chunks keep the flat shape.
+corpus the same 44 questions return 15929 tokens grouped against 26382 flat, for 111 hits
+instead of 199. Grouping is opt-in: clients that iterate chunks keep the flat shape.
+
+`note_matches` counts the matching chunks of that note, not the matching chunks the response
+happened to carry. The ranked list is a bounded overfetch window, so counting its rows would
+report a different number for the same note at every `limit`; the count is asked of the index
+directly, under the same scope and the same AND/OR tiers as the search itself.
 
 Excerpts prefer the chunk body. When the body carries no highlighted term and the context
 column does, the excerpt is taken from the note title and heading trail, so a note found by
 its title shows `Projet Datacron / **Statut**` instead of an unrelated first sentence. A
 legacy index without the context column keeps the body excerpt.
 
+Whether a column matched is decided on private markers, not on the public `**` decoration.
+FTS5 returns a column's leading tokens when nothing matched in it, and `**` is also ordinary
+Markdown emphasis, so a bolded body would otherwise look like a match and suppress the very
+excerpt this feature exists to produce. A context excerpt also carries its own undecorated
+source for redaction: the secret guard compares against the chunk body, and a body comparison
+can never see a secret carried by a title or a heading.
+
 The `frontmatter` scope filter is answered by a `note_frontmatter` table of casefolded
 key/value pairs, one row per scalar or list element, produced by the same flattening rule as
-the in-memory comparison. Ordinary writes refresh a note's pairs; a writable open backfills
-the table once from the indexed metadata and records that in `index_meta`. A certified
-read-only open of an index without the table falls back to scanning note metadata, so the
-filter stays exact in both modes.
+the in-memory comparison and derived from the same serialized metadata. That last point is not
+a detail: `list_notes` matches against the JSON round trip, where an unquoted YAML timestamp
+has already become its ISO string, so pairs built from the live Python objects would index a
+space where the other tool expects a `T`, and the two tools would disagree on one vault.
+
+A writable open rebuilds the table from the indexed metadata, every time and without a marker.
+A release that predates the table writes notes without pairs, and a one-shot marker would make
+the next upgrade skip the repair forever, which is a wrong answer rather than a slow one. The
+same open refills the context of any chunk still missing it, for the same reason. A certified
+read-only open changes nothing and falls back to scanning note metadata, so the filter stays
+exact in both modes.
 
 The context-column migration now logs its row count and duration, and `pytest-xdist` is a
 development dependency: `uv run --frozen --extra dev pytest -n auto` runs the suite in

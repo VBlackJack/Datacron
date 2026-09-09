@@ -1,5 +1,7 @@
 # Mémoire quotidienne et discipline commune
 
+**Français** | [English](../en/memory-discipline.md)
+
 Datacron diffuse un contrat versionné commun dans les instructions serveur et les fichiers
 clients pris en charge. Il couvre projets, réunions, personnes, objectifs professionnels,
 attentes, passations et clôture de travail.

@@ -21,6 +21,7 @@ import json
 import multiprocessing
 import sqlite3
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite
@@ -1347,7 +1348,7 @@ async def test_search_frontmatter_filter_uses_the_pair_index(
     assert rows == [(_NOTE_ID, "status", "closed")]
 
 
-async def test_writable_open_backfills_frontmatter_pairs_once(
+async def test_writable_open_rebuilds_frontmatter_pairs_and_read_only_falls_back(
     tmp_path: Path,
     note_factory: NoteFactory,
     chunk_factory: ChunkFactory,
@@ -1363,7 +1364,6 @@ async def test_writable_open_backfills_frontmatter_pairs_once(
     connection = sqlite3.connect(db_path)
     try:
         connection.execute("DROP TABLE note_frontmatter;")
-        connection.execute("DELETE FROM index_meta WHERE key = 'frontmatter_pairs_backfilled';")
         connection.commit()
     finally:
         connection.close()
@@ -1391,8 +1391,341 @@ async def test_writable_open_backfills_frontmatter_pairs_once(
     connection = sqlite3.connect(db_path)
     try:
         assert connection.execute("SELECT COUNT(*) FROM note_frontmatter;").fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT value FROM index_meta WHERE key = 'frontmatter_pairs_backfilled';"
-        ).fetchone() == ("1",)
     finally:
         connection.close()
+
+
+async def test_context_never_repeats_the_note_title(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    """The heading trail already starts at the H1 the title was resolved from."""
+    note = note_factory(id=_NOTE_ID, rel_path="projects/alpha.md", title="Alpha Note")
+    store = SQLiteFTS5Store()
+    db_path = _db_path(tmp_path)
+    await store.open(db_path)
+    try:
+        await store.upsert_note(
+            note,
+            [
+                chunk_factory(note=note, header_path="Alpha Note", content="root prose"),
+                chunk_factory(
+                    note=note,
+                    chunk_id=f"{note.id}::alpha-note/deep::0000",
+                    header_path="Alpha Note / Deep Heading",
+                    content="nested prose",
+                    ordinal=1,
+                ),
+                chunk_factory(
+                    note=note,
+                    chunk_id=f"{note.id}::other::0000",
+                    header_path="Other Trail",
+                    content="unrelated prose",
+                    ordinal=2,
+                ),
+            ],
+        )
+    finally:
+        await store.close()
+
+    connection = sqlite3.connect(db_path)
+    try:
+        stored = sorted(
+            str(row[0]) for row in connection.execute("SELECT context FROM chunks_fts;")
+        )
+    finally:
+        connection.close()
+    assert stored == [
+        "Alpha Note",
+        "Alpha Note / Deep Heading",
+        "Alpha Note / Other Trail",
+    ]
+
+
+async def test_legacy_migration_also_deduplicates_the_title(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    db_path = _db_path(tmp_path)
+    note = note_factory(id=_NOTE_ID, rel_path="projects/alpha.md", title="Alpha Note")
+    chunk = chunk_factory(note=note, header_path="Alpha Note / Deep Heading", content="prose here")
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    await store.upsert_note(note, [chunk])
+    await store.close()
+
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("DROP TABLE chunks_fts;")
+        connection.execute(_LEGACY_CHUNKS_FTS_SQL)
+        connection.execute(
+            "INSERT INTO chunks_fts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+            (
+                chunk.chunk_id,
+                chunk.note_id,
+                chunk.note_rel_path,
+                chunk.header_path,
+                chunk.section_title,
+                chunk.chunk_type.value,
+                chunk.content,
+                chunk.ordinal,
+                chunk.content_hash,
+                chunk.token_count,
+                chunk.line_start,
+                chunk.line_end,
+                "[]",
+                chunk.lang,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    migrated = SQLiteFTS5Store()
+    await migrated.open(db_path)
+    await migrated.close()
+
+    connection = sqlite3.connect(db_path)
+    try:
+        assert connection.execute("SELECT context FROM chunks_fts;").fetchone() == (
+            "Alpha Note / Deep Heading",
+        )
+    finally:
+        connection.close()
+
+
+async def test_markdown_bold_in_the_body_does_not_hide_a_context_match(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    """The public ``**`` marker is also emphasis, so it cannot prove that the body matched."""
+    bold = note_factory(id=_NOTE_ID, rel_path="a.md", title="Kerberos ticket renewal")
+    plain = note_factory(id=_OTHER_NOTE_ID, rel_path="b.md", title="Kerberos ticket rotation")
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+    try:
+        await store.upsert_note(
+            bold,
+            [
+                chunk_factory(
+                    note=bold,
+                    header_path="Steps",
+                    content="**Rotate** the service account entry every quarter.",
+                )
+            ],
+        )
+        await store.upsert_note(
+            plain,
+            [
+                chunk_factory(
+                    note=plain,
+                    header_path="Steps",
+                    content="Rotate the service account entry every quarter.",
+                )
+            ],
+        )
+        snippets = {
+            result.chunk.note_rel_path: result.snippet for result in await store.search("kerberos")
+        }
+        assert snippets["a.md"] == "**Kerberos** ticket renewal / Steps"
+        assert snippets["b.md"] == "**Kerberos** ticket rotation / Steps"
+        # A genuine body match still wins, and it is still decorated for the client.
+        body = await store.search("quarter")
+        assert body[0].snippet.endswith("every **quarter**.")
+        assert body[0].redaction_source is None
+    finally:
+        await store.close()
+
+
+async def test_frontmatter_pairs_agree_with_the_json_round_trip(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    """An unquoted YAML timestamp reaches the index as a datetime, not as a string."""
+    stamp = datetime(2026, 5, 1, 10, 0, tzinfo=UTC)
+    note = note_factory(id=_NOTE_ID, rel_path="items/dated.md", frontmatter={"created": stamp})
+    store = SQLiteFTS5Store()
+    db_path = _db_path(tmp_path)
+    await store.open(db_path)
+    try:
+        await store.upsert_note(note, [chunk_factory(note=note, content="stampanchor")])
+        iso = stamp.isoformat()
+        assert _paths(await store.search("stampanchor", frontmatter={"created": iso})) == [
+            "items/dated.md"
+        ]
+        assert await store.search("stampanchor", frontmatter={"created": str(stamp)}) == []
+        # list_notes answers the same filter from the JSON round trip; both must agree.
+        listed, total = await store.list_note_paths(
+            folder=None, tags=[], frontmatter={"created": iso}, limit=10, offset=0
+        )
+        assert (listed, total) == (["items/dated.md"], 1)
+    finally:
+        await store.close()
+
+    connection = sqlite3.connect(db_path)
+    try:
+        rows = connection.execute("SELECT key, value FROM note_frontmatter;").fetchall()
+    finally:
+        connection.close()
+    assert rows == [("created", "2026-05-01t10:00:00+00:00")]
+
+
+async def test_writable_open_repairs_an_index_a_downgrade_wrote_behind_us(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    """A release predating these tables leaves rows behind; no one-shot marker may hide them."""
+    db_path = _db_path(tmp_path)
+    kept = note_factory(
+        id=_NOTE_ID, rel_path="projects/kept.md", frontmatter={"confidence": "high"}
+    )
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    await store.upsert_note(kept, [chunk_factory(note=kept, content="downgradeanchor kept")])
+    await store.close()
+
+    # Simulate the older release: it knows neither table nor column, so it writes a note
+    # row and its chunks without pairs and without context, leaving ours untouched.
+    stale = note_factory(
+        id=_OTHER_NOTE_ID, rel_path="projects/added.md", frontmatter={"confidence": "low"}
+    )
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute(
+            "INSERT INTO notes (note_id, rel_path, title, frontmatter_json, content_hash,"
+            " created, updated, indexed_at, fs_mtime, tags_json, sort_key)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', ?);",
+            (
+                stale.id,
+                stale.rel_path,
+                "Added",
+                json.dumps({"confidence": "low"}),
+                "0" * 64,
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+                stale.rel_path,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO chunks_fts (chunk_id, note_id, note_rel_path, header_path,"
+            " section_title, chunk_type, content, ordinal, content_hash, token_count,"
+            " line_start, line_end, wikilinks_out_json, lang, context)"
+            " VALUES (?, ?, ?, 'Added', NULL, 'narrative', ?, 0, ?, 4, 1, 1, '[]', NULL, NULL);",
+            (
+                f"{stale.id}::added::0000",
+                stale.id,
+                stale.rel_path,
+                "downgradeanchor added",
+                "0" * 64,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    reopened = SQLiteFTS5Store()
+    await reopened.open(db_path)
+    try:
+        assert _paths(
+            await reopened.search("downgradeanchor", frontmatter={"confidence": "low"})
+        ) == ["projects/added.md"]
+        assert _paths(
+            await reopened.search("downgradeanchor", frontmatter={"confidence": "high"})
+        ) == ["projects/kept.md"]
+        # The repaired chunk is reachable by its title, which needs the context column.
+        assert _paths(await reopened.search("added")) == ["projects/added.md"]
+    finally:
+        await reopened.close()
+
+    connection = sqlite3.connect(db_path)
+    try:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM chunks_fts WHERE context IS NULL OR context = '';"
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM index_meta WHERE key = 'frontmatter_pairs_backfilled';"
+        ).fetchone() == (0,)
+    finally:
+        connection.close()
+
+
+async def test_upsert_clears_the_pairs_of_a_replaced_identity(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    store = SQLiteFTS5Store()
+    db_path = _db_path(tmp_path)
+    await store.open(db_path)
+    try:
+        first = note_factory(
+            id=_NOTE_ID, rel_path="items/one.md", frontmatter={"confidence": "high"}
+        )
+        await store.upsert_note(first, [chunk_factory(note=first, content="identityanchor")])
+        reidentified = note_factory(
+            id=_OTHER_NOTE_ID, rel_path="items/one.md", frontmatter={"confidence": "low"}
+        )
+        await store.upsert_note(
+            reidentified, [chunk_factory(note=reidentified, content="identityanchor")]
+        )
+        assert (
+            _paths(await store.search("identityanchor", frontmatter={"confidence": "high"})) == []
+        )
+    finally:
+        await store.close()
+
+    connection = sqlite3.connect(db_path)
+    try:
+        assert connection.execute("SELECT note_id, value FROM note_frontmatter;").fetchall() == [
+            (_OTHER_NOTE_ID, "low")
+        ]
+    finally:
+        connection.close()
+
+
+async def test_count_matches_by_note_ignores_the_result_limit(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    many = note_factory(id=_NOTE_ID, rel_path="projects/many.md", title="Many")
+    one = note_factory(id=_OTHER_NOTE_ID, rel_path="projects/one.md", title="One")
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+    try:
+        await store.upsert_note(
+            many,
+            [
+                chunk_factory(
+                    note=many,
+                    chunk_id=f"{many.id}::s::{index:04d}",
+                    header_path=f"Section {index}",
+                    content=f"countanchor section {index}",
+                    ordinal=index,
+                )
+                for index in range(12)
+            ],
+        )
+        await store.upsert_note(one, [chunk_factory(note=one, content="countanchor once")])
+
+        assert len(await store.search("countanchor", limit=3)) == 3
+        counts = await store.count_matches_by_note("countanchor", [many.id, one.id])
+        assert counts == {many.id: 12, one.id: 1}
+        # The scope of the search applies to the count too.
+        assert await store.count_matches_by_note(
+            "countanchor", [many.id, one.id], folder="projects"
+        ) == {many.id: 12, one.id: 1}
+        assert (
+            await store.count_matches_by_note("countanchor", [many.id, one.id], folder="elsewhere")
+            == {}
+        )
+        assert await store.count_matches_by_note("countanchor", []) == {}
+        assert await store.count_matches_by_note("", [many.id]) == {}
+    finally:
+        await store.close()

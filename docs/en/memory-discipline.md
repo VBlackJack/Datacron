@@ -1,5 +1,7 @@
 # Memory discipline and daily follow-up
 
+**English** | [Français](../fr/memory-discipline.md)
+
 Datacron distributes one versioned memory contract through server instructions and supported
 client files. The contract covers session orientation, continuous capture, people, projects,
 meetings, professional objectives, waiting-for replies, handovers and closure.
@@ -16,7 +18,8 @@ live source hashes, excerpts and continuation offsets. Optional subject search r
 existing index without repairing it; candidates are not exhaustive. No subject means only
 configured and explicit paths are read. Objective/review have no automatic taxonomy filter;
 project/people/meeting candidates use their existing memory tags, and the subject search is
-scoped to that tag before the candidate bound applies. Supply known paths when labels differ. Missing or denied notes increase `unavailable` without exposing their content.
+scoped to that tag before the candidate bound applies. Supply known paths when labels
+differ. Missing or denied notes increase `unavailable` without exposing their content.
 
 `max_tokens` is capped by `DATACRON_MAX_RESULT_TOKENS`. The whole JSON payload is bounded
 using four characters per token, including escaping and metadata. Optional sources are omitted

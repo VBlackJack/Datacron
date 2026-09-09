@@ -154,6 +154,21 @@ class FTS5Store(Protocol):
         """
         ...
 
+    async def count_matches_by_note(
+        self,
+        query: str,
+        note_ids: Sequence[str],
+        *,
+        folder: str | None = None,
+        tags: Sequence[str] | None = None,
+        frontmatter: Mapping[str, str] | None = None,
+    ) -> dict[str, int]:
+        """Return matching chunk counts per note, unbounded by any result limit.
+
+        Notes with no match are absent from the mapping rather than mapped to zero.
+        """
+        ...
+
     async def get_chunk(self, chunk_id: str) -> Chunk | None:
         """Lookup a single chunk by id, or ``None`` if absent."""
         ...

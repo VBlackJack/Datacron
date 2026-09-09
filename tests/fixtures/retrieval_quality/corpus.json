@@ -57,16 +57,6 @@
     "frontmatter": {}
   },
   {
-    "path": "public/context-4.md",
-    "body": "# Retention context 4\n\nRetentionpolicy context reference 4.\n",
-    "frontmatter": {}
-  },
-  {
-    "path": "public/context-5.md",
-    "body": "# Retention context 5\n\nRetentionpolicy context reference 5.\n",
-    "frontmatter": {}
-  },
-  {
     "path": "private/restricted.md",
     "body": "# Restricted\n\nRestrictedmarker private credentials instructions.\n",
     "frontmatter": {}
@@ -156,11 +146,6 @@
   {
     "path": "public/vpn-context-3.md",
     "body": "# VPN context 3\n\nVpnaccess context reference 3.\n",
-    "frontmatter": {}
-  },
-  {
-    "path": "public/vpn-context-4.md",
-    "body": "# VPN context 4\n\nVpnaccess context reference 4.\n",
     "frontmatter": {}
   }
 ]

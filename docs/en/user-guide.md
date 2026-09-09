@@ -115,8 +115,9 @@ applies nothing. `apply_organization_manifest` is what applies, and only after v
   same rules as `list_notes` (folder prefix, every tag present, case-insensitive top-level
   frontmatter). The response repeats the filters it applied under `filters`.
 - **Grouping**: `group_by_note=true` keeps only the best-ranked chunk of each note and adds
-  `note_matches`, the number of chunks of that note that matched. Use it when you want to
-  know which notes to open rather than every matching passage.
+  `note_matches`, the number of chunks of that note that matched. That count describes the
+  note, so it does not shrink when you ask for fewer results. Use it when you want to know
+  which notes to open rather than every matching passage.
 - **Excerpts**: the snippet comes from the chunk body; when only the note title or a heading
   matched, the excerpt shows that title or heading trail instead of an unrelated first line.
 - **FR↔EN query expansion** configured in `VAULT.yaml`: for example "sauvegarde" also

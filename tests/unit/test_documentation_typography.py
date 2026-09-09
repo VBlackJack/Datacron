@@ -24,6 +24,7 @@ The mapping only improves the failure message; it never grants permission.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Final
@@ -92,4 +93,51 @@ def test_documentation_scan_reaches_nested_directories() -> None:
 
 def test_documentation_uses_ascii_punctuation() -> None:
     findings = [finding for path in _markdown_files() for finding in _violations(path)]
+    assert not findings, "\n".join(findings)
+
+
+# Removing a banned character can damage a sentence, and a scan for banned code points is
+# blind to exactly that: an em dash rewritten as a bare hyphen glues a clause to the word
+# before it. The conjunction must keep its space, so a hyphen may not sit against one.
+_GLUED_CLAUSE: Final[re.Pattern[str]] = re.compile(
+    r"[^\W\d_]-(?:or|and|as|but|so|then|ou|et|mais|donc)\s"
+)
+
+
+def _language_pairs() -> list[tuple[Path, Path]]:
+    english = _REPO_ROOT / "docs" / "en"
+    french = _REPO_ROOT / "docs" / "fr"
+    return [(page, french / page.name) for page in sorted(english.glob("*.md"))]
+
+
+def test_documentation_keeps_clauses_apart_from_their_conjunction() -> None:
+    findings: list[str] = []
+    for path in _markdown_files():
+        relative = path.relative_to(_REPO_ROOT).as_posix()
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            findings.extend(
+                f"{relative}:{number}: {match.group(0)!r} -> write ' - {match.group(0)[2:]}'"
+                for match in _GLUED_CLAUSE.finditer(line)
+            )
+    assert not findings, "\n".join(findings)
+
+
+def test_every_public_page_links_to_its_translation() -> None:
+    pairs = _language_pairs()
+    assert pairs, "no English documentation page was found"
+    findings: list[str] = []
+    for english, french in pairs:
+        if not french.is_file():
+            findings.append(f"docs/fr/{english.name} is missing")
+            continue
+        if f"(../fr/{english.name})" not in english.read_text(encoding="utf-8"):
+            findings.append(f"docs/en/{english.name} does not link to its translation")
+        if f"(../en/{english.name})" not in french.read_text(encoding="utf-8"):
+            findings.append(f"docs/fr/{french.name} does not link to its translation")
+    orphans = sorted(
+        page.name
+        for page in (_REPO_ROOT / "docs" / "fr").glob("*.md")
+        if not (_REPO_ROOT / "docs" / "en" / page.name).is_file()
+    )
+    findings.extend(f"docs/fr/{name} has no English counterpart" for name in orphans)
     assert not findings, "\n".join(findings)

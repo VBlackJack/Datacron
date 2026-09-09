@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -1010,5 +1011,88 @@ async def test_search_text_groups_results_by_note_on_request(tmp_vault: Path) ->
         bounded = await _search_text_impl(app, query=_GROUP_ANCHOR, limit=1, group_by_note=True)
         assert bounded["returned"] == 1
         assert bounded["limit_applied"] == 1
+    finally:
+        await store.close()
+
+
+_LEAK_TITLE_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXG"
+_LEAK_HEADING_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXH"
+_LEAK_MARKER: Final[str] = "Sup3rSecretValue"
+
+
+async def _open_search_app(tmp_vault: Path) -> tuple[DatacronApp, SQLiteFTS5Store]:
+    settings = Settings(
+        read_paths=[tmp_vault],
+        vault_root=tmp_vault,
+        max_result_count=20,
+        max_result_tokens=8000,
+    )
+    store = SQLiteFTS5Store()
+    await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+    app = build_app(settings=settings, vault_root=tmp_vault, chunker=MarkdownChunker(), store=store)
+    return app, store
+
+
+@pytest.mark.asyncio
+async def test_search_text_redacts_a_secret_carried_by_a_title_or_heading(
+    tmp_vault: Path,
+) -> None:
+    """A context excerpt has no chunk body to compare against, so it needs its own guard."""
+    _write_temporal_note(
+        tmp_vault,
+        rel_path="runbook.md",
+        note_id=_LEAK_TITLE_ID,
+        title=f"Gateway runbook password: {_LEAK_MARKER}",
+        confidence="high",
+        supersedes=[],
+        body="Restart the service and check the expiry date.\n",
+    )
+    _write_temporal_note(
+        tmp_vault,
+        rel_path="recovery.md",
+        note_id=_LEAK_HEADING_ID,
+        title="Recovery guide",
+        confidence="high",
+        supersedes=[],
+        body=(
+            f"## Recovery password: {_LEAK_MARKER}\n\nSteps follow.\n\n"
+            "## Rollout\n\nUnrelated prose here.\n"
+        ),
+    )
+    app, store = await _open_search_app(tmp_vault)
+    try:
+        result = await _search_text_impl(app, query="password", limit=10)
+        assert result["returned"] > 0
+        assert _LEAK_MARKER not in json.dumps(result)
+        assert "[REDACTED]" in json.dumps(result["results"])
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_note_matches_is_not_capped_by_the_overfetch_window(tmp_vault: Path) -> None:
+    sections = "\n\n".join(
+        f"## Section {index}\n\nwindowanchor body {index}." for index in range(12)
+    )
+    _write_temporal_note(
+        tmp_vault,
+        rel_path="projects/many.md",
+        note_id=_SCOPE_PROJECT_ID,
+        title="Many sections",
+        confidence="high",
+        supersedes=[],
+        body=f"{sections}\n",
+    )
+    app, store = await _open_search_app(tmp_vault)
+    try:
+        counts = {}
+        for limit in (1, 2, 5, 20):
+            payload = await _search_text_impl(
+                app, query="windowanchor", limit=limit, group_by_note=True
+            )
+            assert payload["returned"] == 1
+            counts[limit] = payload["results"][0]["note_matches"]
+        # The count describes the note, so it cannot move with the caller's limit.
+        assert set(counts.values()) == {12}, counts
     finally:
         await store.close()

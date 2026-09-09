@@ -80,37 +80,17 @@ async def _search_text_impl(
         return _error_response("search_text", exc, started, query=query, folder=folder)
     filters = _search_filters(folder=scope_folder, tags=tags, frontmatter=frontmatter)
     try:
-        stage_started = time.perf_counter()
-        repair = await _repair_index_on_read(app)
-        timings_ms["repair"] = _elapsed_ms(stage_started)
-
-        stage_started = time.perf_counter()
-        raw_results = await app.store.search(
-            cleaned,
-            limit=bounded_limit * TEMPORAL_OVERFETCH_FACTOR,
+        raw_results, note_matches, repair = await _retrieve_ranked_results(
+            app,
+            query=cleaned,
+            bounded_limit=bounded_limit,
+            include_superseded=include_superseded,
             folder=scope_folder,
             tags=tags,
             frontmatter=frontmatter,
+            group_by_note=group_by_note,
+            timings_ms=timings_ms,
         )
-        timings_ms["fts"] = _elapsed_ms(stage_started)
-
-        stage_started = time.perf_counter()
-        temporal_meta = await app.store.list_temporal_metadata()
-        timings_ms["temporal_metadata"] = _elapsed_ms(stage_started)
-
-        stage_started = time.perf_counter()
-        raw_results = _filter_admitted_results(app, raw_results)
-        ranked = rerank_temporal(
-            raw_results,
-            temporal_meta,
-            include_superseded=include_superseded,
-        )
-        note_matches: dict[str, int] = {}
-        if group_by_note:
-            ranked, note_matches = _collapse_by_note(ranked)
-        raw_results = ranked[:bounded_limit]
-        timings_ms["rerank"] = _elapsed_ms(stage_started)
-        raw_results = await protect_results(app, raw_results)
     except Exception:
         return _internal_error_response("search_text", started, query=query)
 
@@ -180,22 +160,81 @@ def _authorized_search_folder(app: DatacronApp, folder: str | None) -> str | Non
     return None if relative.name == "" else relative.as_posix()
 
 
-def _collapse_by_note(
-    results: list[SearchResult],
-) -> tuple[list[SearchResult], dict[str, int]]:
-    """Keep the best-ranked chunk of every note, counting how many chunks it had.
+async def _retrieve_ranked_results(
+    app: DatacronApp,
+    *,
+    query: str,
+    bounded_limit: int,
+    include_superseded: bool,
+    folder: str | None,
+    tags: list[str] | None,
+    frontmatter: dict[str, str] | None,
+    group_by_note: bool,
+    timings_ms: dict[str, float],
+) -> tuple[list[SearchResult], dict[str, int], ReconcileStats]:
+    """Repair, search, re-rank, optionally collapse by note, and redact, with timings."""
+    stage_started = time.perf_counter()
+    repair = await _repair_index_on_read(app)
+    timings_ms["repair"] = _elapsed_ms(stage_started)
 
-    ``results`` is already ranked; the first chunk seen for a note is its best one and
-    the relative order of notes is preserved.
+    stage_started = time.perf_counter()
+    hits = await app.store.search(
+        query,
+        limit=bounded_limit * TEMPORAL_OVERFETCH_FACTOR,
+        folder=folder,
+        tags=tags,
+        frontmatter=frontmatter,
+    )
+    timings_ms["fts"] = _elapsed_ms(stage_started)
+
+    stage_started = time.perf_counter()
+    temporal_meta = await app.store.list_temporal_metadata()
+    timings_ms["temporal_metadata"] = _elapsed_ms(stage_started)
+
+    stage_started = time.perf_counter()
+    ranked = rerank_temporal(
+        _filter_admitted_results(app, hits),
+        temporal_meta,
+        include_superseded=include_superseded,
+    )
+    if group_by_note:
+        ranked = _collapse_by_note(ranked)
+    results = ranked[:bounded_limit]
+    timings_ms["rerank"] = _elapsed_ms(stage_started)
+
+    note_matches: dict[str, int] = {}
+    if group_by_note and results:
+        # Counting the ranked rows would only ever count the overfetch window, so a note
+        # with more matching sections than that window holds would under-report itself.
+        stage_started = time.perf_counter()
+        note_matches = await app.store.count_matches_by_note(
+            query,
+            [result.chunk.note_id for result in results],
+            folder=folder,
+            tags=tags,
+            frontmatter=frontmatter,
+        )
+        timings_ms["note_matches"] = _elapsed_ms(stage_started)
+
+    return await protect_results(app, results), note_matches, repair
+
+
+def _collapse_by_note(results: list[SearchResult]) -> list[SearchResult]:
+    """Keep the best-ranked chunk of every note, preserving the order of notes.
+
+    ``results`` is already ranked, so the first chunk seen for a note is its best one.
+    The count of matching chunks is asked of the store separately, because this list is
+    the truncated overfetch window and not the note's full set of matches.
     """
     collapsed: list[SearchResult] = []
-    matches: dict[str, int] = {}
+    seen: set[str] = set()
     for result in results:
         note_id = result.chunk.note_id
-        if note_id not in matches:
-            collapsed.append(result)
-        matches[note_id] = matches.get(note_id, 0) + 1
-    return collapsed, matches
+        if note_id in seen:
+            continue
+        seen.add(note_id)
+        collapsed.append(result)
+    return collapsed
 
 
 def _search_filters(

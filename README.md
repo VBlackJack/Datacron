@@ -352,7 +352,8 @@ MCP resources:
 - optional scope: `folder`, `tags`, and `frontmatter` narrow the searched notes with the
   same semantics as `list_notes`; the response echoes the filters actually applied
 - optional grouping: `group_by_note=true` keeps the best chunk of each note and reports how
-  many chunks matched, which cuts the returned tokens by about a third on the eval corpus
+  many of its chunks matched, which cuts the returned tokens by about 40 percent on the eval
+  corpus
 
 `search_regex` stays literal: it applies neither query expansion nor temporal re-rank.
 
