@@ -15,7 +15,8 @@ Le retour contient le contrat complet (ID/version/hash), la capacité globale d'
 les sources courantes avec hashes, extraits et offsets de continuation. La recherche optionnelle
 consulte l'index existant sans le réparer ; elle ne garantit pas l'exhaustivité. Sans sujet,
 seuls les chemins configurés et explicites sont lus. Les domaines project/people/meeting
-filtrent les candidats par leurs tags existants ; objective/review n'ajoutent pas de filtre.
+filtrent les candidats par leurs tags existants, et la recherche de sujet est restreinte à ce
+tag avant la borne de candidats ; objective/review n'ajoutent pas de filtre.
 Les notes manquantes ou refusées augmentent `unavailable` sans exposer leur contenu.
 
 Tout le JSON respecte le budget estimé de quatre caractères par token, plafonné par

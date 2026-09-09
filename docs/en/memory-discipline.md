@@ -15,8 +15,8 @@ The result contains the complete contract ID/version/hash, effective global writ
 live source hashes, excerpts and continuation offsets. Optional subject search reads the
 existing index without repairing it; candidates are not exhaustive. No subject means only
 configured and explicit paths are read. Objective/review have no automatic taxonomy filter;
-project/people/meeting candidates use their existing memory tags. Supply known paths when
-labels differ. Missing or denied notes increase `unavailable` without exposing their content.
+project/people/meeting candidates use their existing memory tags, and the subject search is
+scoped to that tag before the candidate bound applies. Supply known paths when labels differ. Missing or denied notes increase `unavailable` without exposing their content.
 
 `max_tokens` is capped by `DATACRON_MAX_RESULT_TOKENS`. The whole JSON payload is bounded
 using four characters per token, including escaping and metadata. Optional sources are omitted

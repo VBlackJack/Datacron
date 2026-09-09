@@ -452,3 +452,29 @@ async def test_public_error_respects_retrieval_redaction_policy(
     error = json.loads(result.content[0].text)["error"]
     assert error["code"] == "note_not_admitted"
     assert (value not in error["message"]) == (policy in {"all", "retrieval"})
+
+
+async def test_subject_search_is_scoped_by_domain_before_the_candidate_bound(
+    memory_app: DatacronApp,
+) -> None:
+    """Notes outside the domain must not consume the bounded candidate list."""
+    app = memory_app
+    crowd = app.settings.max_result_count + 5
+    for index in range(crowd):
+        _note(
+            app.vault_root,
+            f"projects/alex-{index:02d}.md",
+            f"01J000000000000000000001{index:02d}",
+            f"# Alex project {index}\n\nAlex Alex Alex works on project {index}.\n",
+            ["memory/project"],
+        )
+    await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=False)
+
+    people = await _call(app, "session_context", subject="Alex", domain="people")
+    assert [source["id"] for source in people["sources"]] == [_PERSON]
+    assert people["coverage"] == "ranked_candidates_not_exhaustive"
+
+    projects = await _call(app, "session_context", subject="Alex", domain="project")
+    assert projects["sources"]
+    assert all(source["id"] != _PERSON for source in projects["sources"])
+    assert all(source["rel_path"].startswith("projects/") for source in projects["sources"])

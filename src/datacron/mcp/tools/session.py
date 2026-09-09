@@ -25,6 +25,7 @@ from datacron.core.memory_protocol import (
     CONTRACT_ID,
     CONTRACT_TEXT,
     CONTRACT_VERSION,
+    SESSION_DOMAIN_TAGS,
     SESSION_MAX_NOTES,
     SESSION_MIN_TOKENS,
     SESSION_SUBJECT_CHARS,
@@ -38,11 +39,6 @@ if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
 SessionDomain = Literal["all", "project", "people", "meeting", "objective", "review"]
-_DOMAIN_TAGS = {
-    "project": "memory/project",
-    "people": "memory/contact",
-    "meeting": "memory/session",
-}
 
 
 async def session_context(
@@ -96,7 +92,14 @@ async def session_context(
         paths = list(dict.fromkeys([*app.settings.session_context_paths, *(note_paths or [])]))
         if subject and subject.strip():
             # The store tokenizes plain text and implements its own AND/OR fallback.
-            hits = await app.store.search(subject, limit=app.settings.max_result_count)
+            # Scoping by the domain tag keeps the bounded candidate list from being
+            # consumed by notes that the domain filter would discard afterwards.
+            domain_tag = SESSION_DOMAIN_TAGS.get(domain)
+            hits = await app.store.search(
+                subject,
+                limit=app.settings.max_result_count,
+                tags=[domain_tag] if domain_tag else None,
+            )
             for hit in hits:
                 if hit.chunk.note_rel_path not in paths and app.scope.allows_note_rel_path(
                     hit.chunk.note_rel_path
@@ -149,7 +152,7 @@ async def _load_sources(
             result["unavailable"] += 1
             continue
         if path not in app.settings.session_context_paths and path not in (note_paths or []):
-            tag = _DOMAIN_TAGS.get(domain)
+            tag = SESSION_DOMAIN_TAGS.get(domain)
             if tag and tag not in note.tags:
                 continue
         if "memory/contact" in note.tags:

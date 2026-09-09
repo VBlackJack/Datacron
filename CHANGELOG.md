@@ -14,15 +14,22 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - `search_text` accepts `folder`, `tags`, and `frontmatter` scope filters with the
   `list_notes` semantics, and echoes the filters it applied. The OR fallback for multi-term
   queries honours the same scope.
+- The retrieval corpus grows from 32 to 44 questions with hard cases: title against passing
+  mentions, heading-only matches, duplicate section titles, bilingual queries, backlog and
+  archive distractors, and an `invalid_at` note behind its replacement. The integration gate
+  now requires note recall@5 of 0.99, MRR of 0.96 and nDCG@10 of 0.97.
 
 ### Changed
+
+- `session_context` scopes its subject search to the domain tag, so project, people and
+  meeting candidates are no longer crowded out by notes the domain filter discards.
 
 - The FTS index carries a `context` column holding the note title and heading trail of each
   chunk, weighted three times the chunk body in BM25 scoring. A writable open migrates a
   legacy index in place, preserving chunk identities and hashes; a certified read-only open
   keeps searching a legacy index with unweighted scoring until it is rebuilt.
-- On the versioned retrieval corpus, note recall@5 moves from 0.958 to 1.0 and MRR from
-  0.944 to 0.979.
+- On the enriched retrieval corpus, note recall@5 moves from 0.972 to 1.0, MRR from 0.921 to
+  0.972 and nDCG@10 from 0.940 to 0.981.
 
 ### Fixed
 

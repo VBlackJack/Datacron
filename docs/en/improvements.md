@@ -69,8 +69,13 @@ mixed endings retain the existing dominant-EOL normalization policy.
 
 ## Reproducible evaluation and delivery
 
-`tests/fixtures/retrieval_quality/` contains a synthetic corpus and 32 questions: English,
-French, ambiguous and disambiguated queries, freshness, excluded paths and missing answers.
+`tests/fixtures/retrieval_quality/` contains a synthetic corpus and 44 questions: English,
+French, ambiguous and disambiguated queries, freshness, excluded paths and missing answers,
+plus hard cases: a note titled after the subject against passing mentions, a section heading
+never repeated in its body, the same heading in two project notes, bilingual queries without
+configured expansion, a backlog index and an archive note repeating the subject, and an
+`invalid_at` note behind its replacement. One distractor case is expected to stay imperfect
+until archive demotion exists; it documents that gap rather than hiding it.
 `expected_empty: true` cannot coexist with expected paths/chunks. Empty cases have a separate
 `empty_accuracy`, and are excluded from aggregate positive recall, MRR, nDCG and precision.
 Per-question results retain categories, latency and payload tokens. Baseline comparisons reject
@@ -120,6 +125,12 @@ existing `chunk_id` references, CAS hashes and follow-up projections stay valid.
 read-only open never migrates: it detects the missing column and keeps serving unweighted BM25
 until `datacron reindex` rebuilds the index.
 
-On the versioned retrieval corpus (32 questions, tool pipeline), the change moves note
-recall@5 from 0.958 to 1.0, MRR from 0.944 to 0.979 and nDCG@10 from 0.957 to 0.985, with
-empty-answer accuracy and forbidden-path violations unchanged at 1.0 and 0.
+On the versioned retrieval corpus (44 questions, tool pipeline), the change moves note
+recall@5 from 0.972 to 1.0, MRR from 0.921 to 0.972 and nDCG@10 from 0.940 to 0.981, with
+empty-answer accuracy and forbidden-path violations unchanged at 1.0 and 0. The integration
+test now fails below recall@5 0.99, MRR 0.96 or nDCG@10 0.97, so a ranking regression cannot
+pass silently.
+
+`session_context` applies the same scope to its subject search: when a domain maps to a memory
+tag, the bounded candidate list is built only from notes carrying that tag, instead of being
+filled by notes the domain filter would discard afterwards.

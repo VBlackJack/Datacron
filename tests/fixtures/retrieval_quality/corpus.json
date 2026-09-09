@@ -70,5 +70,97 @@
     "path": "private/restricted.md",
     "body": "# Restricted\n\nRestrictedmarker private credentials instructions.\n",
     "frontmatter": {}
+  },
+  {
+    "path": "public/kafka-migration.md",
+    "body": "# Kafka migration\n\nBroker topics partitions replication factor consumer groups offsets.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/platform-notes.md",
+    "body": "# Platform notes\n\nKafka cluster restarted. Kafka lag observed. Kafka alert silenced. Grafana dashboards updated, kafka mentioned in passing.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/runbook.md",
+    "body": "# Operations runbook\n\n## Certificate renewal\n\nRun the script, check the expiry date, restart the service.\n\n## Disk cleanup\n\nRemove temporary files and rotate the oldest snapshots.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/projects/alpha.md",
+    "body": "# Project Alpha\n\n## Status\n\nDeployment finished, validation pending on the alpha environment.\n\n## Decisions\n\nKeep the single-writer rule for alpha.\n",
+    "frontmatter": {
+      "tags": [
+        "memory/project"
+      ]
+    }
+  },
+  {
+    "path": "public/projects/beta.md",
+    "body": "# Project Beta\n\n## Status\n\nDeployment blocked, waiting for the beta certificate.\n\n## Decisions\n\nBeta ships after alpha.\n",
+    "frontmatter": {
+      "tags": [
+        "memory/project"
+      ]
+    }
+  },
+  {
+    "path": "public/backlog.md",
+    "body": "# Backlog index\n\n## Active\n\n#### BL-0001\n\n**Project**: alpha\n**Status**: OPEN\n\n#### BL-0002\n\n**Project**: beta\n**Status**: DONE\n\n#### BL-0003\n\n**Project**: alpha\n**Status**: PARKED\n",
+    "frontmatter": {
+      "tags": [
+        "memory/meta"
+      ]
+    }
+  },
+  {
+    "path": "public/archive/alpha-part-04.md",
+    "body": "# Split archive alpha part 04\n\nAlpha backlog delta: alpha backlog 131 closed, alpha backlog 14 partial, alpha backlog 5 open. Backlog not modified. Alpha alpha alpha.\n",
+    "frontmatter": {
+      "tags": [
+        "memory/archive"
+      ]
+    }
+  },
+  {
+    "path": "public/vpn.md",
+    "body": "# VPN access\n\nVpnaccess procedure current gateway approved.\n",
+    "frontmatter": {
+      "id": "01J00000000000000000000091"
+    }
+  },
+  {
+    "path": "public/legacy-vpn.md",
+    "body": "# VPN access\n\nVpnaccess procedure legacy gateway decommissioned.\n",
+    "frontmatter": {
+      "id": "01J00000000000000000000092",
+      "invalid_at": "2026-01-01T00:00:00+00:00",
+      "invalidated_by": "01J00000000000000000000091"
+    }
+  },
+  {
+    "path": "public/vpn-context-0.md",
+    "body": "# VPN context 0\n\nVpnaccess context reference 0.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/vpn-context-1.md",
+    "body": "# VPN context 1\n\nVpnaccess context reference 1.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/vpn-context-2.md",
+    "body": "# VPN context 2\n\nVpnaccess context reference 2.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/vpn-context-3.md",
+    "body": "# VPN context 3\n\nVpnaccess context reference 3.\n",
+    "frontmatter": {}
+  },
+  {
+    "path": "public/vpn-context-4.md",
+    "body": "# VPN context 4\n\nVpnaccess context reference 4.\n",
+    "frontmatter": {}
   }
 ]

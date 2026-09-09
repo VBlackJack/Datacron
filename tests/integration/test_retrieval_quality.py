@@ -55,17 +55,20 @@ async def test_versioned_quality_corpus(tmp_path: Path) -> None:
             app,
             render=False,
         )
-        assert report.summary.question_count == 32
+        assert report.summary.question_count == 44
         assert report.summary.empty_accuracy == 1.0
         assert report.summary.forbidden_violation_rate == 0.0, [
             result.model_dump() for result in report.results if result.forbidden_violation
         ]
-        assert report.summary.note_recall_at_k[5] >= 0.95, [
+        # Thresholds sit just under the measured values so a ranking regression fails
+        # here instead of passing silently; the previous baseline scored 0.972 / 0.921 / 0.940.
+        assert report.summary.note_recall_at_k[5] >= 0.99, [
             result.model_dump()
             for result in report.results
             if result.empty_correct is None and result.recall_at_k[5] < 1.0
         ]
-        assert report.summary.mrr >= 0.8
+        assert report.summary.mrr >= 0.96, report.summary.mrr
+        assert report.summary.ndcg_at_10 >= 0.97, report.summary.ndcg_at_10
         assert report.summary.total_tokens_returned > 0
         assert report.summary.latency_p95_ms > 0
     finally:

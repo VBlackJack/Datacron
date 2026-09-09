@@ -274,5 +274,111 @@
     "question": "absentasteroid",
     "expected_paths": [],
     "expected_empty": true
+  },
+  {
+    "id": "title-33",
+    "category": "title",
+    "question": "kafka migration",
+    "expected_paths": [
+      "public/kafka-migration.md"
+    ]
+  },
+  {
+    "id": "title-34",
+    "category": "title",
+    "question": "kafka",
+    "expected_paths": [
+      "public/kafka-migration.md",
+      "public/platform-notes.md"
+    ]
+  },
+  {
+    "id": "heading-35",
+    "category": "heading",
+    "question": "certificate renewal runbook",
+    "expected_paths": [
+      "public/runbook.md"
+    ]
+  },
+  {
+    "id": "heading-36",
+    "category": "heading",
+    "question": "disk cleanup",
+    "expected_paths": [
+      "public/runbook.md"
+    ]
+  },
+  {
+    "id": "duplicate-section-37",
+    "category": "duplicate-section",
+    "question": "alpha status",
+    "expected_paths": [
+      "public/projects/alpha.md"
+    ]
+  },
+  {
+    "id": "duplicate-section-38",
+    "category": "duplicate-section",
+    "question": "beta status deployment",
+    "expected_paths": [
+      "public/projects/beta.md"
+    ]
+  },
+  {
+    "id": "mixed-39",
+    "category": "mixed",
+    "question": "backup quotidienne",
+    "expected_paths": [
+      "public/backup.md",
+      "public/sauvegarde.md"
+    ]
+  },
+  {
+    "id": "mixed-40",
+    "category": "mixed",
+    "question": "sauvegarde nightly",
+    "expected_paths": [
+      "public/backup.md",
+      "public/sauvegarde.md"
+    ]
+  },
+  {
+    "id": "distractor-41",
+    "category": "distractor",
+    "question": "alpha backlog",
+    "expected_paths": [
+      "public/projects/alpha.md",
+      "public/backlog.md"
+    ]
+  },
+  {
+    "id": "distractor-42",
+    "category": "distractor",
+    "question": "project alpha",
+    "expected_paths": [
+      "public/projects/alpha.md"
+    ]
+  },
+  {
+    "id": "invalidated-43",
+    "category": "invalidated",
+    "question": "vpnaccess procedure",
+    "expected_paths": [
+      "public/vpn.md"
+    ],
+    "forbidden_paths": [
+      "public/legacy-vpn.md"
+    ]
+  },
+  {
+    "id": "invalidated-44",
+    "category": "invalidated",
+    "question": "vpnaccess gateway",
+    "expected_paths": [
+      "public/vpn.md"
+    ],
+    "forbidden_paths": [
+      "public/legacy-vpn.md"
+    ]
   }
 ]

@@ -25,6 +25,13 @@ SESSION_MAX_NOTES: Final[int] = 8
 SESSION_NOTE_CHARS: Final[int] = 2400
 SESSION_SUBJECT_CHARS: Final[int] = 256
 SESSION_MIN_TOKENS: Final[int] = 128
+# Tag that a note must carry to belong to a session domain; domains without an
+# entry ("all", "objective", "review") accept every admitted note.
+SESSION_DOMAIN_TAGS: Final[dict[str, str]] = {
+    "project": "memory/project",
+    "people": "memory/contact",
+    "meeting": "memory/session",
+}
 FOLLOW_UP_MAX_RECORDS: Final[int] = 20
 FOLLOW_UP_MAX_TEXT: Final[int] = 4000
 FOLLOW_UP_MARKER_PREFIX: Final[str] = "datacron-follow-up:"
