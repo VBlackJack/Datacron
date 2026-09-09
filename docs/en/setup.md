@@ -247,7 +247,9 @@ datacron protocol uninstall --client all
 | `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | Minimum interval between repair-on-read sweeps; `0` = every read. |
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | Budget for `get_note(format="full")`. |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | Target maximum chunk size. |
-| `DATACRON_RIPGREP_PATH` | `rg` | ripgrep binary. |
+| `DATACRON_RIPGREP_PATH` | `rg` | ripgrep binary. An absolute path is the reliable form: an MCP client does not pass its own PATH to the server it starts. |
+| `DATACRON_REGEX_FALLBACK_TIMEOUT_SECONDS` | `10.0` | Budget for one complete indexed fallback scan, used only when ripgrep is absent. |
+| `DATACRON_REGEX_FALLBACK_MAX_PATTERN_LENGTH` | `512` | Longest pattern the indexed fallback accepts. |
 | `DATACRON_TOOL_DESCRIPTION_PROFILE` | `standard` | Tool description profile: `standard` or opt-in `compact`. |
 
 Path lists use the OS separator: `:` on Unix, `;` on Windows.
@@ -378,6 +380,7 @@ and CI builds cannot bypass this check.
 |---|---|---|
 | `No vault root provided` | No `--vault`, no `DATACRON_VAULT_ROOT`, no `.datacron/VAULT.yaml` in the current folder. | Pass `--vault` or set `DATACRON_VAULT_ROOT`. |
 | `search_regex` fails | `ripgrep` not found. | Install `rg` or set `DATACRON_RIPGREP_PATH`. |
+| `regex fallback exceeded its advisory timeout` | ripgrep is absent and the indexed fallback ran out of budget, which a query matching nothing on a large vault can do. | Install ripgrep, or narrow `glob`, or raise `DATACRON_REGEX_FALLBACK_TIMEOUT_SECONDS`. `datacron status` names the backend in use. |
 | Write tools return an error | `DATACRON_WRITE_PATHS` empty (normal default behavior). | Set the write allowlist (section 8). |
 | `index: not built` in `status` | Index never built. | `datacron index --vault ...`. |
 | Claude Desktop does not see Datacron | Client not restarted after `mcp install`. | Restart Claude Desktop. |

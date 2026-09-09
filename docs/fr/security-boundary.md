@@ -127,8 +127,14 @@ marque les classes d'échec sur lesquelles il vaut la peine de brancher, pas tou
 Le manifeste fermé est `datacron.mcp.security_manifest.MCP_TOOL_CAPABILITIES`. La propriété
 bloquante sur la surface d'injection le compare au registre `MCPServer` vivant. La seule capacité
 adossée à un processus est `search_regex`, qui démarre l'exécutable ripgrep configuré avec des
-arguments de motif et de glob fournis explicitement par l'appelant. Aucun outil MCP ne fournit
-d'accès réseau, d'exécution de processus arbitraire, d'`eval` ni de dispatch dynamique d'outil.
+arguments de motif et de glob fournis explicitement par l'appelant. Quand cet exécutable ne peut
+pas être lancé, `search_regex` ne démarre aucun processus : il compile le motif fourni par
+l'appelant avec le module `re` de Python et l'évalue contre les corps de chunks indexés dans ce
+processus. Ce chemin refuse les motifs trop longs et les formes catastrophiques connues avant
+toute lecture de l'index, et borne le balayage par une échéance observée entre les lots confiés
+au thread de travail, mais c'est une garde best-effort et non un bac à sable : c'est la raison
+pour laquelle ripgrep reste le chemin supporté. Aucun outil MCP ne fournit d'accès réseau,
+d'exécution de processus arbitraire, d'`eval` ni de dispatch dynamique d'outil.
 
 La frontière serveur n'accède à aucun gestionnaire privé du SDK. Elle délègue à l'API publique
 `MCPServer.call_tool` puis traduit un nom d'outil inconnu en erreur JSON-RPC `-32602`. Une

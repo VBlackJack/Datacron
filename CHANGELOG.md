@@ -7,6 +7,52 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [2026.0909.01] - 2026-09-09
+
+### Fixed
+
+- `search_regex` no longer fails on every query when ripgrep is absent. The indexed
+  fallback used to build a list of every chunk in the vault inside its own deadline,
+  and to run the admission predicate once per chunk while doing so. Admission resolves
+  and stats a path, measured at 552 to 902 microseconds per call, so on a 94589-chunk
+  vault the 2.0s budget was gone after 2432 chunks and the scan never reached the
+  matching step. The glob filter, the `limit` early exit and the catastrophic-pattern
+  guard all sat downstream of that point and were therefore unreachable, which is why
+  a trivial literal failed exactly like a pathological one. The fallback now streams
+  the index, applies the cheap lexical glob first, matches in bounded worker batches,
+  and admits only the chunks whose body already matched, once per distinct note. A
+  query with matches stops at the first `limit` of them instead of paying for the whole
+  index.
+- A catastrophic regex is refused before the index is read, so the refusal is reported
+  as such instead of surfacing as a timeout on a large vault.
+- An explicit `rg_path` argument now outranks `DATACRON_RIPGREP_PATH`, matching the
+  precedence everywhere else in the settings, and a blank environment value falls
+  through to the default instead of blanking the command.
+- A ripgrep binary that exists but cannot be launched, such as a path that is not a
+  valid executable, now routes to the indexed fallback like an absent one. Only
+  `FileNotFoundError` was caught before.
+
+### Added
+
+- `datacron status` names the regex backend in use, `session_context` reports a
+  `regex_search_ripgrep` capability, and the server logs a warning at startup when
+  ripgrep cannot be resolved. A missing prerequisite was previously invisible until a
+  query failed, and the failure named a timeout rather than the absent binary. An MCP
+  client does not hand its own PATH to the server it starts, so a shell that finds `rg`
+  proves nothing about the server.
+- `DATACRON_REGEX_FALLBACK_TIMEOUT_SECONDS` and
+  `DATACRON_REGEX_FALLBACK_MAX_PATTERN_LENGTH` are documented. The fallback budget
+  default moves from 2.0s to 10.0s: a complete scan that matches nothing measures 1.7s
+  over 94589 chunks, and the headroom covers a cold cache and vault growth.
+- Regression coverage at scale. Every previous fallback test ran on three chunks, which
+  is how a glob and a limit that were unreachable in production stayed green in CI.
+
+### Changed
+
+- The documented security boundary now states that `search_regex` starts no process
+  when ripgrep is unavailable, and instead compiles and evaluates the caller's pattern
+  in-process against indexed chunk bodies.
+
 ## [2026.0909.00] - 2026-09-09
 
 ### Added

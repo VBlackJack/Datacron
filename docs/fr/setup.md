@@ -253,7 +253,9 @@ datacron protocol uninstall --client all
 | `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | Intervalle minimal entre les sweeps repair-on-read ; `0` = chaque lecture. |
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | Budget de `get_note(format="full")`. |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | Taille cible max des chunks. |
-| `DATACRON_RIPGREP_PATH` | `rg` | Binaire ripgrep. |
+| `DATACRON_RIPGREP_PATH` | `rg` | Binaire ripgrep. Un chemin absolu est la forme fiable : un client MCP ne transmet pas son propre PATH au serveur qu'il demarre. |
+| `DATACRON_REGEX_FALLBACK_TIMEOUT_SECONDS` | `10.0` | Budget d'un balayage complet du repli indexe, utilise seulement quand ripgrep est absent. |
+| `DATACRON_REGEX_FALLBACK_MAX_PATTERN_LENGTH` | `512` | Longueur maximale de motif acceptee par le repli indexe. |
 | `DATACRON_TOOL_DESCRIPTION_PROFILE` | `standard` | Profil de description : `standard` ou `compact` en opt-in. |
 
 Les listes de chemins utilisent le séparateur de l'OS : `:` sous Unix, `;` sous Windows.
@@ -389,6 +391,7 @@ contrôle.
 |---|---|---|
 | `No vault root provided` | Ni `--vault`, ni `DATACRON_VAULT_ROOT`, ni `.datacron/VAULT.yaml` dans le dossier courant. | Passe `--vault` ou définis `DATACRON_VAULT_ROOT`. |
 | `search_regex` échoue | `ripgrep` introuvable. | Installe `rg` ou définis `DATACRON_RIPGREP_PATH`. |
+| `regex fallback exceeded its advisory timeout` | ripgrep est absent et le repli indexé a épuisé son budget, ce qu'une requête sans aucune correspondance peut faire sur un vault volumineux. | Installe ripgrep, ou restreins `glob`, ou augmente `DATACRON_REGEX_FALLBACK_TIMEOUT_SECONDS`. `datacron status` nomme le backend utilisé. |
 | Les write tools renvoient une erreur | `DATACRON_WRITE_PATHS` vide (comportement normal par défaut). | Définis l'allowlist d'écriture (section 8). |
 | `index: not built` dans `status` | Index jamais construit. | `datacron index --vault ...`. |
 | Claude Desktop ne voit pas Datacron | Client non redémarré après `mcp install`. | Redémarre Claude Desktop. |
