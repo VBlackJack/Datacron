@@ -7,7 +7,7 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
-## [Unreleased]
+## [2026.0909.00] - 2026-09-09
 
 ### Added
 
