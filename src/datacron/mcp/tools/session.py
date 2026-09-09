@@ -32,6 +32,7 @@ from datacron.core.memory_protocol import (
 )
 from datacron.core.paths import PathConfinementError
 from datacron.core.scope import NoteAdmissionError
+from datacron.indexing.ripgrep import ripgrep_available
 from datacron.mcp.tools.payloads import _audit, _error_response, _internal_error_response
 from datacron.mcp.tools.read import _build_full_payload
 
@@ -70,6 +71,7 @@ async def session_context(
         "capabilities": {
             "writes_enabled": app.write_policy.effective_writes_enabled,
             "reminders_scheduled": False,
+            "regex_search_ripgrep": ripgrep_available(app.settings.ripgrep_path),
         },
         "evidence": "context_returned_not_behavior_verified",
         "sources": [],

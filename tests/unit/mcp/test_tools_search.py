@@ -17,7 +17,7 @@ from typing import Any, Final
 
 import pytest
 
-from datacron.core.config import Settings
+from datacron.core.config import DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS, Settings
 from datacron.core.durability import DurabilityStatus
 from datacron.core.frontmatter import serialize
 from datacron.core.models import SearchResult
@@ -653,7 +653,7 @@ class TestSearchRegex:
                 "limit": 20,
                 "rg_path": "rg",
                 "fallback_max_pattern_length": 512,
-                "fallback_timeout_seconds": 2.0,
+                "fallback_timeout_seconds": DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS,
             }
         ]  # limit bounded by max_result_count
 

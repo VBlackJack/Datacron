@@ -336,9 +336,21 @@ def build_app(
         )
     resolved_writer = ScopedVaultWriter(vault_writer, resolved_scope, write_policy)
     if ripgrep is None:
-        from datacron.indexing.ripgrep import RipgrepWrapper as _RipgrepWrapper  # noqa: PLC0415
+        from datacron.indexing.ripgrep import (  # noqa: PLC0415
+            RipgrepWrapper as _RipgrepWrapper,
+        )
+        from datacron.indexing.ripgrep import ripgrep_available  # noqa: PLC0415
 
         ripgrep = _RipgrepWrapper()
+        if not ripgrep_available(resolved_settings.ripgrep_path):
+            # An MCP client does not hand its own PATH to the server it starts, so
+            # this is routinely false on a host where an interactive shell finds rg.
+            _LOGGER.warning(
+                "ripgrep not found (%s): search_regex will use the slower indexed "
+                "fallback. Install ripgrep, or set DATACRON_RIPGREP_PATH to an "
+                "absolute path in the MCP client's env block.",
+                resolved_settings.ripgrep_path,
+            )
     return DatacronApp(
         settings=resolved_settings,
         vault_root=resolved_root,

@@ -26,6 +26,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from datacron.core.config import DEFAULT_RIPGREP_PATH, REGEX_FALLBACK_SCAN_BATCH_CHUNKS
 from datacron.core.models import Chunk, Note, SearchResult
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.ripgrep import (
@@ -35,6 +36,7 @@ from datacron.indexing.ripgrep import (
     RipgrepWrapper,
     _build_command,
     _read_frames,
+    _resolve_ripgrep_path,
 )
 
 NoteFactory = Callable[..., Note]
@@ -640,3 +642,294 @@ async def test_invalid_utf8_json_line_is_skipped(
 
     assert len(results) == 1
     assert any("undecodable" in message for message, _args in logger.info_calls)
+
+
+def _missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force the wrapper down the indexed fallback, as an absent rg does."""
+
+    async def _create(*_args: str, **_kwargs: object) -> _FakeProcess:
+        raise FileNotFoundError("missing")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _create)
+
+
+def _forbid_index_reads(monkeypatch: pytest.MonkeyPatch, fixture: _IndexedFixture) -> None:
+    """Make any index read an outright failure, to prove none happens."""
+
+    def _boom() -> AsyncIterator[Chunk]:
+        raise AssertionError("the index was read for a pattern that must be refused first")
+
+    monkeypatch.setattr(fixture.store, "iter_all_chunks", _boom)
+
+
+def _count_streamed(
+    monkeypatch: pytest.MonkeyPatch,
+    fixture: _IndexedFixture,
+) -> list[str]:
+    """Record every chunk the fallback pulls off the index, in order."""
+    streamed: list[str] = []
+    original = fixture.store.iter_all_chunks
+
+    async def _counting() -> AsyncIterator[Chunk]:
+        async for chunk in original():
+            streamed.append(chunk.chunk_id)
+            yield chunk
+
+    monkeypatch.setattr(fixture.store, "iter_all_chunks", _counting)
+    return streamed
+
+
+async def test_catastrophic_pattern_is_refused_before_the_index_is_read(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _missing_binary(monkeypatch)
+    _forbid_index_reads(monkeypatch, indexed)
+
+    with pytest.raises(RegexFallbackError, match="potentially catastrophic pattern"):
+        await RipgrepWrapper().search(
+            "(a+)+$",
+            indexed.vault_root,
+            store=indexed.store,
+            rg_path="missing-rg",
+        )
+
+
+async def test_over_length_pattern_is_refused_before_the_index_is_read(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _missing_binary(monkeypatch)
+    _forbid_index_reads(monkeypatch, indexed)
+
+    with pytest.raises(RegexFallbackError, match="exceeds 8 characters"):
+        await RipgrepWrapper().search(
+            "a" * 9,
+            indexed.vault_root,
+            store=indexed.store,
+            rg_path="missing-rg",
+            fallback_max_pattern_length=8,
+        )
+
+
+async def test_fallback_admits_a_note_once_and_only_after_a_body_match(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _missing_binary(monkeypatch)
+    asked: list[str] = []
+
+    def _admit(rel_path: str) -> bool:
+        asked.append(rel_path)
+        return True
+
+    results = await RipgrepWrapper().search(
+        "Alpha",
+        indexed.vault_root,
+        limit=5,
+        store=indexed.store,
+        rg_path="missing-rg",
+        admit=_admit,
+    )
+
+    # Both Alpha chunks match and share one note; Beta never matches.
+    assert len(results) == 2
+    assert asked == ["alpha.md"]
+
+
+async def test_fallback_never_admits_a_chunk_excluded_by_glob(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _missing_binary(monkeypatch)
+    asked: list[str] = []
+
+    def _admit(rel_path: str) -> bool:
+        asked.append(rel_path)
+        return True
+
+    results = await RipgrepWrapper().search(
+        "intro",
+        indexed.vault_root,
+        glob="folder/*.md",
+        limit=5,
+        store=indexed.store,
+        rg_path="missing-rg",
+        admit=_admit,
+    )
+
+    assert [result.chunk for result in results] == [indexed.chunks["beta"]]
+    assert asked == ["folder/beta.md"]
+
+
+async def test_fallback_timeout_message_reports_how_far_the_scan_got(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The expiry message must report real progress, not a fixed apology.
+
+    The stream stalls after a known number of chunks rather than sleeping for a
+    measured interval, so the reported count is exact instead of timing-dependent.
+    """
+    _missing_binary(monkeypatch)
+    stalled = list(indexed.chunks.values())
+
+    async def _stalling() -> AsyncIterator[Chunk]:
+        for chunk in stalled:
+            yield chunk
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(indexed.store, "iter_all_chunks", _stalling)
+
+    with pytest.raises(RegexFallbackError, match=rf"after scanning {len(stalled)} indexed chunks"):
+        await RipgrepWrapper().search(
+            "safe-pattern",
+            indexed.vault_root,
+            store=indexed.store,
+            rg_path="missing-rg",
+            fallback_timeout_seconds=0.05,
+        )
+
+
+async def test_unusable_binary_routes_to_the_fallback_like_an_absent_one(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import datacron.indexing.ripgrep as ripgrep_module
+
+    logger = _LoggerSpy()
+    monkeypatch.setattr(ripgrep_module, "_LOGGER", logger)
+
+    async def _create(*_args: str, **_kwargs: object) -> _FakeProcess:
+        raise OSError(8, "Exec format error")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _create)
+
+    results = await RipgrepWrapper().search(
+        "later",
+        indexed.vault_root,
+        store=indexed.store,
+        rg_path="not-an-executable",
+    )
+
+    assert [result.chunk for result in results] == [indexed.chunks["alpha_later"]]
+    assert any("falling back" in message for message, _args in logger.warning_calls)
+
+
+def test_explicit_ripgrep_path_outranks_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATACRON_RIPGREP_PATH", "C:/from-environment/rg.exe")
+
+    assert _resolve_ripgrep_path("C:/explicit/rg.exe") == "C:/explicit/rg.exe"
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_blank_environment_ripgrep_path_falls_through_to_the_default(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("DATACRON_RIPGREP_PATH", value)
+
+    assert _resolve_ripgrep_path(None) == DEFAULT_RIPGREP_PATH
+
+
+def test_environment_ripgrep_path_applies_when_no_argument_is_supplied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATACRON_RIPGREP_PATH", "C:/from-environment/rg.exe")
+
+    assert _resolve_ripgrep_path(None) == "C:/from-environment/rg.exe"
+
+
+# Every other fallback test runs on three chunks, which is why the glob and the
+# limit could both be unreachable in production while the suite stayed green.
+# These two run wide enough to cross a scan batch boundary.
+_SCALE_NOTE_COUNT = 4
+_SCALE_CHUNKS_PER_NOTE = 400
+_SCALE_CHUNK_COUNT = _SCALE_NOTE_COUNT * _SCALE_CHUNKS_PER_NOTE
+
+
+@pytest.fixture
+async def indexed_at_scale(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> AsyncIterator[_IndexedFixture]:
+    """Index many chunks over few notes, the shape a real vault has."""
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir()
+    store = SQLiteFTS5Store()
+    await store.open(vault_root / ".datacron" / "index" / "datacron.db")
+
+    for note_index in range(_SCALE_NOTE_COUNT):
+        rel_path = f"note-{note_index:03d}.md"
+        note = note_factory(
+            id=f"01HQXR7K9YZ8M2N3PQRSTV4W{note_index:02d}",
+            path=vault_root / rel_path,
+            rel_path=rel_path,
+            title=f"Note {note_index}",
+        )
+        chunks = [
+            chunk_factory(
+                note=note,
+                chunk_id=f"{note.id}::::{ordinal:04d}",
+                content=f"needle in chunk {ordinal}",
+                ordinal=ordinal,
+            )
+            for ordinal in range(_SCALE_CHUNKS_PER_NOTE)
+        ]
+        await store.upsert_note(note, chunks)
+
+    try:
+        yield _IndexedFixture(vault_root=vault_root, store=store, chunks={})
+    finally:
+        await store.close()
+
+
+async def test_fallback_abandons_the_stream_once_the_limit_is_reached(
+    indexed_at_scale: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cheap query must not pay for the whole index, nor admit whole notes."""
+    _missing_binary(monkeypatch)
+    streamed = _count_streamed(monkeypatch, indexed_at_scale)
+    asked: list[str] = []
+
+    def _admit(rel_path: str) -> bool:
+        asked.append(rel_path)
+        return True
+
+    results = await RipgrepWrapper().search(
+        "needle",
+        indexed_at_scale.vault_root,
+        limit=5,
+        store=indexed_at_scale.store,
+        rg_path="missing-rg",
+        admit=_admit,
+    )
+
+    assert len(results) == 5
+    assert len(streamed) < _SCALE_CHUNK_COUNT
+    assert len(streamed) == REGEX_FALLBACK_SCAN_BATCH_CHUNKS
+    assert asked == ["note-000.md"]
+
+
+async def test_fallback_ranks_continuously_across_a_batch_boundary(
+    indexed_at_scale: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rank is global to the scan, not restarted for every worker batch."""
+    _missing_binary(monkeypatch)
+    limit = REGEX_FALLBACK_SCAN_BATCH_CHUNKS + 88
+
+    results = await RipgrepWrapper().search(
+        "needle",
+        indexed_at_scale.vault_root,
+        limit=limit,
+        store=indexed_at_scale.store,
+        rg_path="missing-rg",
+    )
+
+    assert len(results) == limit
+    assert [result.score for result in results] == [1.0 / (1.0 + rank) for rank in range(limit)]

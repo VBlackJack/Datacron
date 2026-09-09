@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from hashlib import sha256
@@ -478,3 +479,21 @@ async def test_subject_search_is_scoped_by_domain_before_the_candidate_bound(
     assert projects["sources"]
     assert all(source["id"] != _PERSON for source in projects["sources"])
     assert all(source["rel_path"].startswith("projects/") for source in projects["sources"])
+
+
+async def test_context_reports_whether_regex_search_has_ripgrep(
+    memory_app: DatacronApp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing prerequisite must be visible before a query fails on it.
+
+    Without this, an absent ripgrep first shows up as a `search_regex` timeout,
+    which names the symptom and hides the cause.
+    """
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    absent = await _call(memory_app, "session_context")
+    assert absent["capabilities"]["regex_search_ripgrep"] is False
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "C:/tools/rg.exe")
+    present = await _call(memory_app, "session_context")
+    assert present["capabilities"]["regex_search_ripgrep"] is True

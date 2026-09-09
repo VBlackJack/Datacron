@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import shutil
 import sqlite3
 import sys
 from pathlib import Path
@@ -141,6 +142,26 @@ class TestStatus:
         assert "initialized: yes" in result.stdout
         assert "notes:      1" in result.stdout
         assert "not built" in result.stdout
+
+    def test_status_names_the_regex_backend(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An absent ripgrep must be legible here, not only in a failing query."""
+        vault = tmp_path / "vault"
+        runner.invoke(app, ["init", str(vault)])
+
+        monkeypatch.setattr(shutil, "which", lambda _name: None)
+        absent = runner.invoke(app, ["status", "--vault", str(vault)])
+        assert absent.exit_code == 0, absent.stdout
+        assert "ripgrep not found" in absent.stdout
+
+        monkeypatch.setattr(shutil, "which", lambda _name: "C:/tools/rg.exe")
+        present = runner.invoke(app, ["status", "--vault", str(vault)])
+        assert present.exit_code == 0, present.stdout
+        assert "ripgrep not found" not in present.stdout
 
     def test_status_with_empty_index_file_reports_empty(
         self, runner: CliRunner, tmp_path: Path
