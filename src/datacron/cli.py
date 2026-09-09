@@ -114,6 +114,15 @@ _VAULT_ROOT_HELP: Final[str] = (
     "Vault root. Fallback: DATACRON_VAULT_ROOT, then cwd containing VAULT.yaml under .datacron."
 )
 
+# Index states reported by `datacron status`. Each names the remedy that applies to it and
+# only to it: a rebuild repairs damaged bytes, and nothing about a rebuild frees a lock.
+_INDEX_NOT_BUILT: Final[str] = "not built"
+_INDEX_EMPTY: Final[str] = "empty -- run `datacron index`"
+_INDEX_CORRUPT: Final[str] = "unreadable -- run `datacron reindex`"
+_INDEX_UNAVAILABLE: Final[str] = (
+    "cannot be opened -- another process may hold it, or the file is not readable"
+)
+
 
 class _SetupPrompt(StrEnum):
     """Stable identifiers for setup's centralized interactive guidance."""
@@ -1014,24 +1023,40 @@ async def _repair_note_id(
 
 
 async def _index_status_label(db_path: Path) -> str:
+    """Describe the index without touching it.
+
+    The open is read-only on purpose. A writable open runs the schema migrations, so
+    printing a note count would rename and refill the chunk table and rebuild the
+    frontmatter pairs, under a write lock that a running `datacron mcp serve` contends
+    with. Reporting state must not change it.
+    """
     if not db_path.exists():
-        return "not built"
+        return _INDEX_NOT_BUILT
 
     from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
 
     store = SQLiteFTS5Store()
     try:
-        await store.open(db_path)
+        await store.open(db_path, read_only=True)
         stats = await store.stats()
-    except Exception as exc:
-        _LOGGER.warning("Unable to read index stats from %s: %s", db_path, exc)
-        return "unreadable -- run `datacron reindex`"
+    except sqlite3.OperationalError as exc:
+        # Raised before DatabaseError below: OperationalError is one of its subclasses,
+        # and a busy or unauthorized file is not a corrupt one. Sending the operator to
+        # `datacron reindex` for a lock points at the one remedy that cannot help.
+        _LOGGER.warning("Cannot open the index at %s: %s", db_path, exc)
+        return _INDEX_UNAVAILABLE
+    except sqlite3.DatabaseError as exc:
+        _LOGGER.warning("Index at %s is not readable as SQLite: %s", db_path, exc)
+        return _INDEX_CORRUPT
+    except OSError as exc:
+        _LOGGER.warning("Cannot open the index at %s: %s", db_path, exc)
+        return _INDEX_UNAVAILABLE
     finally:
         await store.close()
 
     if stats.note_count > 0:
         return f"built ({stats.note_count} notes, {stats.chunk_count} chunks)"
-    return "empty -- run `datacron index`"
+    return _INDEX_EMPTY
 
 
 @app.command()

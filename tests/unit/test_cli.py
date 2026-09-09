@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sqlite3
 import sys
@@ -538,3 +539,96 @@ class TestMcpServe:
         assert result.exit_code != 0
         combined = (result.stdout + result.stderr).lower()
         assert "vault" in combined or "not found" in combined
+
+
+class TestStatusDoesNotMutateTheIndex:
+    """`status` reports the index; reporting must never migrate or lock it."""
+
+    @staticmethod
+    def _schema(db_path: Path) -> tuple[list[str], list[str]]:
+        connection = sqlite3.connect(db_path)
+        try:
+            columns = [str(row[1]) for row in connection.execute("PRAGMA table_info(chunks_fts);")]
+            tables = sorted(
+                str(row[0])
+                for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            )
+        finally:
+            connection.close()
+        return columns, tables
+
+    def test_status_leaves_an_unmigrated_index_untouched(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        vault = tmp_path / "vault"
+        runner.invoke(app, ["init", str(vault)])
+        (vault / "hello.md").write_text("# Hello\n", encoding="utf-8")
+        db_path = sidecar_index_db(vault)
+        asyncio.run(_create_empty_index(db_path))
+
+        # Roll the index back to the shape a release predating the context column wrote.
+        connection = sqlite3.connect(db_path)
+        try:
+            connection.execute("DROP TABLE chunks_fts;")
+            connection.execute(
+                "CREATE VIRTUAL TABLE chunks_fts USING fts5("
+                "chunk_id UNINDEXED, note_id UNINDEXED, note_rel_path UNINDEXED,"
+                " header_path UNINDEXED, section_title UNINDEXED, chunk_type UNINDEXED,"
+                " content, ordinal UNINDEXED, content_hash UNINDEXED, token_count UNINDEXED,"
+                " line_start UNINDEXED, line_end UNINDEXED, wikilinks_out_json UNINDEXED,"
+                " lang UNINDEXED, tokenize = 'unicode61 remove_diacritics 2');"
+            )
+            connection.execute("DROP TABLE note_frontmatter;")
+            connection.commit()
+        finally:
+            connection.close()
+
+        before = self._schema(db_path)
+        digest_before = hashlib.sha256(db_path.read_bytes()).hexdigest()
+
+        result = runner.invoke(app, ["status", "--vault", str(vault)])
+
+        assert result.exit_code == 0, result.stdout
+        assert "index:      empty" in result.stdout
+        assert self._schema(db_path) == before
+        assert "context" not in before[0]
+        assert hashlib.sha256(db_path.read_bytes()).hexdigest() == digest_before
+        assert not db_path.with_name(f"{db_path.name}-wal").exists()
+
+    def test_status_names_a_rebuild_only_for_a_corrupt_index(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The stderr handler binds the stream at configure time, and CliRunner closes its
+        # captured stream when the command returns, so a warning drained afterwards by the
+        # background listener hits a closed file. That race is a property of the harness,
+        # not of the command; this test is about the label the operator reads.
+        monkeypatch.setenv("DATACRON_LOG_LEVEL", "ERROR")
+        vault = tmp_path / "vault"
+        runner.invoke(app, ["init", str(vault)])
+        db_path = sidecar_index_db(vault)
+        asyncio.run(_create_empty_index(db_path))
+        payload = bytearray(db_path.read_bytes())
+        payload[4096:20480] = b"\x00" * (20480 - 4096)
+        db_path.write_bytes(bytes(payload))
+
+        result = runner.invoke(app, ["status", "--vault", str(vault)])
+
+        assert result.exit_code == 0, result.stdout
+        assert "unreadable -- run `datacron reindex`" in result.stdout
+
+    def test_status_does_not_blame_the_index_when_it_cannot_be_opened(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DATACRON_LOG_LEVEL", "ERROR")
+        vault = tmp_path / "vault"
+        runner.invoke(app, ["init", str(vault)])
+        db_path = sidecar_index_db(vault)
+        # A directory at the index path is openable by neither reader nor rebuild, so the
+        # remedy must not be `datacron reindex`.
+        db_path.mkdir(parents=True, exist_ok=True)
+
+        result = runner.invoke(app, ["status", "--vault", str(vault)])
+
+        assert result.exit_code == 0, result.stdout
+        assert "cannot be opened" in result.stdout
+        assert "datacron reindex" not in result.stdout

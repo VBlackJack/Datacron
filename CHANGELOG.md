@@ -62,6 +62,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   a context are refilled.
 - Reindexing a note under a new identity at a stable path no longer leaves its former
   frontmatter pairs behind.
+- `datacron status` opens the index read-only. A writable open runs the schema migrations, so
+  reporting a note count would rename and refill the chunk table under a write lock that a
+  running `datacron mcp serve` contends with. It also stops naming `datacron reindex` for a
+  failure a rebuild cannot fix, and distinguishes a corrupt index from one it cannot open.
 - Follow-up owner metadata is sandboxed during preparation and retrieval, including older
   revisions, while historical hashes and replay compatibility remain intact.
 - Current follow-up reads expose snapshot-bound pagination and an actionable error when
