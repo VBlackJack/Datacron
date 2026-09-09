@@ -279,7 +279,7 @@ Homebrew v1.1, Docker = CI, Tauri deferred.
 Rejected (v1): Homebrew, Docker and Tauri binaries as launch channels. Revised by ADR-017.
 
 ### ADR-012 - Mandatory eval harness before any advanced retrieval
-30 real questions, recall@k, citation precision, latency, tokens. Explicit gate.
+44 real questions, recall@k, citation precision, latency, tokens. Explicit gate.
 Rejected: adding retrieval technology on intuition; every addition passes the measured gate.
 
 ### ADR-013 - Incremental index reconciliation, `mtime` gate, `content_hash` authority
@@ -424,7 +424,7 @@ datacron/                              # GitHub: VBlackJack/Datacron
 │   │   ├── ripgrep.py                 # subprocess wrapper
 │   │   └── wikilinks.py               # graph extraction
 │   ├── eval/
-│   │   └── harness.py                 # 30-question eval framework
+│   │   └── harness.py                 # Retrieval eval framework (44 questions)
 │   ├── installers/
 │   │   └── claude_desktop.py          # config writer
 │   ├── reliability.py                 # Read-only reliability scan

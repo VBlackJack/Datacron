@@ -96,8 +96,8 @@ datacron --version
 ```
 
 On Windows, `where datacron` or `Get-Command datacron` identifies the executable. Reinstall or
-upgrade the current Datacron release-using the latest `Datacron-Setup.exe` or
-`python -m pip install --upgrade datacron`-then open a new terminal and restart the AI client.
+upgrade the current Datacron release - with the latest `Datacron-Setup.exe` or
+`python -m pip install --upgrade datacron` - then open a new terminal and restart the AI client.
 Running an older installed binary from a fresh source checkout does not add the checkout's newer
 client identifiers.
 

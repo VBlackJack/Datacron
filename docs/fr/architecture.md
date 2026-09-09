@@ -284,7 +284,7 @@ Homebrew v1.1, Docker = CI, Tauri reporté.
 ADR-017.
 
 ### ADR-012 - Eval harness obligatoire avant tout retrieval avancé
-30 questions réelles, recall@k, citation precision, latency, tokens. Gate explicite.
+44 questions réelles, recall@k, citation precision, latency, tokens. Gate explicite.
 Écarté : ajouter de la technologie retrieval à l'intuition ; chaque ajout passe le gate
 mesuré.
 
@@ -436,7 +436,7 @@ datacron/                              # GitHub: VBlackJack/Datacron
 │   │   ├── ripgrep.py                 # subprocess wrapper
 │   │   └── wikilinks.py               # graph extraction
 │   ├── eval/
-│   │   └── harness.py                 # 30-question eval framework
+│   │   └── harness.py                 # Cadre d'eval retrieval (44 questions)
 │   ├── installers/
 │   │   └── claude_desktop.py          # config writer
 │   ├── reliability.py                 # Read-only reliability scan

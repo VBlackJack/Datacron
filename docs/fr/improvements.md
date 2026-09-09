@@ -85,6 +85,7 @@ près et leur ordre revient à l'insertion ; fixer le MRR au-dessus de 0,94 ne f
 ce départage. Les notes de remplissage qui poussent une note démotée hors des cinq premières
 sont dimensionnées sur cette fenêtre pour la même raison : un jeu plus grand que la fenêtre
 rendrait l'attente positive dépendante du départage elle aussi.
+
 `expected_empty: true` est incompatible avec des chemins ou chunks attendus. Son score
 `empty_accuracy` est séparé du rappel, du MRR, du nDCG et de la précision des cas positifs.
 Chaque résultat garde sa catégorie, sa latence et son coût en tokens. La comparaison à une
@@ -163,7 +164,8 @@ ensuite.
 re-rank temporel et avant la limite de résultats, et ajoute `note_matches` à chaque résultat
 conservé. Les notes gardent leur ordre relatif ; la réponse porte `grouped_by_note: true`. Sur
 le corpus versionné, les mêmes 44 questions renvoient 15929 tokens regroupés contre 26382 à
-plat, pour 111 résultats au lieu de 199. Le regroupement est optionnel : les clients qui
+plat, pour 111 résultats au lieu de 199, mesurés sur l'implémentation d'outil qu'appelle le
+harnais d'évaluation lui-même. Le regroupement est optionnel : les clients qui
 parcourent les chunks gardent la forme à plat.
 
 `note_matches` compte les chunks de la note qui correspondent, pas ceux que la réponse s'est

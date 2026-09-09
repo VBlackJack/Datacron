@@ -2,7 +2,6 @@
 
 **English** | [Français](../fr/improvements.md)
 
-
 ## Replaying an ordinary write
 
 All eight ordinary note-writing tools accept an optional `request_id` (1-128 ASCII
@@ -85,6 +84,7 @@ five notes carry identically, so BM25 scores them equal to the digit and their o
 insertion; pinning MRR above 0.94 would only pin that tie-break. The filler notes that push a
 demoted note out of the top five are sized to the window for the same reason: a filler set
 larger than the window makes the positive expectation depend on the tie-break too.
+
 `expected_empty: true` cannot coexist with expected paths/chunks. Empty cases have a separate
 `empty_accuracy`, and are excluded from aggregate positive recall, MRR, nDCG and precision.
 Per-question results retain categories, latency and payload tokens. Baseline comparisons reject
@@ -157,7 +157,7 @@ filled by notes the domain filter would discard afterwards.
 re-ranking and before the result limit, and adds `note_matches` to each surviving hit. Notes
 keep their relative order; the response carries `grouped_by_note: true`. On the versioned
 corpus the same 44 questions return 15929 tokens grouped against 26382 flat, for 111 hits
-instead of 199. Grouping is opt-in: clients that iterate chunks keep the flat shape.
+instead of 199, measured on the tool implementation the eval harness itself calls. Grouping is opt-in: clients that iterate chunks keep the flat shape.
 
 `note_matches` counts the matching chunks of that note, not the matching chunks the response
 happened to carry. The ranked list is a bounded overfetch window, so counting its rows would

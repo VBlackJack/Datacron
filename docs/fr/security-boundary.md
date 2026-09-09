@@ -120,7 +120,7 @@ pas le message : `code` est le champ stable sur lequel brancher, le message est 
 
 Le lire avec `error.get("code")`. La plupart des charges d'erreur ne portent aucun `code` - un
 argument refusé ou une note absente ne rendent que `type` et `message` - de sorte que le champ
-marque les classes d'echec sur lesquelles il vaut la peine de brancher, pas toutes les erreurs.
+marque les classes d'échec sur lesquelles il vaut la peine de brancher, pas toutes les erreurs.
 
 ## Capacités d'outils auditées
 

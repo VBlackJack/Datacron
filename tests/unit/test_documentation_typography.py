@@ -99,6 +99,11 @@ def test_documentation_uses_ascii_punctuation() -> None:
 # Removing a banned character can damage a sentence, and a scan for banned code points is
 # blind to exactly that: an em dash rewritten as a bare hyphen glues a clause to the word
 # before it. The conjunction must keep its space, so a hyphen may not sit against one.
+#
+# This rule is deliberately narrow. Widening it to every clause opener flags "waiting-for
+# replies", "opt-in", every French imperative with an enclitic pronoun ("installe-le") and
+# every option name inside a code span ("`-wal`"), so it would report far more noise than
+# damage. It catches the common shape; the rest of the residue was swept by hand.
 _GLUED_CLAUSE: Final[re.Pattern[str]] = re.compile(
     r"[^\W\d_]-(?:or|and|as|but|so|then|ou|et|mais|donc)\s"
 )
