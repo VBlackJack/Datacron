@@ -167,9 +167,9 @@ async def test_compact_profile_only_changes_search_text_description(tmp_path: Pa
         "over the FTS5 index; note titles and heading trails carry extra weight. "
         "Returns ranked sandbox-wrapped snippets with **term** highlighting. Narrow "
         "the scope with `folder`, `tags`, or `frontmatter` (same semantics as "
-        "list_notes). Requires `datacron index` to have been run first. By default, "
-        "explicitly superseded notes are demoted; set include_superseded=true to "
-        "inspect historical notes."
+        "list_notes); group_by_note=true keeps the best chunk per note. Requires "
+        "`datacron index` to have been run first. By default, explicitly superseded "
+        "notes are demoted; set include_superseded=true to inspect historical notes."
     )
     assert compact["search_text"]["description"] == (
         "Use this tool first for every technical, procedural, project, product, decision, "
@@ -178,10 +178,10 @@ async def test_compact_profile_only_changes_search_text_description(tmp_path: Pa
         "refusing, or asking for clarification; use get_note after a hit. Full-text BM25 "
         "search over the FTS5 index; note titles and heading trails carry extra weight. "
         "Returns ranked sandbox-wrapped snippets with **term** highlighting. Narrow the "
-        "scope with `folder`, `tags`, or `frontmatter` (same semantics as list_notes). "
-        "Requires `datacron index` to have been run first. By default, explicitly "
-        "superseded notes are demoted; set include_superseded=true to inspect "
-        "historical notes."
+        "scope with `folder`, `tags`, or `frontmatter` (same semantics as list_notes); "
+        "group_by_note=true keeps the best chunk per note. Requires `datacron index` to "
+        "have been run first. By default, explicitly superseded notes are demoted; set "
+        "include_superseded=true to inspect historical notes."
     )
 
     standard["search_text"].pop("description")

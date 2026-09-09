@@ -139,3 +139,32 @@ un nDCG@10 de 0,97 : une régression de classement ne peut plus passer en silenc
 correspond à un tag mémoire, la liste bornée de candidats n'est construite qu'à partir des notes
 qui portent ce tag, au lieu d'être remplie par des notes que le filtre de domaine écarterait
 ensuite.
+
+## Résultats regroupés, extraits contextuels et filtres frontmatter indexés
+
+`search_text(group_by_note=true)` garde le chunk le mieux classé de chaque note après le
+re-rank temporel et avant la limite de résultats, et ajoute `note_matches` à chaque résultat
+conservé. Les notes gardent leur ordre relatif ; la réponse porte `grouped_by_note: true`. Sur
+le corpus versionné, les mêmes 44 questions renvoient 17708 tokens regroupés contre 28661 à
+plat, pour 125 résultats au lieu de 215. Le regroupement est optionnel : les clients qui
+parcourent les chunks gardent la forme à plat.
+
+Les extraits privilégient le corps du chunk. Quand le corps ne contient aucun terme surligné
+et que la colonne de contexte en contient, l'extrait est pris dans le titre de la note et le
+chemin des en-têtes : une note trouvée par son titre montre `Projet Datacron / **Statut**` au
+lieu d'une première phrase sans rapport. Un index hérité sans colonne de contexte garde
+l'extrait du corps.
+
+Le filtre de périmètre `frontmatter` est servi par une table `note_frontmatter` de paires
+clé/valeur repliées en casse, une ligne par scalaire ou par élément de liste, produite par la
+même règle d'aplatissement que la comparaison en mémoire. Les écritures ordinaires
+rafraîchissent les paires d'une note ; une ouverture en écriture remplit la table une fois
+depuis les métadonnées indexées et le consigne dans `index_meta`. Une ouverture certifiée en
+lecture seule d'un index sans cette table revient au balayage des métadonnées : le filtre reste
+exact dans les deux modes.
+
+La migration de la colonne de contexte consigne désormais son nombre de lignes et sa durée, et
+`pytest-xdist` fait partie des dépendances de développement :
+`uv run --frozen --extra dev pytest -n auto` exécute la suite en parallèle avec un répertoire
+temporaire par worker. Deux sessions pytest lancées à la main dans le même dépôt partagent
+toujours la racine temporaire par défaut et ne doivent pas se chevaucher.

@@ -134,3 +134,28 @@ pass silently.
 `session_context` applies the same scope to its subject search: when a domain maps to a memory
 tag, the bounded candidate list is built only from notes carrying that tag, instead of being
 filled by notes the domain filter would discard afterwards.
+
+## Grouped results, context excerpts and indexed frontmatter filters
+
+`search_text(group_by_note=true)` keeps the best-ranked chunk of every note after temporal
+re-ranking and before the result limit, and adds `note_matches` to each surviving hit. Notes
+keep their relative order; the response carries `grouped_by_note: true`. On the versioned
+corpus the same 44 questions return 17708 tokens grouped against 28661 flat, for 125 hits
+instead of 215. Grouping is opt-in: clients that iterate chunks keep the flat shape.
+
+Excerpts prefer the chunk body. When the body carries no highlighted term and the context
+column does, the excerpt is taken from the note title and heading trail, so a note found by
+its title shows `Projet Datacron / **Statut**` instead of an unrelated first sentence. A
+legacy index without the context column keeps the body excerpt.
+
+The `frontmatter` scope filter is answered by a `note_frontmatter` table of casefolded
+key/value pairs, one row per scalar or list element, produced by the same flattening rule as
+the in-memory comparison. Ordinary writes refresh a note's pairs; a writable open backfills
+the table once from the indexed metadata and records that in `index_meta`. A certified
+read-only open of an index without the table falls back to scanning note metadata, so the
+filter stays exact in both modes.
+
+The context-column migration now logs its row count and duration, and `pytest-xdist` is a
+development dependency: `uv run --frozen --extra dev pytest -n auto` runs the suite in
+parallel with one temporary directory per worker. Two pytest sessions started by hand in the
+same checkout still share the default temporary root and must not overlap.

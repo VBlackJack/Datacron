@@ -1153,8 +1153,12 @@ async def test_search_weights_note_title_and_heading_trail(
 
         ranked = [result.chunk.note_rel_path for result in await store.search("datacron")]
         assert ranked == ["projects/datacron.md", "projects/other.md"]
-        heading = [result.chunk.note_rel_path for result in await store.search("statut")]
-        assert heading == ["projects/datacron.md"]
+        heading_hits = await store.search("statut")
+        assert [result.chunk.note_rel_path for result in heading_hits] == ["projects/datacron.md"]
+        # The body never mentions the heading, so the excerpt comes from the context.
+        assert heading_hits[0].snippet == "Projet Datacron / **Statut**"
+        body_hits = await store.search("release")
+        assert body_hits[0].snippet.startswith("**release** published")
         accented = [result.chunk.note_rel_path for result in await store.search("projét")]
         assert accented == ["projects/datacron.md"]
     finally:
@@ -1280,3 +1284,115 @@ async def test_read_only_open_keeps_legacy_index_searchable_without_weights(
     finally:
         await reader.close()
     assert "context" not in _fts_columns(db_path)
+
+
+async def test_search_frontmatter_filter_uses_the_pair_index(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    db_path = _db_path(tmp_path)
+    listed = note_factory(
+        id=_NOTE_ID,
+        rel_path="items/listed.md",
+        frontmatter={"Status": ["open", "Blocked"], "priority": 2, "flag": True},
+    )
+    scalar = note_factory(
+        id=_OTHER_NOTE_ID, rel_path="items/scalar.md", frontmatter={"status": "done"}
+    )
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    try:
+        await store.upsert_note(listed, [chunk_factory(note=listed, content="pairanchor listed")])
+        await store.upsert_note(scalar, [chunk_factory(note=scalar, content="pairanchor scalar")])
+        assert _paths(await store.search("pairanchor", frontmatter={"STATUS": "blocked"})) == [
+            "items/listed.md"
+        ]
+        assert _paths(await store.search("pairanchor", frontmatter={"status": "DONE"})) == [
+            "items/scalar.md"
+        ]
+        assert _paths(await store.search("pairanchor", frontmatter={"priority": "2"})) == [
+            "items/listed.md"
+        ]
+        assert _paths(await store.search("pairanchor", frontmatter={"flag": "true"})) == [
+            "items/listed.md"
+        ]
+        assert (
+            _paths(
+                await store.search("pairanchor", frontmatter={"status": "open", "priority": "3"})
+            )
+            == []
+        )
+        # Re-indexing a note replaces its pairs; deleting it removes them.
+        changed = note_factory(
+            id=_NOTE_ID, rel_path="items/listed.md", frontmatter={"status": "closed"}
+        )
+        await store.upsert_note(changed, [chunk_factory(note=changed, content="pairanchor listed")])
+        assert _paths(await store.search("pairanchor", frontmatter={"status": "open"})) == []
+        assert _paths(await store.search("pairanchor", frontmatter={"status": "closed"})) == [
+            "items/listed.md"
+        ]
+        await store.delete_note(_OTHER_NOTE_ID)
+        assert _paths(await store.search("pairanchor", frontmatter={"status": "done"})) == []
+    finally:
+        await store.close()
+
+    connection = sqlite3.connect(db_path)
+    try:
+        rows = connection.execute(
+            "SELECT note_id, key, value FROM note_frontmatter ORDER BY key, value;"
+        ).fetchall()
+    finally:
+        connection.close()
+    assert rows == [(_NOTE_ID, "status", "closed")]
+
+
+async def test_writable_open_backfills_frontmatter_pairs_once(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    db_path = _db_path(tmp_path)
+    note = note_factory(id=_NOTE_ID, rel_path="items/one.md", frontmatter={"confidence": "High"})
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    await store.upsert_note(note, [chunk_factory(note=note, content="backfillanchor")])
+    await store.close()
+
+    # Simulate an index created before the pair table existed.
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("DROP TABLE note_frontmatter;")
+        connection.execute("DELETE FROM index_meta WHERE key = 'frontmatter_pairs_backfilled';")
+        connection.commit()
+    finally:
+        connection.close()
+
+    reader = SQLiteFTS5Store()
+    await reader.open(db_path, read_only=True)
+    try:
+        # Read-only never migrates; the filter falls back to scanning note metadata.
+        assert _paths(
+            await reader.search("backfillanchor", frontmatter={"confidence": "high"})
+        ) == ["items/one.md"]
+        assert await reader.search("backfillanchor", frontmatter={"confidence": "low"}) == []
+    finally:
+        await reader.close()
+
+    writer = SQLiteFTS5Store()
+    await writer.open(db_path)
+    try:
+        assert _paths(
+            await writer.search("backfillanchor", frontmatter={"confidence": "high"})
+        ) == ["items/one.md"]
+    finally:
+        await writer.close()
+
+    connection = sqlite3.connect(db_path)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM note_frontmatter;").fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT value FROM index_meta WHERE key = 'frontmatter_pairs_backfilled';"
+        ).fetchone() == ("1",)
+    finally:
+        connection.close()

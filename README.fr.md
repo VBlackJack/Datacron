@@ -350,6 +350,9 @@ Resources MCP :
   - `include_superseded=true` permet de remonter les notes historiques
 - périmètre optionnel : `folder`, `tags` et `frontmatter` restreignent les notes cherchées
   avec la même sémantique que `list_notes` ; la réponse rappelle les filtres appliqués
+- regroupement optionnel : `group_by_note=true` garde le meilleur chunk de chaque note et
+  indique combien de chunks correspondaient, ce qui réduit d'environ un tiers les tokens
+  renvoyés sur le corpus d'évaluation
 
 `search_regex` reste littéral : il n'applique ni query-expansion ni re-rank temporel.
 

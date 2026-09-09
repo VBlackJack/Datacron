@@ -153,6 +153,23 @@ def coerce_string_list(
     return [stripped] if stripped or keep_empty_scalar else []
 
 
+def frontmatter_filter_pairs(metadata: Mapping[str, object]) -> list[tuple[str, str]]:
+    """Flatten top-level frontmatter into the casefolded key/value pairs a filter can match.
+
+    Scalar values contribute their string representation; list values contribute one pair
+    per element. The rule is the one :func:`matches_frontmatter_filter` applies, so an
+    index built from these pairs answers a filter exactly like the in-memory comparison.
+    """
+    pairs: list[tuple[str, str]] = []
+    for key, value in metadata.items():
+        normalized_key = str(key).casefold()
+        if not normalized_key:
+            continue
+        candidates = value if isinstance(value, list) else [value]
+        pairs.extend((normalized_key, str(candidate).casefold()) for candidate in candidates)
+    return pairs
+
+
 def matches_frontmatter_filter(
     metadata: Mapping[str, object],
     filters: Mapping[str, str] | None,

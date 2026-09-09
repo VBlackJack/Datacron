@@ -119,6 +119,12 @@ un simple "match de mots" :
   cherchées avec les règles de `list_notes` (préfixe de dossier, tous les tags présents,
   frontmatter de premier niveau insensible à la casse). La réponse rappelle les filtres
   appliqués sous `filters`.
+- **Regroupement** : `group_by_note=true` ne garde que le chunk le mieux classé de chaque
+  note et ajoute `note_matches`, le nombre de chunks de cette note qui correspondaient. À
+  utiliser quand tu veux savoir quelles notes ouvrir plutôt que lire chaque passage.
+- **Extraits** : l'extrait vient du corps du chunk ; quand seul le titre de la note ou un
+  en-tête correspond, l'extrait montre ce titre ou ce chemin d'en-têtes au lieu d'une
+  première ligne sans rapport.
 - **Query-expansion FR↔EN** configurée dans `VAULT.yaml` : par exemple "sauvegarde"
   remonte aussi les notes qui parlent de "backup".
 - **Re-rank temporel conservateur** :

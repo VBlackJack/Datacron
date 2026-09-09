@@ -949,3 +949,66 @@ async def test_search_text_scopes_by_folder_tags_and_frontmatter(tmp_vault: Path
         assert invalid["error"]["message"] == "frontmatter keys must be non-empty"
     finally:
         await store.close()
+
+
+_GROUP_MULTI_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXE"
+_GROUP_SINGLE_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXF"
+_GROUP_ANCHOR: Final[str] = "grouptoolanchor"
+
+
+@pytest.mark.asyncio
+async def test_search_text_groups_results_by_note_on_request(tmp_vault: Path) -> None:
+    _write_temporal_note(
+        tmp_vault,
+        rel_path="projects/multi.md",
+        note_id=_GROUP_MULTI_ID,
+        title="Multi section",
+        confidence="high",
+        supersedes=[],
+        body=(
+            f"## One\n\n{_GROUP_ANCHOR} first section.\n\n"
+            f"## Two\n\n{_GROUP_ANCHOR} second section.\n\n"
+            f"## Three\n\n{_GROUP_ANCHOR} third section.\n"
+        ),
+    )
+    _write_temporal_note(
+        tmp_vault,
+        rel_path="projects/single.md",
+        note_id=_GROUP_SINGLE_ID,
+        title="Single section",
+        confidence="high",
+        supersedes=[],
+        body=f"{_GROUP_ANCHOR} only once.\n",
+    )
+    settings = Settings(
+        read_paths=[tmp_vault],
+        vault_root=tmp_vault,
+        max_result_count=20,
+        max_result_tokens=8000,
+    )
+    store = SQLiteFTS5Store()
+    await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+    app = build_app(settings=settings, vault_root=tmp_vault, chunker=MarkdownChunker(), store=store)
+    try:
+        flat = await _search_text_impl(app, query=_GROUP_ANCHOR, limit=10)
+        assert "grouped_by_note" not in flat
+        assert flat["returned"] == 4
+        assert all("note_matches" not in result for result in flat["results"])
+
+        grouped = await _search_text_impl(app, query=_GROUP_ANCHOR, limit=10, group_by_note=True)
+        assert grouped["grouped_by_note"] is True
+        assert grouped["returned"] == 2
+        by_path = {result["note_rel_path"]: result for result in grouped["results"]}
+        assert by_path["projects/multi.md"]["note_matches"] == 3
+        assert by_path["projects/single.md"]["note_matches"] == 1
+        # The surviving chunk of each note is its best-ranked one, in flat order.
+        first_flat: dict[str, str] = {}
+        for result in flat["results"]:
+            first_flat.setdefault(result["note_rel_path"], result["chunk_id"])
+        assert [result["chunk_id"] for result in grouped["results"]] == list(first_flat.values())
+
+        bounded = await _search_text_impl(app, query=_GROUP_ANCHOR, limit=1, group_by_note=True)
+        assert bounded["returned"] == 1
+        assert bounded["limit_applied"] == 1
+    finally:
+        await store.close()

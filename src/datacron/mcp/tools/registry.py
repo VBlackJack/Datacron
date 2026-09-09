@@ -102,9 +102,9 @@ _SEARCH_TEXT_DESCRIPTIONS: Final[dict[str, str]] = {
         "over the FTS5 index; note titles and heading trails carry extra weight. "
         "Returns ranked sandbox-wrapped snippets with **term** highlighting. Narrow "
         "the scope with `folder`, `tags`, or `frontmatter` (same semantics as "
-        "list_notes). Requires `datacron index` to have been run first. By default, "
-        "explicitly superseded notes are demoted; set include_superseded=true to "
-        "inspect historical notes."
+        "list_notes); group_by_note=true keeps the best chunk per note. Requires "
+        "`datacron index` to have been run first. By default, explicitly superseded "
+        "notes are demoted; set include_superseded=true to inspect historical notes."
     ),
     "compact": (
         "Use this tool first for every technical, procedural, project, product, decision, "
@@ -113,10 +113,10 @@ _SEARCH_TEXT_DESCRIPTIONS: Final[dict[str, str]] = {
         "refusing, or asking for clarification; use get_note after a hit. Full-text BM25 "
         "search over the FTS5 index; note titles and heading trails carry extra weight. "
         "Returns ranked sandbox-wrapped snippets with **term** highlighting. Narrow the "
-        "scope with `folder`, `tags`, or `frontmatter` (same semantics as list_notes). "
-        "Requires `datacron index` to have been run first. By default, explicitly "
-        "superseded notes are demoted; set include_superseded=true to inspect "
-        "historical notes."
+        "scope with `folder`, `tags`, or `frontmatter` (same semantics as list_notes); "
+        "group_by_note=true keeps the best chunk per note. Requires `datacron index` to "
+        "have been run first. By default, explicitly superseded notes are demoted; set "
+        "include_superseded=true to inspect historical notes."
     ),
 }
 
@@ -277,6 +277,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         folder: str | None = None,
         tags: list[str] | None = None,
         frontmatter: dict[str, str] | None = None,
+        group_by_note: bool = False,
     ) -> SearchTextOutput:
         return cast(
             "SearchTextOutput",
@@ -288,6 +289,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 folder=folder,
                 tags=tags,
                 frontmatter=frontmatter,
+                group_by_note=group_by_note,
             ),
         )
 

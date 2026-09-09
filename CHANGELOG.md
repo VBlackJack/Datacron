@@ -14,6 +14,12 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - `search_text` accepts `folder`, `tags`, and `frontmatter` scope filters with the
   `list_notes` semantics, and echoes the filters it applied. The OR fallback for multi-term
   queries honours the same scope.
+- `search_text` accepts `group_by_note`: the best-ranked chunk of each note survives and
+  carries `note_matches`; the response reports `grouped_by_note`. On the retrieval corpus the
+  returned tokens drop from 28661 to 17708 for the same 44 questions.
+- The index keeps a `note_frontmatter` table of casefolded top-level pairs, filled on write
+  and backfilled once on the first writable open, so a `frontmatter` filter is an index
+  lookup instead of a scan of every note. A read-only legacy index keeps the scan.
 - The retrieval corpus grows from 32 to 44 questions with hard cases: title against passing
   mentions, heading-only matches, duplicate section titles, bilingual queries, backlog and
   archive distractors, and an `invalid_at` note behind its replacement. The integration gate
@@ -23,6 +29,11 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 - `session_context` scopes its subject search to the domain tag, so project, people and
   meeting candidates are no longer crowded out by notes the domain filter discards.
+- Search excerpts fall back to the note title and heading trail when only that context
+  matched, instead of showing the unrelated start of the chunk body.
+- The context-column migration logs the number of migrated chunks and its duration.
+- `pytest-xdist` joins the development dependencies; `pytest -n auto` runs the suite in
+  parallel with one temporary directory per worker.
 
 - The FTS index carries a `context` column holding the note title and heading trail of each
   chunk, weighted three times the chunk body in BM25 scoring. A writable open migrates a

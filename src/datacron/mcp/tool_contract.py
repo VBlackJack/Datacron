@@ -176,6 +176,7 @@ class SearchResultOutput(TypedDict):
     line_start: int
     line_end: int
     token_count: int
+    note_matches: NotRequired[int | None]
 
 
 class SearchFiltersOutput(TypedDict, total=False):
@@ -195,6 +196,7 @@ class SearchTextOutput(TypedDict, total=False):
     limit_applied: Required[int]
     truncated_for_tokens: Required[bool]
     filters: SearchFiltersOutput | None
+    grouped_by_note: bool | None
     index_repair: ReconcileStatsOutput | None
     timings_ms: dict[str, float] | None
 

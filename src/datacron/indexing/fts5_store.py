@@ -19,6 +19,7 @@ import asyncio
 import json
 import re
 import sqlite3
+import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -35,6 +36,7 @@ from datacron.core.config import (
 from datacron.core.frontmatter import (
     coerce_string_list,
     extract_tags,
+    frontmatter_filter_pairs,
     matches_frontmatter_filter,
 )
 from datacron.core.logger import get_logger
@@ -109,6 +111,26 @@ CREATE TABLE IF NOT EXISTS index_meta (
 );
 """
 
+# Casefolded top-level frontmatter pairs, one row per scalar or list element, so a
+# frontmatter filter is answered by an index lookup instead of a scan of every note.
+_CREATE_NOTE_FRONTMATTER_SQL: Final[str] = """
+CREATE TABLE IF NOT EXISTS note_frontmatter (
+    note_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL
+);
+"""
+_CREATE_NOTE_FRONTMATTER_INDEX_SQL: Final[str] = """
+CREATE INDEX IF NOT EXISTS note_frontmatter_lookup
+ON note_frontmatter (key, value, note_id);
+"""
+_INSERT_NOTE_FRONTMATTER_SQL: Final[str] = (
+    "INSERT INTO note_frontmatter (note_id, key, value) VALUES (?, ?, ?);"
+)
+_DELETE_NOTE_FRONTMATTER_SQL: Final[str] = "DELETE FROM note_frontmatter WHERE note_id = ?;"
+_NOTE_FRONTMATTER_TABLE: Final[str] = "note_frontmatter"
+_FRONTMATTER_PAIRS_META_KEY: Final[str] = "frontmatter_pairs_backfilled"
+
 _INSERT_NOTE_SQL: Final[str] = """
 INSERT INTO notes (
     note_id,
@@ -173,16 +195,21 @@ _SEARCH_COLUMNS_SQL: Final[str] = """
     chunks_fts.lang,
 """
 
-_SEARCH_SNIPPET_SQL: Final[str] = f"""
-    snippet(
-        chunks_fts,
-        {_FTS_CONTENT_COLUMN},
-        '**',
-        '**',
-        '...',
-        32
-    ) AS snippet
-"""
+_SNIPPET_HIGHLIGHT: Final[str] = "**"
+_SNIPPET_ELLIPSIS: Final[str] = "..."
+_SNIPPET_TOKENS: Final[int] = 32
+
+
+def _snippet_sql(column: int, alias: str) -> str:
+    return (
+        f"snippet(chunks_fts, {column}, '{_SNIPPET_HIGHLIGHT}', '{_SNIPPET_HIGHLIGHT}', "
+        f"'{_SNIPPET_ELLIPSIS}', {_SNIPPET_TOKENS}) AS {alias}"
+    )
+
+
+_SEARCH_SNIPPET_SQL: Final[str] = _snippet_sql(_FTS_CONTENT_COLUMN, "snippet")
+# The context snippet is only consulted when the body carries no highlighted match.
+_SEARCH_CONTEXT_SNIPPET_SQL: Final[str] = _snippet_sql(_FTS_CONTEXT_COLUMN, "context_snippet")
 
 # Scope filters mirror ``_NOTE_PATH_FILTER_SQL``: same folder prefix rule, same
 # required-tags rule, plus an optional explicit note identity allowlist.
@@ -202,6 +229,15 @@ WHERE chunks_fts MATCH ?
   AND (? IS NULL OR notes.note_id IN (SELECT value FROM json_each(?)))
 """
 
+# One clause per requested frontmatter pair; every pair must match (AND semantics).
+_SEARCH_FRONTMATTER_PAIR_SQL: Final[str] = """
+  AND EXISTS (
+      SELECT 1
+      FROM note_frontmatter AS pair
+      WHERE pair.note_id = notes.note_id AND pair.key = ? AND pair.value = ?
+  )
+"""
+
 _LEGACY_SCORE_SQL: Final[str] = "bm25(chunks_fts)"
 
 
@@ -212,13 +248,28 @@ def _weighted_score_sql() -> str:
     return f"bm25(chunks_fts, {', '.join(weights)})"
 
 
-def _search_sql(*, weighted: bool, scoped: bool) -> str:
+def _search_sql(*, weighted: bool, scoped: bool, pair_count: int = 0) -> str:
     score = _weighted_score_sql() if weighted else _LEGACY_SCORE_SQL
-    scope = _SEARCH_SCOPE_SQL if scoped else "WHERE chunks_fts MATCH ?"
+    snippets = _SEARCH_SNIPPET_SQL
+    if weighted:
+        snippets = f"{_SEARCH_SNIPPET_SQL}, {_SEARCH_CONTEXT_SNIPPET_SQL}"
+    scope = "WHERE chunks_fts MATCH ?"
+    if scoped:
+        scope = _SEARCH_SCOPE_SQL + _SEARCH_FRONTMATTER_PAIR_SQL * pair_count
     return (
-        f"SELECT {_SEARCH_COLUMNS_SQL} {score} AS raw_score, {_SEARCH_SNIPPET_SQL}"
+        f"SELECT {_SEARCH_COLUMNS_SQL} {score} AS raw_score, {snippets}\n"
         f"FROM chunks_fts\n{scope}\nORDER BY raw_score\nLIMIT ?;"
     )
+
+
+def _row_snippet(row: sqlite3.Row) -> str:
+    """Prefer the body excerpt; fall back to the title/heading excerpt when only it matched."""
+    body = str(row["snippet"])
+    columns = row.keys()
+    if _SNIPPET_HIGHLIGHT in body or "context_snippet" not in columns:
+        return body
+    context = str(row["context_snippet"])
+    return context if _SNIPPET_HIGHLIGHT in context else body
 
 
 _MIGRATE_CHUNK_CONTEXT_SQL: Final[str] = """
@@ -424,11 +475,24 @@ _EMPTY_JSON_LIST: Final[str] = "[]"
 
 @dataclass(frozen=True)
 class _SearchScope:
-    """Bound parameters narrowing one search to a subset of indexed notes."""
+    """Bound parameters narrowing one search to a subset of indexed notes.
+
+    ``frontmatter_pairs`` is answered by the ``note_frontmatter`` index; ``note_ids_json``
+    is the explicit allowlist computed in Python when that index is unavailable
+    (a read-only legacy database).
+    """
 
     folder: str | None
     tags_json: str
-    note_ids_json: str | None
+    frontmatter_pairs: tuple[tuple[str, str], ...] = ()
+    note_ids_json: str | None = None
+
+
+async def _has_table(connection: aiosqlite.Connection, name: str) -> bool:
+    async with connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?;", (name,)
+    ) as cursor:
+        return await cursor.fetchone() is not None
 
 
 async def _has_context_column(connection: aiosqlite.Connection) -> bool:
@@ -447,8 +511,10 @@ class SQLiteFTS5Store:
         self._read_only = False
         self._term_map = normalize_term_map(term_map or {})
         self._temporal_metadata_cache: tuple[int, dict[str, TemporalMeta]] | None = None
-        # ``None`` until the open index has been inspected for the ``context`` column.
+        # ``None`` until the open index has been inspected for the ``context`` column
+        # and the frontmatter pair table.
         self._context_indexed: bool | None = None
+        self._frontmatter_indexed: bool | None = None
 
     async def open(
         self,
@@ -499,6 +565,7 @@ class SQLiteFTS5Store:
         self._read_only = False
         self._temporal_metadata_cache = None
         self._context_indexed = None
+        self._frontmatter_indexed = None
         if connection is not None:
             await connection.close()
 
@@ -528,6 +595,10 @@ class SQLiteFTS5Store:
                 (note.rel_path, note.id),
             )
             await connection.execute(_INSERT_NOTE_SQL, _note_row(note, indexed_at, fs_mtime_ns))
+            await connection.execute(_DELETE_NOTE_FRONTMATTER_SQL, (note.id,))
+            await connection.executemany(
+                _INSERT_NOTE_FRONTMATTER_SQL, _frontmatter_pair_rows(note.id, note.frontmatter)
+            )
             await connection.execute(
                 "DELETE FROM ulid_paths WHERE rel_path = ? OR note_id = ?",
                 (note.rel_path, note.id),
@@ -570,6 +641,7 @@ class SQLiteFTS5Store:
         try:
             await connection.execute("DELETE FROM chunks_fts WHERE note_id = ?", (note_id,))
             await connection.execute("DELETE FROM notes WHERE note_id = ?", (note_id,))
+            await connection.execute(_DELETE_NOTE_FRONTMATTER_SQL, (note_id,))
             await connection.execute("DELETE FROM ulid_paths WHERE note_id = ?", (note_id,))
         except Exception:
             await connection.rollback()
@@ -636,7 +708,7 @@ class SQLiteFTS5Store:
             SearchResult(
                 chunk=_chunk_from_row(row),
                 score=-float(row["raw_score"]),
-                snippet=str(row["snippet"]),
+                snippet=_row_snippet(row),
                 tier=tier,
             )
             for row, tier in ranked_rows
@@ -850,13 +922,17 @@ class SQLiteFTS5Store:
         await connection.execute(_CREATE_CHUNKS_FTS_SQL)
         await connection.execute(_CREATE_ULID_PATHS_SQL)
         await connection.execute(_CREATE_INDEX_META_SQL)
+        await connection.execute(_CREATE_NOTE_FRONTMATTER_SQL)
+        await connection.execute(_CREATE_NOTE_FRONTMATTER_INDEX_SQL)
         await connection.execute(
             "INSERT OR IGNORE INTO index_meta(key, value) VALUES ('generation', '0');"
         )
         await self._migrate_notes_columns(connection)
         await self._migrate_chunk_context(connection)
+        await self._backfill_frontmatter_pairs(connection)
         await connection.commit()
         self._context_indexed = True
+        self._frontmatter_indexed = True
 
     async def _migrate_chunk_context(self, connection: aiosqlite.Connection) -> None:
         """Add the indexed ``context`` column to a legacy ``chunks_fts`` table.
@@ -869,11 +945,18 @@ class SQLiteFTS5Store:
         """
         if await _has_context_column(connection):
             return
+        started = time.perf_counter()
         _LOGGER.info("Migrating chunks_fts to the context-indexed schema")
         await connection.execute(f"ALTER TABLE chunks_fts RENAME TO {_LEGACY_CHUNKS_TABLE};")
         await connection.execute(_CREATE_CHUNKS_FTS_SQL)
-        await connection.execute(_MIGRATE_CHUNK_CONTEXT_SQL, (CHUNK_CONTEXT_SEPARATOR,))
+        cursor = await connection.execute(_MIGRATE_CHUNK_CONTEXT_SQL, (CHUNK_CONTEXT_SEPARATOR,))
+        migrated_rows = cursor.rowcount
         await connection.execute(f"DROP TABLE {_LEGACY_CHUNKS_TABLE};")
+        _LOGGER.info(
+            "Migrated %d chunks to the context-indexed schema in %.0f ms",
+            migrated_rows,
+            (time.perf_counter() - started) * 1000.0,
+        )
 
     async def _is_context_indexed(self, connection: aiosqlite.Connection) -> bool:
         if self._context_indexed is None:
@@ -897,8 +980,13 @@ class SQLiteFTS5Store:
         required_tags = sorted({tag.strip().lower() for tag in (tags or []) if tag.strip()})
         if not normalized_folder and not required_tags and not frontmatter:
             return None
+        frontmatter_pairs: tuple[tuple[str, str], ...] = ()
         note_ids_json: str | None = None
-        if frontmatter:
+        if frontmatter and await self._is_frontmatter_indexed(connection):
+            frontmatter_pairs = tuple(
+                (key.casefold(), value.casefold()) for key, value in frontmatter.items()
+            )
+        elif frontmatter:
             async with connection.execute(_LIST_NOTE_FRONTMATTER_SQL) as cursor:
                 rows = await cursor.fetchall()
             allowed: list[str] = []
@@ -915,7 +1003,48 @@ class SQLiteFTS5Store:
         return _SearchScope(
             folder=normalized_folder or None,
             tags_json=json.dumps(required_tags, ensure_ascii=False),
+            frontmatter_pairs=frontmatter_pairs,
             note_ids_json=note_ids_json,
+        )
+
+    async def _is_frontmatter_indexed(self, connection: aiosqlite.Connection) -> bool:
+        if self._frontmatter_indexed is None:
+            self._frontmatter_indexed = await _has_table(connection, _NOTE_FRONTMATTER_TABLE)
+            if not self._frontmatter_indexed:
+                _LOGGER.warning(
+                    "Index predates the frontmatter pair table; filters scan note metadata"
+                )
+        return self._frontmatter_indexed
+
+    async def _backfill_frontmatter_pairs(self, connection: aiosqlite.Connection) -> None:
+        """Populate ``note_frontmatter`` once from the indexed metadata of existing notes."""
+        async with connection.execute(
+            "SELECT value FROM index_meta WHERE key = ?;", (_FRONTMATTER_PAIRS_META_KEY,)
+        ) as cursor:
+            if await cursor.fetchone() is not None:
+                return
+        started = time.perf_counter()
+        await connection.execute("DELETE FROM note_frontmatter;")
+        async with connection.execute("SELECT note_id, frontmatter_json FROM notes;") as cursor:
+            rows = list(await cursor.fetchall())
+        inserted = 0
+        for row in rows:
+            metadata_raw = json.loads(str(row["frontmatter_json"]))
+            metadata = (
+                cast("dict[str, object]", metadata_raw) if isinstance(metadata_raw, dict) else {}
+            )
+            pair_rows = _frontmatter_pair_rows(str(row["note_id"]), metadata)
+            await connection.executemany(_INSERT_NOTE_FRONTMATTER_SQL, pair_rows)
+            inserted += len(pair_rows)
+        await connection.execute(
+            "INSERT OR REPLACE INTO index_meta(key, value) VALUES (?, '1');",
+            (_FRONTMATTER_PAIRS_META_KEY,),
+        )
+        _LOGGER.info(
+            "Backfilled %d frontmatter pairs for %d notes in %.0f ms",
+            inserted,
+            len(rows),
+            (time.perf_counter() - started) * 1000.0,
         )
 
     def _require_writable(self) -> None:
@@ -1016,7 +1145,8 @@ async def _fetch_search_rows(
     weighted: bool,
     scope: _SearchScope | None,
 ) -> list[sqlite3.Row]:
-    sql = _search_sql(weighted=weighted, scoped=scope is not None)
+    pair_count = 0 if scope is None else len(scope.frontmatter_pairs)
+    sql = _search_sql(weighted=weighted, scoped=scope is not None, pair_count=pair_count)
     parameters: tuple[object, ...]
     if scope is None:
         parameters = (fts_query, limit)
@@ -1029,10 +1159,17 @@ async def _fetch_search_rows(
             scope.tags_json,
             scope.note_ids_json,
             scope.note_ids_json,
+            *(item for pair in scope.frontmatter_pairs for item in pair),
             limit,
         )
     async with connection.execute(sql, parameters) as cursor:
         return cast("list[sqlite3.Row]", await cursor.fetchall())
+
+
+def _frontmatter_pair_rows(
+    note_id: str, metadata: Mapping[str, object]
+) -> list[tuple[str, str, str]]:
+    return [(note_id, key, value) for key, value in frontmatter_filter_pairs(metadata)]
 
 
 def _chunk_context(note_title: str, header_path: str) -> str:

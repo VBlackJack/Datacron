@@ -351,6 +351,8 @@ MCP resources:
   - `include_superseded=true` brings historical notes back up
 - optional scope: `folder`, `tags`, and `frontmatter` narrow the searched notes with the
   same semantics as `list_notes`; the response echoes the filters actually applied
+- optional grouping: `group_by_note=true` keeps the best chunk of each note and reports how
+  many chunks matched, which cuts the returned tokens by about a third on the eval corpus
 
 `search_regex` stays literal: it applies neither query expansion nor temporal re-rank.
 

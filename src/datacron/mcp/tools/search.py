@@ -57,6 +57,7 @@ async def _search_text_impl(
     folder: str | None = None,
     tags: list[str] | None = None,
     frontmatter: dict[str, str] | None = None,
+    group_by_note: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     timings_ms: dict[str, float] = {}
@@ -99,11 +100,15 @@ async def _search_text_impl(
 
         stage_started = time.perf_counter()
         raw_results = _filter_admitted_results(app, raw_results)
-        raw_results = rerank_temporal(
+        ranked = rerank_temporal(
             raw_results,
             temporal_meta,
             include_superseded=include_superseded,
-        )[:bounded_limit]
+        )
+        note_matches: dict[str, int] = {}
+        if group_by_note:
+            ranked, note_matches = _collapse_by_note(ranked)
+        raw_results = ranked[:bounded_limit]
         timings_ms["rerank"] = _elapsed_ms(stage_started)
         raw_results = await protect_results(app, raw_results)
     except Exception:
@@ -111,7 +116,10 @@ async def _search_text_impl(
 
     stage_started = time.perf_counter()
     results, truncated_for_tokens = bound_results(
-        [_search_result_summary(app, result) for result in raw_results],
+        [
+            _search_result_summary(app, result, note_matches=note_matches.get(result.chunk.note_id))
+            for result in raw_results
+        ],
         max_tokens=app.settings.max_result_tokens,
     )
     timings_ms["budget"] = _elapsed_ms(stage_started)
@@ -126,6 +134,8 @@ async def _search_text_impl(
     }
     if filters:
         payload["filters"] = filters
+    if group_by_note:
+        payload["grouped_by_note"] = True
     if repair["reindexed_notes"] or repair["deleted_notes"]:
         payload["index_repair"] = repair
     timings_ms["serialization"] = _elapsed_ms(stage_started)
@@ -150,6 +160,7 @@ async def _search_text_impl(
         returned=len(results),
         include_superseded=include_superseded,
         filters=filters or None,
+        group_by_note=group_by_note or None,
         reindexed_notes=repair["reindexed_notes"],
         deleted_notes=repair["deleted_notes"],
         truncated_for_tokens=truncated_for_tokens,
@@ -167,6 +178,24 @@ def _authorized_search_folder(app: DatacronApp, folder: str | None) -> str | Non
     authorized = app.scope.authorize_rel_path(folder, "read")
     relative = authorized.relative_to(app.vault_root)
     return None if relative.name == "" else relative.as_posix()
+
+
+def _collapse_by_note(
+    results: list[SearchResult],
+) -> tuple[list[SearchResult], dict[str, int]]:
+    """Keep the best-ranked chunk of every note, counting how many chunks it had.
+
+    ``results`` is already ranked; the first chunk seen for a note is its best one and
+    the relative order of notes is preserved.
+    """
+    collapsed: list[SearchResult] = []
+    matches: dict[str, int] = {}
+    for result in results:
+        note_id = result.chunk.note_id
+        if note_id not in matches:
+            collapsed.append(result)
+        matches[note_id] = matches.get(note_id, 0) + 1
+    return collapsed, matches
 
 
 def _search_filters(
@@ -346,7 +375,12 @@ async def _get_backlinks_impl(
     return payload
 
 
-def _search_result_summary(app: DatacronApp, result: SearchResult) -> dict[str, Any]:
+def _search_result_summary(
+    app: DatacronApp,
+    result: SearchResult,
+    *,
+    note_matches: int | None = None,
+) -> dict[str, Any]:
     chunk = result.chunk
     returned_rel_path = _redact_retrieval_text(app, chunk.note_rel_path)
     source = result.redaction_source if result.redaction_source is not None else chunk.content
@@ -362,7 +396,7 @@ def _search_result_summary(app: DatacronApp, result: SearchResult) -> dict[str, 
         returned_rel_path,
         _redact_retrieval_text(app, snippet),
     )
-    return {
+    summary: dict[str, Any] = {
         "chunk_id": _redact_retrieval_text(app, chunk.chunk_id),
         "note_id": chunk.note_id,
         "note_rel_path": returned_rel_path,
@@ -375,6 +409,9 @@ def _search_result_summary(app: DatacronApp, result: SearchResult) -> dict[str, 
         "line_end": chunk.line_end,
         "token_count": chunk.token_count,
     }
+    if note_matches is not None:
+        summary["note_matches"] = note_matches
+    return summary
 
 
 async def _repair_index_on_read(app: DatacronApp) -> ReconcileStats:
