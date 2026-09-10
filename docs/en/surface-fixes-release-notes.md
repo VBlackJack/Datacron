@@ -45,3 +45,14 @@ case in a live migration.
 The local candidate remains `2026.0910.01`; the intended public version is
 `2026.0910.02`. A vault already rebuilt with `.01` does not need another reindex
 solely for this version increment.
+
+## Known limitation: session context budget
+
+With a token budget too small to contain the memory contract, `session_context`
+returns a budget refusal that does not match its declared output schema. Strict
+clients can reject this response before exposing `required_tokens`. This behavior
+predates these fixes and remains unchanged in this release. Retry with a larger
+budget (6,000 tokens worked in the measured case), or use
+`get_note(id_or_path="_memory/INIT.md")` when that bootstrap note exists. A separate
+follow-up will cover the refusal schema, preservation of `required_tokens`, and
+whether other tools share the same error-path exposure.

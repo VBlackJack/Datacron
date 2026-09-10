@@ -49,3 +49,14 @@ réelle.
 Le candidat local reste `2026.0910.01` ; la version publique prévue est
 `2026.0910.02`. Un vault déjà reconstruit avec `.01` n'a pas besoin d'un nouveau
 reindex pour ce seul incrément de version.
+
+## Limite connue : budget du contexte de session
+
+Lorsque le budget ne peut pas contenir le contrat mémoire, `session_context`
+retourne un refus hors du schéma de sortie déclaré. Les clients stricts peuvent
+rejeter cette réponse avant de restituer `required_tokens`. Ce comportement
+préexistait aux correctifs et reste inchangé dans cette version. Réessayer avec un
+budget supérieur (6 000 tokens ont fonctionné dans le cas mesuré), ou utiliser
+`get_note(id_or_path="_memory/INIT.md")` lorsque cette note de démarrage existe.
+Un lot séparé couvrira le schéma du refus, la préservation de `required_tokens`
+et l'exposition éventuelle des autres outils sur leurs chemins d'erreur.

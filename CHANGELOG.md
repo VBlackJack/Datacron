@@ -28,6 +28,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   [French translation](docs/fr/surface-fixes-release-notes.md), including validation limits.
 - Reserve `.01` for the local migration candidate; `.02` is the intended public version.
 
+### Known issues
+
+- With an insufficient budget, `session_context` can return a refusal outside its
+  declared output schema, hiding `required_tokens` from strict clients. This
+  pre-existing issue remains unchanged. Retry with a larger budget or read
+  `_memory/INIT.md` through `get_note` when available; see the upgrade notes.
+
 ## [2026.0910.01] - 2026-09-10
 
 ### Fixed
