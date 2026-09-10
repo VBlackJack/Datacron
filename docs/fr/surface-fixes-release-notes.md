@@ -23,3 +23,16 @@ d'écriture n'est retourné. Le format `cs2` ne porte aucune génération d'inde
 ne peut donc pas attribuer avec certitude ce refus au reindex. Une proposition inchangée
 reste confirmable après une reconstruction qui conserve ses identifiants de chunks.
 Aucune TTL temporelle n'est ajoutée.
+
+## Migration locale mesurée
+
+Le 2026-09-10, le candidat Windows local `2026.0910.01` a reconstruit un vault de
+2 431 notes indexées et 95 094 chunks en 260,197 secondes de durée totale (4 min 20 s).
+La commande de reindex a annoncé 258,558 secondes et la génération est passée de
+2873 à 2874. La comparaison avec l'index sauvegardé relève 22 364 identifiants de
+chunks remplacés dans 641 notes.
+
+Avant les écritures de recette, le checksum Markdown était identique avant et après
+migration, ainsi que le SHA256 séparé de `VAULT.yaml`. Le nouvel index ne signalait
+aucune entrée périmée, divergence de hash, incohérence d'identité ou erreur de parsing
+du frontmatter. Cette mesure locale ne garantit pas la durée pour d'autres vaults.
