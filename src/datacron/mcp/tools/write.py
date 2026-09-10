@@ -30,6 +30,7 @@ from datacron.core.durability import (
 from datacron.core.frontmatter import FrontmatterError, serialize
 from datacron.core.markdown_headings import heading_before, markdown_headings
 from datacron.core.markdown_sections import (
+    HeadingNotFoundError,
     append_entry_to_heading,
     find_section_span,
     patch_note_preamble,
@@ -395,20 +396,7 @@ async def _set_frontmatter_impl(
         )
         cleaned_expected_hash = _validate_expected_hash(expected_hash)
         changed_fields: list[str] = []
-        requested_fields = sorted(
-            field
-            for field, value in {
-                "confidence": cleaned_confidence,
-                "last_verified": cleaned_last_verified,
-                "supersedes": cleaned_supersedes,
-                "rejected": cleaned_rejected,
-                "origin": cleaned_origin,
-                "valid_from": cleaned_valid_from,
-                "invalid_at": cleaned_invalid_at,
-                "invalidated_by": cleaned_invalidated_by,
-            }.items()
-            if value is not None
-        )
+        operation_parameters: dict[str, Any] = {"fields": ""}
 
         def mutation(raw: str) -> str:
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
@@ -474,6 +462,7 @@ async def _set_frontmatter_impl(
                     "invalidated_by",
                     cleaned_invalidated_by,
                 )
+            operation_parameters["fields"] = ",".join(changed_fields)
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
             return _serialize_preserving_bom(metadata, body, has_bom=has_bom)
 
@@ -485,7 +474,7 @@ async def _set_frontmatter_impl(
                 op="set_frontmatter",
                 tool="set_frontmatter",
                 actor=actor,
-                parameters={"fields": ",".join(requested_fields)},
+                parameters=operation_parameters,
             ),
         )
         index_stats = await _reconcile_committed_write(
@@ -805,10 +794,8 @@ async def _rename_note_section_impl(
                     cleaned_heading_level,
                     heading_occurrence=cleaned_heading_occurrence,
                 )
-            except ValueError as exc:
-                if str(exc) == "heading not found; nothing to patch":
-                    raise ValueError("heading not found; nothing to rename") from exc
-                raise
+            except HeadingNotFoundError as exc:
+                raise HeadingNotFoundError("heading not found; nothing to rename") from exc
             selected = heading_before(lines, content_start)
             heading_index = selected.start
             matched_level, matched_text = selected.level, selected.text

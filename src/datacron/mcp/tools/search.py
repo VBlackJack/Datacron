@@ -24,7 +24,13 @@ from datacron.core.models import SearchResult
 from datacron.core.paths import PathConfinementError
 from datacron.core.temporal import rerank_temporal
 from datacron.indexing.reconcile import ReconcileStats, reconcile
-from datacron.indexing.ripgrep import RegexFallbackError, RipgrepError, RipgrepOutputError
+from datacron.indexing.ripgrep import (
+    RegexFallbackError,
+    RegexGlobError,
+    RipgrepError,
+    RipgrepOutputError,
+    matches_vault_glob,
+)
 from datacron.mcp.sandbox import (
     wrap_vault_content,
 )
@@ -288,6 +294,17 @@ async def _search_regex_impl(
     try:
         repair = await _repair_index_on_read(app)
         search_root = app.scope.authorize_path(app.vault_root, "read")
+        if glob is not None:
+            matches_vault_glob("", glob)  # Validate even when the index is empty.
+            indexed = await app.store.list_indexed_notes()
+            if not any(
+                matches_vault_glob(path, glob) and app.scope.allows_note_rel_path(path)
+                for path in indexed
+            ):
+                raise RegexGlobError(
+                    "regex_glob_no_files",
+                    "Glob selects no admitted indexed note; check the file filter",
+                )
         raw_results = await app.ripgrep.search(
             pattern=pattern,
             vault_root=search_root,
@@ -302,7 +319,7 @@ async def _search_regex_impl(
         )
         raw_results = _filter_admitted_results(app, raw_results)
         raw_results = await protect_results(app, raw_results)
-    except (FileNotFoundError, RegexFallbackError, RipgrepOutputError) as exc:
+    except (FileNotFoundError, RegexFallbackError, RegexGlobError, RipgrepOutputError) as exc:
         mapped_exc = ValueError(str(exc)) if isinstance(exc, RegexFallbackError) else exc
         return _error_response("search_regex", mapped_exc, started, pattern=pattern, glob=glob)
     except RipgrepError as exc:
