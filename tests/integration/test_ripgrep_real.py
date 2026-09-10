@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import json
 import shutil
+import subprocess
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -24,9 +26,54 @@ import pytest
 from datacron.core.vault import FilesystemVaultReader
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
-from datacron.indexing.ripgrep import RipgrepWrapper
+from datacron.indexing.ripgrep import RipgrepWrapper, _build_command
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize("glob", [None, "*.md", "_memory/**/*.md"])
+def test_real_rg_retains_default_hidden_directory_policy(
+    tmp_path: Path, rg_path: str, glob: str | None
+) -> None:
+    for name in ("_memory/visible.md", ".git/objects/probe.md", ".datacron/probe.md"):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("needle\n", encoding="utf-8")
+    result = subprocess.run(
+        _build_command(rg_path, "needle", tmp_path, glob, 20),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    matches = [json.loads(line) for line in result.stdout.splitlines()]
+    paths = {
+        Path(event["data"]["path"]["text"]).as_posix()
+        for event in matches
+        if event["type"] == "match"
+    }
+    assert paths == {"_memory/visible.md"}
+
+
+def test_real_rg_retains_default_ignore_policy(tmp_path: Path, rg_path: str) -> None:
+    (tmp_path / ".ignore").write_text("ignored/\n", encoding="utf-8")
+    (tmp_path / "ignored").mkdir()
+    (tmp_path / "ignored/probe.md").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "visible.md").write_text("needle\n", encoding="utf-8")
+    result = subprocess.run(
+        _build_command(rg_path, "needle", tmp_path, None, 20),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "ignored/probe.md" not in result.stdout.replace("\\\\", "/")
+    matches = [json.loads(line) for line in result.stdout.splitlines()]
+    assert {
+        Path(event["data"]["path"]["text"]).as_posix()
+        for event in matches
+        if event["type"] == "match"
+    } == {"visible.md"}
 
 
 @pytest.fixture
@@ -66,3 +113,57 @@ async def test_real_rg_search_resolves_demo_vault_chunk(
     assert results
     assert results[0].chunk.note_rel_path == "welcome.md"
     assert "**Datacron**" in results[0].snippet
+
+
+@pytest.mark.parametrize(
+    ("glob", "expected"),
+    [
+        ("*.md", {"root.md", "_memory/direct.md", "_memory/deep/nested.md", "other/direct.md"}),
+        ("_memory/*.md", {"_memory/direct.md"}),
+        ("_memory/**/*.md", {"_memory/direct.md", "_memory/deep/nested.md"}),
+        ("**/_memory/**/*.md", {"_memory/direct.md", "_memory/deep/nested.md"}),
+        ("_MEMORY/*.md", set()),
+        ("missing/*.md", set()),
+    ],
+)
+async def test_relative_globs_match_identically_with_real_rg_and_fallback(
+    tmp_path: Path, rg_path: str, glob: str, expected: set[str]
+) -> None:
+    for name in ("root.md", "_memory/direct.md", "_memory/deep/nested.md", "other/direct.md"):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("needle\n", encoding="utf-8")
+    reader = FilesystemVaultReader(tmp_path)
+    store = SQLiteFTS5Store()
+    await store.open(tmp_path / ".datacron/index/datacron.db")
+    try:
+        for note in await reader.list_notes():
+            await store.upsert_note(note, MarkdownChunker().chunk(note))
+        for binary in (rg_path, str(tmp_path / "missing-rg")):
+            results = await RipgrepWrapper().search(
+                "needle", tmp_path, glob=glob, store=store, rg_path=binary
+            )
+            assert {result.chunk.note_rel_path for result in results} == expected
+    finally:
+        await store.close()
+
+
+async def test_mcp_distinguishes_empty_glob_from_empty_text_match(
+    indexed_demo_vault: tuple[Path, SQLiteFTS5Store], rg_path: str
+) -> None:
+    from datacron.core.config import Settings
+    from datacron.mcp.server import build_app
+    from datacron.mcp.tools.search import _search_regex_impl
+
+    root, store = indexed_demo_vault
+    app = build_app(
+        settings=Settings(vault_root=root, read_paths=[root], ripgrep_path=rg_path),
+        vault_root=root,
+        store=store,
+    )
+    missing = await _search_regex_impl(app, pattern="needle", glob="missing/*.md", limit=5)
+    assert missing["error"]["code"] == "regex_glob_no_files"
+    empty = await _search_regex_impl(app, pattern="unmatchedneedle", glob="welcome.md", limit=5)
+    assert empty["returned"] == 0
+    invalid = await _search_regex_impl(app, pattern="needle", glob="!*.md", limit=5)
+    assert invalid["error"]["code"] == "regex_glob_invalid"
