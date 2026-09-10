@@ -7,6 +7,55 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [2026.0910.02] - 2026-09-10
+
+### Fixed
+
+- Preserve Markdown heading hierarchy, remove retrieval envelopes from stored follow-up
+  payloads, and resolve regex globs relative to the vault with explicit error reporting.
+- Build contradiction proposals from complete source sections, return typed section
+  errors, and audit only changed frontmatter fields.
+
+### Changed
+
+- Document proposal tokens without a time-based expiry and report unresolved tokens as
+  `proposal_token_stale_or_unknown`, without claiming a definite cause.
+- Upgrades from `2026.0910.00` or earlier require a full `datacron reindex` and refreshed
+  chunk references. The local `.01` candidate rebuilt 2,431 notes in 4 min 20 s
+  (260.197 seconds), replacing 22,364 chunk IDs across 641 notes. This is one Windows
+  vault measurement, not a duration guarantee. See the
+  [upgrade notes](docs/en/surface-fixes-release-notes.md) and
+  [French translation](docs/fr/surface-fixes-release-notes.md), including validation limits.
+- Reserve `.01` for the local migration candidate; `.02` is the intended public version.
+
+### Known issues
+
+- With an insufficient budget, `session_context` can return a refusal outside its
+  declared output schema, hiding `required_tokens` from strict clients. This
+  pre-existing issue remains unchanged. Retry with a larger budget or read
+  `_memory/INIT.md` through `get_note` when available; see the upgrade notes.
+
+## [2026.0910.01] - 2026-09-10
+
+### Fixed
+
+- Preserve sibling heading boundaries when a note has no H1 or skips heading levels.
+- Store follow-up payload text without retrieval envelopes while retaining legacy compatibility.
+- Resolve regex globs relative to the vault and report invalid or unmatched globs explicitly.
+- Build contradiction proposals from the complete source section instead of a truncated excerpt.
+- Return typed section-selection errors and record only changed frontmatter fields in audit receipts.
+
+### Changed
+
+- Document proposal tokens without a time-based expiry and return
+  `proposal_token_stale_or_unknown` when a proposal can no longer be resolved.
+- Require a full `datacron reindex` after installation because affected chunk IDs change.
+  Retrieve fresh chunk references and rescan unresolved contradiction proposals.
+  This version is a local migration candidate. Its local vault migration rebuilt
+  2,431 notes in 260.197 seconds; this measurement is not a duration guarantee.
+  See the [upgrade notes](docs/en/surface-fixes-release-notes.md)
+  and their [French translation](docs/fr/surface-fixes-release-notes.md).
+
 ## [2026.0910.00] - 2026-09-10
 
 ### Fixed

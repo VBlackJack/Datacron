@@ -23,3 +23,40 @@ d'écriture n'est retourné. Le format `cs2` ne porte aucune génération d'inde
 ne peut donc pas attribuer avec certitude ce refus au reindex. Une proposition inchangée
 reste confirmable après une reconstruction qui conserve ses identifiants de chunks.
 Aucune TTL temporelle n'est ajoutée.
+
+## Migration locale mesurée
+
+Le 2026-09-10, le candidat Windows local `2026.0910.01` a reconstruit un vault de
+2 431 notes indexées et 95 094 chunks en 260,197 secondes de durée totale (4 min 20 s).
+La commande de reindex a annoncé 258,558 secondes et la génération est passée de
+2873 à 2874. La comparaison avec l'index sauvegardé relève 22 364 identifiants de
+chunks remplacés dans 641 notes.
+
+Avant les écritures de recette, le checksum Markdown était identique avant et après
+migration, ainsi que le SHA256 séparé de `VAULT.yaml`. Le nouvel index ne signalait
+aucune entrée périmée, divergence de hash, incohérence d'identité ou erreur de parsing
+du frontmatter. Cette mesure locale ne garantit pas la durée pour d'autres vaults.
+
+Aucun véritable token de proposition n'a été conservé avant ce reindex réel : le
+refus d'un token antérieur à la migration n'a donc pas été testé sur ce vault. Un
+token synthétique daté de 2020 a vérifié l'absence de TTL et un token inconnu a
+vérifié le chemin d'erreur ; aucun des deux ne valide ce scénario historique.
+`test_proposal_reindex.py` couvre le refus lorsque les identifiants de chunks
+changent et la conservation lorsqu'ils restent identiques. Conserver un véritable
+token avant le prochain reindex contrôlé permettra de vérifier ce cas en migration
+réelle.
+
+Le candidat local reste `2026.0910.01` ; la version publique prévue est
+`2026.0910.02`. Un vault déjà reconstruit avec `.01` n'a pas besoin d'un nouveau
+reindex pour ce seul incrément de version.
+
+## Limite connue : budget du contexte de session
+
+Lorsque le budget ne peut pas contenir le contrat mémoire, `session_context`
+retourne un refus hors du schéma de sortie déclaré. Les clients stricts peuvent
+rejeter cette réponse avant de restituer `required_tokens`. Ce comportement
+préexistait aux correctifs et reste inchangé dans cette version. Réessayer avec un
+budget supérieur (6 000 tokens ont fonctionné dans le cas mesuré), ou utiliser
+`get_note(id_or_path="_memory/INIT.md")` lorsque cette note de démarrage existe.
+Un lot séparé couvrira le schéma du refus, la préservation de `required_tokens`
+et l'exposition éventuelle des autres outils sur leurs chemins d'erreur.
