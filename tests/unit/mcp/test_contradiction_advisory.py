@@ -664,7 +664,7 @@ async def test_confirmation_is_idempotent_and_write_cas_is_single_effect(
 
     assert written["indexed"] is True
     assert replayed_write["error"]["type"] == "WriteConflictError"
-    assert stale_confirmation["error"]["type"] == "ValueError"
+    assert stale_confirmation["error"]["code"] == "proposal_token_stale_or_unknown"
     retrieval = await _search_text_impl(app, query="worldline", limit=10)
     assert any(
         result["note_rel_path"] == "_memory/facts/employer-old.md"
@@ -696,7 +696,7 @@ async def test_target_change_before_confirmation_refuses_without_write(
 
     result = await _contradiction_scan_impl(app, mode="confirm", proposal_token=token)
 
-    assert result["error"]["type"] == "ValueError"
+    assert result["error"]["code"] == "proposal_token_stale_or_unknown"
     assert "stale" in result["error"]["message"]
     assert not (vault / ".datacron" / "oplog" / "operations.jsonl").exists()
     assert not (vault / ".datacron" / "history").exists()

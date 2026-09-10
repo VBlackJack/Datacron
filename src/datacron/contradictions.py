@@ -137,6 +137,12 @@ _REFINEMENT_MARKERS: Final[tuple[str, ...]] = (
 )
 
 
+class ProposalTokenUnavailableError(ValueError):
+    """A valid token cannot be resolved against the current candidate set."""
+
+    code: Final[str] = "proposal_token_stale_or_unknown"
+
+
 class CandidateClass(StrEnum):
     """Conservative classification attached to every candidate."""
 
@@ -279,7 +285,12 @@ async def confirm_proposal(
         proposal_date=proposal_date,
     )
     if proposal is None:
-        raise ValueError("proposal token is unknown or stale; rerun contradiction_scan")
+        raise ProposalTokenUnavailableError(
+            "Proposal token is stale or unknown. A reindex that changes chunk IDs or "
+            "a change to the candidate set can invalidate it even without a time limit. "
+            "Rerun contradiction_scan(mode='scan') and review a new proposal. "
+            "The cs2 token has no index generation, so the cause cannot be determined."
+        )
 
     target_note = await _read_note(app, proposal.candidate.target.note_rel_path)
     if target_note.content_hash != proposal.candidate.expected_hash:
