@@ -108,6 +108,13 @@ seulement après validation. Voir [Organisation du vault](organization.md).
 
 ## Comment fonctionne la recherche
 
+Le fil contient uniquement les titres présents dans le corps Markdown. Un parent doit
+avoir un niveau strictement inférieur ; les sections H2 restent soeurs même sans H1.
+Le titre du frontmatter est indexé séparément et ne devient jamais une racine virtuelle.
+Après une mise à jour corrigeant les fils erronés, lance un `datacron reindex` complet :
+les identifiants des chunks concernés changent. Récupère des identifiants frais avant
+d'utiliser des références de chunks enregistrées.
+
 `search_text` combine plusieurs signaux, ce qui explique pourquoi les résultats ne sont pas
 un simple "match de mots" :
 

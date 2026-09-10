@@ -24,6 +24,7 @@ from datacron.contradictions import (
     CandidateClass,
     MutationScope,
     SectionAssertion,
+    _addressable_selector,
     _excerpt,
     _statement,
     build_proposal,
@@ -32,6 +33,13 @@ from datacron.contradictions import (
 from datacron.core import config as core_config
 
 _TODAY = date(2026, 7, 17)
+
+
+def test_selector_uses_real_levels_and_ignores_fenced_headings() -> None:
+    body = "## A\n\n#### Child\n\n#### Sibling\n\nB\n---\n\n```\n## B\n```\n"
+    assert _addressable_selector(body, "A / Sibling") == ("Sibling", 4)
+    assert _addressable_selector(body, "B") == ("B", 2)
+    assert _addressable_selector(body, "A / B") is None
 
 
 def _candidate(

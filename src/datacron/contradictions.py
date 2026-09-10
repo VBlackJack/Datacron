@@ -26,7 +26,8 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 from datacron.core import config as core_config
-from datacron.core.markdown_sections import find_section_span, parse_heading_line
+from datacron.core.markdown_headings import markdown_headings
+from datacron.core.markdown_sections import find_section_span
 from datacron.core.models import Chunk, ChunkType, Note
 
 if TYPE_CHECKING:
@@ -134,6 +135,12 @@ _REFINEMENT_MARKERS: Final[tuple[str, ...]] = (
     "precision",
     "raffinement",
 )
+
+
+class ProposalTokenUnavailableError(ValueError):
+    """A valid token cannot be resolved against the current candidate set."""
+
+    code: Final[str] = "proposal_token_stale_or_unknown"
 
 
 class CandidateClass(StrEnum):
@@ -283,7 +290,12 @@ async def confirm_proposal(
         proposal_date=proposal_date,
     )
     if proposal is None:
-        raise ValueError("proposal token is unknown or stale; rerun contradiction_scan")
+        raise ProposalTokenUnavailableError(
+            "Proposal token is stale or unknown. A reindex that changes chunk IDs or "
+            "a change to the candidate set can invalidate it even without a time limit. "
+            "Rerun contradiction_scan(mode='scan') and review a new proposal. "
+            "The cs2 token has no index generation, so the cause cannot be determined."
+        )
 
     target_note = await _read_note(app, proposal.candidate.target.note_rel_path)
     if target_note.content_hash != proposal.candidate.expected_hash:
@@ -719,16 +731,13 @@ def _write_call(target_note: Note, proposal: Proposal) -> dict[str, Any]:
 
 
 def _addressable_selector(body: str, header_path: str) -> tuple[str, int] | None:
-    stack: list[str] = []
+    stack: list[tuple[int, str]] = []
     entries: list[tuple[str, int, str]] = []
-    for line in body.splitlines():
-        parsed = parse_heading_line(line)
-        if parsed is None:
-            continue
-        level, text = parsed
-        stack = stack[: max(level - 1, 0)]
-        stack.append(text)
-        entries.append((text, level, _HEADING_SEPARATOR.join(stack)))
+    for heading in markdown_headings(body.splitlines(keepends=True)):
+        level, text = heading.level, heading.text
+        stack = [item for item in stack if item[0] < level]
+        stack.append((level, text))
+        entries.append((text, level, _HEADING_SEPARATOR.join(title for _, title in stack)))
 
     path_matches = [entry for entry in entries if entry[2] == header_path]
     if len(path_matches) != 1:

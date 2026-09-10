@@ -104,6 +104,24 @@ def test_nested_section_titles_use_immediate_heading() -> None:
     assert chunks[7].section_title == "Retrieval"
 
 
+@pytest.mark.parametrize("root", ["", "# Root\n\n"])
+def test_heading_siblings_use_actual_levels(root: str) -> None:
+    chunks = _chunks_for("hierarchy.md", root + "## A\n\n## B\n\n### B1\n\n## C\n")
+    prefix = "Root / " if root else ""
+    headings = [chunk for chunk in chunks if chunk.chunk_type is ChunkType.HEADING]
+    if root:
+        assert headings.pop(0).header_path == "Root"
+    assert [chunk.header_path for chunk in headings] == [
+        prefix + title for title in ("A", "B", "B / B1", "C")
+    ]
+    assert headings[-1].chunk_id == f"{_NOTE_ID}::{('root/' if root else '')}c::0000"
+
+
+def test_skipped_heading_levels_do_not_create_false_parents() -> None:
+    chunks = _chunks_for("gaps.md", "## A\n\n#### Child\n\n#### Sibling\n\n## B\n")
+    assert [chunk.header_path for chunk in chunks] == ["A", "A / Child", "A / Sibling", "B"]
+
+
 def test_chunk_ids_use_slugged_header_path_only() -> None:
     chunks = _chunks_for("nested-headings.md")
 
