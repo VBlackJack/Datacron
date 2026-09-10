@@ -95,6 +95,46 @@ async def _call(app: DatacronApp, name: str, **arguments: Any) -> dict[str, Any]
     return dict(json.loads(result.content[0].text))
 
 
+async def test_frontmatter_receipt_and_history_report_actual_changes(
+    memory_app: DatacronApp,
+) -> None:
+    app = memory_app
+    first = await _call(
+        app,
+        "set_frontmatter",
+        rel_path="person.md",
+        confidence="high",
+        last_verified="2026-09-10",
+        request_id="initial-fields",
+    )
+    assert first["indexed"] is True
+    result = await _call(
+        app,
+        "set_frontmatter",
+        rel_path="person.md",
+        confidence="low",
+        last_verified="2026-09-10",
+        rejected=["old -- replaced"],
+        expected_hash=first["content_hash"],
+        request_id="mixed-fields",
+    )
+    assert result["indexed"] is True
+    assert result["updated"]["fields"] == ["confidence", "rejected"]
+    history = await _call(app, "get_note_history", note="person.md", request_id="mixed-fields")
+    assert history["operations"][0]["parameters"]["fields"] == ",".join(result["updated"]["fields"])
+    unchanged = await _call(
+        app,
+        "set_frontmatter",
+        rel_path="person.md",
+        confidence="low",
+        expected_hash=result["content_hash"],
+        request_id="unchanged-fields",
+    )
+    assert unchanged["updated"]["fields"] == []
+    history = await _call(app, "get_note_history", note="person.md", request_id="unchanged-fields")
+    assert history["operations"][0]["parameters"]["fields"] == ""
+
+
 async def test_context_complete_kernel_budget_and_no_index_repair(memory_app: DatacronApp) -> None:
     app = memory_app
     before = await app.store.stats()
@@ -497,43 +537,3 @@ async def test_context_reports_whether_regex_search_has_ripgrep(
     monkeypatch.setattr(shutil, "which", lambda _name: "C:/tools/rg.exe")
     present = await _call(memory_app, "session_context")
     assert present["capabilities"]["regex_search_ripgrep"] is True
-
-
-async def test_frontmatter_receipt_and_history_report_actual_changes(
-    memory_app: DatacronApp,
-) -> None:
-    app = memory_app
-    first = await _call(
-        app,
-        "set_frontmatter",
-        rel_path="person.md",
-        confidence="high",
-        last_verified="2026-09-10",
-        request_id="initial-fields",
-    )
-    assert first["indexed"] is True
-    result = await _call(
-        app,
-        "set_frontmatter",
-        rel_path="person.md",
-        confidence="low",
-        last_verified="2026-09-10",
-        rejected=["old -- replaced"],
-        expected_hash=first["content_hash"],
-        request_id="mixed-fields",
-    )
-    assert result["indexed"] is True
-    assert result["updated"]["fields"] == ["confidence", "rejected"]
-    history = await _call(app, "get_note_history", note="person.md", request_id="mixed-fields")
-    assert history["operations"][0]["parameters"]["fields"] == ",".join(result["updated"]["fields"])
-    unchanged = await _call(
-        app,
-        "set_frontmatter",
-        rel_path="person.md",
-        confidence="low",
-        expected_hash=result["content_hash"],
-        request_id="unchanged-fields",
-    )
-    assert unchanged["updated"]["fields"] == []
-    history = await _call(app, "get_note_history", note="person.md", request_id="unchanged-fields")
-    assert history["operations"][0]["parameters"]["fields"] == ""
