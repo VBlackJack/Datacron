@@ -80,7 +80,7 @@ def _select_heading_match(
 ) -> tuple[int, int]:
     if heading_occurrence is None:
         if not matches:
-            raise ValueError("heading not found; nothing to patch")
+            raise ValueError("heading not found; no section selected")
         if len(matches) > 1:
             raise ValueError(
                 f"heading is ambiguous ({len(matches)} matches); pass heading_level for "

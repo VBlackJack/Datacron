@@ -806,7 +806,7 @@ async def _rename_note_section_impl(
                     heading_occurrence=cleaned_heading_occurrence,
                 )
             except ValueError as exc:
-                if str(exc) == "heading not found; nothing to patch":
+                if str(exc) == "heading not found; no section selected":
                     raise ValueError("heading not found; nothing to rename") from exc
                 raise
             selected = heading_before(lines, content_start)
