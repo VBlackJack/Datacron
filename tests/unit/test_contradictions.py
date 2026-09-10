@@ -67,6 +67,7 @@ def _candidate(
         addressable=True,
         heading_level=2,
         expected_hash="a" * 64,
+        source_content=source_content,
     )
 
 
@@ -155,9 +156,7 @@ def test_truncated_open_question_ends_with_ellipsis_not_question_mark() -> None:
         today=_TODAY,
     )
 
-    assert proposal.block == (
-        f"> QUESTION OUVERTE 2026-07-17 : {prefix}... Voir _memory/facts/current.md."
-    )
+    assert proposal.block == "> QUESTION OUVERTE 2026-07-17 : Voir _memory/facts/current.md."
 
 
 def test_short_statement_and_empty_fallback_keep_exact_punctuation() -> None:
@@ -249,3 +248,17 @@ def test_proposal_token_is_deterministic_and_content_addressed() -> None:
 
     assert first.token == second.token
     assert first.token != changed.token
+
+
+@pytest.mark.parametrize("classification", list(CandidateClass))
+def test_long_source_proposes_only_reference(classification: CandidateClass) -> None:
+    proposal = build_proposal(
+        _candidate(source_content="Complete sentence. " * 100),
+        classification=classification,
+        scope=MutationScope.SECTION,
+        today=_TODAY,
+    )
+    assert proposal.block is not None
+    assert "..." not in proposal.block
+    assert "Complete sentence" not in proposal.block
+    assert proposal.block.endswith("Voir _memory/facts/current.md.")

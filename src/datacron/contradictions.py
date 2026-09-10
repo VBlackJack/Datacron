@@ -182,6 +182,8 @@ class Candidate:
     heading_level: int | None = None
     expected_hash: str | None = None
     manual_action: str | None = None
+    source_content: str | None = None
+    source_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -218,6 +220,9 @@ def format_update_block(
 ) -> str:
     """Return the one canonical dated section-level provenance block."""
     label = core_config.DEFAULT_CONTRADICTION_PROVENANCE_LABELS[classification.name.lower()]
+    connector = core_config.DEFAULT_CONTRADICTION_SOURCE_CONNECTOR
+    if truncated:
+        return f"> {label} {today.isoformat()} : {connector} {source_rel_path}."
     cleaned_statement = _clean_statement(statement, classification, truncated=truncated)
     sentence = (
         cleaned_statement
@@ -317,7 +322,11 @@ def build_proposal(
     if scope is MutationScope.WHOLE_NOTE and classification is not CandidateClass.CONTRADICTION:
         raise ValueError("whole-note invalidation requires CONTRADICTION classification")
 
-    statement = _statement_result(candidate.source.content, classification)
+    statement = (
+        _statement_result(candidate.source_content, classification)
+        if candidate.source_content is not None
+        else _TruncatedText(text="", truncated=True)
+    )
     if scope is MutationScope.SECTION:
         if candidate.heading_level is None or candidate.target.section_title is None:
             raise ValueError("section proposal requires an addressable heading")
@@ -350,6 +359,7 @@ def build_proposal(
         "target_chunk_id": candidate.target.chunk_id,
         "source_note_id": candidate.source.note_id,
         "source_chunk_id": candidate.source.chunk_id,
+        "source_hash": candidate.source_hash,
         "classification": classification.value,
         "scope": scope.value,
         "expected_hash": candidate.expected_hash,
@@ -548,7 +558,21 @@ async def _resolve_addressability(  # noqa: PLR0911 - guard clauses preserve ref
         addressable=True,
         heading_level=level,
         expected_hash=target_note.content_hash,
+        source_content=_complete_source_section(source_note, candidate.source),
+        source_hash=source_note.content_hash,
     )
+
+
+def _complete_source_section(note: Note, source: SectionAssertion) -> str | None:
+    """Read one complete live section; ambiguous sources produce reference-only proposals."""
+    if source.section_title is None:
+        return None
+    try:
+        lines = note.content.splitlines(keepends=True)
+        start, end = find_section_span(lines, source.section_title, None)
+    except ValueError:
+        return None
+    return "".join(lines[start:end])
 
 
 def _candidate_payload(
