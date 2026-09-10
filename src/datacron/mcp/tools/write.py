@@ -30,6 +30,7 @@ from datacron.core.durability import (
 from datacron.core.frontmatter import FrontmatterError, serialize
 from datacron.core.markdown_headings import heading_before, markdown_headings
 from datacron.core.markdown_sections import (
+    HeadingNotFoundError,
     append_entry_to_heading,
     find_section_span,
     patch_note_preamble,
@@ -793,10 +794,8 @@ async def _rename_note_section_impl(
                     cleaned_heading_level,
                     heading_occurrence=cleaned_heading_occurrence,
                 )
-            except ValueError as exc:
-                if str(exc) == "heading not found; nothing to patch":
-                    raise ValueError("heading not found; nothing to rename") from exc
-                raise
+            except HeadingNotFoundError as exc:
+                raise HeadingNotFoundError("heading not found; nothing to rename") from exc
             selected = heading_before(lines, content_start)
             heading_index = selected.start
             matched_level, matched_text = selected.level, selected.text
