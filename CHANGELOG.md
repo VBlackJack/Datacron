@@ -7,6 +7,26 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [2026.0910.01] - 2026-09-10
+
+### Fixed
+
+- Preserve sibling heading boundaries when a note has no H1 or skips heading levels.
+- Store follow-up payload text without retrieval envelopes while retaining legacy compatibility.
+- Resolve regex globs relative to the vault and report invalid or unmatched globs explicitly.
+- Build contradiction proposals from the complete source section instead of a truncated excerpt.
+- Return typed section-selection errors and record only changed frontmatter fields in audit receipts.
+
+### Changed
+
+- Document proposal tokens without a time-based expiry and return
+  `proposal_token_stale_or_unknown` when a proposal can no longer be resolved.
+- Require a full `datacron reindex` after installation because affected chunk IDs change.
+  Retrieve fresh chunk references and rescan unresolved contradiction proposals.
+  This version is a local migration candidate; production-vault migration duration
+  has not yet been measured. See the [upgrade notes](docs/en/surface-fixes-release-notes.md)
+  and their [French translation](docs/fr/surface-fixes-release-notes.md).
+
 ## [2026.0910.00] - 2026-09-10
 
 ### Fixed
