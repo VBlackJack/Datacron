@@ -212,19 +212,25 @@ def _render_entry(
         exclude={"expected_hash", "heading"},
     )
     raw["source_id"] = source.id
-    raw["identity_basis"] = (
+    legacy = dict(raw)
+    legacy["identity_basis"] = (
         wrap_vault_content(target.rel_path, record.identity_basis)
         if record.identity_basis
         else None
     )
-    raw["source_excerpt"] = wrap_vault_content(source.rel_path, record.source_excerpt)
-    raw["summary"] = wrap_vault_content(target.rel_path, record.summary)
+    legacy["source_excerpt"] = wrap_vault_content(source.rel_path, record.source_excerpt)
+    legacy["summary"] = wrap_vault_content(target.rel_path, record.summary)
     # Retain replay compatibility with existing envelopes without rewriting history.
     legacy_digest = sha256(
-        json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=2).encode()
+        json.dumps(legacy, ensure_ascii=True, sort_keys=True, indent=2).encode()
     ).hexdigest()
     if record.owner is not None:
         raw["owner"] = sanitize_metadata_value(record.owner)
+        legacy["owner"] = raw["owner"]
+    legacy_sanitized_digest = sha256(
+        json.dumps(legacy, ensure_ascii=True, sort_keys=True, indent=2).encode()
+    ).hexdigest()
+    raw["text_format"] = "raw"
     rendered = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=2)
     # Prepared output is a write payload, not a retrieval snippet: refuse rather than
     # silently modify sensitive text and invalidate the source evidence.
@@ -245,7 +251,7 @@ def _render_entry(
     ]
     prior = dict(known)
     if record.revision in prior:
-        if prior[record.revision] not in {digest, legacy_digest}:
+        if prior[record.revision] not in {digest, legacy_digest, legacy_sanitized_digest}:
             raise FollowUpValidationError("revision already exists with different content")
         return None
     if known and record.previous_revision != known[-1][0]:

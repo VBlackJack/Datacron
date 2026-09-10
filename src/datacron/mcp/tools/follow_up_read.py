@@ -19,13 +19,19 @@ import json
 import re
 import time
 from hashlib import sha256
+from html import escape
 from typing import TYPE_CHECKING, Any
 
 from datacron.core.memory_protocol import FOLLOW_UP_MARKER_PREFIX, SESSION_MAX_NOTES
 from datacron.core.models import Note
 from datacron.core.paths import PathConfinementError
 from datacron.core.scope import NoteAdmissionError
-from datacron.mcp.sandbox import sanitize_payload_strings, wrap_vault_content
+from datacron.mcp.sandbox import (
+    VAULT_CONTENT_CLOSE,
+    VAULT_CONTENT_NOTICE,
+    sanitize_payload_strings,
+    wrap_vault_content,
+)
 from datacron.mcp.tools.payloads import _audit, _error_response, _internal_error_response
 from datacron.mcp.tools.session import rendered_size
 
@@ -96,12 +102,12 @@ async def get_follow_up(
             for item in current.values():
                 if not include_closed and item.get("status") in {"completed", "cancelled"}:
                     continue
-                safe = sanitize_payload_strings(item)
-                # Hash integrity does not make historical text trusted. Reframe even
-                # legacy envelopes, neutralizing any nested control delimiters.
-                for field in ("summary", "source_excerpt", "identity_basis"):
-                    if isinstance(item.get(field), str):
-                        safe[field] = wrap_vault_content(note.rel_path, item[field])
+                projected = _project_text(item)
+                safe = sanitize_payload_strings(projected)
+                if isinstance(projected.get("source_excerpt"), str):
+                    safe["source_excerpt"] = wrap_vault_content(
+                        str(item.get("source_path", note.rel_path)), projected["source_excerpt"]
+                    )
                 safe = app.secret_redactor.redact_value(safe)
                 records.append(
                     {
@@ -137,6 +143,23 @@ class FollowUpReadError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def _project_text(item: dict[str, Any]) -> dict[str, Any]:
+    """Unframe recognized historical presentation text without changing stored bytes."""
+    projected = dict(item)
+    if item.get("text_format") == "raw":
+        return projected
+    for field in ("summary", "source_excerpt", "identity_basis"):
+        value = item.get(field)
+        path = item.get("source_path" if field == "source_excerpt" else "target_path")
+        if not isinstance(value, str) or not isinstance(path, str):
+            continue
+        prefix = f'<vault_content path="{escape(path, quote=True)}">\n{VAULT_CONTENT_NOTICE}\n'
+        suffix = f"\n{VAULT_CONTENT_CLOSE}"
+        if value.startswith(prefix) and value.endswith(suffix):
+            projected[field] = value[len(prefix) : -len(suffix)]
+    return projected
 
 
 def _page(
