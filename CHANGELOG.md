@@ -23,8 +23,9 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   `proposal_token_stale_or_unknown` when a proposal can no longer be resolved.
 - Require a full `datacron reindex` after installation because affected chunk IDs change.
   Retrieve fresh chunk references and rescan unresolved contradiction proposals.
-  This version is a local migration candidate; production-vault migration duration
-  has not yet been measured. See the [upgrade notes](docs/en/surface-fixes-release-notes.md)
+  This version is a local migration candidate. Its local vault migration rebuilt
+  2,431 notes in 260.197 seconds; this measurement is not a duration guarantee.
+  See the [upgrade notes](docs/en/surface-fixes-release-notes.md)
   and their [French translation](docs/fr/surface-fixes-release-notes.md).
 
 ## [2026.0910.00] - 2026-09-10
