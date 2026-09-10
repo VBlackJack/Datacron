@@ -95,6 +95,46 @@ async def _call(app: DatacronApp, name: str, **arguments: Any) -> dict[str, Any]
     return dict(json.loads(result.content[0].text))
 
 
+async def test_frontmatter_receipt_and_history_report_actual_changes(
+    memory_app: DatacronApp,
+) -> None:
+    app = memory_app
+    first = await _call(
+        app,
+        "set_frontmatter",
+        rel_path="person.md",
+        confidence="high",
+        last_verified="2026-09-10",
+        request_id="initial-fields",
+    )
+    assert first["indexed"] is True
+    result = await _call(
+        app,
+        "set_frontmatter",
+        rel_path="person.md",
+        confidence="low",
+        last_verified="2026-09-10",
+        rejected=["old -- replaced"],
+        expected_hash=first["content_hash"],
+        request_id="mixed-fields",
+    )
+    assert result["indexed"] is True
+    assert result["updated"]["fields"] == ["confidence", "rejected"]
+    history = await _call(app, "get_note_history", note="person.md", request_id="mixed-fields")
+    assert history["operations"][0]["parameters"]["fields"] == ",".join(result["updated"]["fields"])
+    unchanged = await _call(
+        app,
+        "set_frontmatter",
+        rel_path="person.md",
+        confidence="low",
+        expected_hash=result["content_hash"],
+        request_id="unchanged-fields",
+    )
+    assert unchanged["updated"]["fields"] == []
+    history = await _call(app, "get_note_history", note="person.md", request_id="unchanged-fields")
+    assert history["operations"][0]["parameters"]["fields"] == ""
+
+
 async def test_context_complete_kernel_budget_and_no_index_repair(memory_app: DatacronApp) -> None:
     app = memory_app
     before = await app.store.stats()
@@ -347,10 +387,16 @@ async def test_follow_up_owner_is_sandboxed_without_rewriting_history(
     args = prepared["plans"][0]["arguments"]
     assert owner not in args["entry"]
     if legacy:
+        from datacron.mcp.sandbox import wrap_vault_content
+
         # Recreate an envelope from the previous release, with a valid digest.
         marker, fence, remainder = args["entry"].split("\n", 2)
         body, closing = remainder.rsplit("\n", 1)
         item = json.loads(body)
+        item.pop("text_format")
+        for field in ("summary", "source_excerpt", "identity_basis"):
+            path = "source.md" if field == "source_excerpt" else "person.md"
+            item[field] = wrap_vault_content(path, item[field])
         item["owner"] = owner
         body = json.dumps(item, ensure_ascii=True, sort_keys=True, indent=2)
         prefix = marker.rsplit(":", 1)[0]
@@ -363,6 +409,10 @@ async def test_follow_up_owner_is_sandboxed_without_rewriting_history(
     result = await _call(app, "get_follow_up", note_paths=["person.md"])
     assert owner not in json.dumps(result)
     assert "[escaped:" in result["records"][0]["record"]["owner"]
+    assert result["records"][0]["record"]["summary"] == "Awaiting the report"
+    excerpt = result["records"][0]["record"]["source_excerpt"]
+    assert excerpt.startswith('<vault_content path="source.md">')
+    assert excerpt.count("<vault_content") == 1
     replay = await _call(app, "prepare_follow_up", records=[_record(app, owner=owner)])
     assert replay["already_recorded"] == ["meeting-report"]
     assert (app.vault_root / "person.md").read_bytes() == before
@@ -497,3 +547,26 @@ async def test_context_reports_whether_regex_search_has_ripgrep(
     monkeypatch.setattr(shutil, "which", lambda _name: "C:/tools/rg.exe")
     present = await _call(memory_app, "session_context")
     assert present["capabilities"]["regex_search_ripgrep"] is True
+
+
+async def test_follow_up_keeps_raw_write_text_and_source_provenance(
+    memory_app: DatacronApp,
+) -> None:
+    from datacron.mcp.sandbox import wrap_vault_content
+    from datacron.mcp.tools.follow_up_read import follow_up_entries
+
+    app = memory_app
+    original = _record(app, summary="Résumé: café\n  Follow up.")
+    prepared = await _call(app, "prepare_follow_up", records=[original])
+    args = prepared["plans"][0]["arguments"]
+    assert "<vault_content" not in args["entry"]
+    saved = await _call(app, "append_journal", **args)
+    assert saved["indexed"] is True
+    note = await app.vault_reader.read_note(app.vault_root / "person.md")
+    stored = follow_up_entries(note)[0]
+    for field in ("source_excerpt", "summary", "identity_basis"):
+        assert stored[field].encode() == original[field].encode()
+    result = await _call(app, "get_follow_up", note_paths=["person.md"])
+    current = result["records"][0]["record"]
+    assert current["summary"].encode() == original["summary"].encode()
+    assert current["source_excerpt"] == wrap_vault_content("source.md", original["source_excerpt"])
