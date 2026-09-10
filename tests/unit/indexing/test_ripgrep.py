@@ -249,7 +249,7 @@ def test_build_command_inserts_separator_before_dash_pattern() -> None:
 
     command = _build_command("rg", "-foo", vault_root, glob=None, limit=20)
 
-    assert command == ["rg", "--json", "--", "-foo", str(vault_root)]
+    assert command == ["rg", "--json", "--hidden", "--no-ignore", "--", "-foo", "."]
 
 
 def test_build_command_places_separator_after_glob_options() -> None:
@@ -259,7 +259,7 @@ def test_build_command_places_separator_after_glob_options() -> None:
     separator_index = command.index("--")
 
     assert command[separator_index - 2 : separator_index] == ["--glob", "*.md"]
-    assert command[separator_index + 1 :] == ["-foo", str(vault_root)]
+    assert command[separator_index + 1 :] == ["-foo", "."]
 
 
 async def test_happy_path_resolves_three_matches_across_two_files(
@@ -621,9 +621,10 @@ async def test_glob_filter_is_passed_to_subprocess(
     )
 
     command = calls[0][0]
-    assert command[:5] == ("rg", "--json", "--glob", "*.md", "--")
-    assert command[5] == "kafka"
-    assert command[6] == str(indexed.vault_root)
+    assert command[:7] == ("rg", "--json", "--hidden", "--no-ignore", "--glob", "*.md", "--")
+    assert command[7] == "kafka"
+    assert command[8] == "."
+    assert calls[0][1]["cwd"] == indexed.vault_root
 
 
 async def test_invalid_utf8_json_line_is_skipped(

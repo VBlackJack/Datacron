@@ -284,3 +284,16 @@ de retrouver le reçu historique sans répéter une modification déjà effectu�
 
 
 Voir [Améliorations de fiabilité](improvements.md) pour le rejeu des écritures, l'indexation ciblée, la sélection Markdown commune et les contrôles qualité.
+
+
+### Filtres de fichiers regex
+
+Les globs sont sensibles à la casse et relatifs au vault sur les deux moteurs. Utilise
+`/` : `*.md` vise les noms à toute profondeur, `_memory/*.md` les fichiers directs,
+et `_memory/**/*.md` inclut les descendants (`**` accepte zéro dossier). Ripgrep tourne
+avec le vault comme répertoire courant et `.` comme cible de recherche.
+
+Utilise des globs positifs avec `*`, `?`, classes de caractères et segments `**` complets.
+La négation, les alternatives entre accolades et les séparateurs antislash sont refusés
+avec `regex_glob_invalid`. `regex_glob_no_files` signale un filtre ne sélectionnant aucune
+note indexée admise ; un succès vide signifie que le motif n'a produit aucun résultat visible.
