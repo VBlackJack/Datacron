@@ -7,6 +7,27 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [2026.0910.02] - 2026-09-10
+
+### Fixed
+
+- Preserve Markdown heading hierarchy, remove retrieval envelopes from stored follow-up
+  payloads, and resolve regex globs relative to the vault with explicit error reporting.
+- Build contradiction proposals from complete source sections, return typed section
+  errors, and audit only changed frontmatter fields.
+
+### Changed
+
+- Document proposal tokens without a time-based expiry and report unresolved tokens as
+  `proposal_token_stale_or_unknown`, without claiming a definite cause.
+- Upgrades from `2026.0910.00` or earlier require a full `datacron reindex` and refreshed
+  chunk references. The local `.01` candidate rebuilt 2,431 notes in 4 min 20 s
+  (260.197 seconds), replacing 22,364 chunk IDs across 641 notes. This is one Windows
+  vault measurement, not a duration guarantee. See the
+  [upgrade notes](docs/en/surface-fixes-release-notes.md) and
+  [French translation](docs/fr/surface-fixes-release-notes.md), including validation limits.
+- Reserve `.01` for the local migration candidate; `.02` is the intended public version.
+
 ## [2026.0910.01] - 2026-09-10
 
 ### Fixed

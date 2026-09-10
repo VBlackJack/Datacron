@@ -36,3 +36,16 @@ Avant les écritures de recette, le checksum Markdown était identique avant et 
 migration, ainsi que le SHA256 séparé de `VAULT.yaml`. Le nouvel index ne signalait
 aucune entrée périmée, divergence de hash, incohérence d'identité ou erreur de parsing
 du frontmatter. Cette mesure locale ne garantit pas la durée pour d'autres vaults.
+
+Aucun véritable token de proposition n'a été conservé avant ce reindex réel : le
+refus d'un token antérieur à la migration n'a donc pas été testé sur ce vault. Un
+token synthétique daté de 2020 a vérifié l'absence de TTL et un token inconnu a
+vérifié le chemin d'erreur ; aucun des deux ne valide ce scénario historique.
+`test_proposal_reindex.py` couvre le refus lorsque les identifiants de chunks
+changent et la conservation lorsqu'ils restent identiques. Conserver un véritable
+token avant le prochain reindex contrôlé permettra de vérifier ce cas en migration
+réelle.
+
+Le candidat local reste `2026.0910.01` ; la version publique prévue est
+`2026.0910.02`. Un vault déjà reconstruit avec `.01` n'a pas besoin d'un nouveau
+reindex pour ce seul incrément de version.
