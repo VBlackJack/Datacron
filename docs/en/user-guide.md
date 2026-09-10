@@ -105,6 +105,12 @@ applies nothing. `apply_organization_manifest` is what applies, and only after v
 
 ## How search works
 
+Heading trails contain only headings present in the Markdown body. A parent must have
+a strictly lower heading level; sibling H2 sections remain siblings even without an H1.
+The frontmatter title is indexed separately and is never a virtual trail root.
+After upgrading from a version with incorrect trails, run a full `datacron reindex`:
+affected chunk IDs change, so retrieve fresh IDs before using saved chunk references.
+
 `search_text` combines several signals, which is why results are not a plain "word match":
 
 - **FTS5 / BM25** for the base lexical score.

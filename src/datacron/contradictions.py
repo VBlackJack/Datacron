@@ -26,7 +26,8 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 from datacron.core import config as core_config
-from datacron.core.markdown_sections import find_section_span, parse_heading_line
+from datacron.core.markdown_headings import markdown_headings
+from datacron.core.markdown_sections import find_section_span
 from datacron.core.models import Chunk, ChunkType, Note
 
 if TYPE_CHECKING:
@@ -695,16 +696,13 @@ def _write_call(target_note: Note, proposal: Proposal) -> dict[str, Any]:
 
 
 def _addressable_selector(body: str, header_path: str) -> tuple[str, int] | None:
-    stack: list[str] = []
+    stack: list[tuple[int, str]] = []
     entries: list[tuple[str, int, str]] = []
-    for line in body.splitlines():
-        parsed = parse_heading_line(line)
-        if parsed is None:
-            continue
-        level, text = parsed
-        stack = stack[: max(level - 1, 0)]
-        stack.append(text)
-        entries.append((text, level, _HEADING_SEPARATOR.join(stack)))
+    for heading in markdown_headings(body.splitlines(keepends=True)):
+        level, text = heading.level, heading.text
+        stack = [item for item in stack if item[0] < level]
+        stack.append((level, text))
+        entries.append((text, level, _HEADING_SEPARATOR.join(title for _, title in stack)))
 
     path_matches = [entry for entry in entries if entry[2] == header_path]
     if len(path_matches) != 1:

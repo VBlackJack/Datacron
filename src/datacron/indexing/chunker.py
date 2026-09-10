@@ -93,7 +93,7 @@ class MarkdownChunker:
             ]
 
         chunks: list[Chunk] = []
-        headings: list[str] = []
+        headings: list[tuple[int, str]] = []
         ordinal_counters: dict[str, int] = {}
 
         for index, token in enumerate(blocks):
@@ -109,7 +109,7 @@ class MarkdownChunker:
                     _token_text(token),
                 )
 
-            chunk_headings = list(headings)
+            chunk_headings = [title for _, title in headings]
             for content, rel_start, rel_end in _segment_block_content(
                 raw_lines, chunk_type, self._max_chars
             ):
@@ -193,9 +193,12 @@ def _heading_level(token: Any) -> int:
     return int(getattr(token, "level", 1))
 
 
-def _updated_heading_stack(headings: list[str], level: int, title: str) -> list[str]:
-    retained = headings[: max(level - 1, 0)]
-    retained.append(title.strip())
+def _updated_heading_stack(
+    headings: list[tuple[int, str]], level: int, title: str
+) -> list[tuple[int, str]]:
+    """Retain only actual ancestors; the frontmatter title is not a virtual H1."""
+    retained = [heading for heading in headings if heading[0] < level]
+    retained.append((level, title.strip()))
     return retained
 
 
