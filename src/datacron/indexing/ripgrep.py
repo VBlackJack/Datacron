@@ -33,6 +33,7 @@ import re
 import shutil
 from asyncio.subprocess import PIPE
 from collections.abc import AsyncIterator, Callable
+from functools import cache
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, final
 
@@ -72,6 +73,41 @@ class RegexFallbackError(RuntimeError):
     """Raised when the best-effort Python regex fallback declines or times out."""
 
 
+class RegexGlobError(ValueError):
+    """An invalid glob or an empty admitted file selection."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def matches_vault_glob(rel_path: str, glob: str) -> bool:
+    """Match case-sensitive path segments; only a complete ** crosses directories."""
+    if not glob or glob.startswith("!") or any(char in glob for char in "{}\\"):
+        raise RegexGlobError(
+            "regex_glob_invalid", "Use a positive vault-relative glob with / separators"
+        )
+    pattern = glob.removeprefix("./").removeprefix("/")
+    parts = tuple(pattern.split("/"))
+    if any(part in {"", ".", ".."} for part in parts):
+        raise RegexGlobError(
+            "regex_glob_invalid", "Glob contains an empty or relative path segment"
+        )
+    path = tuple(rel_path.split("/"))
+    if len(parts) == 1:
+        return fnmatch.fnmatchcase(path[-1], parts[0])
+
+    @cache
+    def match(i: int, j: int) -> bool:
+        if j == len(parts):
+            return i == len(path)
+        if parts[j] == "**":
+            return match(i, j + 1) or (i < len(path) and match(i + 1, j))
+        return i < len(path) and fnmatch.fnmatchcase(path[i], parts[j]) and match(i + 1, j + 1)
+
+    return match(0, 0)
+
+
 class RipgrepOutputError(RuntimeError):
     """A bounded subprocess frame was refused before JSON decoding."""
 
@@ -104,10 +140,8 @@ class RipgrepWrapper:
         frontmatter and depends on index freshness; MCP ``search_regex`` repairs the
         index before calling this wrapper.
 
-        The two paths differ in ``glob`` semantics: ripgrep applies gitignore globs,
-        where ``*`` does not cross a directory separator, while the fallback applies
-        :func:`fnmatch.fnmatch`, where it does and which is case-insensitive on
-        Windows. Anchor a glob you need to behave identically on both.
+        Globs are case-sensitive and vault-relative on both paths. A single star
+        stays within a path segment; a complete double-star segment crosses folders.
         """
         if limit <= 0:
             return []
@@ -118,7 +152,9 @@ class RipgrepWrapper:
         resolved_rg_path = _resolve_ripgrep_path(rg_path)
         command = _build_command(resolved_rg_path, pattern, vault_root, glob, limit)
         try:
-            proc = await asyncio.create_subprocess_exec(*command, stdout=PIPE, stderr=PIPE)
+            proc = await asyncio.create_subprocess_exec(
+                *command, stdout=PIPE, stderr=PIPE, cwd=vault_root
+            )
         except OSError as exc:
             _LOGGER.warning(
                 "ripgrep is unusable (%s: errno=%s winerror=%s %s); falling back to "
@@ -161,6 +197,7 @@ class RipgrepWrapper:
                 limit=limit,
                 admit=admit,
                 max_frame_bytes=max_frame_bytes or DEFAULT_REGEX_MAX_FRAME_BYTES,
+                glob=glob,
             )
             if killed_for_limit and proc.returncode is None:
                 proc.kill()
@@ -194,6 +231,7 @@ async def _collect_results(
     limit: int,
     admit: Callable[[str], bool] | None = None,
     max_frame_bytes: int = DEFAULT_REGEX_MAX_FRAME_BYTES,
+    glob: str | None = None,
 ) -> tuple[list[SearchResult], bool]:
     results: list[SearchResult] = []
     async for raw_line in _read_frames(stdout, max_frame_bytes):
@@ -207,7 +245,11 @@ async def _collect_results(
             store=store,
             rank_index=len(results),
         )
-        if result is not None and (admit is None or admit(result.chunk.note_rel_path)):
+        if (
+            result is not None
+            and (glob is None or matches_vault_glob(result.chunk.note_rel_path, glob))
+            and (admit is None or admit(result.chunk.note_rel_path))
+        ):
             results.append(result)
         if len(results) >= limit:
             return results, True
@@ -267,7 +309,7 @@ def _build_command(
     command = [rg_path, "--json"]
     if glob:
         command.extend(["--glob", glob])
-    command.extend(["--", pattern, str(vault_root)])
+    command.extend(["--", pattern, "."])
     return command
 
 
@@ -310,7 +352,7 @@ async def _fallback_indexed_regex_search(
         async with asyncio.timeout(timeout_seconds):
             async for chunk in store.iter_all_chunks():
                 scanned += 1
-                if glob and not fnmatch.fnmatch(chunk.note_rel_path, glob):
+                if glob and not matches_vault_glob(chunk.note_rel_path, glob):
                     continue
                 batch.append(chunk)
                 if len(batch) < REGEX_FALLBACK_SCAN_BATCH_CHUNKS:

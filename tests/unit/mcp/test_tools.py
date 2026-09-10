@@ -3767,8 +3767,9 @@ class TestPatchNoteSection:
             expected_hash=hash_text(original_raw),
         )
 
-        assert result["error"]["type"] == "ValueError"
-        assert result["error"]["message"] == "heading not found; nothing to patch"
+        assert result["error"]["type"] == "HeadingNotFoundError"
+        assert result["error"]["message"] == "heading not found; no section selected"
+        assert result["error"]["code"] == "heading_not_found"
         assert target.read_text(encoding="utf-8") == original_raw
 
     @pytest.mark.asyncio

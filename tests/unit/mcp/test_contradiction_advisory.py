@@ -400,6 +400,10 @@ async def test_summary_payload_is_compact_and_alternative_confirms_like_full(
         summary_confirmation["confirmation"]["write_call"]
         == full_confirmation["confirmation"]["write_call"]
     )
+    new_content = summary_confirmation["confirmation"]["write_call"]["arguments"]["new_content"]
+    assert "..." not in new_content
+    assert "Voir " in new_content
+    assert "Detailed audit documentation" not in new_content
 
 
 async def test_cap_does_not_change_candidates_below_threshold(

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -111,3 +112,55 @@ def test_fences_duplicates_and_multiline_setext_selection() -> None:
         3,
         4,
     )
+
+
+@pytest.mark.parametrize("operation", ["patch", "delete", "rename"])
+@pytest.mark.parametrize("alternate_message", [False, True])
+async def test_absent_heading_reports_selection_without_writing(
+    tmp_path: Path, operation: str, alternate_message: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typing import Any
+
+    from mcp.types import CallToolResult, TextContent
+
+    from datacron.core.markdown_sections import HeadingNotFoundError
+    from datacron.mcp.server import create_server
+
+    if alternate_message:
+
+        def missing_heading(*args: Any, **kwargs: Any) -> tuple[int, int]:
+            raise HeadingNotFoundError("The requested section is absent")
+
+        monkeypatch.setattr("datacron.mcp.tools.write.find_section_span", missing_heading)
+
+    path = tmp_path / "note.md"
+    path.write_text(serialize({"id": "01J00000000000000000000091"}, "## Present\n\nBody.\n"))
+    before = path.read_bytes()
+    app = build_app(
+        settings=Settings(vault_root=tmp_path, read_paths=[tmp_path], write_paths=[tmp_path]),
+        vault_root=tmp_path,
+    )
+    await app.store.open(sidecar_index_db(tmp_path))
+    try:
+        arguments: dict[str, Any] = {
+            "rel_path": "note.md",
+            "heading": "Absent",
+            "expected_hash": sha256_bytes(before),
+        }
+        if operation == "patch":
+            arguments["new_content"] = "Replacement"
+        elif operation == "rename":
+            arguments["new_heading"] = "Renamed"
+        result = await create_server(app).call_tool(operation + "_note_section", arguments)
+        assert isinstance(result, CallToolResult)
+        assert result.is_error
+        assert isinstance(result.content[0], TextContent)
+        error = json.loads(result.content[0].text)["error"]
+        assert error["code"] == "heading_not_found"
+        assert error["type"] == "HeadingNotFoundError"
+        if operation == "rename":
+            assert error["message"] == "heading not found; nothing to rename"
+        assert "nothing to patch" not in str(result)
+        assert path.read_bytes() == before
+    finally:
+        await app.store.close()

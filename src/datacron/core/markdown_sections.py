@@ -21,6 +21,7 @@ from typing import Final
 from datacron.core.markdown_headings import markdown_headings
 
 __all__ = [
+    "HeadingNotFoundError",
     "append_entry_to_heading",
     "find_section_span",
     "parse_heading_line",
@@ -30,6 +31,12 @@ __all__ = [
 ]
 
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
+
+
+class HeadingNotFoundError(ValueError):
+    """No section matches the requested heading."""
+
+    code: Final[str] = "heading_not_found"
 
 
 def append_entry_to_heading(body: str, heading: str, entry: str) -> str:
@@ -80,7 +87,7 @@ def _select_heading_match(
 ) -> tuple[int, int]:
     if heading_occurrence is None:
         if not matches:
-            raise ValueError("heading not found; nothing to patch")
+            raise HeadingNotFoundError("heading not found; no section selected")
         if len(matches) > 1:
             raise ValueError(
                 f"heading is ambiguous ({len(matches)} matches); pass heading_level for "
