@@ -65,7 +65,16 @@ SUPERSEDED_DEMOTION_FACTOR: Final[float] = 0.1
 CONFIDENCE_PENALTY: Final[dict[str, float]] = {"low": 0.7, "needs_verification": 0.5}
 DEFAULT_RIPGREP_PATH: Final[str] = "rg"
 DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH: Final[int] = 512
-DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS: Final[float] = 2.0
+# Budget for one complete indexed fallback scan. The scan streams the index and
+# stops at the first `limit` matches, so this ceiling is only reached by a query
+# that matches nothing: measured at 1.7s over 94589 chunks, warm cache. The
+# headroom covers a cold cache, a narrower scope, and vault growth, while still
+# bounding a pathological pattern.
+DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS: Final[float] = 10.0
+# Chunks handed to one worker-thread regex batch. The deadline is only observed
+# between batches, so this trades deadline precision against thread hand-off
+# cost. Internal tuning: deliberately not a Settings field.
+REGEX_FALLBACK_SCAN_BATCH_CHUNKS: Final[int] = 512
 DEFAULT_REGEX_MAX_FRAME_BYTES: Final[int] = 8 * 1024 * 1024
 REGEX_STREAM_READ_BYTES: Final[int] = 64 * 1024
 # Bounded wait for a contended vault advisory lock (and the sidecar index

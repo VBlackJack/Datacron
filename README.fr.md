@@ -67,7 +67,7 @@ python -m pip install -e .
 Prérequis runtime :
 
 - Python 3.11+
-- `ripgrep` disponible dans le `PATH` pour `search_regex`
+- `ripgrep` disponible dans le `PATH` pour `search_regex` ; sans lui, cet outil se rabat sur un balayage plus lent des corps de chunks indexés
 - un dossier de notes Markdown
 - un client MCP stdio pris en charge, par exemple Claude Desktop, Codex CLI ou Gemini CLI
 

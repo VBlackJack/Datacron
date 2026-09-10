@@ -420,6 +420,7 @@ def status(
         _print(f"  created:    {config.created or '<unknown>'}")
     _print(f"  notes:      {note_count}")
     _print(f"  index:      {index_status} ({db_path})")
+    _print(f"  regex:      {_regex_backend_label(settings)}")
     _print(f"  log file:   {log_dir / today_log}")
     _log_completion("status", started)
 
@@ -1019,6 +1020,22 @@ async def _repair_note_id(
         index_after=index_after,
         mismatches_before=mismatches_before,
         mismatches_after=mismatches_after,
+    )
+
+
+def _regex_backend_label(settings: Settings) -> str:
+    """Describe which backend `search_regex` will actually use.
+
+    A missing binary is otherwise invisible until a query fails, and the failure
+    names a timeout rather than the absent prerequisite that caused it.
+    """
+    from datacron.indexing.ripgrep import ripgrep_available  # noqa: PLC0415
+
+    if ripgrep_available(settings.ripgrep_path):
+        return f"ripgrep ({settings.ripgrep_path})"
+    return (
+        f"indexed fallback - ripgrep not found ({settings.ripgrep_path}); "
+        "install it or set DATACRON_RIPGREP_PATH to an absolute path"
     )
 
 

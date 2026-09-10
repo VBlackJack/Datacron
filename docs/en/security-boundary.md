@@ -125,9 +125,14 @@ worth branching on rather than every failure.
 The closed manifest is `datacron.mcp.security_manifest.MCP_TOOL_CAPABILITIES`.
 The blocking injection-surface property compares it with the live `MCPServer` registry.
 The only process-backed capability is `search_regex`, which starts the configured
-ripgrep executable with explicit caller-provided pattern and glob arguments. No MCP
-tool provides network access, arbitrary process execution, eval, or dynamic tool
-dispatch.
+ripgrep executable with explicit caller-provided pattern and glob arguments. When that
+executable cannot be launched, `search_regex` starts no process at all: it compiles the
+caller-provided pattern with Python `re` and evaluates it against indexed chunk bodies in
+this process. That path refuses over-long patterns and known catastrophic shapes before
+reading the index, and bounds the scan with a deadline observed between worker batches,
+but it is a best-effort guard rather than a sandbox, and it is the reason ripgrep is the
+supported path. No MCP tool provides network access, arbitrary process execution, eval,
+or dynamic tool dispatch.
 
 The server boundary accesses no private SDK manager. It delegates to the public
 `MCPServer.call_tool` API, then translates an unknown tool name to JSON-RPC error `-32602`.

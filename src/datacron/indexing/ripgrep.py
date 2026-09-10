@@ -13,10 +13,12 @@
 # limitations under the License.
 """Async ripgrep wrapper with a best-effort indexed Python regex fallback.
 
-Ripgrep is the supported regex path. If its binary is absent, the fallback uses
-heuristic rejection for known catastrophic shapes and an advisory timeout. This
-is not a complete ReDoS sandbox: the timeout cannot preempt ``re`` while it holds
-the GIL, and cancelling the await does not stop the worker thread.
+Ripgrep is the supported regex path. If its binary is absent, the fallback
+rejects known catastrophic shapes before touching the index, then streams the
+indexed chunks in bounded batches and stops at the first ``limit`` admitted
+matches. This is not a complete ReDoS sandbox: the deadline is observed between
+batches, so it cannot preempt ``re`` while it holds the GIL inside one batch, and
+cancelling the await does not stop that batch's worker thread.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ import fnmatch
 import json
 import os
 import re
+import shutil
 from asyncio.subprocess import PIPE
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path, PurePosixPath
@@ -38,13 +41,14 @@ from datacron.core.config import (
     DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS,
     DEFAULT_REGEX_MAX_FRAME_BYTES,
     DEFAULT_RIPGREP_PATH,
+    REGEX_FALLBACK_SCAN_BATCH_CHUNKS,
     REGEX_STREAM_READ_BYTES,
 )
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, SearchResult
 from datacron.core.protocols import FTS5Store
 
-__all__ = ["RegexFallbackError", "RipgrepError", "RipgrepWrapper"]
+__all__ = ["RegexFallbackError", "RipgrepError", "RipgrepWrapper", "ripgrep_available"]
 
 _LOGGER = get_logger(__name__)
 _RIPGREP_PATH_ENV: Final[str] = "DATACRON_RIPGREP_PATH"
@@ -94,10 +98,16 @@ class RipgrepWrapper:
         """Search with ripgrep, falling back to indexed chunks if the binary is absent.
 
         Ripgrep is the supported path. The fallback scans indexed chunk bodies only,
-        applies a best-effort ReDoS guard, and has an advisory timeout that cannot
-        preempt Python ``re`` while it holds the GIL. Installing ripgrep avoids this
-        fallback entirely. The indexed scan excludes frontmatter and depends on index
-        freshness; MCP ``search_regex`` repairs the index before calling this wrapper.
+        applies a best-effort ReDoS guard before any I/O, and has an advisory deadline
+        observed between batches, so it cannot preempt Python ``re`` inside one batch.
+        Installing ripgrep avoids this fallback entirely. The indexed scan excludes
+        frontmatter and depends on index freshness; MCP ``search_regex`` repairs the
+        index before calling this wrapper.
+
+        The two paths differ in ``glob`` semantics: ripgrep applies gitignore globs,
+        where ``*`` does not cross a directory separator, while the fallback applies
+        :func:`fnmatch.fnmatch`, where it does and which is case-insensitive on
+        Windows. Anchor a glob you need to behave identically on both.
         """
         if limit <= 0:
             return []
@@ -105,16 +115,18 @@ class RipgrepWrapper:
             _LOGGER.info("ripgrep search skipped: no FTS5Store supplied for chunk resolution")
             return []
 
-        resolved_rg_path = os.environ.get(_RIPGREP_PATH_ENV, rg_path or DEFAULT_RIPGREP_PATH)
+        resolved_rg_path = _resolve_ripgrep_path(rg_path)
         command = _build_command(resolved_rg_path, pattern, vault_root, glob, limit)
         try:
             proc = await asyncio.create_subprocess_exec(*command, stdout=PIPE, stderr=PIPE)
-        except FileNotFoundError as exc:
+        except OSError as exc:
             _LOGGER.warning(
-                "ripgrep binary not found (%s); falling back to best-effort indexed "
-                "Python regex scan: %s",
+                "ripgrep is unusable (%s: errno=%s winerror=%s %s); falling back to "
+                "best-effort indexed Python regex scan",
                 resolved_rg_path,
-                exc,
+                exc.errno,
+                getattr(exc, "winerror", None),
+                exc.strerror,
             )
             return await _fallback_indexed_regex_search(
                 pattern=pattern,
@@ -220,6 +232,31 @@ async def _read_frames(stdout: asyncio.StreamReader, maximum: int) -> AsyncItera
         yield bytes(pending)
 
 
+def ripgrep_available(rg_path: str | None = None) -> bool:
+    """Report whether the configured ripgrep binary can actually be launched.
+
+    An interactive shell can resolve ``rg`` through an alias or a shell function
+    that a spawned child process cannot see, and an MCP client does not pass its
+    own PATH to the server it starts. This probes the way the subprocess launch
+    will, so the answer matches what ``search_regex`` will experience.
+    """
+    return shutil.which(_resolve_ripgrep_path(rg_path)) is not None
+
+
+def _resolve_ripgrep_path(rg_path: str | None) -> str:
+    """Resolve the ripgrep binary, with an explicit argument outranking the environment.
+
+    ``DATACRON_RIPGREP_PATH`` already reaches ``Settings.ripgrep_path`` through the
+    settings env prefix, so reading it here is a second, lower-precedence chance for
+    a caller that builds the wrapper without settings. An argument always wins, which
+    matches pydantic-settings, where init keyword arguments outrank environment values.
+    """
+    if rg_path:
+        return rg_path
+    from_environment = os.environ.get(_RIPGREP_PATH_ENV, "").strip()
+    return from_environment or DEFAULT_RIPGREP_PATH
+
+
 def _build_command(
     rg_path: str,
     pattern: str,
@@ -246,59 +283,67 @@ async def _fallback_indexed_regex_search(
 ) -> list[SearchResult]:
     """Run the best-effort indexed fallback when supported ripgrep is unavailable.
 
-    The timeout is advisory: expiry can return control to the caller, but it does
-    not stop the worker thread and cannot preempt ``re`` while it holds the GIL.
-    Installing ripgrep avoids this fallback entirely.
+    The pattern is refused or compiled before the index is touched, so a rejected
+    pattern costs no I/O. The scan then streams the index in bounded batches and
+    stops at the first ``limit`` admitted matches, so the deadline is only reached
+    by a query that matches nothing. The deadline is observed between batches: it
+    cannot preempt ``re`` while it holds the GIL inside one batch, which is what
+    bounds a batch rather than the whole scan. Installing ripgrep avoids this
+    fallback entirely.
+
+    Filter order is deliberate and load-bearing. ``glob`` is lexical and free, the
+    regex is the selective step, and ``admit`` is a filesystem call costing
+    hundreds of microseconds, so it runs last, only on chunks whose body already
+    matched, and at most once per distinct note.
     """
     if len(pattern) > max_pattern_length:
         raise RegexFallbackError(
             "best-effort regex fallback pattern exceeds "
             f"{max_pattern_length} characters -- install ripgrep"
         )
+    compiled = _compile_guarded_pattern(pattern)
+    results: list[SearchResult] = []
+    admissions: dict[str, bool] = {}
+    scanned = 0
+    batch: list[Chunk] = []
     try:
         async with asyncio.timeout(timeout_seconds):
-            chunks = [
-                chunk
-                async for chunk in store.iter_all_chunks()
-                if admit is None or admit(chunk.note_rel_path)
-            ]
-            return await asyncio.to_thread(
-                _scan_indexed_chunks,
-                pattern,
-                glob,
-                limit,
-                chunks,
-            )
+            async for chunk in store.iter_all_chunks():
+                scanned += 1
+                if glob and not fnmatch.fnmatch(chunk.note_rel_path, glob):
+                    continue
+                batch.append(chunk)
+                if len(batch) < REGEX_FALLBACK_SCAN_BATCH_CHUNKS:
+                    continue
+                if await _drain_batch(batch, compiled, limit, results, admissions, admit):
+                    return results
+                batch = []
+            if batch:
+                await _drain_batch(batch, compiled, limit, results, admissions, admit)
+            return results
     except TimeoutError:
         raise RegexFallbackError(
-            "regex fallback exceeded its advisory timeout; worker scan may continue "
-            "-- install ripgrep"
+            "regex fallback exceeded its advisory timeout after scanning "
+            f"{scanned} indexed chunks; narrow the glob, lower the limit, raise "
+            "DATACRON_REGEX_FALLBACK_TIMEOUT_SECONDS, or install ripgrep"
         ) from None
 
 
-def _scan_indexed_chunks(
-    pattern: str,
-    glob: str | None,
+async def _drain_batch(
+    batch: list[Chunk],
+    compiled: re.Pattern[str],
     limit: int,
-    chunks: list[Chunk],
-) -> list[SearchResult]:
-    """Scan chunks after a heuristic guard for known catastrophic regex shapes.
+    results: list[SearchResult],
+    admissions: dict[str, bool],
+    admit: Callable[[str], bool] | None,
+) -> bool:
+    """Match one batch off the event loop, then admit and rank the survivors.
 
-    The guard is deliberately conservative and is not a complete ReDoS sandbox.
-    Ripgrep remains the supported regex path.
+    Returns whether ``limit`` results have been collected, which ends the scan.
     """
-    if _RISKY_REPETITION_PATTERN.search(pattern):
-        raise RegexFallbackError(
-            "best-effort regex fallback rejected a potentially catastrophic pattern "
-            "-- install ripgrep"
-        )
-    compiled = re.compile(pattern)
-    results: list[SearchResult] = []
-    for chunk in chunks:
-        if glob and not fnmatch.fnmatch(chunk.note_rel_path, glob):
-            continue
-        snippet = _first_matching_line_snippet(chunk.content, compiled)
-        if snippet is None:
+    matches = await asyncio.to_thread(_scan_indexed_chunks, batch, compiled)
+    for chunk, snippet in matches:
+        if admit is not None and not _is_admitted(chunk.note_rel_path, admissions, admit):
             continue
         rank_index = len(results)
         results.append(
@@ -309,8 +354,54 @@ def _scan_indexed_chunks(
             )
         )
         if len(results) >= limit:
-            break
-    return results
+            return True
+    return False
+
+
+def _is_admitted(
+    rel_path: str,
+    admissions: dict[str, bool],
+    admit: Callable[[str], bool],
+) -> bool:
+    """Decide admission once per distinct note, not once per chunk."""
+    admitted = admissions.get(rel_path)
+    if admitted is None:
+        admitted = admit(rel_path)
+        admissions[rel_path] = admitted
+    return admitted
+
+
+def _compile_guarded_pattern(pattern: str) -> re.Pattern[str]:
+    """Refuse known catastrophic regex shapes, then compile, before any I/O.
+
+    The guard is deliberately conservative and is not a complete ReDoS sandbox.
+    Ripgrep remains the supported regex path. Running it ahead of the index scan
+    is what makes the refusal reachable: behind a full scan it could never be
+    reported, because the deadline expired first.
+    """
+    if _RISKY_REPETITION_PATTERN.search(pattern):
+        raise RegexFallbackError(
+            "best-effort regex fallback rejected a potentially catastrophic pattern "
+            "-- install ripgrep"
+        )
+    return re.compile(pattern)
+
+
+def _scan_indexed_chunks(
+    chunks: list[Chunk],
+    compiled: re.Pattern[str],
+) -> list[tuple[Chunk, str]]:
+    """Return every chunk in one batch whose body matches, with its snippet.
+
+    Ranking and admission are the caller's, so this stays a pure CPU step safe to
+    hand to a worker thread.
+    """
+    matches: list[tuple[Chunk, str]] = []
+    for chunk in chunks:
+        snippet = _first_matching_line_snippet(chunk.content, compiled)
+        if snippet is not None:
+            matches.append((chunk, snippet))
+    return matches
 
 
 def _first_matching_line_snippet(content: str, pattern: re.Pattern[str]) -> str | None:
