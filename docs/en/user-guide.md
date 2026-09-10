@@ -284,6 +284,10 @@ separators: `*.md` matches filenames at any depth, `_memory/*.md` matches direct
 and `_memory/**/*.md` includes descendants (`**` can match zero folders). Ripgrep runs
 with the vault as its working directory and `.` as its search target.
 
+Ripgrep retains its default hidden-file and ignore rules; an explicit glob follows
+ripgrep's normal override precedence. The fallback scans admitted indexed chunks,
+so file coverage can differ even though glob matching uses the same path rules.
+
 Use positive globs with `*`, `?`, character classes, and whole `**` path segments.
 Negation, brace alternatives and backslash separators are refused with
 `regex_glob_invalid`. `regex_glob_no_files` means the filter selects no admitted indexed

@@ -306,7 +306,7 @@ def _build_command(
     glob: str | None,
     limit: int,
 ) -> list[str]:
-    command = [rg_path, "--json", "--hidden", "--no-ignore"]
+    command = [rg_path, "--json"]
     if glob:
         command.extend(["--glob", glob])
     command.extend(["--", pattern, "."])

@@ -293,6 +293,11 @@ Les globs sont sensibles à la casse et relatifs au vault sur les deux moteurs. 
 et `_memory/**/*.md` inclut les descendants (`**` accepte zéro dossier). Ripgrep tourne
 avec le vault comme répertoire courant et `.` comme cible de recherche.
 
+Ripgrep conserve ses règles habituelles pour les fichiers cachés et ignorés ; un
+glob explicite suit les priorités normales de ripgrep. Le fallback parcourt les
+chunks indexés admis : les fichiers couverts peuvent donc différer malgré des
+règles de correspondance des chemins communes.
+
 Utilise des globs positifs avec `*`, `?`, classes de caractères et segments `**` complets.
 La négation, les alternatives entre accolades et les séparateurs antislash sont refusés
 avec `regex_glob_invalid`. `regex_glob_no_files` signale un filtre ne sélectionnant aucune

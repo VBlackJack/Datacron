@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import json
 import shutil
+import subprocess
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -24,9 +26,54 @@ import pytest
 from datacron.core.vault import FilesystemVaultReader
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
-from datacron.indexing.ripgrep import RipgrepWrapper
+from datacron.indexing.ripgrep import RipgrepWrapper, _build_command
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize("glob", [None, "*.md", "_memory/**/*.md"])
+def test_real_rg_retains_default_hidden_directory_policy(
+    tmp_path: Path, rg_path: str, glob: str | None
+) -> None:
+    for name in ("_memory/visible.md", ".git/objects/probe.md", ".datacron/probe.md"):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("needle\n", encoding="utf-8")
+    result = subprocess.run(
+        _build_command(rg_path, "needle", tmp_path, glob, 20),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    matches = [json.loads(line) for line in result.stdout.splitlines()]
+    paths = {
+        Path(event["data"]["path"]["text"]).as_posix()
+        for event in matches
+        if event["type"] == "match"
+    }
+    assert paths == {"_memory/visible.md"}
+
+
+def test_real_rg_retains_default_ignore_policy(tmp_path: Path, rg_path: str) -> None:
+    (tmp_path / ".ignore").write_text("ignored/\n", encoding="utf-8")
+    (tmp_path / "ignored").mkdir()
+    (tmp_path / "ignored/probe.md").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "visible.md").write_text("needle\n", encoding="utf-8")
+    result = subprocess.run(
+        _build_command(rg_path, "needle", tmp_path, None, 20),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "ignored/probe.md" not in result.stdout.replace("\\\\", "/")
+    matches = [json.loads(line) for line in result.stdout.splitlines()]
+    assert {
+        Path(event["data"]["path"]["text"]).as_posix()
+        for event in matches
+        if event["type"] == "match"
+    } == {"visible.md"}
 
 
 @pytest.fixture

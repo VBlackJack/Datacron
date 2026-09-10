@@ -249,7 +249,7 @@ def test_build_command_inserts_separator_before_dash_pattern() -> None:
 
     command = _build_command("rg", "-foo", vault_root, glob=None, limit=20)
 
-    assert command == ["rg", "--json", "--hidden", "--no-ignore", "--", "-foo", "."]
+    assert command == ["rg", "--json", "--", "-foo", "."]
 
 
 def test_build_command_places_separator_after_glob_options() -> None:
@@ -621,9 +621,8 @@ async def test_glob_filter_is_passed_to_subprocess(
     )
 
     command = calls[0][0]
-    assert command[:7] == ("rg", "--json", "--hidden", "--no-ignore", "--glob", "*.md", "--")
-    assert command[7] == "kafka"
-    assert command[8] == "."
+    assert command[:5] == ("rg", "--json", "--glob", "*.md", "--")
+    assert command[5:] == ("kafka", ".")
     assert calls[0][1]["cwd"] == indexed.vault_root
 
 
