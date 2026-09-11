@@ -151,7 +151,47 @@ async def test_context_complete_kernel_budget_and_no_index_repair(memory_app: Da
     )
     small = await _call(app, "session_context", max_tokens=128)
     assert small["error"]["code"] == "context_budget_too_small"
+    assert small["error"]["type"] == "ContextBudgetError"
+    assert small["error"]["required_tokens"] > 128
     assert "contract" not in small
+
+
+async def test_budget_refusals_are_typed_tool_errors_with_required_tokens(
+    memory_app: DatacronApp,
+) -> None:
+    """Both refusal paths leave the boundary as tool errors, never as off-schema results."""
+    app = memory_app
+    server = create_server(app)
+    kernel = await server.call_tool("session_context", {"max_tokens": 128})
+    assert isinstance(kernel, CallToolResult)
+    assert kernel.is_error is True
+    assert kernel.structured_content is None
+    assert isinstance(kernel.content[0], TextContent)
+    kernel_payload = json.loads(kernel.content[0].text)
+    assert set(kernel_payload) == {"error"}
+    required = kernel_payload["error"]["required_tokens"]
+    assert kernel_payload["error"] == {
+        "type": "ContextBudgetError",
+        "message": f"session context requires at least {required} tokens",
+        "code": "context_budget_too_small",
+        "required_tokens": required,
+    }
+    # The advertised requirement is sufficient: the same call with that budget succeeds.
+    exact = await _call(app, "session_context", max_tokens=required)
+    assert exact["contract"]["hash"] == CONTRACT_HASH
+    # The kernel fits exactly, so a subject (longer coverage label) and omitted sources
+    # can only be refused after every source has been dropped: the second path.
+    final = await server.call_tool(
+        "session_context", {"subject": "Alex", "domain": "people", "max_tokens": required}
+    )
+    assert isinstance(final, CallToolResult)
+    assert final.is_error is True
+    assert final.structured_content is None
+    assert isinstance(final.content[0], TextContent)
+    final_payload = json.loads(final.content[0].text)
+    assert final_payload["error"]["code"] == "context_budget_too_small"
+    assert final_payload["error"]["type"] == "ContextBudgetError"
+    assert final_payload["error"]["required_tokens"] > required
 
 
 async def test_live_context_handles_long_sources_and_homonyms(memory_app: DatacronApp) -> None:

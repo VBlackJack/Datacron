@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.memory_protocol import (
@@ -40,6 +40,36 @@ if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
 SessionDomain = Literal["all", "project", "people", "meeting", "objective", "review"]
+
+CONTEXT_BUDGET_TOO_SMALL: Final[str] = "context_budget_too_small"
+
+
+class ContextBudgetError(ValueError):
+    """The requested token budget cannot hold the memory contract.
+
+    Carrying the refusal as a business exception routes it through the shared
+    ``_error_response`` shape, so the MCP boundary emits a tool error instead of
+    a result that the declared ``SessionContextOutput`` schema cannot describe.
+    """
+
+    code: Final[str] = CONTEXT_BUDGET_TOO_SMALL
+
+    def __init__(self, required_tokens: int) -> None:
+        super().__init__(f"session context requires at least {required_tokens} tokens")
+        self.required_tokens = required_tokens
+
+
+def _budget_refusal(started: float, rendered_chars: int) -> dict[str, Any]:
+    """Return the typed refusal, preserving the measured requirement on every path."""
+    required_tokens = -(-rendered_chars // TOKEN_ESTIMATE_CHARS_PER_TOKEN)
+    payload = _error_response(
+        "session_context",
+        ContextBudgetError(required_tokens),
+        started,
+        required_tokens=required_tokens,
+    )
+    payload["error"]["required_tokens"] = required_tokens
+    return payload
 
 
 async def session_context(
@@ -83,13 +113,9 @@ async def session_context(
         "truncated": False,
     }
     maximum = budget * TOKEN_ESTIMATE_CHARS_PER_TOKEN
-    if rendered_size(result) > maximum:
-        return {
-            "error": {
-                "code": "context_budget_too_small",
-                "required_tokens": (rendered_size(result) + 3) // 4,
-            }
-        }
+    kernel_size = rendered_size(result)
+    if kernel_size > maximum:
+        return _budget_refusal(started, kernel_size)
     try:
         paths = list(dict.fromkeys([*app.settings.session_context_paths, *(note_paths or [])]))
         if subject and subject.strip():
@@ -117,8 +143,9 @@ async def session_context(
             result["omitted"] or any(x["truncated"] for x in result["sources"])
         )
         # Account for digit growth in counters before accepting the final serialization.
-        if rendered_size(result) > maximum:
-            return {"error": {"code": "context_budget_too_small"}}
+        final_size = rendered_size(result)
+        if final_size > maximum:
+            return _budget_refusal(started, final_size)
         _audit(
             "session_context",
             started,
