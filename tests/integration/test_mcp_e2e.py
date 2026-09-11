@@ -246,6 +246,40 @@ class TestMcpE2E:
         }
         assert resource_error.value.code == INVALID_PARAMS
 
+    async def test_mcp_v2_strict_client_accepts_session_budget_refusal(
+        self,
+        vault: Path,
+        tmp_path: Path,
+    ) -> None:
+        """A schema-validating client keeps ``required_tokens`` from the budget refusal.
+
+        ``Client.call_tool`` revalidates every non-error result against the listed
+        ``outputSchema``; the refusal must therefore travel as a tool error, and the
+        success must still satisfy ``SessionContextOutput`` on the same connection.
+        """
+        transport = stdio_client(_server_params(vault, tmp_path / "logs"))
+        async with Client(transport, mode="auto") as client:
+            refused = await client.call_tool("session_context", {"max_tokens": 128})
+            accepted = await client.call_tool("session_context", {"max_tokens": 6000})
+            bounded = await client.call_tool("session_context", {"max_tokens": 64})
+
+        assert refused.is_error is True
+        assert refused.structured_content is None
+        refusal = json.loads(refused.content[0].text)  # type: ignore[union-attr]
+        assert refusal["error"]["code"] == "context_budget_too_small"
+        assert refusal["error"]["type"] == "ContextBudgetError"
+        assert refusal["error"]["required_tokens"] > 128
+        assert accepted.is_error is False
+        assert accepted.structured_content is not None
+        assert accepted.structured_content["unavailable"] >= 0
+        assert accepted.structured_content["contract"]["id"] == "datacron-memory"
+        assert bounded.is_error is True
+        assert bounded.structured_content is None
+        assert json.loads(bounded.content[0].text)["error"] == {  # type: ignore[union-attr]
+            "message": "session input exceeds bounds",
+            "type": "ValueError",
+        }
+
     @pytest.mark.parametrize("mode", ["auto", "legacy"])
     async def test_mcp_v2_stdio_unknown_tool_uses_invalid_params(
         self,

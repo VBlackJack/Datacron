@@ -7,6 +7,15 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [Unreleased]
+
+### Fixed
+
+- Return the `session_context` budget refusal as a typed tool error (`isError=true`, `code`
+  `context_budget_too_small`, `type` `ContextBudgetError`) instead of a result outside the
+  declared `SessionContextOutput` schema, and carry `required_tokens` on both refusal paths so
+  a schema-validating client can retry with a sufficient budget.
+
 ## [2026.0910.02] - 2026-09-10
 
 ### Fixed

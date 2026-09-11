@@ -23,7 +23,11 @@ differ. Missing or denied notes increase `unavailable` without exposing their co
 
 `max_tokens` is capped by `DATACRON_MAX_RESULT_TOKENS`. The whole JSON payload is bounded
 using four characters per token, including escaping and metadata. Optional sources are omitted
-before the contract is cut; an insufficient core budget returns `context_budget_too_small`.
+before the contract is cut; an insufficient core budget returns a tool error (`isError=true`)
+with `code` `context_budget_too_small`, `type` `ContextBudgetError` and `required_tokens`,
+the estimated budget that would have fitted. The refusal never travels as a structured
+result, so a client that validates `SessionContextOutput` still reads `required_tokens`
+from the error payload; retry with that budget or read `_memory/INIT.md` with `get_note`.
 This is an estimate, not a tokenizer-specific guarantee. Follow `next_read` and inspect sources
 before concluding from a partial excerpt. Two people candidates trigger clarification; even
 one candidate is not an identity confirmation. Vault text remains sandboxed data.
