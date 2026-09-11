@@ -7,7 +7,7 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
-## [Unreleased]
+## [2026.0911.00] - 2026-09-11
 
 ### Fixed
 
@@ -15,6 +15,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   `context_budget_too_small`, `type` `ContextBudgetError`) instead of a result outside the
   declared `SessionContextOutput` schema, and carry `required_tokens` on both refusal paths so
   a schema-validating client can retry with a sufficient budget.
+
+### Changed
+
+- Upgrading from `2026.0910.02` changes only the `session_context` refusal path: no chunk
+  ID, index format or note bytes change, so no `datacron reindex` is required for this
+  increment. Vaults still on `2026.0910.00` or earlier keep the full reindex requirement
+  documented for `2026.0910.02`.
 
 ## [2026.0910.02] - 2026-09-10
 
