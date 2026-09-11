@@ -60,3 +60,9 @@ budget supérieur (6 000 tokens ont fonctionné dans le cas mesuré), ou utilise
 `get_note(id_or_path="_memory/INIT.md")` lorsque cette note de démarrage existe.
 Un lot séparé couvrira le schéma du refus, la préservation de `required_tokens`
 et l'exposition éventuelle des autres outils sur leurs chemins d'erreur.
+
+Résolu dans `2026.0911.00` : le refus est désormais une erreur d'outil (`isError=true`)
+portant `code`, `type` et `required_tokens` sur les deux voies de refus, et l'inventaire
+des vingt autres outils n'a trouvé aucune autre réponse d'erreur hors schéma. Cet
+incrément ne change aucun identifiant de chunk et ne demande aucun reindex ; voir la page
+[discipline mémoire](memory-discipline.md).

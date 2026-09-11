@@ -56,3 +56,8 @@ budget (6,000 tokens worked in the measured case), or use
 `get_note(id_or_path="_memory/INIT.md")` when that bootstrap note exists. A separate
 follow-up will cover the refusal schema, preservation of `required_tokens`, and
 whether other tools share the same error-path exposure.
+
+Resolved in `2026.0911.00`: the refusal is now a tool error (`isError=true`) carrying
+`code`, `type` and `required_tokens` on both refusal paths, and an inventory of the
+other twenty tools found no other off-schema error response. That increment changes no
+chunk ID and needs no reindex; see the [memory discipline](memory-discipline.md) page.
