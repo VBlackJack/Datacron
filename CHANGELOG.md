@@ -7,7 +7,7 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
-## [Unreleased]
+## [2026.0912.00] - 2026-09-12
 
 ### Added
 
@@ -37,6 +37,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   declares `organization.tags` (`extra_forbidden`), so every Datacron installation sharing a
   vault must be upgraded before the block is declared. Only `create_note_ai` and the
   organization manifest are gated; body mutations are measured by `reorganize`, not refused.
+- Upgrading from `2026.0911.00` changes no chunk ID, index format or note bytes: the chunker
+  and the index store are untouched, so no `datacron reindex` is required for this increment.
+  Vaults still on `2026.0910.00` or earlier keep the full reindex requirement documented for
+  `2026.0910.02`.
 
 ## [2026.0911.00] - 2026-09-11
 
