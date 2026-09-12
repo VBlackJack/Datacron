@@ -227,6 +227,180 @@ class OrganizationRule(BaseModel):
         return naming
 
 
+def _normalize_tag_value(value: object, *, what: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{what} must be a string")
+    tag = value.strip()
+    if not tag:
+        raise ValueError(f"{what} must not be empty")
+    if any(character.isspace() for character in tag):
+        raise ValueError(f"{what} must not contain whitespace; got {tag!r}")
+    return tag
+
+
+def _normalize_namespace_value(value: object, *, what: str) -> str:
+    namespace = _normalize_tag_value(value, what=what)
+    if "/" in namespace:
+        raise ValueError(f"{what} is a namespace and must not contain '/'; got {namespace!r}")
+    return namespace
+
+
+@final
+class OrganizationSubject(BaseModel):
+    """One registered subject: its canonical tag and the spellings it replaces.
+
+    A note that carries an alias instead of the canonical tag is reported and
+    refused, so a registry entry is also the place where old names keep
+    resolving to the subject that owns them.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: str
+    aliases: tuple[str, ...] = ()
+
+    @field_validator("tag", mode="before")
+    @classmethod
+    def _normalize_tag(cls, value: object) -> str:
+        return _normalize_tag_value(value, what="organization subject tag")
+
+    @field_validator("aliases", mode="before")
+    @classmethod
+    def _normalize_aliases(cls, value: object) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("organization subject aliases must be a list of strings")
+        aliases = tuple(
+            _normalize_tag_value(item, what="organization subject alias") for item in value
+        )
+        seen: set[str] = set()
+        for alias in aliases:
+            folded = alias.casefold()
+            if folded in seen:
+                raise ValueError(f"duplicate organization subject alias {alias!r}")
+            seen.add(folded)
+        return aliases
+
+    @model_validator(mode="after")
+    def _alias_differs_from_tag(self) -> OrganizationSubject:
+        if any(alias.casefold() == self.tag.casefold() for alias in self.aliases):
+            raise ValueError(f"organization subject {self.tag!r} lists itself as an alias")
+        return self
+
+
+@final
+class OrganizationTagPolicy(BaseModel):
+    """Vault-declared tag policy enforced at write time and measured by the planner.
+
+    Every name here comes from the vault: the namespace that carries the
+    placement tag, the placement tags that may double as transversal markers,
+    the namespace that names a subject, the closed subject registry, the
+    placement tags whose notes may carry several subjects, and the other
+    namespaces admitted. Datacron ships no taxonomy and refuses unknown keys.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    placement_namespace: str
+    markers: tuple[str, ...] = ()
+    subject_namespace: str | None = None
+    subjects: tuple[OrganizationSubject, ...] = ()
+    subject_exempt_tags: tuple[str, ...] = ()
+    allowed_namespaces: tuple[str, ...] = ()
+
+    @field_validator("placement_namespace", mode="before")
+    @classmethod
+    def _normalize_placement_namespace(cls, value: object) -> str:
+        return _normalize_namespace_value(value, what="organization tags placement_namespace")
+
+    @field_validator("subject_namespace", mode="before")
+    @classmethod
+    def _normalize_subject_namespace(cls, value: object) -> str | None:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return _normalize_namespace_value(value, what="organization tags subject_namespace")
+
+    @field_validator("markers", "subject_exempt_tags", mode="before")
+    @classmethod
+    def _normalize_tag_lists(cls, value: object) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("organization tags lists must be lists of strings")
+        return tuple(_normalize_tag_value(item, what="organization tags entry") for item in value)
+
+    @field_validator("allowed_namespaces", mode="before")
+    @classmethod
+    def _normalize_allowed_namespaces(cls, value: object) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("organization tags allowed_namespaces must be a list of strings")
+        return tuple(
+            _normalize_namespace_value(item, what="organization tags allowed namespace")
+            for item in value
+        )
+
+    @field_validator("subjects", mode="before")
+    @classmethod
+    def _coerce_subjects(cls, value: object) -> object:
+        if value is None:
+            return ()
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("organization tags subjects must be a list")
+        return tuple({"tag": item} if isinstance(item, str) else item for item in value)
+
+    @model_validator(mode="after")
+    def _check_registry(self) -> OrganizationTagPolicy:
+        if self.subjects and self.subject_namespace is None:
+            raise ValueError(
+                "organization tags subject_namespace is required when subjects are declared"
+            )
+        reserved = {self.placement_namespace.casefold()}
+        if self.subject_namespace is not None:
+            if self.subject_namespace.casefold() in reserved:
+                raise ValueError(
+                    "organization tags subject_namespace must differ from placement_namespace"
+                )
+            reserved.add(self.subject_namespace.casefold())
+        for namespace in self.allowed_namespaces:
+            if namespace.casefold() in reserved:
+                raise ValueError(
+                    f"organization tags allowed namespace {namespace!r} duplicates a "
+                    "declared namespace"
+                )
+        for marker in self.markers:
+            if not marker.casefold().startswith(self.placement_namespace.casefold() + "/"):
+                raise ValueError(
+                    f"organization tags marker {marker!r} must live in the placement namespace"
+                )
+        seen: dict[str, str] = {}
+        for subject in self.subjects:
+            if self.subject_namespace is not None and not subject.tag.casefold().startswith(
+                self.subject_namespace.casefold() + "/"
+            ):
+                raise ValueError(
+                    f"organization subject {subject.tag!r} must live in the subject namespace"
+                )
+            for name in (subject.tag, *subject.aliases):
+                folded = name.casefold()
+                previous = seen.get(folded)
+                if previous is not None:
+                    raise ValueError(
+                        f"organization subject name {name!r} is declared twice "
+                        f"({previous} and {subject.tag})"
+                    )
+                seen[folded] = subject.tag
+        return self
+
+
 @final
 class OrganizationConfig(BaseModel):
     """Declarative organization policy for a vault.
@@ -240,6 +414,7 @@ class OrganizationConfig(BaseModel):
 
     scope: str | None = None
     rules: tuple[OrganizationRule, ...] = ()
+    tags: OrganizationTagPolicy | None = None
 
     @field_validator("scope", mode="before")
     @classmethod
@@ -274,7 +449,46 @@ class OrganizationConfig(BaseModel):
     def _require_scope_for_active_rules(self) -> OrganizationConfig:
         if self.rules and self.scope is None:
             raise ValueError("organization scope is required when rules are declared")
+        if self.tags is not None:
+            _validate_tag_policy_against_rules(self.rules, self.tags)
         return self
+
+
+def _validate_tag_policy_against_rules(
+    rules: tuple[OrganizationRule, ...],
+    tags: OrganizationTagPolicy,
+) -> None:
+    """Every name the policy relies on must exist among the rules, spelled the same way."""
+    if not rules:
+        raise ValueError("organization tags policy requires at least one rule")
+    rule_tags = {rule.tag.casefold() for rule in rules}
+    prefix = tags.placement_namespace.casefold() + "/"
+    for rule in rules:
+        if rule.tag != rule.tag.lower():
+            # The rule resolver compares tags exactly while the policy compares
+            # them lowercased; lowercase rules keep both in step.
+            raise ValueError(
+                f"organization rule tag {rule.tag!r} must be lowercase when a tags "
+                "policy is declared"
+            )
+        if not rule.tag.casefold().startswith(prefix):
+            raise ValueError(
+                f"organization rule tag {rule.tag!r} is outside the placement namespace "
+                f"{tags.placement_namespace!r} declared by the tags policy"
+            )
+    aliases = [alias for subject in tags.subjects for alias in subject.aliases]
+    for alias in aliases:
+        if alias.casefold() in rule_tags:
+            raise ValueError(
+                f"organization subject alias {alias!r} collides with a declared rule tag"
+            )
+    for label, names in (
+        ("marker", tags.markers),
+        ("subject_exempt_tags entry", tags.subject_exempt_tags),
+    ):
+        for name in names:
+            if name.casefold() not in rule_tags:
+                raise ValueError(f"organization tags {label} {name!r} must be a declared rule tag")
 
 
 class VaultConfig(BaseModel):
