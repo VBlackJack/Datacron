@@ -102,19 +102,87 @@ matters:
 Template constraint on `{iso_date}`: a template holds at most one, and when it holds one,
 the template must start with it.
 
+## The `tags` block: a declared tag policy
+
+Placement rules say where a governed note belongs. They say nothing about a note that
+carries no governed tag, two of them, a subject name spelled three different ways, or a
+namespace invented by one client. The optional `tags` block inside `organization` closes
+that gap, and it is enforced where it matters: at write time, not only in a report.
+
+| Key | Required | Purpose |
+|---|---|---|
+| `placement_namespace` | yes | The namespace of the placement tags, which are the rule tags (`memory` when rules are `memory/fact`, `memory/project`, ...). Every rule tag must live in it. |
+| `markers` | no | Rule tags that may accompany the placement tag as a transversal marker (`memory/decision` on a fact that settles something). |
+| `subject_namespace` | no | The namespace that names the subject a note belongs to (`project`). |
+| `subjects` | no | The closed registry of subject tags, each with optional `aliases`: spellings that must be reported instead of silently accepted. A plain string is a subject without aliases. |
+| `subject_exempt_tags` | no | Placement tags whose notes may carry several subjects (a person record relates to many projects). |
+| `allowed_namespaces` | no | Other namespaces admitted next to the placement and subject namespaces (`org`, `meta`). Anything else with a `/` is refused. |
+
+The policy reads as follows. A note carries **exactly one placement tag** among the rule
+tags, optionally plus one marker; **at most one subject tag** from the registry, unless its
+placement tag is exempt; **no alias** of a registered subject, whether bare (`heimdall`) or
+namespaced (`projet/heimdall`); **no undeclared namespace**, and no `memory/*` tag that is
+not a rule tag. Tags without a `/` that are not aliases are free descriptors and always
+pass. Comparison is case-insensitive, and inline `#tag` occurrences in the body count, so a
+compliant frontmatter cannot be undone by prose.
+
+Three surfaces apply the same evaluation:
+
+- `create_note_ai` refuses a note inside the scope whose effective tags break the policy,
+  with a typed error whose `code` is `tag_policy_violation` and whose message names every
+  violation and what was expected. Nothing is written.
+- `apply_organization_manifest` refuses, at validation, a bundle whose **result** notes break
+  the policy of the target configuration, with the same code. Notes the bundle does not
+  touch are not judged, so an incremental cleanup stays possible.
+- `datacron reorganize` reports the three policy kinds described below.
+
+A vault without the block is unaffected; none of this exists until the vault declares it.
+The policy requires at least one rule, every marker and exempt tag must be a rule tag, and
+an unknown key is a loud failure at load time, like everywhere else in the block.
+
+```yaml
+organization:
+  scope: _memory
+  rules:
+    - tag: memory/contact
+      folder: _memory/people
+    - tag: memory/fact
+      folder: _memory/facts
+      naming: "{iso_date}-{slug}"
+    - tag: memory/decision
+      folder: _memory/decisions
+      naming: "{iso_date}-{slug}"
+  tags:
+    placement_namespace: memory
+    markers: [memory/decision]
+    subject_namespace: project
+    subjects:
+      - tag: project/heimdall
+        aliases: [heimdall, projet/heimdall]
+      - project/datacron
+    subject_exempt_tags: [memory/contact]
+    allowed_namespaces: [org, meta]
+```
+
 ## What is measured, and what is not
 
-Three gaps are reported, and nothing else.
+Six gaps are reported, and nothing else. The first three measure a governed note against
+its rule; the last three exist only when the vault declares a `tags` policy.
 
 | Kind | Meaning |
 |---|---|
 | `WRONG_FOLDER` | The note is not in the folder its rule declares. |
 | `NAMING` | The stem does not satisfy its rule's template. |
 | `OVER_SIZE` | The note exceeds its rule's `max_kb`. |
+| `UNGOVERNED` | The note carries no placement tag (policy declared only). |
+| `UNKNOWN_TAG` | A tag is an alias of a registered subject, an unregistered subject, an undeclared namespace, or a `memory/*` tag that is not a rule tag (policy declared only). |
+| `TAG_CARDINALITY` | Several placement tags, or several subject tags on a note whose placement tag is not exempt (policy declared only). |
 
-**A note no rule claims is not a deviation.** It is counted in `unmatched`, and Datacron
-never invents a placement for it. This is a property of the model, not a tolerance: a vault
-may hold as many ungoverned notes as it likes.
+**Without a `tags` policy, a note no rule claims is not a deviation.** It is counted in
+`unmatched`, and Datacron never invents a placement for it. This is a property of the
+model, not a tolerance: a vault may hold as many ungoverned notes as it likes. With a policy
+declared, such a note is still counted in `unmatched` and additionally reported as
+`UNGOVERNED`, so the identity below keeps holding.
 
 A note the planner cannot read is reported in `skipped` with its reason. It never
 interrupts the scan.
@@ -176,6 +244,9 @@ Organization report for /path/to/vault
   WRONG_FOLDER   0
   NAMING         0
   OVER_SIZE      0
+  UNGOVERNED     0
+  UNKNOWN_TAG    0
+  TAG_CARDINALITY 0
 No deviation found.
 ```
 
@@ -204,6 +275,9 @@ The identity `scanned = governed + unmatched` always holds.
   "counts": {
     "NAMING": 0,
     "OVER_SIZE": 0,
+    "TAG_CARDINALITY": 0,
+    "UNGOVERNED": 0,
+    "UNKNOWN_TAG": 0,
     "WRONG_FOLDER": 0
   },
   "deviations": [],

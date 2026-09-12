@@ -46,6 +46,7 @@ from datacron.core.paths import PathConfinementError, assert_within_paths
 from datacron.core.scope import NoteAdmissionError, SingleTenantVaultScope
 from datacron.core.vault import SKIPPED_FOLDERS, NoteAdmissionPolicy
 from datacron.organization.rules import matches_naming, resolve_rule
+from datacron.organization.tags import evaluate_tag_policy
 
 __all__ = [
     "Deviation",
@@ -77,11 +78,19 @@ class OrganizationConfigurationError(ValueError):
 
 
 class DeviationKind(StrEnum):
-    """The three gaps this lot reports. Nothing else is a deviation."""
+    """The six gaps the planner reports. Nothing else is a deviation.
+
+    The first three measure a governed note against its rule. The last three
+    exist only when the vault declares ``organization.tags``; without that
+    block, an unmatched note is out of scope, never a deviation.
+    """
 
     WRONG_FOLDER = "WRONG_FOLDER"
     NAMING = "NAMING"
     OVER_SIZE = "OVER_SIZE"
+    UNGOVERNED = "UNGOVERNED"
+    UNKNOWN_TAG = "UNKNOWN_TAG"
+    TAG_CARDINALITY = "TAG_CARDINALITY"
 
 
 @final
@@ -458,6 +467,17 @@ def _plan_snapshots(
             skipped.append(SkippedNote(rel_path=note.rel_path, reason=note.skipped_reason))
             continue
         rule = resolve_rule(note.tags, organization)
+        if organization.tags is not None:
+            for violation in evaluate_tag_policy(note.tags, organization):
+                deviations.append(
+                    Deviation(
+                        rel_path=note.rel_path,
+                        kind=DeviationKind(violation.kind.value),
+                        tag=violation.tag or (rule.tag if rule is not None else ""),
+                        detail=violation.detail,
+                        expected=violation.expected,
+                    )
+                )
         if rule is None:
             unmatched += 1
             continue

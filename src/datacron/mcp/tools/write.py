@@ -22,12 +22,13 @@ from typing import TYPE_CHECKING, Any, Final
 
 from ulid import ULID
 
+from datacron.core.config import load_vault_config
 from datacron.core.durability import (
     DurabilityUnavailableError,
     ReadOnlyModeError,
     RecoveryRequiredError,
 )
-from datacron.core.frontmatter import FrontmatterError, serialize
+from datacron.core.frontmatter import FrontmatterError, extract_tags, serialize
 from datacron.core.markdown_headings import heading_before, markdown_headings
 from datacron.core.markdown_sections import (
     HeadingNotFoundError,
@@ -42,7 +43,7 @@ from datacron.core.operation_log import (
     OperationContext,
     OperationLogError,
 )
-from datacron.core.paths import PathConfinementError
+from datacron.core.paths import PathConfinementError, sidecar_vault_config
 from datacron.core.vault_writer import UlidCollisionError
 from datacron.core.write_request import ReplayedWriteError
 from datacron.indexing.reconcile import ReconcileStats
@@ -69,6 +70,7 @@ from datacron.mcp.tools.write_validation import (
     _validate_rename_note_section_request,
     _validate_set_frontmatter_request,
 )
+from datacron.organization.tags import TagPolicyError, evaluate_tag_policy
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -144,6 +146,29 @@ async def _execute_write_tool(
         return _internal_error_response(tool, started, **audit_fields)
 
 
+def _enforce_tag_policy(app: DatacronApp, rel_path: str, tags: list[str], body: str) -> None:
+    """Refuse a creation whose effective tags break the vault's declared policy.
+
+    The policy lives in ``.datacron/VAULT.yaml`` (``organization.tags``); a vault
+    without it is unaffected. Effective tags include inline ``#tag`` occurrences
+    in the body, exactly as the planner aggregates them, so a compliant
+    frontmatter cannot be undone by prose.
+    """
+    config = load_vault_config(sidecar_vault_config(app.vault_root))
+    if config is None or config.organization is None:
+        return
+    organization = config.organization
+    if organization.tags is None or organization.scope is None:
+        return
+    normalized = rel_path.replace("\\", "/").strip("/").casefold()
+    scope = organization.scope.rstrip("/").casefold()
+    if not normalized.startswith(scope + "/"):
+        return
+    violations = evaluate_tag_policy(extract_tags({"tags": tags}, body), organization)
+    if violations:
+        raise TagPolicyError(rel_path, violations)
+
+
 @replayable_write
 async def _create_note_ai_impl(
     app: DatacronApp,
@@ -176,6 +201,7 @@ async def _create_note_ai_impl(
         )
         cleaned_expected_hash = _validate_expected_hash(expected_hash)
         cleaned_rejected = _validate_rejected_entries(rejected) if rejected is not None else None
+        _enforce_tag_policy(app, cleaned["rel_path"], cleaned["tags"], body)
         now = datetime.now(tz=UTC)
         for attempt in range(_ULID_CREATE_ATTEMPTS):
             note_id = str(ULID())

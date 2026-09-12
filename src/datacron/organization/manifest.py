@@ -38,7 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from ulid import ULID
 from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
-from datacron.core.config import VaultConfig
+from datacron.core.config import OrganizationConfig, VaultConfig
 from datacron.core.frontmatter import (
     FrontmatterError,
     build_tiered_alias_index,
@@ -57,6 +57,11 @@ from datacron.core.scope import (
 )
 from datacron.core.vault import MIGRATED_ULID_SIDECAR_FILENAME, ULID_SIDECAR_FILENAME
 from datacron.organization.planner import OrganizationNoteSnapshot
+from datacron.organization.tags import (
+    TAG_POLICY_ERROR_CODE,
+    evaluate_tag_policy,
+    format_violations,
+)
 
 __all__ = [
     "MAX_MANIFEST_BYTES",
@@ -1924,6 +1929,63 @@ def _validate_organization_topology(
             )
 
 
+def _project_scope_notes(
+    operations: tuple[OrganizationOperation, ...],
+    projected_identities: Mapping[str, _ProjectedIdentity],
+    organization: OrganizationConfig | None,
+    organization_scope: str,
+) -> tuple[OrganizationNoteSnapshot, ...]:
+    """Snapshot every projected note inside the scope, after the tag policy gate."""
+    _assert_results_satisfy_tag_policy(
+        operations,
+        projected_identities,
+        organization,
+        organization_scope,
+    )
+    return tuple(
+        OrganizationNoteSnapshot(
+            rel_path=item.rel_path,
+            size_bytes=item.size,
+            tags=item.tags,
+            calendar_date=item.calendar_date,
+        )
+        for item in sorted(projected_identities.values(), key=lambda value: value.rel_path)
+        if _path_belongs_to_organization_scope(item.rel_path, organization_scope)
+    )
+
+
+def _assert_results_satisfy_tag_policy(
+    operations: tuple[OrganizationOperation, ...],
+    projected_identities: Mapping[str, _ProjectedIdentity],
+    organization: OrganizationConfig | None,
+    organization_scope: str,
+) -> None:
+    """Refuse a bundle whose result notes would break the target tag policy.
+
+    Only the manifest's own results are judged: a bundle is not blocked by
+    pre-existing notes it does not touch, so an incremental cleanup stays
+    possible. Effective tags include inline body tags, exactly as the planner
+    aggregates them.
+    """
+    if organization is None or organization.tags is None:
+        return
+    failures: list[str] = []
+    for operation in operations:
+        if not _path_belongs_to_organization_scope(operation.target, organization_scope):
+            continue
+        item = projected_identities.get(normalize_vault_rel_path(operation.target))
+        if item is None:
+            continue
+        violations = evaluate_tag_policy(item.tags, organization)
+        if violations:
+            failures.append(f"{operation.target}: {format_violations(violations)}")
+    if failures:
+        raise OrganizationManifestError(
+            TAG_POLICY_ERROR_CODE,
+            "Projected result notes break the declared tag policy: " + " | ".join(failures),
+        )
+
+
 def _path_belongs_to_organization_scope(rel_path: str, organization_scope: str) -> bool:
     normalized_path = _filesystem_path_key(PurePosixPath(rel_path).as_posix())
     normalized_scope = _filesystem_path_key(
@@ -2186,15 +2248,11 @@ def validate_organization_bundle(
         )
         for row in scope_notes
     )
-    projected_notes = tuple(
-        OrganizationNoteSnapshot(
-            rel_path=item.rel_path,
-            size_bytes=item.size,
-            tags=item.tags,
-            calendar_date=item.calendar_date,
-        )
-        for item in sorted(projected_identities.values(), key=lambda value: value.rel_path)
-        if _path_belongs_to_organization_scope(item.rel_path, organization_scope)
+    projected_notes = _project_scope_notes(
+        bundle.manifest.operations,
+        projected_identities,
+        target_config.organization,
+        organization_scope,
     )
     scope_document = {
         "config_before_sha256": config_before_sha256,

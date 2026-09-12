@@ -7,6 +7,30 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [Unreleased]
+
+### Added
+
+- Vault-declared tag policy: an optional `organization.tags` block in `.datacron/VAULT.yaml`
+  declares the placement namespace, the transversal markers, the subject namespace, a closed
+  subject registry with aliases, the placement tags exempt from the single-subject rule, and
+  the other admitted namespaces. Datacron still ships no taxonomy.
+- `create_note_ai` refuses, with the typed error code `tag_policy_violation`, a note inside the
+  organization scope whose effective tags (frontmatter plus inline `#tags`) break the declared
+  policy; nothing is written.
+- `apply_organization_manifest` refuses at validation, with the same code, a bundle whose result
+  notes break the policy of the target configuration; untouched notes are not judged.
+- `datacron reorganize` reports three new deviation kinds when a policy is declared:
+  `UNGOVERNED`, `UNKNOWN_TAG` and `TAG_CARDINALITY`; `--kind` accepts them. The identity
+  `scanned = governed + unmatched` is unchanged.
+
+### Changed
+
+- Memory protocol contract `1.1.0`: the shared discipline states the declared tag policy in one
+  sentence and trims a few phrasings to stay under the client size ceiling. Reinstall the client
+  blocks with `datacron protocol install` after upgrading; vaults without an `organization.tags`
+  block are unaffected.
+
 ## [2026.0911.00] - 2026-09-11
 
 ### Fixed

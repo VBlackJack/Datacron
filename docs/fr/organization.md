@@ -105,19 +105,92 @@ compte :
 Contrainte de gabarit sur `{iso_date}` : un gabarit en contient au plus un, et s'il en
 contient un, il doit commencer par lui.
 
+## Le bloc `tags` : une politique de tags déclarée
+
+Les règles de placement disent où va une note gouvernée. Elles ne disent rien d'une note
+sans tag gouverné, d'une note qui en porte deux, d'un nom de sujet écrit de trois façons, ou
+d'un espace de noms inventé par un client. Le bloc optionnel `tags`, à l'intérieur
+d'`organization`, ferme cette brèche, et il est appliqué là où cela compte : à l'écriture,
+pas seulement dans un rapport.
+
+| Clé | Obligatoire | Rôle |
+|---|---|---|
+| `placement_namespace` | oui | L'espace de noms des tags de placement, qui sont les tags des règles (`memory` quand les règles sont `memory/fact`, `memory/project`, ...). Chaque tag de règle doit y vivre. |
+| `markers` | non | Tags de règle qui peuvent accompagner le tag de placement comme marqueur transversal (`memory/decision` sur un fait qui tranche quelque chose). |
+| `subject_namespace` | non | L'espace de noms qui nomme le sujet auquel une note appartient (`project`). |
+| `subjects` | non | Le registre fermé des tags de sujet, chacun avec des `aliases` optionnels : les graphies à signaler plutôt qu'à accepter en silence. Une chaîne seule est un sujet sans alias. |
+| `subject_exempt_tags` | non | Tags de placement dont les notes peuvent porter plusieurs sujets (une fiche personne se rattache à plusieurs projets). |
+| `allowed_namespaces` | non | Les autres espaces de noms admis à côté de ceux du placement et du sujet (`org`, `meta`). Tout autre tag contenant `/` est refusé. |
+
+La politique se lit ainsi. Une note porte **exactement un tag de placement** parmi les tags
+de règle, éventuellement accompagné d'un marqueur ; **au plus un tag de sujet** pris dans le
+registre, sauf si son tag de placement est exempté ; **aucun alias** d'un sujet enregistré,
+nu (`heimdall`) ou préfixé (`projet/heimdall`) ; **aucun espace de noms non déclaré**, et
+aucun tag `memory/*` qui ne soit pas un tag de règle. Les tags sans `/` qui ne sont pas des
+alias sont des descripteurs libres et passent toujours. La comparaison ignore la casse, et
+les occurrences `#tag` du corps comptent, de sorte qu'un frontmatter conforme ne peut pas
+être défait par la prose.
+
+Trois surfaces appliquent la même évaluation :
+
+- `create_note_ai` refuse une note de la portée dont les tags effectifs enfreignent la
+  politique, avec une erreur typée dont le `code` est `tag_policy_violation` et dont le
+  message nomme chaque infraction et ce qui était attendu. Rien n'est écrit.
+- `apply_organization_manifest` refuse, à la validation, un lot dont les notes
+  **résultantes** enfreignent la politique de la configuration cible, avec le même code. Les
+  notes que le lot ne touche pas ne sont pas jugées, pour qu'un nettoyage incrémental reste
+  possible.
+- `datacron reorganize` rapporte les trois natures d'écart décrites plus bas.
+
+Un vault sans ce bloc n'est pas affecté ; rien de tout cela n'existe tant que le vault ne le
+déclare pas. La politique exige au moins une règle, chaque marqueur et chaque tag exempté
+doit être un tag de règle, et une clé inconnue est un échec bruyant au chargement, comme
+partout ailleurs dans le bloc.
+
+```yaml
+organization:
+  scope: _memory
+  rules:
+    - tag: memory/contact
+      folder: _memory/people
+    - tag: memory/fact
+      folder: _memory/facts
+      naming: "{iso_date}-{slug}"
+    - tag: memory/decision
+      folder: _memory/decisions
+      naming: "{iso_date}-{slug}"
+  tags:
+    placement_namespace: memory
+    markers: [memory/decision]
+    subject_namespace: project
+    subjects:
+      - tag: project/heimdall
+        aliases: [heimdall, projet/heimdall]
+      - project/datacron
+    subject_exempt_tags: [memory/contact]
+    allowed_namespaces: [org, meta]
+```
+
 ## Ce qui est mesuré, et ce qui ne l'est pas
 
-Trois écarts sont rapportés, et rien d'autre.
+Six écarts sont rapportés, et rien d'autre. Les trois premiers mesurent une note gouvernée
+contre sa règle ; les trois derniers n'existent que si le vault déclare une politique `tags`.
 
 | Nature | Signification |
 |---|---|
 | `WRONG_FOLDER` | La note n'est pas dans le dossier que sa règle déclare. |
 | `NAMING` | Le stem ne satisfait pas le gabarit de sa règle. |
 | `OVER_SIZE` | La note dépasse le `max_kb` de sa règle. |
+| `UNGOVERNED` | La note ne porte aucun tag de placement (politique déclarée seulement). |
+| `UNKNOWN_TAG` | Un tag est l'alias d'un sujet enregistré, un sujet hors registre, un espace de noms non déclaré, ou un tag `memory/*` qui n'est pas un tag de règle (politique déclarée seulement). |
+| `TAG_CARDINALITY` | Plusieurs tags de placement, ou plusieurs tags de sujet sur une note dont le tag de placement n'est pas exempté (politique déclarée seulement). |
 
-**Une note qu'aucune règle ne réclame n'est pas un écart.** Elle est comptée dans
-`unmatched`, et Datacron ne lui invente jamais un placement. C'est une propriété du modèle,
-pas une tolérance : un vault peut contenir autant de notes non gouvernées qu'il le souhaite.
+**Sans politique `tags`, une note qu'aucune règle ne réclame n'est pas un écart.** Elle est
+comptée dans `unmatched`, et Datacron ne lui invente jamais un placement. C'est une
+propriété du modèle, pas une tolérance : un vault peut contenir autant de notes non
+gouvernées qu'il le souhaite. Avec une politique déclarée, une telle note reste comptée dans
+`unmatched` et est en plus rapportée comme `UNGOVERNED`, de sorte que l'identité ci-dessous
+reste vraie.
 
 Une note que le planner ne parvient pas à lire est reportée dans `skipped` avec son motif.
 Elle n'interrompt jamais le balayage.
@@ -179,6 +252,9 @@ Organization report for G:\mon-vault
   WRONG_FOLDER   0
   NAMING         0
   OVER_SIZE      0
+  UNGOVERNED     0
+  UNKNOWN_TAG    0
+  TAG_CARDINALITY 0
 No deviation found.
 ```
 
@@ -207,6 +283,9 @@ L'identité `scanned = governed + unmatched` est toujours vraie.
   "counts": {
     "NAMING": 0,
     "OVER_SIZE": 0,
+    "TAG_CARDINALITY": 0,
+    "UNGOVERNED": 0,
+    "UNKNOWN_TAG": 0,
     "WRONG_FOLDER": 0
   },
   "deviations": [],
