@@ -117,9 +117,12 @@ def path_within_scope(rel_path: str, scope: str) -> bool:
 class _Vocabulary:
     """The declared policy, lowercased once for the whole evaluation.
 
-    ``rule_tags`` holds the placement rules only: a rule keyed by a registered
-    subject tag decides a folder, never what the note is, so it is judged as a
-    subject like any other and does not count toward the placement set.
+    ``rule_tags`` holds every rule that is not keyed by a registered subject:
+    a subject rule decides a folder, never what the note is, so its tag is
+    judged as a subject like any other and does not count toward the
+    placement set. Excluding by registry membership rather than by namespace
+    keeps a placement rule admitted under the configuration's own comparison
+    counted exactly as before subject rules existed.
     """
 
     rule_tags: tuple[str, ...]
@@ -136,18 +139,17 @@ class _Vocabulary:
         subject_namespace = (
             policy.subject_namespace.lower() if policy.subject_namespace is not None else None
         )
-        placement_namespace = policy.placement_namespace.lower()
-        prefix = placement_namespace + "/"
+        subject_tags = frozenset(subject.tag.lower() for subject in policy.subjects)
         return cls(
             rule_tags=tuple(
                 rule.tag.lower()
                 for rule in organization.rules
-                if rule.tag.lower().startswith(prefix)
+                if rule.tag.lower() not in subject_tags
             ),
             markers=frozenset(marker.lower() for marker in policy.markers),
-            placement_namespace=placement_namespace,
+            placement_namespace=policy.placement_namespace.lower(),
             subject_namespace=subject_namespace,
-            subject_tags=frozenset(subject.tag.lower() for subject in policy.subjects),
+            subject_tags=subject_tags,
             alias_owner={
                 alias.lower(): subject.tag.lower()
                 for subject in policy.subjects

@@ -337,6 +337,20 @@ def test_subject_rule_namespace_uses_the_evaluator_normalization() -> None:
     assert resolve_rule(["memory/fact", f"{sharp}/demo"], organization) is organization.rules[0]
 
 
+def test_placement_rules_admitted_under_casefold_still_count_as_placement() -> None:
+    # A historical configuration whose placement namespace matches its rule only
+    # under casefold() keeps the diagnostics it had before subject rules existed.
+    organization = OrganizationConfig(
+        scope="_memory",
+        rules=(OrganizationRule(tag="strasse/fact", folder="_memory/facts"),),
+        tags=OrganizationTagPolicy(placement_namespace="straße"),
+    )
+
+    kinds = [item.kind.value for item in evaluate_tag_policy(["strasse/fact"], organization)]
+
+    assert kinds == ["UNKNOWN_TAG"]
+
+
 def test_subject_rule_round_trips_through_vault_yaml() -> None:
     document = {
         "organization": {
