@@ -7,17 +7,23 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
-## [Unreleased]
+## [2026.0912.02] - 2026-09-12
 
 ### Added
 
 - Identity adoption through the organization manifest: a `replace_exact` whose source note has
-  no frontmatter id is accepted when the manifest's expected id is the identity the ULID sidecar
-  already maps to that exact path, the key the reader resolves, and the payload carries the same
-  id. The replacement writes the id
-  into the note; the index, backlinks and history keep the identity they always used. Batch
-  commit and recovery check the same sidecar baseline. Move sources without a frontmatter id
-  stay unsupported.
+  no frontmatter id is accepted when the manifest spells the target exactly as the file exists
+  on disk, the manifest's expected id is the identity the ULID sidecar already maps to that exact
+  path (the key the reader resolves) and the payload carries the same id. The replacement writes
+  the id into the note; the index, backlinks and history keep the identity they always used.
+  Batch commit and recovery check the same sidecar baseline. Move sources without a frontmatter
+  id stay unsupported, and a frontmatter id that is present but not a string is still refused.
+
+### Changed
+
+- Upgrading from `2026.0912.01` changes no chunk ID, index format, note bytes or protocol block:
+  the chunker, the index store and the memory contract are untouched, so no `datacron reindex`
+  and no `datacron protocol install` are required for this increment.
 
 ## [2026.0912.01] - 2026-09-12
 
