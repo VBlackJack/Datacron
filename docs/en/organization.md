@@ -151,9 +151,10 @@ at load time, like everywhere else in the block.
   the control to run after such writes, not a reason to write inline tags.
 - **Inline tags follow the extractor's heuristics.** A `#tag` inside a single-backtick span
   or a symmetric fenced block is ignored; one inside an indented code block, or a fence
-  closed with a different marker length, still counts. Inline tags are made of ASCII word
-  characters, `/`, `.` and `-`; an accented tag is truncated at the first other character.
-  Write tags in the frontmatter, never in prose.
+  closed with a different marker length, still counts. An inline tag starts with an ASCII
+  letter or `_` and continues with ASCII letters, digits, `_`, `-` and `/`; an accented or
+  dotted tag is truncated at the first other character. Write tags in the frontmatter,
+  never in prose.
 - **Every Datacron installation must be upgraded before the block is declared.** An
   executable that predates the policy refuses the whole `VAULT.yaml` with an
   `extra_forbidden` validation error, which stops its server; the key is not ignored.

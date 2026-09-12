@@ -160,9 +160,9 @@ chargement, comme partout ailleurs dans le bloc.
 - **Les tags en ligne suivent les heuristiques de l'extracteur.** Un `#tag` dans un span à
   un backtick ou dans un bloc de code délimité symétrique est ignoré ; un tag dans un bloc de
   code indenté, ou dans un bloc fermé par un marqueur d'une autre longueur, compte encore.
-  Les tags en ligne sont faits de caractères ASCII de mot, `/`, `.` et `-` ; un tag
-  accentué est tronqué au premier autre caractère. Écrire les tags dans le frontmatter,
-  jamais en prose.
+  Un tag en ligne commence par une lettre ASCII ou `_` et continue par des lettres ASCII,
+  des chiffres, `_`, `-` et `/` ; un tag accentué ou contenant un point est tronqué au
+  premier autre caractère. Écrire les tags dans le frontmatter, jamais en prose.
 - **Toute installation de Datacron doit être mise à niveau avant de déclarer le bloc.** Un
   exécutable antérieur à la politique refuse tout le `VAULT.yaml` avec une erreur de
   validation `extra_forbidden`, ce qui arrête son serveur ; la clé n'est pas ignorée.

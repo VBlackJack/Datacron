@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -160,7 +161,14 @@ def _enforce_tag_policy(app: DatacronApp, rel_path: str, tags: list[str], body: 
     organization = config.organization
     if organization.tags is None or organization.scope is None:
         return
-    if not path_within_scope(rel_path, organization.scope):
+    # Judge the destination the writer will actually use: "_memory/x/../y.md" and an
+    # absolute path inside the vault both land inside the scope once normalized. A
+    # path that leaves the vault is not exempted here; the writer's own
+    # confinement refuses it afterwards.
+    root = os.path.normcase(os.path.normpath(str(app.vault_root)))
+    candidate = rel_path if os.path.isabs(rel_path) else os.path.join(root, rel_path)
+    relative = os.path.relpath(os.path.normcase(os.path.normpath(candidate)), root)
+    if relative.startswith("..") or not path_within_scope(relative, organization.scope):
         return
     violations = evaluate_tag_policy(extract_tags({"tags": tags}, body), organization)
     if violations:

@@ -100,8 +100,10 @@ def path_within_scope(rel_path: str, scope: str) -> bool:
     ``./_memory/x.md`` and ``_memory//x.md`` are the same path as
     ``_memory/x.md``; a lexical prefix test would let the first two escape a
     guard that the planner and the manifest apply after canonicalization. A
-    path containing ``..`` is never inside a scope: the writer's own path
-    confinement refuses it later with its own error.
+    ``..`` segment is not resolved here and makes the answer ``False``: callers
+    that accept user paths must first normalize them against the vault root
+    (the writer guard does), because a ``False`` from this function means
+    "not judged", never "refused".
     """
     path_parts = _canonical_parts(rel_path)
     scope_parts = _canonical_parts(scope)

@@ -128,12 +128,20 @@ async def test_compliant_note_is_created(writable_app: DatacronApp) -> None:
 
 
 async def test_equivalent_path_spellings_cannot_escape_the_guard(
-    writable_app: DatacronApp,
+    writable_app: DatacronApp, tmp_vault: Path
 ) -> None:
-    for rel_path in ("./_memory/facts/2026-09-12-w.md", "_memory//facts/2026-09-12-w.md"):
+    spellings = (
+        "./_memory/facts/2026-09-12-w.md",
+        "_memory//facts/2026-09-12-w.md",
+        "_memory/facts/../facts/2026-09-12-w.md",
+        "_drafts/../_memory/facts/2026-09-12-w.md",
+        str(tmp_vault / "_memory" / "facts" / "2026-09-12-w.md"),
+    )
+    for rel_path in spellings:
         result = await _create(writable_app, rel_path, ["memory/fact", "heimdall"])
 
         assert result["error"]["code"] == "tag_policy_violation", rel_path
+    assert not (tmp_vault / "_memory" / "facts" / "2026-09-12-w.md").exists()
 
 
 async def test_notes_outside_the_scope_are_not_judged(writable_app: DatacronApp) -> None:
