@@ -111,7 +111,7 @@ that gap, and it is enforced where it matters: at write time, not only in a repo
 
 | Key | Required | Purpose |
 |---|---|---|
-| `placement_namespace` | yes | The namespace of the placement tags, which are the rule tags (`memory` when rules are `memory/fact`, `memory/project`, ...). Every rule tag must live in it. |
+| `placement_namespace` | yes | The namespace of the placement tags (`memory` when rules are `memory/fact`, `memory/project`, ...). Every rule tag lives in it, or names a declared subject (see [subject rules](#subject-rules)). |
 | `markers` | no | Rule tags that may accompany the placement tag as a transversal marker (`memory/decision` on a fact that settles something). |
 | `subject_namespace` | no | The namespace that names the subject a note belongs to (`project`). |
 | `subjects` | no | The closed registry of subject tags, each with optional `aliases`: spellings that must be reported instead of silently accepted. A plain string is a subject without aliases. |
@@ -137,10 +137,32 @@ Three surfaces apply the same evaluation:
 - `datacron reorganize` reports the three policy kinds described below.
 
 A vault without the block is not judged; none of this exists until the vault declares it.
-The policy requires at least one rule, every marker and exempt tag must be a rule tag, rule
-tags must be lowercase (the rule resolver compares them exactly, the policy compares them
-lowercased), an alias may not collide with a rule tag, and an unknown key is a loud failure
-at load time, like everywhere else in the block.
+The policy requires at least one placement rule, every marker and exempt tag must be a
+placement rule tag, rule tags must be lowercase (the rule resolver compares them exactly,
+the policy compares them lowercased), an alias may not collide with a rule tag, and an
+unknown key is a loud failure at load time, like everywhere else in the block.
+
+### Subject rules
+
+Once a policy is declared, a rule may be keyed by a **registered subject tag** instead of a
+placement tag: `project/heimdall` to `_memory/subjects/perso/heimdall`. The rule behaves like
+any other, first declared match wins, and carries the folder, the naming template and the
+ceiling for the notes it governs. What changes is the reading of the note: the folder says
+which subject the note belongs to, the placement tag still says what the note is.
+
+- The policy is unchanged. A note governed by a subject rule still carries **exactly one
+  placement tag** and at most one marker; the subject rule tag is judged as a subject, never
+  counted as a placement tag. A note with a subject tag and no placement tag is
+  `UNGOVERNED`, even when a subject rule decides its folder.
+- A rule tag that is neither in the placement namespace nor a declared subject is refused at
+  load time, and so is an alias used as a rule tag. Markers and exempt tags must name
+  placement rules, and at least one placement rule must remain.
+- Declaration order does the rest. Put the rules of the types that must stay together
+  (`memory/contact`, `memory/preference`, ...) **before** the subject rules, and the subject
+  rules **before** the placement rules that serve as fallback for notes without a subject.
+  A subject rule declared first would draw every person record into the subject folder.
+- The winning rule carries everything, so declare `max_kb` on each subject rule: a `memory/fact`
+  ceiling does not apply to a fact governed by its subject.
 
 ### What the policy does not cover
 
@@ -168,6 +190,9 @@ organization:
   rules:
     - tag: memory/contact
       folder: _memory/people
+    - tag: project/heimdall
+      folder: _memory/subjects/perso/heimdall
+      max_kb: 121
     - tag: memory/fact
       folder: _memory/facts
       naming: "{iso_date}-{slug}"

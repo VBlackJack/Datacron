@@ -182,9 +182,9 @@ def test_policy_refuses_unknown_keys_loudly() -> None:
 def test_organization_binds_policy_to_its_rules() -> None:
     with pytest.raises(ValidationError, match="requires at least one rule"):
         OrganizationConfig(scope="_memory", rules=(), tags=_policy())
-    with pytest.raises(ValidationError, match="must be a declared rule tag"):
+    with pytest.raises(ValidationError, match="must be a declared placement rule tag"):
         _organization(_policy(markers=["memory/session"]))
-    with pytest.raises(ValidationError, match="must be a declared rule tag"):
+    with pytest.raises(ValidationError, match="must be a declared placement rule tag"):
         _organization(_policy(subject_exempt_tags=["memory/session"]))
     with pytest.raises(ValidationError, match="outside the placement namespace"):
         OrganizationConfig(
@@ -235,6 +235,91 @@ def test_at_most_one_marker_accompanies_the_placement_tag() -> None:
         "TAG_CARDINALITY"
     ]
     assert _kinds(["memory/decision", "memory/project"], policy) == ["TAG_CARDINALITY"]
+
+
+_SUBJECT_FOLDER = "_memory/subjects/perso/heimdall"
+
+
+def _rules_with_subject() -> tuple[OrganizationRule, ...]:
+    contact, *fallbacks = _rules()
+    subject = OrganizationRule(tag="project/heimdall", folder=_SUBJECT_FOLDER, max_kb=121)
+    return (contact, subject, *fallbacks)
+
+
+def _subject_organization(policy: OrganizationTagPolicy | None = None) -> OrganizationConfig:
+    return OrganizationConfig(
+        scope="_memory", rules=_rules_with_subject(), tags=policy or _policy()
+    )
+
+
+def _subject_kinds(tags: list[str]) -> list[str]:
+    return [item.kind.value for item in evaluate_tag_policy(tags, _subject_organization())]
+
+
+def test_subject_rule_is_accepted_and_never_counts_as_placement() -> None:
+    organization = _subject_organization()
+
+    assert organization.rules[1].tag == "project/heimdall"
+    assert _subject_kinds(["memory/fact", "project/heimdall"]) == []
+    assert _subject_kinds(["memory/fact", "memory/decision", "project/heimdall"]) == []
+    assert _subject_kinds(["project/heimdall", "ssh"]) == ["UNGOVERNED"]
+    assert _subject_kinds(["memory/fact", "memory/project", "project/heimdall"]) == [
+        "TAG_CARDINALITY"
+    ]
+    assert _subject_kinds(["memory/fact", "project/heimdall", "project/datacron"]) == [
+        "TAG_CARDINALITY"
+    ]
+    ungoverned = evaluate_tag_policy(["project/heimdall"], organization)
+    assert ungoverned[0].expected is not None
+    assert "project/heimdall" not in ungoverned[0].expected
+
+
+def test_subject_rule_must_name_a_registered_subject_and_leave_a_placement_rule() -> None:
+    with pytest.raises(ValidationError, match="is not a declared subject"):
+        OrganizationConfig(
+            scope="_memory",
+            rules=(*_rules(), OrganizationRule(tag="project/ghost", folder="_memory/x")),
+            tags=_policy(),
+        )
+    with pytest.raises(ValidationError, match="is not a declared subject"):
+        OrganizationConfig(
+            scope="_memory",
+            rules=(*_rules(), OrganizationRule(tag="heimdall", folder="_memory/x")),
+            tags=_policy(),
+        )
+    with pytest.raises(ValidationError, match="must live in the placement namespace"):
+        _subject_organization(_policy(markers=["project/heimdall"]))
+    with pytest.raises(ValidationError, match="must be a declared placement rule tag"):
+        _subject_organization(_policy(subject_exempt_tags=["project/heimdall"]))
+    with pytest.raises(ValidationError, match="requires at least one placement rule"):
+        OrganizationConfig(
+            scope="_memory",
+            rules=(OrganizationRule(tag="project/heimdall", folder=_SUBJECT_FOLDER),),
+            tags=_policy(markers=[], subject_exempt_tags=[]),
+        )
+
+
+def test_subject_rule_round_trips_through_vault_yaml() -> None:
+    document = {
+        "organization": {
+            "scope": "_memory",
+            "rules": [
+                {"tag": "memory/contact", "folder": "_memory/people"},
+                {"tag": "project/x", "folder": "_memory/subjects/x", "max_kb": 121},
+                {"tag": "memory/fact", "folder": "_memory/facts"},
+            ],
+            "tags": {
+                "placement_namespace": "memory",
+                "subject_namespace": "project",
+                "subjects": [{"tag": "project/x", "aliases": ["x"]}],
+            },
+        }
+    }
+
+    config = VaultConfig.model_validate(document)
+
+    assert config.organization is not None
+    assert [rule.tag for rule in config.organization.rules][1] == "project/x"
 
 
 def test_rule_tags_must_be_lowercase_when_a_policy_is_declared() -> None:
@@ -308,6 +393,37 @@ def test_planner_reports_policy_gaps_only_when_the_policy_is_declared(tmp_path: 
         "UNKNOWN_TAG",
         "WRONG_FOLDER",
     ]
+
+
+def test_planner_places_subject_notes_by_the_subject_rule(tmp_path: Path) -> None:
+    _write(tmp_path, "_memory/facts/2026-09-12-moved.md", ["memory/fact", "project/heimdall"])
+    _write(tmp_path, f"{_SUBJECT_FOLDER}/heimdall.md", ["memory/project", "project/heimdall"])
+    _write(tmp_path, f"{_SUBJECT_FOLDER}/2026-09-12-fact.md", ["memory/fact", "project/heimdall"])
+    _write(tmp_path, f"{_SUBJECT_FOLDER}/bare.md", ["project/heimdall"])
+    _write(
+        tmp_path,
+        "_memory/people/ada.md",
+        ["memory/contact", "project/heimdall", "project/datacron"],
+    )
+    _write(tmp_path, "_memory/facts/2026-09-12-orphan.md", ["memory/fact"])
+
+    plan = plan_organization(
+        tmp_path, VaultConfig.model_validate({"organization": _subject_organization()})
+    )
+
+    assert plan.governed == 6
+    assert plan.unmatched == 0
+    assert [
+        (item.rel_path.rsplit("/", 1)[1], item.kind, item.expected) for item in plan.deviations
+    ] == [
+        ("2026-09-12-moved.md", DeviationKind.WRONG_FOLDER, _SUBJECT_FOLDER),
+        (
+            "bare.md",
+            DeviationKind.UNGOVERNED,
+            "one of: memory/contact, memory/project, memory/fact, memory/decision",
+        ),
+    ]
+    assert plan.deviations[0].tag == "project/heimdall"
 
 
 # --- manifest -------------------------------------------------------------
@@ -398,6 +514,29 @@ def test_manifest_judges_inline_body_tags_too(tmp_path: Path) -> None:
 
     with pytest.raises(OrganizationManifestError, match="namespace 'topic' is not declared"):
         _validate(vault, manifest_path)
+
+
+def test_manifest_accepts_a_target_configuration_with_a_subject_rule(tmp_path: Path) -> None:
+    vault, manifest_path = _bundle(
+        tmp_path, with_policy=True, result_tags=["memory/fact", "project/heimdall"], body="after"
+    )
+    document = yaml.safe_load(_config_bytes(True))
+    document["organization"]["rules"].insert(
+        0, {"tag": "project/heimdall", "folder": "memory/heimdall", "max_kb": 121}
+    )
+    target = yaml.safe_dump(document, sort_keys=False).encode()
+    digest = hashlib.sha256(target).hexdigest()
+    (manifest_path.parent / "payloads" / f"{digest}.yaml").write_bytes(target)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["config"] = {
+        "kind": "replace_exact",
+        "target": ".datacron/VAULT.yaml",
+        "expected_sha256": hashlib.sha256(_config_bytes(True)).hexdigest(),
+        "payload_sha256": digest,
+    }
+    manifest_path.write_text(json.dumps(manifest, separators=(",", ":")), encoding="utf-8")
+
+    _validate(vault, manifest_path)
 
 
 def test_manifest_accepts_compliant_results_and_ignores_policy_when_absent(tmp_path: Path) -> None:

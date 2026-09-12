@@ -458,11 +458,20 @@ def _validate_tag_policy_against_rules(
     rules: tuple[OrganizationRule, ...],
     tags: OrganizationTagPolicy,
 ) -> None:
-    """Every name the policy relies on must exist among the rules, spelled the same way."""
+    """Every name the policy relies on must exist among the rules, spelled the same way.
+
+    A rule is keyed either by a placement tag (inside ``placement_namespace``) or
+    by a registered subject tag: a subject rule places the notes a subject owns
+    in the subject's own folder, while the note keeps carrying exactly one
+    placement tag that says what it is. Markers and exemptions name placement
+    rules only; a subject rule never counts as a placement tag.
+    """
     if not rules:
         raise ValueError("organization tags policy requires at least one rule")
     rule_tags = {rule.tag.casefold() for rule in rules}
     prefix = tags.placement_namespace.casefold() + "/"
+    subject_tags = {subject.tag.casefold() for subject in tags.subjects}
+    placement_rule_tags: set[str] = set()
     for rule in rules:
         if rule.tag != rule.tag.lower():
             # The rule resolver compares tags exactly while the policy compares
@@ -471,11 +480,17 @@ def _validate_tag_policy_against_rules(
                 f"organization rule tag {rule.tag!r} must be lowercase when a tags "
                 "policy is declared"
             )
-        if not rule.tag.casefold().startswith(prefix):
+        folded = rule.tag.casefold()
+        if folded.startswith(prefix):
+            placement_rule_tags.add(folded)
+        elif folded not in subject_tags:
             raise ValueError(
                 f"organization rule tag {rule.tag!r} is outside the placement namespace "
-                f"{tags.placement_namespace!r} declared by the tags policy"
+                f"{tags.placement_namespace!r} declared by the tags policy and is not a "
+                "declared subject"
             )
+    if not placement_rule_tags:
+        raise ValueError("organization tags policy requires at least one placement rule")
     aliases = [alias for subject in tags.subjects for alias in subject.aliases]
     for alias in aliases:
         if alias.casefold() in rule_tags:
@@ -487,8 +502,10 @@ def _validate_tag_policy_against_rules(
         ("subject_exempt_tags entry", tags.subject_exempt_tags),
     ):
         for name in names:
-            if name.casefold() not in rule_tags:
-                raise ValueError(f"organization tags {label} {name!r} must be a declared rule tag")
+            if name.casefold() not in placement_rule_tags:
+                raise ValueError(
+                    f"organization tags {label} {name!r} must be a declared placement rule tag"
+                )
 
 
 class VaultConfig(BaseModel):
