@@ -22,7 +22,9 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 - Configuration validation refuses a rule tag that is neither in the placement namespace nor
   a declared subject with a message naming both conditions; before this version every rule
-  tag had to live in the placement namespace as soon as the policy was declared.
+  tag had to live in the placement namespace as soon as the policy was declared. A marker or
+  exempt tag that names a subject rule is refused with a new message; one that names no rule
+  at all keeps the previous message.
 
 ## [2026.0912.00] - 2026-09-12
 

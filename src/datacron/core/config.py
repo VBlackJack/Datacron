@@ -470,7 +470,9 @@ def _validate_tag_policy_against_rules(
         raise ValueError("organization tags policy requires at least one rule")
     rule_tags = {rule.tag.casefold() for rule in rules}
     prefix = tags.placement_namespace.casefold() + "/"
-    subject_tags = {subject.tag.casefold() for subject in tags.subjects}
+    # The evaluator and the rule resolver compare tags with ``lower()``; admitting a
+    # subject rule under ``casefold()`` would accept a rule no compliant note can reach.
+    subject_tags = {subject.tag.lower() for subject in tags.subjects}
     placement_rule_tags: set[str] = set()
     for rule in rules:
         if rule.tag != rule.tag.lower():
@@ -483,7 +485,7 @@ def _validate_tag_policy_against_rules(
         folded = rule.tag.casefold()
         if folded.startswith(prefix):
             placement_rule_tags.add(folded)
-        elif folded not in subject_tags:
+        elif rule.tag not in subject_tags:
             raise ValueError(
                 f"organization rule tag {rule.tag!r} is outside the placement namespace "
                 f"{tags.placement_namespace!r} declared by the tags policy and is not a "
@@ -502,6 +504,8 @@ def _validate_tag_policy_against_rules(
         ("subject_exempt_tags entry", tags.subject_exempt_tags),
     ):
         for name in names:
+            if name.casefold() not in rule_tags:
+                raise ValueError(f"organization tags {label} {name!r} must be a declared rule tag")
             if name.casefold() not in placement_rule_tags:
                 raise ValueError(
                     f"organization tags {label} {name!r} must be a declared placement rule tag"

@@ -38,6 +38,7 @@ from datacron.organization.manifest import (
     validate_organization_bundle,
 )
 from datacron.organization.planner import DeviationKind, plan_organization
+from datacron.organization.rules import resolve_rule
 from datacron.organization.tags import (
     TagPolicyError,
     TagViolationKind,
@@ -182,9 +183,9 @@ def test_policy_refuses_unknown_keys_loudly() -> None:
 def test_organization_binds_policy_to_its_rules() -> None:
     with pytest.raises(ValidationError, match="requires at least one rule"):
         OrganizationConfig(scope="_memory", rules=(), tags=_policy())
-    with pytest.raises(ValidationError, match="must be a declared placement rule tag"):
+    with pytest.raises(ValidationError, match="must be a declared rule tag"):
         _organization(_policy(markers=["memory/session"]))
-    with pytest.raises(ValidationError, match="must be a declared placement rule tag"):
+    with pytest.raises(ValidationError, match="must be a declared rule tag"):
         _organization(_policy(subject_exempt_tags=["memory/session"]))
     with pytest.raises(ValidationError, match="outside the placement namespace"):
         OrganizationConfig(
@@ -297,6 +298,25 @@ def test_subject_rule_must_name_a_registered_subject_and_leave_a_placement_rule(
             rules=(OrganizationRule(tag="project/heimdall", folder=_SUBJECT_FOLDER),),
             tags=_policy(markers=[], subject_exempt_tags=[]),
         )
+
+
+def test_subject_rule_admission_uses_the_evaluator_normalization() -> None:
+    sharp = "project/straße"
+    policy = _policy(subjects=[sharp])
+
+    with pytest.raises(ValidationError, match="is not a declared subject"):
+        OrganizationConfig(
+            scope="_memory",
+            rules=(*_rules(), OrganizationRule(tag="project/strasse", folder="_memory/s")),
+            tags=policy,
+        )
+    organization = OrganizationConfig(
+        scope="_memory",
+        rules=(OrganizationRule(tag=sharp, folder="_memory/s"), *_rules()),
+        tags=policy,
+    )
+    assert evaluate_tag_policy(["memory/fact", sharp], organization) == ()
+    assert resolve_rule(["memory/fact", sharp], organization) is organization.rules[0]
 
 
 def test_subject_rule_round_trips_through_vault_yaml() -> None:
