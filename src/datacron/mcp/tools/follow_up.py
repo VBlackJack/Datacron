@@ -20,7 +20,7 @@ import re
 import time
 from datetime import date
 from hashlib import sha256
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,7 +44,23 @@ if TYPE_CHECKING:
 _ID = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
 _HASH = r"^[0-9a-f]{64}$"
 _ULID = r"^[0-9A-HJKMNP-TV-Z]{26}$"
+_HEADING_MAX_LENGTH: Final[int] = 256
+_OWNER_MAX_LENGTH: Final[int] = 256
+_IDENTITY_BASIS_MAX_LENGTH: Final[int] = 1000
 _TEXT = Annotated[str, Field(min_length=1, max_length=FOLLOW_UP_MAX_TEXT)]
+
+# Some MCP clients present the tool schema without its $defs, patterns or bounds. The
+# description repeats every constraint the schema declares so that a model reading only
+# the description can still build a record the server accepts.
+FOLLOW_UP_CONSTRAINTS_DESCRIPTION: Final[str] = (
+    "Schema constraints, repeated because some clients strip them: record_id, revision "
+    f"and previous_revision match {_ID}; target_id matches {_ULID} (upper-case Crockford "
+    f"ULID); expected_hash and source_hash match {_HASH} (lower-case sha256); target_path, "
+    f"source_path, source_excerpt and summary are 1 to {FOLLOW_UP_MAX_TEXT} characters; "
+    f"heading is 1 to {_HEADING_MAX_LENGTH}; owner at most {_OWNER_MAX_LENGTH}; "
+    f"identity_basis at most {_IDENTITY_BASIS_MAX_LENGTH}; event_date and due_date are "
+    f"ISO dates; unknown fields are refused; at most {FOLLOW_UP_MAX_RECORDS} records per call."
+)
 
 
 class FollowUpValidationError(ValueError):
@@ -64,19 +80,19 @@ class FollowUpRecord(BaseModel):
     target_path: _TEXT
     target_id: str = Field(pattern=_ULID)
     expected_hash: str = Field(pattern=_HASH)
-    heading: str = Field(min_length=1, max_length=256)
+    heading: str = Field(min_length=1, max_length=_HEADING_MAX_LENGTH)
     source_path: _TEXT
     source_hash: str = Field(pattern=_HASH)
     source_excerpt: _TEXT
     summary: _TEXT
     event_date: date | None = None
-    owner: str | None = Field(default=None, max_length=256)
+    owner: str | None = Field(default=None, max_length=_OWNER_MAX_LENGTH)
     due_date: date | None = None
     status: Literal[
         "unknown", "proposed", "open", "in_progress", "waiting", "completed", "cancelled"
     ] = "unknown"
     identity_confirmed: bool = False
-    identity_basis: str | None = Field(default=None, max_length=1000)
+    identity_basis: str | None = Field(default=None, max_length=_IDENTITY_BASIS_MAX_LENGTH)
 
 
 async def prepare_follow_up(app: DatacronApp, records: list[FollowUpRecord]) -> dict[str, Any]:

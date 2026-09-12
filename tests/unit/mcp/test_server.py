@@ -39,6 +39,7 @@ from datacron.core.batch_transaction import (
 from datacron.core.config import Settings
 from datacron.core.durability import DurabilityStatus, RecoveryRequiredError
 from datacron.core.hashing import sha256_bytes
+from datacron.core.memory_protocol import FOLLOW_UP_MAX_RECORDS
 from datacron.core.operation_log import OperationRecord
 from datacron.core.paths import PathConfinementError, sidecar_index_db, sidecar_vault_config
 from datacron.core.scope import SingleTenantVaultScope
@@ -889,6 +890,42 @@ async def test_missing_resource_uses_invalid_params(tmp_path: Path) -> None:
         await create_server(app).read_resource("datacron://vault/missing")
 
     assert error.value.error.code == INVALID_PARAMS
+
+
+@pytest.mark.asyncio
+async def test_prepare_follow_up_description_repeats_every_schema_constraint(
+    tmp_path: Path,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    app = build_app(
+        settings=Settings(read_paths=[vault], write_paths=[vault], vault_root=vault),
+        vault_root=vault,
+    )
+    tools = {tool.name: tool for tool in await create_server(app).list_tools()}
+    tool = tools["prepare_follow_up"]
+    description = tool.description or ""
+    record_schema = tool.input_schema["$defs"]["FollowUpRecord"]
+    assert record_schema["additionalProperties"] is False
+
+    patterns: set[str] = set()
+    bounds: set[str] = set()
+    for field_schema in record_schema["properties"].values():
+        variants = field_schema.get("anyOf", [field_schema])
+        for variant in variants:
+            if "pattern" in variant:
+                patterns.add(variant["pattern"])
+            if "maxLength" in variant:
+                bounds.add(str(variant["maxLength"]))
+    assert patterns
+    assert bounds
+    for pattern in patterns:
+        assert pattern in description
+    for bound in bounds:
+        assert bound in description
+    assert f"at most {FOLLOW_UP_MAX_RECORDS} records" in description
+    assert "unknown fields are refused" in description
+    assert "additionalProperties" not in description
 
 
 @pytest.mark.asyncio

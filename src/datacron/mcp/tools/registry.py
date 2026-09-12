@@ -50,7 +50,7 @@ from datacron.mcp.tool_contract import (
     SetFrontmatterOutput,
 )
 from datacron.mcp.tools.advisory import _contradiction_scan_impl
-from datacron.mcp.tools.follow_up import FollowUpRecord
+from datacron.mcp.tools.follow_up import FOLLOW_UP_CONSTRAINTS_DESCRIPTION, FollowUpRecord
 from datacron.mcp.tools.follow_up import prepare_follow_up as build_follow_up
 from datacron.mcp.tools.follow_up_read import get_follow_up as read_follow_up
 from datacron.mcp.tools.ops import _audit_query_impl, _get_health_impl, _get_note_history_impl
@@ -163,7 +163,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
             "identity confirmation; clarify homonyms first. Returns bounded "
             "append_journal plans, never writes. Validation is structural, not a "
             "truth verdict. Use stable record/revision IDs, then apply with existing "
-            "writers and verify receipts."
+            "writers and verify receipts. " + FOLLOW_UP_CONSTRAINTS_DESCRIPTION
         ),
         annotations=_READ_ANNOTATIONS,
     )

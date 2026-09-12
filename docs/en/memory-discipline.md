@@ -45,6 +45,9 @@ Each record supplies `record_id`, `revision`, `kind`, `target_path`, `target_id`
 `interaction`, `decision`, `objective`, and `project_state`. Unknown `event_date`, `owner` and
 `due_date` remain null. Status is `unknown`, `proposed`, `open`, `in_progress`, `waiting`,
 `completed`, or `cancelled`; a proposal is not an agreed commitment.
+The tool description repeats the schema constraints (identifier, hash and ULID patterns, text
+bounds, record limit) because some MCP clients present the schema without its definitions
+or patterns; the schema itself is unchanged.
 
 Targets tagged `memory/contact`, paths under `people/`, and interactions require `identity_confirmed=true` and a
 nonempty `identity_basis`. That is caller-supplied confirmation, not identity inference by the
