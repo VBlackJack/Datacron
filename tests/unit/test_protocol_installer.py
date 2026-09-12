@@ -467,6 +467,19 @@ def test_all_uses_shared_detection_and_skips_claude_desktop(
     assert outcomes[3].changed is True
 
 
+def test_uninstall_tells_claude_desktop_users_what_to_remove(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(protocol, "detect_clients", lambda **_: ("claude-desktop",))
+
+    outcomes = uninstall_memory_protocol(PROTOCOL_ALL)
+
+    assert outcomes[0].client_id == "claude-desktop"
+    assert outcomes[0].skipped is True
+    assert "remove the session start line" in outcomes[0].detail
+    assert SESSION_START_INSTRUCTION not in outcomes[0].detail
+
+
 def test_protocol_clients_explicitly_exclude_clients_without_instruction_target() -> None:
     assert set(PROTOCOL_CLIENT_IDS) == set(mcp_clients.ALL_CLIENT_IDS) - {mcp_clients.LMSTUDIO}
     assert mcp_clients.LMSTUDIO not in PROTOCOL_CLIENT_IDS

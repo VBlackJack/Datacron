@@ -74,7 +74,10 @@ Prérequis runtime :
 ## Première session
 
 1. Choisis ton dossier de notes avec l'installeur ou `datacron setup`.
-2. Reconnecte Datacron dans ton client MCP pour charger les outils et les instructions.
+2. Reconnecte Datacron dans ton client MCP pour charger les outils et les instructions. Le
+   chat de Claude Desktop ne présente pas les instructions du serveur : colle la ligne de
+   démarrage de session affichée par l'installation dans tes préférences Claude (voir
+   [setup](docs/fr/setup.md)).
 3. Demande : "Retrouve les notes de mon projet et résume son état avec les sources."
 
 Pour les sessions de mémoire, `session_context` fournit un contexte borné et le protocole
