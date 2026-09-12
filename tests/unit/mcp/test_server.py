@@ -903,10 +903,9 @@ def _description_clauses(description: str) -> dict[str, str]:
     clauses: dict[str, str] = {}
     for clause in sentence.split("; "):
         name, separator, body = clause.partition(": ")
-        if separator:
-            clauses[name] = body
-        else:
-            clauses[clause] = ""
+        key = name if separator else clause
+        assert key not in clauses, f"duplicate clause {key}"
+        clauses[key] = body
     return clauses
 
 
@@ -925,6 +924,8 @@ def _expected_clause(field_schema: dict[str, Any]) -> str:
             parts.append(f"{variant['minLength']} to {variant['maxLength']} characters")
         elif "maxLength" in variant:
             parts.append(f"at most {variant['maxLength']} characters")
+        elif "minLength" in variant:
+            parts.append(f"at least {variant['minLength']} characters")
         if variant.get("format") == "date":
             parts.append("ISO date")
         if variant.get("type") == "boolean":
@@ -977,13 +978,15 @@ def test_render_follow_up_constraints_follows_the_schema_it_is_given() -> None:
                 "default": None,
             },
             "gamma": {"enum": ["one", "two"], "default": "one", "type": "string"},
+            "delta": {"minLength": 3, "type": "string"},
         },
     }
     rendered = render_follow_up_constraints(schema)
     assert "required: alpha;" in rendered
     assert "; alpha: pattern ^x{2}$;" in rendered
     assert "; beta: at most 7 characters, or null, default null;" in rendered
-    assert rendered.endswith('; gamma: one of one, two, default "one"')
+    assert '; gamma: one of one, two, default "one";' in rendered
+    assert rendered.endswith("; delta: at least 3 characters")
     schema["properties"]["alpha"]["pattern"] = "^y$"
     assert "; alpha: pattern ^y$;" in render_follow_up_constraints(schema)
 
