@@ -1016,11 +1016,13 @@ async def test_prepare_follow_up_description_repeats_every_schema_constraint_per
     }
     for name in record_schema["properties"]:
         assert _EXPECTED_PROPERTY_NAME.fullmatch(name), name
+        assert name not in fixed, name
     assert set(record_schema["required"]) <= set(record_schema["properties"])
     expected = fixed | {
         name: _expected_clause(field_schema)
         for name, field_schema in record_schema["properties"].items()
     }
+    assert len(expected) == len(fixed) + len(record_schema["properties"])
     assert clauses == expected
     assert all(expected[name] for name in record_schema["properties"])
 
@@ -1106,6 +1108,10 @@ def test_render_follow_up_constraints_follows_the_schema_it_is_given() -> None:
     del schema["properties"]["odd: name"]
     schema["required"] = ["alpha, beta"]
     with pytest.raises(ValueError, match="required entries are not declared"):
+        render_follow_up_constraints(schema)
+    schema["required"] = ["alpha"]
+    schema["properties"]["required"] = {"type": "boolean"}
+    with pytest.raises(ValueError, match="property name not rendered"):
         render_follow_up_constraints(schema)
 
 

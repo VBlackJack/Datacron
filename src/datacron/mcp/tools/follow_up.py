@@ -94,6 +94,7 @@ _RENDERED_FORMATS: Final[frozenset[str]] = frozenset({"date"})
 _RENDERED_ENUM_MEMBER: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_-]+$")
 _RENDERED_PROPERTY_NAME: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _CLAUSE_SEPARATORS: Final[tuple[str, ...]] = ("; ", ", ", ": ")
+_RESERVED_CLAUSE_NAMES: Final[frozenset[str]] = frozenset({"required"})
 _RENDERED_TYPES: Final[frozenset[str]] = frozenset({"string", "boolean", "null"})
 
 
@@ -166,7 +167,7 @@ def _variant_parts(variant: dict[str, Any]) -> list[str]:
 
 def _constraint_clause(name: str, field_schema: dict[str, Any]) -> str:
     """Render one property of a JSON schema as a short, client-independent clause."""
-    if not _RENDERED_PROPERTY_NAME.fullmatch(name):
+    if not _RENDERED_PROPERTY_NAME.fullmatch(name) or name in _RESERVED_CLAUSE_NAMES:
         raise ValueError(f"property name not rendered unambiguously: {name!r}")
     parts: list[str] = []
     nullable = False
