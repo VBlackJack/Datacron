@@ -1501,9 +1501,42 @@ class OrganizationBatchTransaction:
                 ValueError,
             ) as exc:
                 return f"historical note identity is invalid for {member.operation_id}: {exc}"
-            if metadata.get("id") != member.note_id or aliases != member.before_aliases:
+            if aliases != member.before_aliases:
                 return f"historical note identity differs for {member.operation_id}"
+            historical_id = metadata.get("id")
+            if historical_id == member.note_id:
+                continue
+            if historical_id is None and member.kind == "replace_exact":
+                # Identity adoption: the validator bound a sidecar-only source to
+                # the manifest identity; the baseline sidecar must still say so.
+                try:
+                    baseline_id = self._baseline_sidecar_identity(pending, member.target_rel_path)
+                except (OperationLogError, OSError, ValueError) as exc:
+                    return (
+                        f"baseline sidecar identity is unreadable for {member.operation_id}: {exc}"
+                    )
+                if baseline_id == member.note_id:
+                    continue
+            return f"historical note identity differs for {member.operation_id}"
         return None
+
+    def _baseline_sidecar_identity(self, pending: _PendingBatch, rel_path: str) -> str | None:
+        """Return the identity the baseline sidecars map to ``rel_path``, if exactly one."""
+        sidecar_member = next(
+            (
+                member
+                for member in pending.members
+                if member.kind == "identity_sidecar_replace_exact"
+            ),
+            None,
+        )
+        mappings = self._identity_sidecar_before_mapping(pending, sidecar_member)
+        mappings.update(self._migrated_sidecar_mapping(pending))
+        key = rel_path.casefold()
+        found = {note_id for path, note_id in mappings.items() if path.casefold() == key}
+        if len(found) != 1:
+            return None
+        return next(iter(found))
 
     def _projected_identity_stage_error(
         self,

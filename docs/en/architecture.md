@@ -370,9 +370,11 @@ an exact `.datacron/ulids.json` replacement derived internally from the affected
 key of a validated move or a mechanically proven obsolete case collision. Its count and
 content-free digest are token-bound; exact records remain in pending and committed receipts so
 recovery and index cleanup do not depend on history retention. This member is not an arbitrary
-manifest payload. A `replace_exact` or
-`move_replace_exact` source must carry its declared ID in Markdown frontmatter; a sidecar-only
-source identity is unsupported in v1.
+manifest payload. A `move_replace_exact` source must carry its declared ID in Markdown
+frontmatter; a sidecar-only move source is unsupported in v1. A `replace_exact` source without a
+frontmatter id is accepted when the manifest's expected id is that note's sidecar identity and the
+payload carries the same id: the replacement adopts the identity into the note, which is how a
+hand-written file such as a README gains a durable id without ever changing it.
 
 Payloads are staged durably before a pending receipt is published. Recovery revalidates the
 receipt, staged bytes, exact baselines, live scope, admission policy, write roots, and unchanged

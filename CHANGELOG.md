@@ -7,6 +7,17 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [Unreleased]
+
+### Added
+
+- Identity adoption through the organization manifest: a `replace_exact` whose source note has
+  no frontmatter id is accepted when the manifest's expected id is the identity the ULID sidecar
+  already maps to that path and the payload carries the same id. The replacement writes the id
+  into the note; the index, backlinks and history keep the identity they always used. Batch
+  commit and recovery check the same sidecar baseline. Move sources without a frontmatter id
+  stay unsupported.
+
 ## [2026.0912.01] - 2026-09-12
 
 ### Added

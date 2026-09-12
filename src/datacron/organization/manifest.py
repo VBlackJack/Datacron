@@ -1111,11 +1111,30 @@ def _assert_absent_case_insensitive(path: Path) -> None:
         )
 
 
+def _sidecar_identity_for(rel_path: str, sidecar_ids: Mapping[str, str]) -> str | None:
+    """Return the one sidecar identity mapped to ``rel_path``, or ``None``.
+
+    The lookup follows the filesystem's own case contract. An absent mapping
+    and an ambiguous one (two case-colliding keys with different ids) both
+    yield ``None``: adoption never guesses an identity.
+    """
+    key = _filesystem_path_key(PurePosixPath(rel_path).as_posix())
+    found = {
+        note_id
+        for path, note_id in sidecar_ids.items()
+        if _filesystem_path_key(PurePosixPath(path).as_posix()) == key
+    }
+    if len(found) != 1:
+        return None
+    return next(iter(found))
+
+
 def _read_expected_note(
     path: Path,
     *,
     expected_sha256: str,
     expected_identity: ExistingNoteIdentity,
+    sidecar_identity: str | None = None,
 ) -> None:
     if not path.is_file():
         raise OrganizationManifestError("source_missing", f"Exact source is not a file: {path}")
@@ -1140,10 +1159,15 @@ def _read_expected_note(
         ) from exc
     source_id = metadata.get("id")
     if not isinstance(source_id, str):
-        raise OrganizationManifestError(
-            "source_identity_invalid",
-            f"Source note has no frontmatter id: {path}",
-        )
+        if sidecar_identity is None or sidecar_identity != expected_identity.id:
+            raise OrganizationManifestError(
+                "source_identity_invalid",
+                f"Source note has no frontmatter id: {path}",
+            )
+        # Identity adoption: the vault knows this note only through its sidecar
+        # mapping. The manifest names that identity, the payload carries it in
+        # frontmatter, and the note keeps the id it always had in the index.
+        source_id = sidecar_identity
     actual_identity = ExistingNoteIdentity(
         id=source_id,
         aliases=tuple(coerce_string_list(metadata.get("aliases"))),
@@ -2097,6 +2121,13 @@ def validate_organization_bundle(
     if config_precondition is not None:
         preconditions.append(config_precondition)
     organization_scope = next(iter(scope_rel_paths))
+    (
+        primary_bytes,
+        primary_ids,
+        migrated_bytes,
+        migrated_ids,
+        sidecar_ids,
+    ) = _load_vault_id_state(resolved_vault)
 
     for operation in bundle.manifest.operations:
         _assert_operation_organization_scope(operation, organization_scope)
@@ -2138,6 +2169,7 @@ def validate_organization_bundle(
                 target_path,
                 expected_sha256=operation.expected_sha256,
                 expected_identity=operation.expected,
+                sidecar_identity=_sidecar_identity_for(operation.target, sidecar_ids),
             )
             source_path = target_path
             preconditions.append(
@@ -2197,13 +2229,6 @@ def validate_organization_bundle(
             )
         )
 
-    (
-        primary_bytes,
-        primary_ids,
-        migrated_bytes,
-        migrated_ids,
-        sidecar_ids,
-    ) = _load_vault_id_state(resolved_vault)
     live_identities = _inventory_admitted_identities(
         resolved_vault,
         scope,
