@@ -7,6 +7,38 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [2026.0912.03] - 2026-09-12
+
+### Added
+
+- The `prepare_follow_up` tool description ends with the record schema rendered as prose,
+  one clause per property: required fields, extra fields refused, identifier, ULID and hash
+  patterns, enumerations, text bounds, nullable alternatives, defaults, and the runtime limit
+  on records per call. Some MCP clients present the input schema without its definitions or
+  patterns; the description carries the same constraints for them. The JSON schema itself is
+  unchanged. The renderer refuses any schema keyword, type, format, variant or name it cannot
+  express unambiguously, so a constraint added to the model can never be silently missing
+  from the description, and a test compares every rendered clause with an expectation rebuilt
+  from the listed schema.
+- `datacron protocol install --client claude-desktop` prints the one-line session start
+  instruction to paste into the Claude preferences, the first sentence of the memory
+  contract; `datacron protocol uninstall` tells the user to remove it.
+
+### Changed
+
+- `datacron protocol status` reports `claude-desktop` as `manual` at user scope, like Cursor,
+  instead of `unverified`. The Claude Desktop chat presents the tool schemas intact but does not
+  present the MCP server instructions to the model, so the memory contract reaches that client
+  only through the user's Claude preferences; `session_context` returns the full contract text
+  in `contract.instructions`. Earlier entries of this changelog describing Claude Desktop as
+  receiving the instructions during MCP initialization recorded an assumption that this
+  measurement refutes. The README, installation, setup and memory discipline pages, in English
+  and French, describe the manual step.
+- Upgrading from `2026.0912.02` changes no chunk ID, index format, note bytes or protocol block:
+  the chunker, the index store and the memory contract bytes are untouched, so no
+  `datacron reindex` and no `datacron protocol install` are required for this increment.
+  Reconnect the MCP server so the client reloads the `prepare_follow_up` description.
+
 ## [2026.0912.02] - 2026-09-12
 
 ### Added
