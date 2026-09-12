@@ -911,6 +911,8 @@ def _description_clauses(description: str) -> dict[str, str]:
 
 _EXPECTED_VARIANT_KEYS = {"pattern", "enum", "minLength", "maxLength", "format", "type"}
 _EXPECTED_PARENT_KEYS = {"anyOf", "default", "title", "description"}
+_EXPECTED_FORMATS = {"date"}
+_EXPECTED_TYPES = {"string", "boolean", "null"}
 
 
 def _expected_variants(field_schema: dict[str, Any]) -> list[dict[str, Any]]:
@@ -923,6 +925,12 @@ def _expected_variants(field_schema: dict[str, Any]) -> list[dict[str, Any]]:
     for variant in variants:
         assert set(variant) <= _EXPECTED_VARIANT_KEYS, variant
     return variants
+
+
+def _expected_shape(variant: dict[str, Any]) -> None:
+    """Fail on a format or type value the expectation does not express."""
+    assert variant.get("format", "date") in _EXPECTED_FORMATS, variant
+    assert variant.get("type", "string") in _EXPECTED_TYPES, variant
 
 
 def _expected_length(variant: dict[str, Any]) -> list[str]:
@@ -940,6 +948,7 @@ def _expected_clause(field_schema: dict[str, Any]) -> str:
     variants = _expected_variants(field_schema)
     parts: list[str] = []
     for variant in variants:
+        _expected_shape(variant)
         if variant.get("type") == "null":
             continue
         if "pattern" in variant:
@@ -1015,7 +1024,15 @@ def test_render_follow_up_constraints_follows_the_schema_it_is_given() -> None:
         render_follow_up_constraints(schema)
     del schema["properties"]["beta"]["minLength"]
     schema["properties"]["delta"]["const"] = "fixed"
-    with pytest.raises(ValueError, match="not rendered"):
+    with pytest.raises(ValueError, match="keywords not rendered"):
+        render_follow_up_constraints(schema)
+    del schema["properties"]["delta"]["const"]
+    schema["properties"]["delta"]["format"] = "uuid"
+    with pytest.raises(ValueError, match="format not rendered"):
+        render_follow_up_constraints(schema)
+    del schema["properties"]["delta"]["format"]
+    schema["properties"]["beta"]["anyOf"].append({"type": "integer"})
+    with pytest.raises(ValueError, match="type not rendered"):
         render_follow_up_constraints(schema)
 
 

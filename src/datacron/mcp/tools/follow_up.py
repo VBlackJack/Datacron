@@ -87,6 +87,8 @@ _RENDERED_SCHEMA_KEYS: Final[frozenset[str]] = frozenset(
     {"pattern", "enum", "minLength", "maxLength", "format", "type", "title", "description"}
 )
 _PARENT_ONLY_SCHEMA_KEYS: Final[frozenset[str]] = frozenset({"anyOf", "default"})
+_RENDERED_FORMATS: Final[frozenset[str]] = frozenset({"date"})
+_RENDERED_TYPES: Final[frozenset[str]] = frozenset({"string", "boolean", "null"})
 
 
 def _checked_variants(name: str, field_schema: dict[str, Any]) -> list[dict[str, Any]]:
@@ -108,6 +110,14 @@ def _checked_variants(name: str, field_schema: dict[str, Any]) -> list[dict[str,
         if unknown:
             raise ValueError(f"{name}: schema keywords not rendered: {sorted(unknown)}")
     return list(variants)
+
+
+def _check_variant_values(name: str, variant: dict[str, Any]) -> None:
+    """Refuse a format or type value the clause does not express."""
+    if variant.get("format", "date") not in _RENDERED_FORMATS:
+        raise ValueError(f"{name}: schema format not rendered: {variant['format']}")
+    if variant.get("type", "string") not in _RENDERED_TYPES:
+        raise ValueError(f"{name}: schema type not rendered: {variant['type']}")
 
 
 def _length_clause(variant: dict[str, Any]) -> str | None:
@@ -145,6 +155,7 @@ def _constraint_clause(name: str, field_schema: dict[str, Any]) -> str:
     parts: list[str] = []
     nullable = False
     for variant in _checked_variants(name, field_schema):
+        _check_variant_values(name, variant)
         if variant.get("type") == "null":
             nullable = True
             continue
