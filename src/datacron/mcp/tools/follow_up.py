@@ -47,20 +47,8 @@ _ULID = r"^[0-9A-HJKMNP-TV-Z]{26}$"
 _HEADING_MAX_LENGTH: Final[int] = 256
 _OWNER_MAX_LENGTH: Final[int] = 256
 _IDENTITY_BASIS_MAX_LENGTH: Final[int] = 1000
-_TEXT = Annotated[str, Field(min_length=1, max_length=FOLLOW_UP_MAX_TEXT)]
-
-# Some MCP clients present the tool schema without its $defs, patterns or bounds. The
-# description repeats every constraint the schema declares so that a model reading only
-# the description can still build a record the server accepts.
-FOLLOW_UP_CONSTRAINTS_DESCRIPTION: Final[str] = (
-    "Schema constraints, repeated because some clients strip them: record_id, revision "
-    f"and previous_revision match {_ID}; target_id matches {_ULID} (upper-case Crockford "
-    f"ULID); expected_hash and source_hash match {_HASH} (lower-case sha256); target_path, "
-    f"source_path, source_excerpt and summary are 1 to {FOLLOW_UP_MAX_TEXT} characters; "
-    f"heading is 1 to {_HEADING_MAX_LENGTH}; owner at most {_OWNER_MAX_LENGTH}; "
-    f"identity_basis at most {_IDENTITY_BASIS_MAX_LENGTH}; event_date and due_date are "
-    f"ISO dates; unknown fields are refused; at most {FOLLOW_UP_MAX_RECORDS} records per call."
-)
+_TEXT_MIN_LENGTH: Final[int] = 1
+_TEXT = Annotated[str, Field(min_length=_TEXT_MIN_LENGTH, max_length=FOLLOW_UP_MAX_TEXT)]
 
 
 class FollowUpValidationError(ValueError):
@@ -80,7 +68,7 @@ class FollowUpRecord(BaseModel):
     target_path: _TEXT
     target_id: str = Field(pattern=_ULID)
     expected_hash: str = Field(pattern=_HASH)
-    heading: str = Field(min_length=1, max_length=_HEADING_MAX_LENGTH)
+    heading: str = Field(min_length=_TEXT_MIN_LENGTH, max_length=_HEADING_MAX_LENGTH)
     source_path: _TEXT
     source_hash: str = Field(pattern=_HASH)
     source_excerpt: _TEXT
@@ -93,6 +81,65 @@ class FollowUpRecord(BaseModel):
     ] = "unknown"
     identity_confirmed: bool = False
     identity_basis: str | None = Field(default=None, max_length=_IDENTITY_BASIS_MAX_LENGTH)
+
+
+def _constraint_clause(name: str, field_schema: dict[str, Any]) -> str:
+    """Render one property of a JSON schema as a short, client-independent clause."""
+    parts: list[str] = []
+    nullable = False
+    for variant in field_schema.get("anyOf") or [field_schema]:
+        if variant.get("type") == "null":
+            nullable = True
+            continue
+        if "pattern" in variant:
+            parts.append(f"pattern {variant['pattern']}")
+        if "enum" in variant:
+            parts.append("one of " + ", ".join(str(value) for value in variant["enum"]))
+        minimum = variant.get("minLength")
+        maximum = variant.get("maxLength")
+        if minimum is not None and maximum is not None:
+            parts.append(f"{minimum} to {maximum} characters")
+        elif maximum is not None:
+            parts.append(f"at most {maximum} characters")
+        elif minimum is not None:
+            parts.append(f"at least {minimum} characters")
+        if variant.get("format") == "date":
+            parts.append("ISO date")
+        if variant.get("type") == "boolean":
+            parts.append("boolean")
+    if nullable:
+        parts.append("or null")
+    if "default" in field_schema:
+        parts.append(f"default {json.dumps(field_schema['default'])}")
+    return f"{name}: " + ", ".join(parts)
+
+
+def render_follow_up_constraints(record_schema: dict[str, Any]) -> str:
+    """Repeat every constraint of the record schema in prose, clause by clause.
+
+    Some MCP clients present the tool schema without its $defs, patterns or bounds. The
+    rendered text lets a model that only reads the description build a record the server
+    accepts. Clauses are separated by "; " and each starts with the property name.
+    """
+    clauses = [
+        "required: " + ", ".join(record_schema["required"]),
+        (
+            "extra fields refused"
+            if record_schema.get("additionalProperties") is False
+            else "extra fields ignored"
+        ),
+        f"at most {FOLLOW_UP_MAX_RECORDS} records per call, checked at runtime",
+    ]
+    clauses.extend(
+        _constraint_clause(name, field_schema)
+        for name, field_schema in record_schema["properties"].items()
+    )
+    return "Schema constraints, repeated because some clients strip them: " + "; ".join(clauses)
+
+
+FOLLOW_UP_CONSTRAINTS_DESCRIPTION: Final[str] = render_follow_up_constraints(
+    FollowUpRecord.model_json_schema()
+)
 
 
 async def prepare_follow_up(app: DatacronApp, records: list[FollowUpRecord]) -> dict[str, Any]:

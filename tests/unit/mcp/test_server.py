@@ -54,6 +54,7 @@ from datacron.mcp.server import (
     build_app,
     create_server,
 )
+from datacron.mcp.tools.follow_up import render_follow_up_constraints
 
 
 def test_mcp_v2_dependency_and_public_surface_are_explicit() -> None:
@@ -892,8 +893,21 @@ async def test_missing_resource_uses_invalid_params(tmp_path: Path) -> None:
     assert error.value.error.code == INVALID_PARAMS
 
 
+# Six patterns, two enumerations, five minimum and seven maximum lengths, two dates and one
+# boolean: the guard fails when a constraint disappears from the listed schema.
+_FOLLOW_UP_CONSTRAINT_COUNT = 23
+
+
+def _description_clause(description: str, name: str) -> str:
+    """Return the clause of one property inside the rendered constraint sentence."""
+    marker = f"; {name}: "
+    assert marker in description, name
+    clause = description.split(marker, 1)[1]
+    return clause.split(";", 1)[0]
+
+
 @pytest.mark.asyncio
-async def test_prepare_follow_up_description_repeats_every_schema_constraint(
+async def test_prepare_follow_up_description_repeats_every_schema_constraint_per_field(
     tmp_path: Path,
 ) -> None:
     vault = tmp_path / "vault"
@@ -906,26 +920,65 @@ async def test_prepare_follow_up_description_repeats_every_schema_constraint(
     tool = tools["prepare_follow_up"]
     description = tool.description or ""
     record_schema = tool.input_schema["$defs"]["FollowUpRecord"]
+    assert tool.input_schema["properties"]["records"]["items"] == {"$ref": "#/$defs/FollowUpRecord"}
     assert record_schema["additionalProperties"] is False
+    assert "; extra fields refused;" in description
+    assert f"; at most {FOLLOW_UP_MAX_RECORDS} records per call, checked at runtime;" in (
+        description
+    )
+    assert "required: " + ", ".join(record_schema["required"]) + ";" in description
 
-    patterns: set[str] = set()
-    bounds: set[str] = set()
-    for field_schema in record_schema["properties"].values():
-        variants = field_schema.get("anyOf", [field_schema])
-        for variant in variants:
+    checked = 0
+    for name, field_schema in record_schema["properties"].items():
+        clause = _description_clause(description, name)
+        if "default" in field_schema:
+            assert f"default {json.dumps(field_schema['default'])}" in clause, name
+        for variant in field_schema.get("anyOf") or [field_schema]:
+            if variant.get("type") == "null":
+                assert "or null" in clause, name
+                continue
             if "pattern" in variant:
-                patterns.add(variant["pattern"])
+                assert variant["pattern"] in clause, name
+                checked += 1
+            if "enum" in variant:
+                for value in variant["enum"]:
+                    assert value in clause.split("one of ", 1)[1], name
+                checked += 1
+            if "minLength" in variant:
+                assert f"{variant['minLength']} to " in clause, name
+                checked += 1
             if "maxLength" in variant:
-                bounds.add(str(variant["maxLength"]))
-    assert patterns
-    assert bounds
-    for pattern in patterns:
-        assert pattern in description
-    for bound in bounds:
-        assert bound in description
-    assert f"at most {FOLLOW_UP_MAX_RECORDS} records" in description
-    assert "unknown fields are refused" in description
-    assert "additionalProperties" not in description
+                assert f"{variant['maxLength']} characters" in clause, name
+                checked += 1
+            if variant.get("format") == "date":
+                assert "ISO date" in clause, name
+                checked += 1
+            if variant.get("type") == "boolean":
+                assert "boolean" in clause, name
+                checked += 1
+    assert checked == _FOLLOW_UP_CONSTRAINT_COUNT
+
+
+def test_render_follow_up_constraints_follows_the_schema_it_is_given() -> None:
+    schema: dict[str, Any] = {
+        "additionalProperties": False,
+        "required": ["alpha"],
+        "properties": {
+            "alpha": {"pattern": "^x{2}$", "type": "string"},
+            "beta": {
+                "anyOf": [{"maxLength": 7, "type": "string"}, {"type": "null"}],
+                "default": None,
+            },
+            "gamma": {"enum": ["one", "two"], "default": "one", "type": "string"},
+        },
+    }
+    rendered = render_follow_up_constraints(schema)
+    assert "required: alpha;" in rendered
+    assert "; alpha: pattern ^x{2}$;" in rendered
+    assert "; beta: at most 7 characters, or null, default null;" in rendered
+    assert rendered.endswith('; gamma: one of one, two, default "one"')
+    schema["properties"]["alpha"]["pattern"] = "^y$"
+    assert "; alpha: pattern ^y$;" in render_follow_up_constraints(schema)
 
 
 @pytest.mark.asyncio
