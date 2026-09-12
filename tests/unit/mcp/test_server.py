@@ -958,6 +958,7 @@ def _expected_clause(field_schema: dict[str, Any]) -> str:
     for variant in variants:
         _expected_shape(variant)
         if variant.get("type") == "null":
+            assert variant == {"type": "null"}, variant
             continue
         variant_parts: list[str] = []
         if "pattern" in variant:
@@ -994,6 +995,7 @@ async def test_prepare_follow_up_description_repeats_every_schema_constraint_per
     record_schema = tool.input_schema["$defs"]["FollowUpRecord"]
     assert tool.input_schema["properties"]["records"]["items"] == {"$ref": "#/$defs/FollowUpRecord"}
     assert set(record_schema) <= _EXPECTED_RECORD_KEYS, set(record_schema)
+    assert record_schema["type"] == "object"
     assert record_schema["additionalProperties"] is False
 
     clauses = _description_clauses(tool.description or "")
@@ -1056,6 +1058,22 @@ def test_render_follow_up_constraints_follows_the_schema_it_is_given() -> None:
     del schema["properties"]["beta"]["anyOf"][-1]
     schema["maxProperties"] = 12
     with pytest.raises(ValueError, match="record schema keywords not rendered"):
+        render_follow_up_constraints(schema)
+    del schema["maxProperties"]
+    schema["properties"]["beta"]["anyOf"][1] = {"type": "null", "enum": ["never"]}
+    with pytest.raises(ValueError, match="null variant"):
+        render_follow_up_constraints(schema)
+    schema["properties"]["beta"]["anyOf"][1] = {"type": "null"}
+    schema["properties"]["alpha"]["type"] = ["string", "null"]
+    with pytest.raises(ValueError, match="type not rendered"):
+        render_follow_up_constraints(schema)
+    schema["properties"]["alpha"]["type"] = "string"
+    schema["additionalProperties"] = {"type": "string"}
+    with pytest.raises(ValueError, match="additionalProperties sub-schema"):
+        render_follow_up_constraints(schema)
+    schema["additionalProperties"] = False
+    schema["type"] = "array"
+    with pytest.raises(ValueError, match="record schema type"):
         render_follow_up_constraints(schema)
 
 

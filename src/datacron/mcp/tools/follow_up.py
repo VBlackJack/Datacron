@@ -117,10 +117,12 @@ def _checked_variants(name: str, field_schema: dict[str, Any]) -> list[dict[str,
 
 def _check_variant_values(name: str, variant: dict[str, Any]) -> None:
     """Refuse a format or type value the clause does not express."""
-    if variant.get("format", "date") not in _RENDERED_FORMATS:
-        raise ValueError(f"{name}: schema format not rendered: {variant['format']}")
-    if variant.get("type", "string") not in _RENDERED_TYPES:
-        raise ValueError(f"{name}: schema type not rendered: {variant['type']}")
+    format_value = variant.get("format", "date")
+    if not isinstance(format_value, str) or format_value not in _RENDERED_FORMATS:
+        raise ValueError(f"{name}: schema format not rendered: {format_value!r}")
+    type_value = variant.get("type", "string")
+    if not isinstance(type_value, str) or type_value not in _RENDERED_TYPES:
+        raise ValueError(f"{name}: schema type not rendered: {type_value!r}")
 
 
 def _length_clause(variant: dict[str, Any]) -> str | None:
@@ -160,6 +162,8 @@ def _constraint_clause(name: str, field_schema: dict[str, Any]) -> str:
     for variant in _checked_variants(name, field_schema):
         _check_variant_values(name, variant)
         if variant.get("type") == "null":
+            if set(variant) != {"type"}:
+                raise ValueError(f"{name}: constraints on the null variant are not rendered")
             nullable = True
             continue
         variant_parts = _variant_parts(variant)
@@ -185,13 +189,14 @@ def render_follow_up_constraints(record_schema: dict[str, Any]) -> str:
     unknown = set(record_schema) - _RENDERED_RECORD_KEYS
     if unknown:
         raise ValueError(f"record schema keywords not rendered: {sorted(unknown)}")
+    if record_schema.get("type", "object") != "object":
+        raise ValueError(f"record schema type not rendered: {record_schema['type']!r}")
+    extra = record_schema.get("additionalProperties", True)
+    if not isinstance(extra, bool):
+        raise ValueError("record schema additionalProperties sub-schema not rendered")
     clauses = [
         "required: " + ", ".join(record_schema["required"]),
-        (
-            "extra fields refused"
-            if record_schema.get("additionalProperties") is False
-            else "extra fields ignored"
-        ),
+        "extra fields ignored" if extra else "extra fields refused",
         f"at most {FOLLOW_UP_MAX_RECORDS} records per call, checked at runtime",
     ]
     clauses.extend(
