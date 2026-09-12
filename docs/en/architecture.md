@@ -372,9 +372,10 @@ content-free digest are token-bound; exact records remain in pending and committ
 recovery and index cleanup do not depend on history retention. This member is not an arbitrary
 manifest payload. A `move_replace_exact` source must carry its declared ID in Markdown
 frontmatter; a sidecar-only move source is unsupported in v1. A `replace_exact` source without a
-frontmatter id is accepted when the manifest's expected id is the identity the sidecar maps to
-that exact path (the key the reader resolves, never a case or spelling variant) and the payload
-carries the same id: the replacement adopts the identity into the note, which is how a
+frontmatter id is accepted when the manifest spells the target exactly as the file exists on
+disk, the manifest's expected id is the identity the sidecar maps to that exact path (the key the
+reader resolves, never a case or spelling variant) and the payload carries the same id: the
+replacement adopts the identity into the note, which is how a
 hand-written file such as a README gains a durable id without ever changing it. A frontmatter id
 that is present but not a string is refused as before.
 

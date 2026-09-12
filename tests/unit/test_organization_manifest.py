@@ -1180,6 +1180,23 @@ def test_replace_without_frontmatter_id_needs_the_matching_sidecar_identity(
     assert error.value.code == "source_identity_invalid"
 
 
+def test_adoption_refuses_a_manifest_target_whose_case_differs_from_the_file(
+    tmp_path: Path,
+) -> None:
+    case = _build_case(tmp_path)
+    _replace_source_without_id(case, {"memory/Replace.md": _REPLACE_ID})
+    operation = cast("dict[str, object]", cast("list[object]", case.manifest["operations"])[0])
+    operation["target"] = "memory/Replace.md"
+    case.manifest_path.write_text(json.dumps(case.manifest), encoding="utf-8")
+
+    with pytest.raises(OrganizationManifestError) as error:
+        _load_and_validate(case)
+
+    # Case-insensitive filesystems resolve the file and refuse the identity;
+    # case-sensitive ones do not find the source at all.
+    assert error.value.code in {"source_identity_invalid", "source_missing"}
+
+
 @pytest.mark.parametrize("raw_id", ["123", "false", "[]", "{}"])
 def test_adoption_refuses_a_non_textual_frontmatter_id(tmp_path: Path, raw_id: str) -> None:
     case = _build_case(tmp_path)

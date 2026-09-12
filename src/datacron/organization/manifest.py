@@ -1111,14 +1111,28 @@ def _assert_absent_case_insensitive(path: Path) -> None:
         )
 
 
-def _sidecar_identity_for(rel_path: str, sidecar_ids: Mapping[str, str]) -> str | None:
-    """Return the sidecar identity the reader resolves for ``rel_path``, or ``None``.
+def _sidecar_identity_for(
+    rel_path: str,
+    target_path: Path,
+    vault_root: Path,
+    sidecar_ids: Mapping[str, str],
+) -> str | None:
+    """Return the sidecar identity the reader resolves for this note, or ``None``.
 
-    The reader looks the sidecar up by exact key, so adoption does too: a key
-    that differs in case or spelling (``./``, ``//``) never gave the note its
-    identity and must not give it one now. ``rel_path`` is the canonical
-    manifest target, the same string the projected identity inventory uses.
+    The reader looks the sidecar up by the exact key of the physical path, and
+    the batch records that same physical path in its receipt. Adoption is
+    therefore offered only when the manifest spells the target exactly as the
+    file exists on disk (a case-insensitive filesystem would otherwise resolve
+    ``Replace.md`` to ``replace.md`` and the commit would find no identity),
+    and only for the exact sidecar key: a case or spelling variant (``./``,
+    ``//``) never gave the note its identity and must not give it one now.
     """
+    try:
+        physical = target_path.resolve(strict=True).relative_to(vault_root).as_posix()
+    except (OSError, ValueError):
+        return None
+    if physical != rel_path:
+        return None
     return sidecar_ids.get(rel_path)
 
 
@@ -2168,7 +2182,9 @@ def validate_organization_bundle(
                 target_path,
                 expected_sha256=operation.expected_sha256,
                 expected_identity=operation.expected,
-                sidecar_identity=_sidecar_identity_for(operation.target, sidecar_ids),
+                sidecar_identity=_sidecar_identity_for(
+                    operation.target, target_path, resolved_vault, sidecar_ids
+                ),
             )
             source_path = target_path
             preconditions.append(

@@ -383,9 +383,10 @@ conservés dans les reçus pending et committed pour une recovery et une purge d
 de la rétention d'historique. Ce membre n'est pas un payload arbitraire du manifeste. Une source de
 `move_replace_exact` doit porter son ID déclaré dans le frontmatter Markdown ; une source de
 déplacement présente uniquement dans le sidecar n'est pas prise en charge en v1. Une source de
-`replace_exact` sans id de frontmatter est acceptée quand l'id attendu du manifeste est l'identité
-que le sidecar attribue à ce chemin exact (la clé que le lecteur résout, jamais une variante de
-casse ou d'écriture) et que le payload porte le même id : le remplacement adopte l'identité dans la
+`replace_exact` sans id de frontmatter est acceptée quand le manifeste écrit la cible exactement
+comme le fichier existe sur le disque, que l'id attendu du manifeste est l'identité que le sidecar
+attribue à ce chemin exact (la clé que le lecteur résout, jamais une variante de casse ou
+d'écriture) et que le payload porte le même id : le remplacement adopte l'identité dans la
 note, ce qui permet à un fichier écrit à la main, un README par exemple, d'obtenir un id durable
 sans jamais en changer. Un id de frontmatter présent mais non textuel reste refusé.
 
