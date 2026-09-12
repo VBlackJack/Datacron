@@ -1160,7 +1160,13 @@ def test_replace_adopts_the_sidecar_identity_of_a_source_without_frontmatter_id(
 
 @pytest.mark.parametrize(
     "sidecar",
-    [None, {"memory/replace.md": _OTHER_SIDECAR_ID}, {"memory/Replace.md": _OTHER_SIDECAR_ID}],
+    [
+        None,
+        {"memory/replace.md": _OTHER_SIDECAR_ID},
+        {"memory/Replace.md": _REPLACE_ID},
+        {"memory/./replace.md": _REPLACE_ID},
+        {"memory//replace.md": _REPLACE_ID},
+    ],
 )
 def test_replace_without_frontmatter_id_needs_the_matching_sidecar_identity(
     tmp_path: Path, sidecar: dict[str, str] | None
@@ -1174,14 +1180,21 @@ def test_replace_without_frontmatter_id_needs_the_matching_sidecar_identity(
     assert error.value.code == "source_identity_invalid"
 
 
-def test_adoption_refuses_an_ambiguous_case_colliding_sidecar(tmp_path: Path) -> None:
+@pytest.mark.parametrize("raw_id", ["123", "false", "[]", "{}"])
+def test_adoption_refuses_a_non_textual_frontmatter_id(tmp_path: Path, raw_id: str) -> None:
     case = _build_case(tmp_path)
-    _replace_source_without_id(
-        case,
-        {"memory/replace.md": _REPLACE_ID, "memory/REPLACE.md": _ADOPTED_ID},
-    )
+    _replace_source_without_id(case, {"memory/replace.md": _REPLACE_ID})
+    source = case.vault / "memory" / "replace.md"
+    source_bytes = (
+        f"---\nid: {raw_id}\ntitle: replace-title\ntags:\n  - memory/fact\n---\n"
+        "# replace-title\n\nbefore\n"
+    ).encode()
+    source.write_bytes(source_bytes)
+    operation = cast("dict[str, object]", cast("list[object]", case.manifest["operations"])[0])
+    operation["expected_sha256"] = sha256_bytes(source_bytes)
+    case.manifest_path.write_text(json.dumps(case.manifest), encoding="utf-8")
 
-    with pytest.raises(OrganizationManifestError) as error:
+    with pytest.raises(OrganizationManifestError, match="no frontmatter id") as error:
         _load_and_validate(case)
 
-    assert error.value.code in {"source_identity_invalid", "identity_inventory_invalid"}
+    assert error.value.code == "source_identity_invalid"

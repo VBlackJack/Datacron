@@ -1521,7 +1521,7 @@ class OrganizationBatchTransaction:
         return None
 
     def _baseline_sidecar_identity(self, pending: _PendingBatch, rel_path: str) -> str | None:
-        """Return the identity the baseline sidecars map to ``rel_path``, if exactly one."""
+        """Return the identity the baseline sidecars map to ``rel_path`` by exact key."""
         sidecar_member = next(
             (
                 member
@@ -1532,11 +1532,9 @@ class OrganizationBatchTransaction:
         )
         mappings = self._identity_sidecar_before_mapping(pending, sidecar_member)
         mappings.update(self._migrated_sidecar_mapping(pending))
-        key = rel_path.casefold()
-        found = {note_id for path, note_id in mappings.items() if path.casefold() == key}
-        if len(found) != 1:
-            return None
-        return next(iter(found))
+        # Exact key, like the reader and the validator: a case or spelling
+        # variant never gave the note its identity.
+        return mappings.get(rel_path)
 
     def _projected_identity_stage_error(
         self,

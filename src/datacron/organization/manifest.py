@@ -1112,21 +1112,14 @@ def _assert_absent_case_insensitive(path: Path) -> None:
 
 
 def _sidecar_identity_for(rel_path: str, sidecar_ids: Mapping[str, str]) -> str | None:
-    """Return the one sidecar identity mapped to ``rel_path``, or ``None``.
+    """Return the sidecar identity the reader resolves for ``rel_path``, or ``None``.
 
-    The lookup follows the filesystem's own case contract. An absent mapping
-    and an ambiguous one (two case-colliding keys with different ids) both
-    yield ``None``: adoption never guesses an identity.
+    The reader looks the sidecar up by exact key, so adoption does too: a key
+    that differs in case or spelling (``./``, ``//``) never gave the note its
+    identity and must not give it one now. ``rel_path`` is the canonical
+    manifest target, the same string the projected identity inventory uses.
     """
-    key = _filesystem_path_key(PurePosixPath(rel_path).as_posix())
-    found = {
-        note_id
-        for path, note_id in sidecar_ids.items()
-        if _filesystem_path_key(PurePosixPath(path).as_posix()) == key
-    }
-    if len(found) != 1:
-        return None
-    return next(iter(found))
+    return sidecar_ids.get(rel_path)
 
 
 def _read_expected_note(
@@ -1158,16 +1151,22 @@ def _read_expected_note(
             f"Cannot parse source identity {path}: {exc}",
         ) from exc
     source_id = metadata.get("id")
-    if not isinstance(source_id, str):
-        if sidecar_identity is None or sidecar_identity != expected_identity.id:
-            raise OrganizationManifestError(
-                "source_identity_invalid",
-                f"Source note has no frontmatter id: {path}",
-            )
+    if (
+        source_id is None
+        and sidecar_identity is not None
+        and sidecar_identity == expected_identity.id
+    ):
         # Identity adoption: the vault knows this note only through its sidecar
         # mapping. The manifest names that identity, the payload carries it in
         # frontmatter, and the note keeps the id it always had in the index.
         source_id = sidecar_identity
+    if not isinstance(source_id, str):
+        # Absent without a matching sidecar identity, or present but not a
+        # string: the batch would refuse either at commit, so refuse here.
+        raise OrganizationManifestError(
+            "source_identity_invalid",
+            f"Source note has no frontmatter id: {path}",
+        )
     actual_identity = ExistingNoteIdentity(
         id=source_id,
         aliases=tuple(coerce_string_list(metadata.get("aliases"))),

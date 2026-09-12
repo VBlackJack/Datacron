@@ -13,7 +13,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 - Identity adoption through the organization manifest: a `replace_exact` whose source note has
   no frontmatter id is accepted when the manifest's expected id is the identity the ULID sidecar
-  already maps to that path and the payload carries the same id. The replacement writes the id
+  already maps to that exact path, the key the reader resolves, and the payload carries the same
+  id. The replacement writes the id
   into the note; the index, backlinks and history keep the identity they always used. Batch
   commit and recovery check the same sidecar baseline. Move sources without a frontmatter id
   stay unsupported.
