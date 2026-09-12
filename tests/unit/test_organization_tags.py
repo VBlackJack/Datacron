@@ -319,6 +319,24 @@ def test_subject_rule_admission_uses_the_evaluator_normalization() -> None:
     assert resolve_rule(["memory/fact", sharp], organization) is organization.rules[0]
 
 
+def test_subject_rule_namespace_uses_the_evaluator_normalization() -> None:
+    sharp = "straße"
+    folded = "strasse"
+    with pytest.raises(ValidationError, match="is not a declared subject"):
+        OrganizationConfig(
+            scope="_memory",
+            rules=(OrganizationRule(tag=f"{folded}/demo", folder="_memory/s"), *_rules()),
+            tags=_policy(subject_namespace=sharp, subjects=[f"{folded}/demo"]),
+        )
+    organization = OrganizationConfig(
+        scope="_memory",
+        rules=(OrganizationRule(tag=f"{sharp}/demo", folder="_memory/s"), *_rules()),
+        tags=_policy(subject_namespace=sharp, subjects=[f"{sharp}/demo"]),
+    )
+    assert evaluate_tag_policy(["memory/fact", f"{sharp}/demo"], organization) == ()
+    assert resolve_rule(["memory/fact", f"{sharp}/demo"], organization) is organization.rules[0]
+
+
 def test_subject_rule_round_trips_through_vault_yaml() -> None:
     document = {
         "organization": {

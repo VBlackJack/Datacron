@@ -473,6 +473,9 @@ def _validate_tag_policy_against_rules(
     # The evaluator and the rule resolver compare tags with ``lower()``; admitting a
     # subject rule under ``casefold()`` would accept a rule no compliant note can reach.
     subject_tags = {subject.tag.lower() for subject in tags.subjects}
+    subject_prefix = (
+        None if tags.subject_namespace is None else tags.subject_namespace.lower() + "/"
+    )
     placement_rule_tags: set[str] = set()
     for rule in rules:
         if rule.tag != rule.tag.lower():
@@ -485,7 +488,14 @@ def _validate_tag_policy_against_rules(
         folded = rule.tag.casefold()
         if folded.startswith(prefix):
             placement_rule_tags.add(folded)
-        elif rule.tag not in subject_tags:
+        elif (
+            rule.tag not in subject_tags
+            or subject_prefix is None
+            or not rule.tag.startswith(subject_prefix)
+        ):
+            # The evaluator classifies a tag by its lowercased namespace: a rule
+            # whose namespace only matches the policy under casefold() could win
+            # the placement and still be reported as an unknown tag.
             raise ValueError(
                 f"organization rule tag {rule.tag!r} is outside the placement namespace "
                 f"{tags.placement_namespace!r} declared by the tags policy and is not a "
