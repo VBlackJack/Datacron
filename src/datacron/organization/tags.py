@@ -115,7 +115,15 @@ def path_within_scope(rel_path: str, scope: str) -> bool:
 @final
 @dataclass(frozen=True, slots=True)
 class _Vocabulary:
-    """The declared policy, lowercased once for the whole evaluation."""
+    """The declared policy, lowercased once for the whole evaluation.
+
+    ``rule_tags`` holds every rule that is not keyed by a registered subject:
+    a subject rule decides a folder, never what the note is, so its tag is
+    judged as a subject like any other and does not count toward the
+    placement set. Excluding by registry membership rather than by namespace
+    keeps a placement rule admitted under the configuration's own comparison
+    counted exactly as before subject rules existed.
+    """
 
     rule_tags: tuple[str, ...]
     markers: frozenset[str]
@@ -131,12 +139,17 @@ class _Vocabulary:
         subject_namespace = (
             policy.subject_namespace.lower() if policy.subject_namespace is not None else None
         )
+        subject_tags = frozenset(subject.tag.lower() for subject in policy.subjects)
         return cls(
-            rule_tags=tuple(rule.tag.lower() for rule in organization.rules),
+            rule_tags=tuple(
+                rule.tag.lower()
+                for rule in organization.rules
+                if rule.tag.lower() not in subject_tags
+            ),
             markers=frozenset(marker.lower() for marker in policy.markers),
             placement_namespace=policy.placement_namespace.lower(),
             subject_namespace=subject_namespace,
-            subject_tags=frozenset(subject.tag.lower() for subject in policy.subjects),
+            subject_tags=subject_tags,
             alias_owner={
                 alias.lower(): subject.tag.lower()
                 for subject in policy.subjects
@@ -174,7 +187,9 @@ def evaluate_tag_policy(
     Tags are compared lowercased, the way the planner aggregates them (the
     configuration requires lowercase rule tags whenever a policy is declared,
     so the rule resolver and this evaluation agree). A vault without a
-    declared policy yields an empty tuple.
+    declared policy yields an empty tuple. A rule keyed by a subject tag does
+    not make that tag a placement tag: the note still needs exactly one tag in
+    the placement namespace, whichever rule ends up deciding its folder.
     """
     policy = organization.tags
     if policy is None:

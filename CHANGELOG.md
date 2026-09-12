@@ -7,6 +7,25 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [Unreleased]
+
+### Added
+
+- Subject placement rules: with an `organization.tags` policy declared, a placement rule may
+  be keyed by a registered subject tag (`project/heimdall` to `_memory/subjects/perso/heimdall`)
+  next to the rules keyed by placement tags. The winning rule still decides the folder, the
+  naming template and the size ceiling; the policy still requires exactly one placement tag
+  per note and does not count the subject rule as one. Markers and exempt tags must name
+  placement rules, and at least one placement rule must remain.
+
+### Changed
+
+- Configuration validation refuses a rule tag that is neither in the placement namespace nor
+  a declared subject with a message naming both conditions; before this version every rule
+  tag had to live in the placement namespace as soon as the policy was declared. A marker or
+  exempt tag that names a subject rule is refused with a new message; one that names no rule
+  at all keeps the previous message.
+
 ## [2026.0912.00] - 2026-09-12
 
 ### Added

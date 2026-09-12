@@ -115,7 +115,7 @@ pas seulement dans un rapport.
 
 | Clé | Obligatoire | Rôle |
 |---|---|---|
-| `placement_namespace` | oui | L'espace de noms des tags de placement, qui sont les tags des règles (`memory` quand les règles sont `memory/fact`, `memory/project`, ...). Chaque tag de règle doit y vivre. |
+| `placement_namespace` | oui | L'espace de noms des tags de placement (`memory` quand les règles sont `memory/fact`, `memory/project`, ...). Chaque tag de règle y vit, ou nomme un sujet déclaré (voir [les règles de sujet](#les-regles-de-sujet)). |
 | `markers` | non | Tags de règle qui peuvent accompagner le tag de placement comme marqueur transversal (`memory/decision` sur un fait qui tranche quelque chose). |
 | `subject_namespace` | non | L'espace de noms qui nomme le sujet auquel une note appartient (`project`). |
 | `subjects` | non | Le registre fermé des tags de sujet, chacun avec des `aliases` optionnels : les graphies à signaler plutôt qu'à accepter en silence. Une chaîne seule est un sujet sans alias. |
@@ -143,11 +143,36 @@ Trois surfaces appliquent la même évaluation :
 - `datacron reorganize` rapporte les trois natures d'écart décrites plus bas.
 
 Un vault sans ce bloc n'est pas jugé ; rien de tout cela n'existe tant que le vault ne le
-déclare pas. La politique exige au moins une règle, chaque marqueur et chaque tag exempté
-doit être un tag de règle, les tags de règle doivent être en minuscules (le résolveur de
-règles les compare exactement, la politique les compare en minuscules), un alias ne peut pas
-entrer en collision avec un tag de règle, et une clé inconnue est un échec bruyant au
-chargement, comme partout ailleurs dans le bloc.
+déclare pas. La politique exige au moins une règle de placement, chaque marqueur et chaque
+tag exempté doit être un tag de règle de placement, les tags de règle doivent être en
+minuscules (le résolveur de règles les compare exactement, la politique les compare en
+minuscules), un alias ne peut pas entrer en collision avec un tag de règle, et une clé
+inconnue est un échec bruyant au chargement, comme partout ailleurs dans le bloc.
+
+### Les règles de sujet
+
+Une fois la politique déclarée, une règle peut être portée par un **tag de sujet du
+registre** au lieu d'un tag de placement : `project/heimdall` vers
+`_memory/subjects/perso/heimdall`. La règle se comporte comme les autres, la première
+déclarée qui correspond gagne, et elle porte le dossier, le gabarit de nom et le plafond des
+notes qu'elle gouverne. Ce qui change, c'est la lecture de la note : le dossier dit à quel
+sujet elle appartient, le tag de placement dit toujours ce qu'elle est.
+
+- La politique ne change pas. Une note gouvernée par une règle de sujet porte toujours
+  **exactement un tag de placement** et au plus un marqueur ; le tag de la règle de sujet est
+  jugé comme un sujet, jamais compté comme tag de placement. Une note avec un tag de sujet et
+  sans tag de placement est `UNGOVERNED`, même quand une règle de sujet décide de son dossier.
+- Un tag de règle qui n'est ni dans l'espace de placement ni un sujet déclaré est refusé au
+  chargement, de même qu'un alias utilisé comme tag de règle. Les marqueurs et les tags
+  exemptés doivent nommer des règles de placement, et au moins une règle de placement doit
+  rester.
+- L'ordre de déclaration fait le reste. Déclarer les règles des types qui doivent rester
+  ensemble (`memory/contact`, `memory/preference`, ...) **avant** les règles de sujet, et les
+  règles de sujet **avant** les règles de placement qui servent de repli aux notes sans sujet.
+  Une règle de sujet déclarée en premier attirerait chaque fiche personne dans le dossier du
+  sujet.
+- La règle gagnante porte tout : déclarer `max_kb` sur chaque règle de sujet, car le plafond
+  de `memory/fact` ne s'applique pas à un fait gouverné par son sujet.
 
 ### Ce que la politique ne couvre pas
 
@@ -176,6 +201,9 @@ organization:
   rules:
     - tag: memory/contact
       folder: _memory/people
+    - tag: project/heimdall
+      folder: _memory/subjects/perso/heimdall
+      max_kb: 121
     - tag: memory/fact
       folder: _memory/facts
       naming: "{iso_date}-{slug}"
