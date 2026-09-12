@@ -7,7 +7,7 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
-## [Unreleased]
+## [2026.0912.01] - 2026-09-12
 
 ### Added
 
@@ -25,6 +25,9 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   tag had to live in the placement namespace as soon as the policy was declared. A marker or
   exempt tag that names a subject rule is refused with a new message; one that names no rule
   at all keeps the previous message.
+- Upgrading from `2026.0912.00` changes no chunk ID, index format, note bytes or protocol block:
+  the chunker, the index store and the memory contract are untouched, so no `datacron reindex`
+  and no `datacron protocol install` are required for this increment.
 
 ## [2026.0912.00] - 2026-09-12
 
