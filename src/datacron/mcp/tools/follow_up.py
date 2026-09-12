@@ -91,6 +91,9 @@ _RENDERED_RECORD_KEYS: Final[frozenset[str]] = frozenset(
     {"additionalProperties", "description", "properties", "required", "title", "type"}
 )
 _RENDERED_FORMATS: Final[frozenset[str]] = frozenset({"date"})
+_RENDERED_ENUM_MEMBER: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_-]+$")
+_RENDERED_PROPERTY_NAME: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_CLAUSE_SEPARATORS: Final[tuple[str, ...]] = ("; ", ", ", ": ")
 _RENDERED_TYPES: Final[frozenset[str]] = frozenset({"string", "boolean", "null"})
 
 
@@ -123,6 +126,12 @@ def _check_variant_values(name: str, variant: dict[str, Any]) -> None:
     type_value = variant.get("type")
     if not isinstance(type_value, str) or type_value not in _RENDERED_TYPES:
         raise ValueError(f"{name}: schema type not rendered: {type_value!r}")
+    for member in variant.get("enum", ()):
+        if not isinstance(member, str) or not _RENDERED_ENUM_MEMBER.fullmatch(member):
+            raise ValueError(f"{name}: enum member not rendered unambiguously: {member!r}")
+    pattern = variant.get("pattern", "")
+    if not isinstance(pattern, str) or any(sep in pattern for sep in _CLAUSE_SEPARATORS):
+        raise ValueError(f"{name}: pattern not rendered unambiguously: {pattern!r}")
 
 
 def _length_clause(variant: dict[str, Any]) -> str | None:
@@ -144,7 +153,7 @@ def _variant_parts(variant: dict[str, Any]) -> list[str]:
     if "pattern" in variant:
         parts.append(f"pattern {variant['pattern']}")
     if "enum" in variant:
-        parts.append("one of " + ", ".join(str(value) for value in variant["enum"]))
+        parts.append("one of " + ", ".join(variant["enum"]))
     length = _length_clause(variant)
     if length is not None:
         parts.append(length)
@@ -157,6 +166,8 @@ def _variant_parts(variant: dict[str, Any]) -> list[str]:
 
 def _constraint_clause(name: str, field_schema: dict[str, Any]) -> str:
     """Render one property of a JSON schema as a short, client-independent clause."""
+    if not _RENDERED_PROPERTY_NAME.fullmatch(name):
+        raise ValueError(f"property name not rendered unambiguously: {name!r}")
     parts: list[str] = []
     nullable = False
     for variant in _checked_variants(name, field_schema):

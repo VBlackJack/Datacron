@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 import tomllib
 from importlib.metadata import version
 from pathlib import Path
@@ -921,6 +922,9 @@ _EXPECTED_RECORD_KEYS = {
 }
 _EXPECTED_FORMATS = {"date"}
 _EXPECTED_TYPES = {"string", "boolean", "null"}
+_EXPECTED_ENUM_MEMBER = re.compile(r"^[A-Za-z0-9_-]+$")
+_EXPECTED_PROPERTY_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_CLAUSE_SEPARATORS = ("; ", ", ", ": ")
 
 
 def _expected_variants(field_schema: dict[str, Any]) -> list[dict[str, Any]]:
@@ -939,6 +943,12 @@ def _expected_shape(variant: dict[str, Any]) -> None:
     """Fail on a format or type value the expectation does not express."""
     assert variant.get("format", "date") in _EXPECTED_FORMATS, variant
     assert variant.get("type") in _EXPECTED_TYPES, variant
+    for member in variant.get("enum", ()):
+        assert isinstance(member, str), member
+        assert _EXPECTED_ENUM_MEMBER.fullmatch(member), member
+    pattern = variant.get("pattern", "")
+    assert isinstance(pattern, str), pattern
+    assert not any(sep in pattern for sep in _CLAUSE_SEPARATORS), pattern
 
 
 def _expected_length(variant: dict[str, Any]) -> list[str]:
@@ -1004,6 +1014,8 @@ async def test_prepare_follow_up_description_repeats_every_schema_constraint_per
         "extra fields refused": "",
         f"at most {FOLLOW_UP_MAX_RECORDS} records per call, checked at runtime": "",
     }
+    for name in record_schema["properties"]:
+        assert _EXPECTED_PROPERTY_NAME.fullmatch(name), name
     expected = fixed | {
         name: _expected_clause(field_schema)
         for name, field_schema in record_schema["properties"].items()
@@ -1077,6 +1089,18 @@ def test_render_follow_up_constraints_follows_the_schema_it_is_given() -> None:
     schema["additionalProperties"] = False
     schema["type"] = "array"
     with pytest.raises(ValueError, match="record schema type"):
+        render_follow_up_constraints(schema)
+    schema["type"] = "object"
+    schema["properties"]["gamma"]["enum"] = ["one, two", "three"]
+    with pytest.raises(ValueError, match="enum member not rendered"):
+        render_follow_up_constraints(schema)
+    schema["properties"]["gamma"]["enum"] = ["one", "two"]
+    schema["properties"]["alpha"]["pattern"] = "^a, or null$"
+    with pytest.raises(ValueError, match="pattern not rendered"):
+        render_follow_up_constraints(schema)
+    schema["properties"]["alpha"]["pattern"] = "^x{2}$"
+    schema["properties"]["odd: name"] = {"type": "boolean"}
+    with pytest.raises(ValueError, match="property name not rendered"):
         render_follow_up_constraints(schema)
 
 
