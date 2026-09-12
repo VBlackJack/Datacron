@@ -159,7 +159,10 @@ def _constraint_clause(name: str, field_schema: dict[str, Any]) -> str:
         if variant.get("type") == "null":
             nullable = True
             continue
-        parts.extend(_variant_parts(variant))
+        variant_parts = _variant_parts(variant)
+        if not variant_parts:
+            raise ValueError(f"{name}: an unconstrained variant widens the schema silently")
+        parts.extend(variant_parts)
     if nullable:
         parts.append("or null")
     if "default" in field_schema:

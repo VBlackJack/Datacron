@@ -951,15 +951,18 @@ def _expected_clause(field_schema: dict[str, Any]) -> str:
         _expected_shape(variant)
         if variant.get("type") == "null":
             continue
+        variant_parts: list[str] = []
         if "pattern" in variant:
-            parts.append("pattern " + variant["pattern"])
+            variant_parts.append("pattern " + variant["pattern"])
         if "enum" in variant:
-            parts.append("one of " + ", ".join(variant["enum"]))
-        parts.extend(_expected_length(variant))
+            variant_parts.append("one of " + ", ".join(variant["enum"]))
+        variant_parts.extend(_expected_length(variant))
         if variant.get("format") == "date":
-            parts.append("ISO date")
+            variant_parts.append("ISO date")
         if variant.get("type") == "boolean":
-            parts.append("boolean")
+            variant_parts.append("boolean")
+        assert variant_parts, ("unconstrained variant", variant)
+        parts.extend(variant_parts)
     if any(variant.get("type") == "null" for variant in variants):
         parts.append("or null")
     if "default" in field_schema:
@@ -1033,6 +1036,9 @@ def test_render_follow_up_constraints_follows_the_schema_it_is_given() -> None:
     del schema["properties"]["delta"]["format"]
     schema["properties"]["beta"]["anyOf"].append({"type": "integer"})
     with pytest.raises(ValueError, match="type not rendered"):
+        render_follow_up_constraints(schema)
+    schema["properties"]["beta"]["anyOf"][-1] = {"type": "string"}
+    with pytest.raises(ValueError, match="unconstrained variant"):
         render_follow_up_constraints(schema)
 
 
