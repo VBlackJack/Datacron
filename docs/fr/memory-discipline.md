@@ -42,6 +42,11 @@ contient `record_id`, `revision`, `kind`, `target_path`, `target_id`, `expected_
 `source_path`, `source_hash`, `source_excerpt`, `summary`. Types : `action`, `interaction`, `decision`,
 `objective`, `project_state`. Date d'événement, porteur et échéance inconnus restent null.
 Statuts : unknown, proposed, open, in_progress, waiting, completed, cancelled.
+La description de l'outil répète le schéma d'enregistrement clause par clause (champs requis,
+motifs d'identifiant, de hash et d'ULID, énumérations, bornes de texte, champs nullables et
+valeurs par défaut) ainsi que la limite d'enregistrements par appel vérifiée à l'exécution,
+parce que certains clients MCP présentent le schéma sans ses définitions ni ses motifs ; le
+schéma lui-même ne change pas.
 
 Une cible portant `memory/contact`, un chemin `people/` ou une interaction exige
 `identity_confirmed=true` et `identity_basis`.

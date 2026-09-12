@@ -20,7 +20,7 @@ import re
 import time
 from datetime import date
 from hashlib import sha256
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,7 +44,11 @@ if TYPE_CHECKING:
 _ID = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
 _HASH = r"^[0-9a-f]{64}$"
 _ULID = r"^[0-9A-HJKMNP-TV-Z]{26}$"
-_TEXT = Annotated[str, Field(min_length=1, max_length=FOLLOW_UP_MAX_TEXT)]
+_HEADING_MAX_LENGTH: Final[int] = 256
+_OWNER_MAX_LENGTH: Final[int] = 256
+_IDENTITY_BASIS_MAX_LENGTH: Final[int] = 1000
+_TEXT_MIN_LENGTH: Final[int] = 1
+_TEXT = Annotated[str, Field(min_length=_TEXT_MIN_LENGTH, max_length=FOLLOW_UP_MAX_TEXT)]
 
 
 class FollowUpValidationError(ValueError):
@@ -64,19 +68,162 @@ class FollowUpRecord(BaseModel):
     target_path: _TEXT
     target_id: str = Field(pattern=_ULID)
     expected_hash: str = Field(pattern=_HASH)
-    heading: str = Field(min_length=1, max_length=256)
+    heading: str = Field(min_length=_TEXT_MIN_LENGTH, max_length=_HEADING_MAX_LENGTH)
     source_path: _TEXT
     source_hash: str = Field(pattern=_HASH)
     source_excerpt: _TEXT
     summary: _TEXT
     event_date: date | None = None
-    owner: str | None = Field(default=None, max_length=256)
+    owner: str | None = Field(default=None, max_length=_OWNER_MAX_LENGTH)
     due_date: date | None = None
     status: Literal[
         "unknown", "proposed", "open", "in_progress", "waiting", "completed", "cancelled"
     ] = "unknown"
     identity_confirmed: bool = False
-    identity_basis: str | None = Field(default=None, max_length=1000)
+    identity_basis: str | None = Field(default=None, max_length=_IDENTITY_BASIS_MAX_LENGTH)
+
+
+_RENDERED_SCHEMA_KEYS: Final[frozenset[str]] = frozenset(
+    {"pattern", "enum", "minLength", "maxLength", "format", "type", "title", "description"}
+)
+_PARENT_ONLY_SCHEMA_KEYS: Final[frozenset[str]] = frozenset({"anyOf", "default"})
+_RENDERED_RECORD_KEYS: Final[frozenset[str]] = frozenset(
+    {"additionalProperties", "description", "properties", "required", "title", "type"}
+)
+_RENDERED_FORMATS: Final[frozenset[str]] = frozenset({"date"})
+_RENDERED_ENUM_MEMBER: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_-]+$")
+_RENDERED_PROPERTY_NAME: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_CLAUSE_SEPARATORS: Final[tuple[str, ...]] = ("; ", ", ", ": ")
+_RESERVED_CLAUSE_NAMES: Final[frozenset[str]] = frozenset({"required"})
+_RENDERED_TYPES: Final[frozenset[str]] = frozenset({"string", "boolean", "null"})
+
+
+def _checked_variants(name: str, field_schema: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the schema variants of one property, refusing keywords the clause cannot express.
+
+    A constraint added to the model must never be silently missing from the description.
+    """
+    variants = field_schema.get("anyOf")
+    if variants is None:
+        unknown = set(field_schema) - _RENDERED_SCHEMA_KEYS - _PARENT_ONLY_SCHEMA_KEYS
+        if unknown:
+            raise ValueError(f"{name}: schema keywords not rendered: {sorted(unknown)}")
+        return [field_schema]
+    beside = set(field_schema) - _PARENT_ONLY_SCHEMA_KEYS - {"title", "description"}
+    if beside:
+        raise ValueError(f"{name}: constraints beside anyOf are not rendered: {sorted(beside)}")
+    for variant in variants:
+        unknown = set(variant) - _RENDERED_SCHEMA_KEYS
+        if unknown:
+            raise ValueError(f"{name}: schema keywords not rendered: {sorted(unknown)}")
+    return list(variants)
+
+
+def _check_variant_values(name: str, variant: dict[str, Any]) -> None:
+    """Refuse a format or type value the clause does not express."""
+    format_value = variant.get("format", "date")
+    if not isinstance(format_value, str) or format_value not in _RENDERED_FORMATS:
+        raise ValueError(f"{name}: schema format not rendered: {format_value!r}")
+    type_value = variant.get("type")
+    if not isinstance(type_value, str) or type_value not in _RENDERED_TYPES:
+        raise ValueError(f"{name}: schema type not rendered: {type_value!r}")
+    for member in variant.get("enum", ()):
+        if not isinstance(member, str) or not _RENDERED_ENUM_MEMBER.fullmatch(member):
+            raise ValueError(f"{name}: enum member not rendered unambiguously: {member!r}")
+    pattern = variant.get("pattern", "")
+    if not isinstance(pattern, str) or any(sep in pattern for sep in _CLAUSE_SEPARATORS):
+        raise ValueError(f"{name}: pattern not rendered unambiguously: {pattern!r}")
+
+
+def _length_clause(variant: dict[str, Any]) -> str | None:
+    """Render minLength and maxLength of one variant, or None when it has neither."""
+    minimum = variant.get("minLength")
+    maximum = variant.get("maxLength")
+    if minimum is not None and maximum is not None:
+        return f"{minimum} to {maximum} characters"
+    if maximum is not None:
+        return f"at most {maximum} characters"
+    if minimum is not None:
+        return f"at least {minimum} characters"
+    return None
+
+
+def _variant_parts(variant: dict[str, Any]) -> list[str]:
+    """Render the constraints of one non-null variant."""
+    parts: list[str] = []
+    if "pattern" in variant:
+        parts.append(f"pattern {variant['pattern']}")
+    if "enum" in variant:
+        parts.append("one of " + ", ".join(variant["enum"]))
+    length = _length_clause(variant)
+    if length is not None:
+        parts.append(length)
+    if variant.get("format") == "date":
+        parts.append("ISO date")
+    if variant.get("type") == "boolean":
+        parts.append("boolean")
+    return parts
+
+
+def _constraint_clause(name: str, field_schema: dict[str, Any]) -> str:
+    """Render one property of a JSON schema as a short, client-independent clause."""
+    if not _RENDERED_PROPERTY_NAME.fullmatch(name) or name in _RESERVED_CLAUSE_NAMES:
+        raise ValueError(f"property name not rendered unambiguously: {name!r}")
+    parts: list[str] = []
+    nullable = False
+    for variant in _checked_variants(name, field_schema):
+        _check_variant_values(name, variant)
+        if variant.get("type") == "null":
+            if set(variant) != {"type"}:
+                raise ValueError(f"{name}: constraints on the null variant are not rendered")
+            nullable = True
+            continue
+        variant_parts = _variant_parts(variant)
+        if not variant_parts:
+            raise ValueError(f"{name}: an unconstrained variant widens the schema silently")
+        if parts:
+            raise ValueError(f"{name}: alternatives between constrained variants are not rendered")
+        parts.extend(variant_parts)
+    if nullable:
+        parts.append("or null")
+    if "default" in field_schema:
+        parts.append(f"default {json.dumps(field_schema['default'])}")
+    return f"{name}: " + ", ".join(parts)
+
+
+def render_follow_up_constraints(record_schema: dict[str, Any]) -> str:
+    """Repeat every constraint of the record schema in prose, clause by clause.
+
+    Some MCP clients present the tool schema without its $defs, patterns or bounds. The
+    rendered text lets a model that only reads the description build a record the server
+    accepts. Clauses are separated by "; " and each starts with the property name.
+    """
+    unknown = set(record_schema) - _RENDERED_RECORD_KEYS
+    if unknown:
+        raise ValueError(f"record schema keywords not rendered: {sorted(unknown)}")
+    if record_schema.get("type", "object") != "object":
+        raise ValueError(f"record schema type not rendered: {record_schema['type']!r}")
+    extra = record_schema.get("additionalProperties", True)
+    if not isinstance(extra, bool):
+        raise ValueError("record schema additionalProperties sub-schema not rendered")
+    properties = record_schema["properties"]
+    undeclared = [name for name in record_schema["required"] if name not in properties]
+    if undeclared:
+        raise ValueError(f"required entries are not declared properties: {undeclared!r}")
+    clauses = [
+        "required: " + ", ".join(record_schema["required"]),
+        "extra fields ignored" if extra else "extra fields refused",
+        f"at most {FOLLOW_UP_MAX_RECORDS} records per call, checked at runtime",
+    ]
+    clauses.extend(
+        _constraint_clause(name, field_schema) for name, field_schema in properties.items()
+    )
+    return "Schema constraints, repeated because some clients strip them: " + "; ".join(clauses)
+
+
+FOLLOW_UP_CONSTRAINTS_DESCRIPTION: Final[str] = render_follow_up_constraints(
+    FollowUpRecord.model_json_schema()
+)
 
 
 async def prepare_follow_up(app: DatacronApp, records: list[FollowUpRecord]) -> dict[str, Any]:

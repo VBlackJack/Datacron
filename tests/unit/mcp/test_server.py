@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 import tomllib
 from importlib.metadata import version
 from pathlib import Path
@@ -39,6 +40,7 @@ from datacron.core.batch_transaction import (
 from datacron.core.config import Settings
 from datacron.core.durability import DurabilityStatus, RecoveryRequiredError
 from datacron.core.hashing import sha256_bytes
+from datacron.core.memory_protocol import FOLLOW_UP_MAX_RECORDS
 from datacron.core.operation_log import OperationRecord
 from datacron.core.paths import PathConfinementError, sidecar_index_db, sidecar_vault_config
 from datacron.core.scope import SingleTenantVaultScope
@@ -53,6 +55,7 @@ from datacron.mcp.server import (
     build_app,
     create_server,
 )
+from datacron.mcp.tools.follow_up import render_follow_up_constraints
 
 
 def test_mcp_v2_dependency_and_public_surface_are_explicit() -> None:
@@ -889,6 +892,227 @@ async def test_missing_resource_uses_invalid_params(tmp_path: Path) -> None:
         await create_server(app).read_resource("datacron://vault/missing")
 
     assert error.value.error.code == INVALID_PARAMS
+
+
+_FOLLOW_UP_CONSTRAINTS_PREAMBLE = "Schema constraints, repeated because some clients strip them: "
+
+
+def _description_clauses(description: str) -> dict[str, str]:
+    """Split the rendered constraint sentence into one exact clause per property."""
+    assert _FOLLOW_UP_CONSTRAINTS_PREAMBLE in description
+    sentence = description.split(_FOLLOW_UP_CONSTRAINTS_PREAMBLE, 1)[1]
+    clauses: dict[str, str] = {}
+    for clause in sentence.split("; "):
+        name, separator, body = clause.partition(": ")
+        key = name if separator else clause
+        assert key not in clauses, f"duplicate clause {key}"
+        clauses[key] = body
+    return clauses
+
+
+_EXPECTED_VARIANT_KEYS = {"pattern", "enum", "minLength", "maxLength", "format", "type"}
+_EXPECTED_PARENT_KEYS = {"anyOf", "default", "title", "description"}
+_EXPECTED_RECORD_KEYS = {
+    "additionalProperties",
+    "description",
+    "properties",
+    "required",
+    "title",
+    "type",
+}
+_EXPECTED_FORMATS = {"date"}
+_EXPECTED_TYPES = {"string", "boolean", "null"}
+_EXPECTED_ENUM_MEMBER = re.compile(r"^[A-Za-z0-9_-]+$")
+_EXPECTED_PROPERTY_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_CLAUSE_SEPARATORS = ("; ", ", ", ": ")
+
+
+def _expected_variants(field_schema: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the variants of one property, failing on any keyword the expectation ignores."""
+    if "anyOf" not in field_schema:
+        assert set(field_schema) <= _EXPECTED_VARIANT_KEYS | _EXPECTED_PARENT_KEYS, field_schema
+        return [field_schema]
+    assert set(field_schema) <= _EXPECTED_PARENT_KEYS, field_schema
+    variants = list(field_schema["anyOf"])
+    for variant in variants:
+        assert set(variant) <= _EXPECTED_VARIANT_KEYS, variant
+    return variants
+
+
+def _expected_shape(variant: dict[str, Any]) -> None:
+    """Fail on a format or type value the expectation does not express."""
+    assert variant.get("format", "date") in _EXPECTED_FORMATS, variant
+    assert variant.get("type") in _EXPECTED_TYPES, variant
+    for member in variant.get("enum", ()):
+        assert isinstance(member, str), member
+        assert _EXPECTED_ENUM_MEMBER.fullmatch(member), member
+    pattern = variant.get("pattern", "")
+    assert isinstance(pattern, str), pattern
+    assert not any(sep in pattern for sep in _CLAUSE_SEPARATORS), pattern
+
+
+def _expected_length(variant: dict[str, Any]) -> list[str]:
+    if "minLength" in variant and "maxLength" in variant:
+        return [f"{variant['minLength']} to {variant['maxLength']} characters"]
+    if "maxLength" in variant:
+        return [f"at most {variant['maxLength']} characters"]
+    if "minLength" in variant:
+        return [f"at least {variant['minLength']} characters"]
+    return []
+
+
+def _expected_clause(field_schema: dict[str, Any]) -> str:
+    """Build, independently of the renderer, the exact clause one property must produce."""
+    variants = _expected_variants(field_schema)
+    parts: list[str] = []
+    for variant in variants:
+        _expected_shape(variant)
+        if variant.get("type") == "null":
+            assert variant == {"type": "null"}, variant
+            continue
+        variant_parts: list[str] = []
+        if "pattern" in variant:
+            variant_parts.append("pattern " + variant["pattern"])
+        if "enum" in variant:
+            variant_parts.append("one of " + ", ".join(variant["enum"]))
+        variant_parts.extend(_expected_length(variant))
+        if variant.get("format") == "date":
+            variant_parts.append("ISO date")
+        if variant.get("type") == "boolean":
+            variant_parts.append("boolean")
+        assert variant_parts, ("unconstrained variant", variant)
+        assert not parts, ("alternative constrained variants", variants)
+        parts.extend(variant_parts)
+    if any(variant.get("type") == "null" for variant in variants):
+        parts.append("or null")
+    if "default" in field_schema:
+        parts.append("default " + json.dumps(field_schema["default"]))
+    return ", ".join(parts)
+
+
+@pytest.mark.asyncio
+async def test_prepare_follow_up_description_repeats_every_schema_constraint_per_field(
+    tmp_path: Path,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    app = build_app(
+        settings=Settings(read_paths=[vault], write_paths=[vault], vault_root=vault),
+        vault_root=vault,
+    )
+    tools = {tool.name: tool for tool in await create_server(app).list_tools()}
+    tool = tools["prepare_follow_up"]
+    record_schema = tool.input_schema["$defs"]["FollowUpRecord"]
+    assert tool.input_schema["properties"]["records"]["items"] == {"$ref": "#/$defs/FollowUpRecord"}
+    assert set(record_schema) <= _EXPECTED_RECORD_KEYS, set(record_schema)
+    assert record_schema["type"] == "object"
+    assert record_schema["additionalProperties"] is False
+
+    clauses = _description_clauses(tool.description or "")
+    fixed = {
+        "required": ", ".join(record_schema["required"]),
+        "extra fields refused": "",
+        f"at most {FOLLOW_UP_MAX_RECORDS} records per call, checked at runtime": "",
+    }
+    for name in record_schema["properties"]:
+        assert _EXPECTED_PROPERTY_NAME.fullmatch(name), name
+        assert name not in fixed, name
+    assert set(record_schema["required"]) <= set(record_schema["properties"])
+    expected = fixed | {
+        name: _expected_clause(field_schema)
+        for name, field_schema in record_schema["properties"].items()
+    }
+    assert len(expected) == len(fixed) + len(record_schema["properties"])
+    assert clauses == expected
+    assert all(expected[name] for name in record_schema["properties"])
+
+
+def test_render_follow_up_constraints_follows_the_schema_it_is_given() -> None:
+    schema: dict[str, Any] = {
+        "additionalProperties": False,
+        "required": ["alpha"],
+        "properties": {
+            "alpha": {"pattern": "^x{2}$", "type": "string"},
+            "beta": {
+                "anyOf": [{"maxLength": 7, "type": "string"}, {"type": "null"}],
+                "default": None,
+            },
+            "gamma": {"enum": ["one", "two"], "default": "one", "type": "string"},
+            "delta": {"minLength": 3, "type": "string"},
+        },
+    }
+    rendered = render_follow_up_constraints(schema)
+    assert "required: alpha;" in rendered
+    assert "; alpha: pattern ^x{2}$;" in rendered
+    assert "; beta: at most 7 characters, or null, default null;" in rendered
+    assert '; gamma: one of one, two, default "one";' in rendered
+    assert rendered.endswith("; delta: at least 3 characters")
+    schema["properties"]["alpha"]["pattern"] = "^y$"
+    assert "; alpha: pattern ^y$;" in render_follow_up_constraints(schema)
+    schema["properties"]["beta"]["minLength"] = 2
+    with pytest.raises(ValueError, match="beside anyOf"):
+        render_follow_up_constraints(schema)
+    del schema["properties"]["beta"]["minLength"]
+    schema["properties"]["delta"]["const"] = "fixed"
+    with pytest.raises(ValueError, match="keywords not rendered"):
+        render_follow_up_constraints(schema)
+    del schema["properties"]["delta"]["const"]
+    schema["properties"]["delta"]["format"] = "uuid"
+    with pytest.raises(ValueError, match="format not rendered"):
+        render_follow_up_constraints(schema)
+    del schema["properties"]["delta"]["format"]
+    schema["properties"]["beta"]["anyOf"].append({"type": "integer"})
+    with pytest.raises(ValueError, match="type not rendered"):
+        render_follow_up_constraints(schema)
+    schema["properties"]["beta"]["anyOf"][-1] = {"type": "string"}
+    with pytest.raises(ValueError, match="unconstrained variant"):
+        render_follow_up_constraints(schema)
+    schema["properties"]["beta"]["anyOf"][-1] = {"type": "string", "minLength": 300}
+    with pytest.raises(ValueError, match="alternatives between constrained variants"):
+        render_follow_up_constraints(schema)
+    del schema["properties"]["beta"]["anyOf"][-1]
+    schema["maxProperties"] = 12
+    with pytest.raises(ValueError, match="record schema keywords not rendered"):
+        render_follow_up_constraints(schema)
+    del schema["maxProperties"]
+    schema["properties"]["beta"]["anyOf"][1] = {"type": "null", "enum": ["never"]}
+    with pytest.raises(ValueError, match="null variant"):
+        render_follow_up_constraints(schema)
+    schema["properties"]["beta"]["anyOf"][1] = {"type": "null"}
+    schema["properties"]["alpha"]["type"] = ["string", "null"]
+    with pytest.raises(ValueError, match="type not rendered"):
+        render_follow_up_constraints(schema)
+    del schema["properties"]["alpha"]["type"]
+    with pytest.raises(ValueError, match="type not rendered: None"):
+        render_follow_up_constraints(schema)
+    schema["properties"]["alpha"]["type"] = "string"
+    schema["additionalProperties"] = {"type": "string"}
+    with pytest.raises(ValueError, match="additionalProperties sub-schema"):
+        render_follow_up_constraints(schema)
+    schema["additionalProperties"] = False
+    schema["type"] = "array"
+    with pytest.raises(ValueError, match="record schema type"):
+        render_follow_up_constraints(schema)
+    schema["type"] = "object"
+    schema["properties"]["gamma"]["enum"] = ["one, two", "three"]
+    with pytest.raises(ValueError, match="enum member not rendered"):
+        render_follow_up_constraints(schema)
+    schema["properties"]["gamma"]["enum"] = ["one", "two"]
+    schema["properties"]["alpha"]["pattern"] = "^a, or null$"
+    with pytest.raises(ValueError, match="pattern not rendered"):
+        render_follow_up_constraints(schema)
+    schema["properties"]["alpha"]["pattern"] = "^x{2}$"
+    schema["properties"]["odd: name"] = {"type": "boolean"}
+    with pytest.raises(ValueError, match="property name not rendered"):
+        render_follow_up_constraints(schema)
+    del schema["properties"]["odd: name"]
+    schema["required"] = ["alpha, beta"]
+    with pytest.raises(ValueError, match="required entries are not declared"):
+        render_follow_up_constraints(schema)
+    schema["required"] = ["alpha"]
+    schema["properties"]["required"] = {"type": "boolean"}
+    with pytest.raises(ValueError, match="property name not rendered"):
+        render_follow_up_constraints(schema)
 
 
 @pytest.mark.asyncio
