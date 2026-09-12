@@ -893,17 +893,47 @@ async def test_missing_resource_uses_invalid_params(tmp_path: Path) -> None:
     assert error.value.error.code == INVALID_PARAMS
 
 
-# Six patterns, two enumerations, five minimum and seven maximum lengths, two dates and one
-# boolean: the guard fails when a constraint disappears from the listed schema.
-_FOLLOW_UP_CONSTRAINT_COUNT = 23
+_FOLLOW_UP_CONSTRAINTS_PREAMBLE = "Schema constraints, repeated because some clients strip them: "
 
 
-def _description_clause(description: str, name: str) -> str:
-    """Return the clause of one property inside the rendered constraint sentence."""
-    marker = f"; {name}: "
-    assert marker in description, name
-    clause = description.split(marker, 1)[1]
-    return clause.split(";", 1)[0]
+def _description_clauses(description: str) -> dict[str, str]:
+    """Split the rendered constraint sentence into one exact clause per property."""
+    assert _FOLLOW_UP_CONSTRAINTS_PREAMBLE in description
+    sentence = description.split(_FOLLOW_UP_CONSTRAINTS_PREAMBLE, 1)[1]
+    clauses: dict[str, str] = {}
+    for clause in sentence.split("; "):
+        name, separator, body = clause.partition(": ")
+        if separator:
+            clauses[name] = body
+        else:
+            clauses[clause] = ""
+    return clauses
+
+
+def _expected_clause(field_schema: dict[str, Any]) -> str:
+    """Build, independently of the renderer, the exact clause one property must produce."""
+    variants = field_schema.get("anyOf") or [field_schema]
+    parts: list[str] = []
+    for variant in variants:
+        if variant.get("type") == "null":
+            continue
+        if "pattern" in variant:
+            parts.append("pattern " + variant["pattern"])
+        if "enum" in variant:
+            parts.append("one of " + ", ".join(variant["enum"]))
+        if "minLength" in variant and "maxLength" in variant:
+            parts.append(f"{variant['minLength']} to {variant['maxLength']} characters")
+        elif "maxLength" in variant:
+            parts.append(f"at most {variant['maxLength']} characters")
+        if variant.get("format") == "date":
+            parts.append("ISO date")
+        if variant.get("type") == "boolean":
+            parts.append("boolean")
+    if any(variant.get("type") == "null" for variant in variants):
+        parts.append("or null")
+    if "default" in field_schema:
+        parts.append("default " + json.dumps(field_schema["default"]))
+    return ", ".join(parts)
 
 
 @pytest.mark.asyncio
@@ -918,45 +948,22 @@ async def test_prepare_follow_up_description_repeats_every_schema_constraint_per
     )
     tools = {tool.name: tool for tool in await create_server(app).list_tools()}
     tool = tools["prepare_follow_up"]
-    description = tool.description or ""
     record_schema = tool.input_schema["$defs"]["FollowUpRecord"]
     assert tool.input_schema["properties"]["records"]["items"] == {"$ref": "#/$defs/FollowUpRecord"}
     assert record_schema["additionalProperties"] is False
-    assert "; extra fields refused;" in description
-    assert f"; at most {FOLLOW_UP_MAX_RECORDS} records per call, checked at runtime;" in (
-        description
-    )
-    assert "required: " + ", ".join(record_schema["required"]) + ";" in description
 
-    checked = 0
-    for name, field_schema in record_schema["properties"].items():
-        clause = _description_clause(description, name)
-        if "default" in field_schema:
-            assert f"default {json.dumps(field_schema['default'])}" in clause, name
-        for variant in field_schema.get("anyOf") or [field_schema]:
-            if variant.get("type") == "null":
-                assert "or null" in clause, name
-                continue
-            if "pattern" in variant:
-                assert variant["pattern"] in clause, name
-                checked += 1
-            if "enum" in variant:
-                for value in variant["enum"]:
-                    assert value in clause.split("one of ", 1)[1], name
-                checked += 1
-            if "minLength" in variant:
-                assert f"{variant['minLength']} to " in clause, name
-                checked += 1
-            if "maxLength" in variant:
-                assert f"{variant['maxLength']} characters" in clause, name
-                checked += 1
-            if variant.get("format") == "date":
-                assert "ISO date" in clause, name
-                checked += 1
-            if variant.get("type") == "boolean":
-                assert "boolean" in clause, name
-                checked += 1
-    assert checked == _FOLLOW_UP_CONSTRAINT_COUNT
+    clauses = _description_clauses(tool.description or "")
+    fixed = {
+        "required": ", ".join(record_schema["required"]),
+        "extra fields refused": "",
+        f"at most {FOLLOW_UP_MAX_RECORDS} records per call, checked at runtime": "",
+    }
+    expected = fixed | {
+        name: _expected_clause(field_schema)
+        for name, field_schema in record_schema["properties"].items()
+    }
+    assert clauses == expected
+    assert all(expected[name] for name in record_schema["properties"])
 
 
 def test_render_follow_up_constraints_follows_the_schema_it_is_given() -> None:
