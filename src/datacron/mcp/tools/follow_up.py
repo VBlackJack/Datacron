@@ -87,6 +87,9 @@ _RENDERED_SCHEMA_KEYS: Final[frozenset[str]] = frozenset(
     {"pattern", "enum", "minLength", "maxLength", "format", "type", "title", "description"}
 )
 _PARENT_ONLY_SCHEMA_KEYS: Final[frozenset[str]] = frozenset({"anyOf", "default"})
+_RENDERED_RECORD_KEYS: Final[frozenset[str]] = frozenset(
+    {"additionalProperties", "description", "properties", "required", "title", "type"}
+)
 _RENDERED_FORMATS: Final[frozenset[str]] = frozenset({"date"})
 _RENDERED_TYPES: Final[frozenset[str]] = frozenset({"string", "boolean", "null"})
 
@@ -162,6 +165,8 @@ def _constraint_clause(name: str, field_schema: dict[str, Any]) -> str:
         variant_parts = _variant_parts(variant)
         if not variant_parts:
             raise ValueError(f"{name}: an unconstrained variant widens the schema silently")
+        if parts:
+            raise ValueError(f"{name}: alternatives between constrained variants are not rendered")
         parts.extend(variant_parts)
     if nullable:
         parts.append("or null")
@@ -177,6 +182,9 @@ def render_follow_up_constraints(record_schema: dict[str, Any]) -> str:
     rendered text lets a model that only reads the description build a record the server
     accepts. Clauses are separated by "; " and each starts with the property name.
     """
+    unknown = set(record_schema) - _RENDERED_RECORD_KEYS
+    if unknown:
+        raise ValueError(f"record schema keywords not rendered: {sorted(unknown)}")
     clauses = [
         "required: " + ", ".join(record_schema["required"]),
         (

@@ -911,6 +911,14 @@ def _description_clauses(description: str) -> dict[str, str]:
 
 _EXPECTED_VARIANT_KEYS = {"pattern", "enum", "minLength", "maxLength", "format", "type"}
 _EXPECTED_PARENT_KEYS = {"anyOf", "default", "title", "description"}
+_EXPECTED_RECORD_KEYS = {
+    "additionalProperties",
+    "description",
+    "properties",
+    "required",
+    "title",
+    "type",
+}
 _EXPECTED_FORMATS = {"date"}
 _EXPECTED_TYPES = {"string", "boolean", "null"}
 
@@ -962,6 +970,7 @@ def _expected_clause(field_schema: dict[str, Any]) -> str:
         if variant.get("type") == "boolean":
             variant_parts.append("boolean")
         assert variant_parts, ("unconstrained variant", variant)
+        assert not parts, ("alternative constrained variants", variants)
         parts.extend(variant_parts)
     if any(variant.get("type") == "null" for variant in variants):
         parts.append("or null")
@@ -984,6 +993,7 @@ async def test_prepare_follow_up_description_repeats_every_schema_constraint_per
     tool = tools["prepare_follow_up"]
     record_schema = tool.input_schema["$defs"]["FollowUpRecord"]
     assert tool.input_schema["properties"]["records"]["items"] == {"$ref": "#/$defs/FollowUpRecord"}
+    assert set(record_schema) <= _EXPECTED_RECORD_KEYS, set(record_schema)
     assert record_schema["additionalProperties"] is False
 
     clauses = _description_clauses(tool.description or "")
@@ -1039,6 +1049,13 @@ def test_render_follow_up_constraints_follows_the_schema_it_is_given() -> None:
         render_follow_up_constraints(schema)
     schema["properties"]["beta"]["anyOf"][-1] = {"type": "string"}
     with pytest.raises(ValueError, match="unconstrained variant"):
+        render_follow_up_constraints(schema)
+    schema["properties"]["beta"]["anyOf"][-1] = {"type": "string", "minLength": 300}
+    with pytest.raises(ValueError, match="alternatives between constrained variants"):
+        render_follow_up_constraints(schema)
+    del schema["properties"]["beta"]["anyOf"][-1]
+    schema["maxProperties"] = 12
+    with pytest.raises(ValueError, match="record schema keywords not rendered"):
         render_follow_up_constraints(schema)
 
 
