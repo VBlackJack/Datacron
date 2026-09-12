@@ -83,30 +83,72 @@ class FollowUpRecord(BaseModel):
     identity_basis: str | None = Field(default=None, max_length=_IDENTITY_BASIS_MAX_LENGTH)
 
 
+_RENDERED_SCHEMA_KEYS: Final[frozenset[str]] = frozenset(
+    {"pattern", "enum", "minLength", "maxLength", "format", "type", "title", "description"}
+)
+_PARENT_ONLY_SCHEMA_KEYS: Final[frozenset[str]] = frozenset({"anyOf", "default"})
+
+
+def _checked_variants(name: str, field_schema: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the schema variants of one property, refusing keywords the clause cannot express.
+
+    A constraint added to the model must never be silently missing from the description.
+    """
+    variants = field_schema.get("anyOf")
+    if variants is None:
+        unknown = set(field_schema) - _RENDERED_SCHEMA_KEYS - _PARENT_ONLY_SCHEMA_KEYS
+        if unknown:
+            raise ValueError(f"{name}: schema keywords not rendered: {sorted(unknown)}")
+        return [field_schema]
+    beside = set(field_schema) - _PARENT_ONLY_SCHEMA_KEYS - {"title", "description"}
+    if beside:
+        raise ValueError(f"{name}: constraints beside anyOf are not rendered: {sorted(beside)}")
+    for variant in variants:
+        unknown = set(variant) - _RENDERED_SCHEMA_KEYS
+        if unknown:
+            raise ValueError(f"{name}: schema keywords not rendered: {sorted(unknown)}")
+    return list(variants)
+
+
+def _length_clause(variant: dict[str, Any]) -> str | None:
+    """Render minLength and maxLength of one variant, or None when it has neither."""
+    minimum = variant.get("minLength")
+    maximum = variant.get("maxLength")
+    if minimum is not None and maximum is not None:
+        return f"{minimum} to {maximum} characters"
+    if maximum is not None:
+        return f"at most {maximum} characters"
+    if minimum is not None:
+        return f"at least {minimum} characters"
+    return None
+
+
+def _variant_parts(variant: dict[str, Any]) -> list[str]:
+    """Render the constraints of one non-null variant."""
+    parts: list[str] = []
+    if "pattern" in variant:
+        parts.append(f"pattern {variant['pattern']}")
+    if "enum" in variant:
+        parts.append("one of " + ", ".join(str(value) for value in variant["enum"]))
+    length = _length_clause(variant)
+    if length is not None:
+        parts.append(length)
+    if variant.get("format") == "date":
+        parts.append("ISO date")
+    if variant.get("type") == "boolean":
+        parts.append("boolean")
+    return parts
+
+
 def _constraint_clause(name: str, field_schema: dict[str, Any]) -> str:
     """Render one property of a JSON schema as a short, client-independent clause."""
     parts: list[str] = []
     nullable = False
-    for variant in field_schema.get("anyOf") or [field_schema]:
+    for variant in _checked_variants(name, field_schema):
         if variant.get("type") == "null":
             nullable = True
             continue
-        if "pattern" in variant:
-            parts.append(f"pattern {variant['pattern']}")
-        if "enum" in variant:
-            parts.append("one of " + ", ".join(str(value) for value in variant["enum"]))
-        minimum = variant.get("minLength")
-        maximum = variant.get("maxLength")
-        if minimum is not None and maximum is not None:
-            parts.append(f"{minimum} to {maximum} characters")
-        elif maximum is not None:
-            parts.append(f"at most {maximum} characters")
-        elif minimum is not None:
-            parts.append(f"at least {minimum} characters")
-        if variant.get("format") == "date":
-            parts.append("ISO date")
-        if variant.get("type") == "boolean":
-            parts.append("boolean")
+        parts.extend(_variant_parts(variant))
     if nullable:
         parts.append("or null")
     if "default" in field_schema:

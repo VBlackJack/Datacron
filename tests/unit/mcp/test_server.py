@@ -909,9 +909,35 @@ def _description_clauses(description: str) -> dict[str, str]:
     return clauses
 
 
+_EXPECTED_VARIANT_KEYS = {"pattern", "enum", "minLength", "maxLength", "format", "type"}
+_EXPECTED_PARENT_KEYS = {"anyOf", "default", "title", "description"}
+
+
+def _expected_variants(field_schema: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the variants of one property, failing on any keyword the expectation ignores."""
+    if "anyOf" not in field_schema:
+        assert set(field_schema) <= _EXPECTED_VARIANT_KEYS | _EXPECTED_PARENT_KEYS, field_schema
+        return [field_schema]
+    assert set(field_schema) <= _EXPECTED_PARENT_KEYS, field_schema
+    variants = list(field_schema["anyOf"])
+    for variant in variants:
+        assert set(variant) <= _EXPECTED_VARIANT_KEYS, variant
+    return variants
+
+
+def _expected_length(variant: dict[str, Any]) -> list[str]:
+    if "minLength" in variant and "maxLength" in variant:
+        return [f"{variant['minLength']} to {variant['maxLength']} characters"]
+    if "maxLength" in variant:
+        return [f"at most {variant['maxLength']} characters"]
+    if "minLength" in variant:
+        return [f"at least {variant['minLength']} characters"]
+    return []
+
+
 def _expected_clause(field_schema: dict[str, Any]) -> str:
     """Build, independently of the renderer, the exact clause one property must produce."""
-    variants = field_schema.get("anyOf") or [field_schema]
+    variants = _expected_variants(field_schema)
     parts: list[str] = []
     for variant in variants:
         if variant.get("type") == "null":
@@ -920,12 +946,7 @@ def _expected_clause(field_schema: dict[str, Any]) -> str:
             parts.append("pattern " + variant["pattern"])
         if "enum" in variant:
             parts.append("one of " + ", ".join(variant["enum"]))
-        if "minLength" in variant and "maxLength" in variant:
-            parts.append(f"{variant['minLength']} to {variant['maxLength']} characters")
-        elif "maxLength" in variant:
-            parts.append(f"at most {variant['maxLength']} characters")
-        elif "minLength" in variant:
-            parts.append(f"at least {variant['minLength']} characters")
+        parts.extend(_expected_length(variant))
         if variant.get("format") == "date":
             parts.append("ISO date")
         if variant.get("type") == "boolean":
@@ -989,6 +1010,13 @@ def test_render_follow_up_constraints_follows_the_schema_it_is_given() -> None:
     assert rendered.endswith("; delta: at least 3 characters")
     schema["properties"]["alpha"]["pattern"] = "^y$"
     assert "; alpha: pattern ^y$;" in render_follow_up_constraints(schema)
+    schema["properties"]["beta"]["minLength"] = 2
+    with pytest.raises(ValueError, match="beside anyOf"):
+        render_follow_up_constraints(schema)
+    del schema["properties"]["beta"]["minLength"]
+    schema["properties"]["delta"]["const"] = "fixed"
+    with pytest.raises(ValueError, match="not rendered"):
+        render_follow_up_constraints(schema)
 
 
 @pytest.mark.asyncio
