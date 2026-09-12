@@ -2931,3 +2931,70 @@ def test_operation_journal_windows_reparse_attribute_is_rejected(
         journal.store_history(b"blocked")
 
     assert not (sidecar / "history").exists()
+
+
+# --- identity adoption ------------------------------------------------------
+
+
+def _replace_bundle_adopting_sidecar_identity(
+    root: Path, *, sidecar_id: str
+) -> ValidatedOrganizationBundle:
+    target = root / "notes" / "adopt.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    before = _note_without_id("Adopt")
+    after = _note(_FIRST_ID, "Adopt")
+    target.write_bytes(before)
+    payload = _payload(root, 0, after)
+    operation = ReplaceExactOperation(
+        kind="replace_exact",
+        target="notes/adopt.md",
+        expected_sha256=sha256_bytes(before),
+        expected=ExistingNoteIdentity(id=_FIRST_ID, aliases=()),
+        payload_sha256=payload.sha256,
+        result=ExistingNoteIdentity(id=_FIRST_ID, aliases=()),
+    )
+    return _validated_bundle(
+        root,
+        (
+            ResolvedOrganizationOperation(
+                operation=operation,
+                source_path=target,
+                target_path=target,
+                payload=payload,
+            ),
+        ),
+        identity_sidecar_before_bytes=_sidecar_bytes({"notes/adopt.md": sidecar_id}),
+    )
+
+
+async def test_replace_adopts_the_sidecar_identity_into_frontmatter(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    bundle = _replace_bundle_adopting_sidecar_identity(vault, sidecar_id=_FIRST_ID)
+    writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault / "notes"]))
+
+    result = await _apply(writer, bundle)
+
+    assert [member.kind for member in result.members] == ["replace_exact"]
+    assert result.members[0].note_id == _FIRST_ID
+    assert (vault / "notes" / "adopt.md").read_bytes() == _note(_FIRST_ID, "Adopt")
+    assert json.loads((vault / ".datacron" / "ulids.json").read_text(encoding="utf-8")) == {
+        "notes/adopt.md": _FIRST_ID
+    }
+
+
+async def test_replace_without_frontmatter_id_is_refused_when_the_sidecar_disagrees(
+    tmp_path: Path,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    bundle = _replace_bundle_adopting_sidecar_identity(vault, sidecar_id=_SECOND_ID)
+    writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault / "notes"]))
+
+    # The validator refuses such a bundle before any token exists; a bundle that
+    # reaches the batch with a disagreeing baseline fails closed like any other
+    # divergence: nothing is committed and the batch is left for recovery.
+    with pytest.raises(RecoveryRequiredError, match="divergent path"):
+        await _apply(writer, bundle)
+
+    assert (vault / "notes" / "adopt.md").read_bytes() == _note_without_id("Adopt")

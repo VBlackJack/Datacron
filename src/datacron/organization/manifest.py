@@ -1111,11 +1111,37 @@ def _assert_absent_case_insensitive(path: Path) -> None:
         )
 
 
+def _sidecar_identity_for(
+    rel_path: str,
+    target_path: Path,
+    vault_root: Path,
+    sidecar_ids: Mapping[str, str],
+) -> str | None:
+    """Return the sidecar identity the reader resolves for this note, or ``None``.
+
+    The reader looks the sidecar up by the exact key of the physical path, and
+    the batch records that same physical path in its receipt. Adoption is
+    therefore offered only when the manifest spells the target exactly as the
+    file exists on disk (a case-insensitive filesystem would otherwise resolve
+    ``Replace.md`` to ``replace.md`` and the commit would find no identity),
+    and only for the exact sidecar key: a case or spelling variant (``./``,
+    ``//``) never gave the note its identity and must not give it one now.
+    """
+    try:
+        physical = target_path.resolve(strict=True).relative_to(vault_root).as_posix()
+    except (OSError, ValueError):
+        return None
+    if physical != rel_path:
+        return None
+    return sidecar_ids.get(rel_path)
+
+
 def _read_expected_note(
     path: Path,
     *,
     expected_sha256: str,
     expected_identity: ExistingNoteIdentity,
+    sidecar_identity: str | None = None,
 ) -> None:
     if not path.is_file():
         raise OrganizationManifestError("source_missing", f"Exact source is not a file: {path}")
@@ -1139,7 +1165,18 @@ def _read_expected_note(
             f"Cannot parse source identity {path}: {exc}",
         ) from exc
     source_id = metadata.get("id")
+    if (
+        source_id is None
+        and sidecar_identity is not None
+        and sidecar_identity == expected_identity.id
+    ):
+        # Identity adoption: the vault knows this note only through its sidecar
+        # mapping. The manifest names that identity, the payload carries it in
+        # frontmatter, and the note keeps the id it always had in the index.
+        source_id = sidecar_identity
     if not isinstance(source_id, str):
+        # Absent without a matching sidecar identity, or present but not a
+        # string: the batch would refuse either at commit, so refuse here.
         raise OrganizationManifestError(
             "source_identity_invalid",
             f"Source note has no frontmatter id: {path}",
@@ -2097,6 +2134,13 @@ def validate_organization_bundle(
     if config_precondition is not None:
         preconditions.append(config_precondition)
     organization_scope = next(iter(scope_rel_paths))
+    (
+        primary_bytes,
+        primary_ids,
+        migrated_bytes,
+        migrated_ids,
+        sidecar_ids,
+    ) = _load_vault_id_state(resolved_vault)
 
     for operation in bundle.manifest.operations:
         _assert_operation_organization_scope(operation, organization_scope)
@@ -2138,6 +2182,9 @@ def validate_organization_bundle(
                 target_path,
                 expected_sha256=operation.expected_sha256,
                 expected_identity=operation.expected,
+                sidecar_identity=_sidecar_identity_for(
+                    operation.target, target_path, resolved_vault, sidecar_ids
+                ),
             )
             source_path = target_path
             preconditions.append(
@@ -2197,13 +2244,6 @@ def validate_organization_bundle(
             )
         )
 
-    (
-        primary_bytes,
-        primary_ids,
-        migrated_bytes,
-        migrated_ids,
-        sidecar_ids,
-    ) = _load_vault_id_state(resolved_vault)
     live_identities = _inventory_admitted_identities(
         resolved_vault,
         scope,

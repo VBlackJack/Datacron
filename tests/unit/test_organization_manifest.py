@@ -1113,3 +1113,106 @@ def test_path_chain_guard_rejects_windows_reparse_attribute(
 
     with pytest.raises(LinkedPathError, match="Linked path component"):
         assert_path_chain_without_links(candidate)
+
+
+# --- identity adoption ------------------------------------------------------
+
+_ADOPTED_ID = "01J0000000000000000000ADPT"
+_OTHER_SIDECAR_ID = "01J000000000000000000OTHER"
+
+
+def _note_without_frontmatter_id(title: str, body: str) -> bytes:
+    return f"---\ntitle: {title}\ntags:\n  - memory/fact\n---\n# {title}\n\n{body}\n".encode()
+
+
+def _replace_source_without_id(case: _BundleCase, sidecar: dict[str, str] | None) -> None:
+    operations = cast("list[object]", case.manifest["operations"])
+    operation = cast("dict[str, object]", operations[0])
+    stale_payload = case.manifest_path.parent / "payloads" / f"{operation['payload_sha256']}.md"
+    stale_payload.unlink()
+    source = case.vault / "memory" / "replace.md"
+    source_bytes = _note_without_frontmatter_id("replace-title", "before")
+    source.write_bytes(source_bytes)
+    after = _note(_REPLACE_ID, "replace-title", (), "after")
+    digest = sha256_bytes(after)
+    (case.manifest_path.parent / "payloads" / f"{digest}.md").write_bytes(after)
+    operation["expected_sha256"] = sha256_bytes(source_bytes)
+    operation["expected"] = {"id": _REPLACE_ID, "aliases": []}
+    operation["payload_sha256"] = digest
+    operation["result"] = {"id": _REPLACE_ID, "aliases": []}
+    case.manifest_path.write_text(json.dumps(case.manifest), encoding="utf-8")
+    if sidecar is not None:
+        (case.vault / ".datacron" / "ulids.json").write_text(json.dumps(sidecar), encoding="utf-8")
+
+
+def test_replace_adopts_the_sidecar_identity_of_a_source_without_frontmatter_id(
+    tmp_path: Path,
+) -> None:
+    case = _build_case(tmp_path)
+    _replace_source_without_id(case, {"memory/replace.md": _REPLACE_ID, "memory/move.md": _MOVE_ID})
+
+    _bundle, validated = _load_and_validate(case)
+
+    assert "memory/replace.md" in {item.rel_path for item in validated.projected_notes}
+    assert validated.operations[0].expected_identity is not None
+    assert validated.operations[0].expected_identity.id == _REPLACE_ID
+
+
+@pytest.mark.parametrize(
+    "sidecar",
+    [
+        None,
+        {"memory/replace.md": _OTHER_SIDECAR_ID},
+        {"memory/Replace.md": _REPLACE_ID},
+        {"memory/./replace.md": _REPLACE_ID},
+        {"memory//replace.md": _REPLACE_ID},
+    ],
+)
+def test_replace_without_frontmatter_id_needs_the_matching_sidecar_identity(
+    tmp_path: Path, sidecar: dict[str, str] | None
+) -> None:
+    case = _build_case(tmp_path)
+    _replace_source_without_id(case, sidecar)
+
+    with pytest.raises(OrganizationManifestError, match="no frontmatter id") as error:
+        _load_and_validate(case)
+
+    assert error.value.code == "source_identity_invalid"
+
+
+def test_adoption_refuses_a_manifest_target_whose_case_differs_from_the_file(
+    tmp_path: Path,
+) -> None:
+    case = _build_case(tmp_path)
+    _replace_source_without_id(case, {"memory/Replace.md": _REPLACE_ID})
+    operation = cast("dict[str, object]", cast("list[object]", case.manifest["operations"])[0])
+    operation["target"] = "memory/Replace.md"
+    case.manifest_path.write_text(json.dumps(case.manifest), encoding="utf-8")
+
+    with pytest.raises(OrganizationManifestError) as error:
+        _load_and_validate(case)
+
+    # Case-insensitive filesystems resolve the file and refuse the identity;
+    # case-sensitive ones do not find the source at all (missing, or two
+    # paths resolved by the scope), which was already refused before.
+    assert error.value.code in {"source_identity_invalid", "source_missing", "vault_path_invalid"}
+
+
+@pytest.mark.parametrize("raw_id", ["123", "false", "[]", "{}"])
+def test_adoption_refuses_a_non_textual_frontmatter_id(tmp_path: Path, raw_id: str) -> None:
+    case = _build_case(tmp_path)
+    _replace_source_without_id(case, {"memory/replace.md": _REPLACE_ID})
+    source = case.vault / "memory" / "replace.md"
+    source_bytes = (
+        f"---\nid: {raw_id}\ntitle: replace-title\ntags:\n  - memory/fact\n---\n"
+        "# replace-title\n\nbefore\n"
+    ).encode()
+    source.write_bytes(source_bytes)
+    operation = cast("dict[str, object]", cast("list[object]", case.manifest["operations"])[0])
+    operation["expected_sha256"] = sha256_bytes(source_bytes)
+    case.manifest_path.write_text(json.dumps(case.manifest), encoding="utf-8")
+
+    with pytest.raises(OrganizationManifestError, match="no frontmatter id") as error:
+        _load_and_validate(case)
+
+    assert error.value.code == "source_identity_invalid"
