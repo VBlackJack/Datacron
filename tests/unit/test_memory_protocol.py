@@ -57,7 +57,7 @@ def test_status_missing_current_outdated_and_preserves_other_text(
 
 def test_manual_and_server_only_status_are_not_compliance() -> None:
     assert protocol_status("cursor")["clients"][0]["distribution"] == "manual"
-    assert protocol_status("claude-desktop")["clients"][0]["distribution"] == "unverified"
+    assert protocol_status("claude-desktop")["clients"][0]["distribution"] == "manual"
 
 
 def test_status_cli_is_read_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

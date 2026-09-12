@@ -25,6 +25,7 @@ from typer.testing import CliRunner
 import datacron.cli as cli_module
 from datacron import setup_wizard
 from datacron.cli import app
+from datacron.core.memory_protocol import SESSION_START_INSTRUCTION
 from datacron.installers import mcp_clients, protocol
 from datacron.installers.claude_desktop import MCPServerInvocation
 from datacron.installers.protocol import (
@@ -454,7 +455,8 @@ def test_all_uses_shared_detection_and_skips_claude_desktop(
 
     assert outcomes[0].client_id == "claude-desktop"
     assert outcomes[0].skipped is True
-    assert "server instructions" in outcomes[0].detail
+    assert "does not present server instructions" in outcomes[0].detail
+    assert SESSION_START_INSTRUCTION in outcomes[0].detail
     assert outcomes[1].instruction_path == fake_home / ".codex" / "AGENTS.md"
     assert outcomes[1].changed is True
     assert outcomes[2].instruction_path == (
@@ -463,6 +465,19 @@ def test_all_uses_shared_detection_and_skips_claude_desktop(
     assert outcomes[2].changed is True
     assert outcomes[3].instruction_path == fake_home / _VSCODE_RULE_RELATIVE_PATH
     assert outcomes[3].changed is True
+
+
+def test_uninstall_tells_claude_desktop_users_what_to_remove(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(protocol, "detect_clients", lambda **_: ("claude-desktop",))
+
+    outcomes = uninstall_memory_protocol(PROTOCOL_ALL)
+
+    assert outcomes[0].client_id == "claude-desktop"
+    assert outcomes[0].skipped is True
+    assert "remove the session start line" in outcomes[0].detail
+    assert SESSION_START_INSTRUCTION not in outcomes[0].detail
 
 
 def test_protocol_clients_explicitly_exclude_clients_without_instruction_target() -> None:

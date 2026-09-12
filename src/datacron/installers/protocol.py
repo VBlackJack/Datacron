@@ -23,7 +23,12 @@ from pathlib import Path
 from typing import Final, Literal, TypeAlias
 
 from datacron.core.logger import get_logger
-from datacron.core.memory_protocol import PROTOCOL_BLOCK, PROTOCOL_MARKER_BEGIN, PROTOCOL_MARKER_END
+from datacron.core.memory_protocol import (
+    PROTOCOL_BLOCK,
+    PROTOCOL_MARKER_BEGIN,
+    PROTOCOL_MARKER_END,
+    SESSION_START_INSTRUCTION,
+)
 from datacron.installers.mcp_clients import (
     ALL_CLIENT_IDS,
     ANTIGRAVITY,
@@ -67,6 +72,14 @@ _CURSOR_MANUAL_INSTRUCTIONS: Final[str] = "\n".join(
         "",
         PROTOCOL_BLOCK,
     )
+)
+_CLAUDE_DESKTOP_MANUAL_INSTALL: Final[str] = (
+    "no rules file and the chat does not present server instructions; "
+    f"add this line to the Claude preferences: {SESSION_START_INSTRUCTION}"
+)
+_CLAUDE_DESKTOP_MANUAL_UNINSTALL: Final[str] = (
+    "no rules file to clean; remove the session start line from the Claude preferences "
+    "if you added it"
 )
 _CURSOR_RULE_FRONTMATTER: Final[str] = (
     "---\ndescription: Datacron memory protocol\nalwaysApply: true\n---"
@@ -268,7 +281,11 @@ def _apply_to_clients(
                     successful=True,
                     changed=False,
                     skipped=True,
-                    detail="server instructions available; client loading and behavior unverified",
+                    detail=(
+                        _CLAUDE_DESKTOP_MANUAL_INSTALL
+                        if operation == "install"
+                        else _CLAUDE_DESKTOP_MANUAL_UNINSTALL
+                    ),
                 )
             )
             continue

@@ -224,7 +224,10 @@ Codex, Windsurf et VS Code. Antigravity est limité au scope projet : la command
 n'écrit aucun fichier d'instructions global utilisateur. Cursor demande encore un
 copier-coller dans
 **Settings > Rules**, car ses règles utilisateur globales ne sont exposées que dans
-l'interface. Claude Desktop s'appuie sur les instructions du serveur MCP.
+l'interface. Claude Desktop n'a pas non plus de fichier de règles, et son chat ne présente
+pas les instructions du serveur MCP au modèle : `datacron protocol install --client
+claude-desktop` affiche la ligne de démarrage de session à coller dans tes préférences
+Claude, et `protocol status` le signale en `manual`.
 
 LM Studio est volontairement absent de la liste des clients du protocole. Sa documentation
 officielle ne définit aucun fichier d'instructions globales, donc Datacron configure seulement

@@ -76,7 +76,9 @@ Runtime prerequisites:
 ## First session
 
 1. Choose your notes folder with the installer or `datacron setup`.
-2. Reconnect Datacron in your MCP client to load the tools and instructions.
+2. Reconnect Datacron in your MCP client to load the tools and instructions. The Claude
+   Desktop chat does not present the server instructions: paste the session start line
+   printed by setup into your Claude preferences (see [setup](docs/en/setup.md)).
 3. Ask: "Find the notes for my project and summarize its status with sources."
 
 For memory sessions, `session_context` returns bounded context and the shared protocol.

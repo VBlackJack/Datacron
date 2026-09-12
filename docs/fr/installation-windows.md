@@ -39,7 +39,9 @@ consulte les [questions fréquentes](faq.md).
    raccourcis du menu Démarrer, puis lance la configuration : il enregistre Datacron
    dans chaque client IA détecté, installe les instructions mémoire globales prises en charge
    et indexe le vault. Cursor affiche encore une étape manuelle dans **Settings > Rules** ;
-   Claude Desktop reçoit les instructions directement pendant l'initialisation MCP.
+   Claude Desktop n'a pas de fichier de règles et son chat ne présente pas les instructions
+   du serveur au modèle : colle la ligne de démarrage de session affichée par l'installation
+   dans tes préférences Claude (voir [mémoire quotidienne](memory-discipline.md)).
 
 Après l'installation, redémarre Claude Desktop (ou ton client) pour qu'il charge le
 serveur Datacron.
