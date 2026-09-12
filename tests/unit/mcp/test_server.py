@@ -938,7 +938,7 @@ def _expected_variants(field_schema: dict[str, Any]) -> list[dict[str, Any]]:
 def _expected_shape(variant: dict[str, Any]) -> None:
     """Fail on a format or type value the expectation does not express."""
     assert variant.get("format", "date") in _EXPECTED_FORMATS, variant
-    assert variant.get("type", "string") in _EXPECTED_TYPES, variant
+    assert variant.get("type") in _EXPECTED_TYPES, variant
 
 
 def _expected_length(variant: dict[str, Any]) -> list[str]:
@@ -1066,6 +1066,9 @@ def test_render_follow_up_constraints_follows_the_schema_it_is_given() -> None:
     schema["properties"]["beta"]["anyOf"][1] = {"type": "null"}
     schema["properties"]["alpha"]["type"] = ["string", "null"]
     with pytest.raises(ValueError, match="type not rendered"):
+        render_follow_up_constraints(schema)
+    del schema["properties"]["alpha"]["type"]
+    with pytest.raises(ValueError, match="type not rendered: None"):
         render_follow_up_constraints(schema)
     schema["properties"]["alpha"]["type"] = "string"
     schema["additionalProperties"] = {"type": "string"}

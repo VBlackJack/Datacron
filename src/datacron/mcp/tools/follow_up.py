@@ -120,7 +120,7 @@ def _check_variant_values(name: str, variant: dict[str, Any]) -> None:
     format_value = variant.get("format", "date")
     if not isinstance(format_value, str) or format_value not in _RENDERED_FORMATS:
         raise ValueError(f"{name}: schema format not rendered: {format_value!r}")
-    type_value = variant.get("type", "string")
+    type_value = variant.get("type")
     if not isinstance(type_value, str) or type_value not in _RENDERED_TYPES:
         raise ValueError(f"{name}: schema type not rendered: {type_value!r}")
 
