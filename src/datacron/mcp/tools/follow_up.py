@@ -205,14 +205,17 @@ def render_follow_up_constraints(record_schema: dict[str, Any]) -> str:
     extra = record_schema.get("additionalProperties", True)
     if not isinstance(extra, bool):
         raise ValueError("record schema additionalProperties sub-schema not rendered")
+    properties = record_schema["properties"]
+    undeclared = [name for name in record_schema["required"] if name not in properties]
+    if undeclared:
+        raise ValueError(f"required entries are not declared properties: {undeclared!r}")
     clauses = [
         "required: " + ", ".join(record_schema["required"]),
         "extra fields ignored" if extra else "extra fields refused",
         f"at most {FOLLOW_UP_MAX_RECORDS} records per call, checked at runtime",
     ]
     clauses.extend(
-        _constraint_clause(name, field_schema)
-        for name, field_schema in record_schema["properties"].items()
+        _constraint_clause(name, field_schema) for name, field_schema in properties.items()
     )
     return "Schema constraints, repeated because some clients strip them: " + "; ".join(clauses)
 
