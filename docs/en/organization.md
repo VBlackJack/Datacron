@@ -136,9 +136,30 @@ Three surfaces apply the same evaluation:
   touch are not judged, so an incremental cleanup stays possible.
 - `datacron reorganize` reports the three policy kinds described below.
 
-A vault without the block is unaffected; none of this exists until the vault declares it.
-The policy requires at least one rule, every marker and exempt tag must be a rule tag, and
-an unknown key is a loud failure at load time, like everywhere else in the block.
+A vault without the block is not judged; none of this exists until the vault declares it.
+The policy requires at least one rule, every marker and exempt tag must be a rule tag, rule
+tags must be lowercase (the rule resolver compares them exactly, the policy compares them
+lowercased), an alias may not collide with a rule tag, and an unknown key is a loud failure
+at load time, like everywhere else in the block.
+
+### What the policy does not cover
+
+- **Only creation and manifests are gated.** `append_journal`, `patch_note_section`,
+  `patch_note_preamble`, `rename_note_section`, `delete_note_section` and `revert_note`
+  change a body without re-judging its tags: an entry that writes `#topic/x` in prose, or a
+  restored historical version, can drift. `datacron reorganize` measures that drift; it is
+  the control to run after such writes, not a reason to write inline tags.
+- **Inline tags follow the extractor's heuristics.** A `#tag` inside a single-backtick span
+  or a symmetric fenced block is ignored; one inside an indented code block, or a fence
+  closed with a different marker length, still counts. Inline tags are made of ASCII word
+  characters, `/`, `.` and `-`; an accented tag is truncated at the first other character.
+  Write tags in the frontmatter, never in prose.
+- **Every Datacron installation must be upgraded before the block is declared.** An
+  executable that predates the policy refuses the whole `VAULT.yaml` with an
+  `extra_forbidden` validation error, which stops its server; the key is not ignored.
+- **The JSON report lists six counters even without a policy.** The three policy counters
+  are then always zero, and `--kind` accepts their names; the identity
+  `scanned = governed + unmatched` and every other field are unchanged.
 
 ```yaml
 organization:

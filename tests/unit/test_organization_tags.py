@@ -43,6 +43,7 @@ from datacron.organization.tags import (
     TagViolationKind,
     evaluate_tag_policy,
     format_violations,
+    path_within_scope,
 )
 
 
@@ -213,6 +214,57 @@ def test_policy_round_trips_through_vault_yaml() -> None:
     assert config.organization.tags.subjects[0].aliases == ("x",)
 
 
+def test_alias_is_refused_in_any_spelling_and_cannot_collide_with_a_rule() -> None:
+    policy = _policy(
+        subjects=[{"tag": "project/a", "aliases": ["org/a", "projet/a"]}],
+        allowed_namespaces=["org"],
+    )
+
+    assert _kinds(["memory/fact", "org/a"], policy) == ["UNKNOWN_TAG"]
+    violations = evaluate_tag_policy(["memory/fact", "projet/a"], _organization(policy))
+    assert violations[0].expected == "project/a"
+    with pytest.raises(ValidationError, match="collides with a declared rule tag"):
+        _organization(_policy(subjects=[{"tag": "project/a", "aliases": ["memory/fact"]}]))
+
+
+def test_at_most_one_marker_accompanies_the_placement_tag() -> None:
+    policy = _policy(markers=["memory/decision", "memory/project"])
+
+    assert _kinds(["memory/fact", "memory/decision"], policy) == []
+    assert _kinds(["memory/fact", "memory/decision", "memory/project"], policy) == [
+        "TAG_CARDINALITY"
+    ]
+    assert _kinds(["memory/decision", "memory/project"], policy) == ["TAG_CARDINALITY"]
+
+
+def test_rule_tags_must_be_lowercase_when_a_policy_is_declared() -> None:
+    rules = (OrganizationRule(tag="Memory/Fact", folder="_memory/facts"),)
+
+    OrganizationConfig(scope="_memory", rules=rules)
+    with pytest.raises(ValidationError, match="must be lowercase"):
+        OrganizationConfig(scope="_memory", rules=rules, tags=_policy(markers=[]))
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "scope", "inside"),
+    [
+        ("_memory/facts/x.md", "_memory", True),
+        ("./_memory/facts/x.md", "_memory", True),
+        ("_memory//facts/x.md", "_memory//", True),
+        ("_memory\\facts\\x.md", "_memory", True),
+        ("_memory.md", "_memory", False),
+        ("_memoryx/x.md", "_memory", False),
+        ("_memory/../_drafts/x.md", "_memory", False),
+        ("_drafts/x.md", "_memory", False),
+        ("_memory/x.md", "", False),
+    ],
+)
+def test_path_within_scope_canonicalizes_before_comparing(
+    rel_path: str, scope: str, inside: bool
+) -> None:
+    assert path_within_scope(rel_path, scope) is inside
+
+
 # --- planner --------------------------------------------------------------
 
 
@@ -248,6 +300,14 @@ def test_planner_reports_policy_gaps_only_when_the_policy_is_declared(tmp_path: 
     ]
     assert plan.counts_by_kind()["UNGOVERNED"] == 1
     assert plan.deviations[0].expected == "project/heimdall"
+    assert sorted(silent.counts_by_kind()) == [
+        "NAMING",
+        "OVER_SIZE",
+        "TAG_CARDINALITY",
+        "UNGOVERNED",
+        "UNKNOWN_TAG",
+        "WRONG_FOLDER",
+    ]
 
 
 # --- manifest -------------------------------------------------------------

@@ -142,10 +142,33 @@ Trois surfaces appliquent la même évaluation :
   possible.
 - `datacron reorganize` rapporte les trois natures d'écart décrites plus bas.
 
-Un vault sans ce bloc n'est pas affecté ; rien de tout cela n'existe tant que le vault ne le
+Un vault sans ce bloc n'est pas jugé ; rien de tout cela n'existe tant que le vault ne le
 déclare pas. La politique exige au moins une règle, chaque marqueur et chaque tag exempté
-doit être un tag de règle, et une clé inconnue est un échec bruyant au chargement, comme
-partout ailleurs dans le bloc.
+doit être un tag de règle, les tags de règle doivent être en minuscules (le résolveur de
+règles les compare exactement, la politique les compare en minuscules), un alias ne peut pas
+entrer en collision avec un tag de règle, et une clé inconnue est un échec bruyant au
+chargement, comme partout ailleurs dans le bloc.
+
+### Ce que la politique ne couvre pas
+
+- **Seules la création et les manifestes sont gardés.** `append_journal`,
+  `patch_note_section`, `patch_note_preamble`, `rename_note_section`, `delete_note_section`
+  et `revert_note` modifient un corps sans rejuger ses tags : une entrée qui écrit
+  `#topic/x` en prose, ou une version historique restaurée, peut dériver.
+  `datacron reorganize` mesure cette dérive ; c'est le contrôle à lancer après ces
+  écritures, pas une raison d'écrire des tags en ligne.
+- **Les tags en ligne suivent les heuristiques de l'extracteur.** Un `#tag` dans un span à
+  un backtick ou dans un bloc de code délimité symétrique est ignoré ; un tag dans un bloc de
+  code indenté, ou dans un bloc fermé par un marqueur d'une autre longueur, compte encore.
+  Les tags en ligne sont faits de caractères ASCII de mot, `/`, `.` et `-` ; un tag
+  accentué est tronqué au premier autre caractère. Écrire les tags dans le frontmatter,
+  jamais en prose.
+- **Toute installation de Datacron doit être mise à niveau avant de déclarer le bloc.** Un
+  exécutable antérieur à la politique refuse tout le `VAULT.yaml` avec une erreur de
+  validation `extra_forbidden`, ce qui arrête son serveur ; la clé n'est pas ignorée.
+- **Le rapport JSON liste six compteurs même sans politique.** Les trois compteurs de
+  politique valent alors toujours zéro, et `--kind` accepte leurs noms ; l'identité
+  `scanned = governed + unmatched` et tous les autres champs sont inchangés.
 
 ```yaml
 organization:

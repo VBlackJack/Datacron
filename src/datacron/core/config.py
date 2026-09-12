@@ -450,28 +450,45 @@ class OrganizationConfig(BaseModel):
         if self.rules and self.scope is None:
             raise ValueError("organization scope is required when rules are declared")
         if self.tags is not None:
-            if not self.rules:
-                raise ValueError("organization tags policy requires at least one rule")
-            rule_tags = {rule.tag.casefold() for rule in self.rules}
-            prefix = self.tags.placement_namespace.casefold() + "/"
-            for rule in self.rules:
-                if not rule.tag.casefold().startswith(prefix):
-                    raise ValueError(
-                        f"organization rule tag {rule.tag!r} is outside the placement namespace "
-                        f"{self.tags.placement_namespace!r} declared by the tags policy"
-                    )
-            for marker in self.tags.markers:
-                if marker.casefold() not in rule_tags:
-                    raise ValueError(
-                        f"organization tags marker {marker!r} must be a declared rule tag"
-                    )
-            for exempt in self.tags.subject_exempt_tags:
-                if exempt.casefold() not in rule_tags:
-                    raise ValueError(
-                        f"organization tags subject_exempt_tags entry {exempt!r} must be a "
-                        "declared rule tag"
-                    )
+            _validate_tag_policy_against_rules(self.rules, self.tags)
         return self
+
+
+def _validate_tag_policy_against_rules(
+    rules: tuple[OrganizationRule, ...],
+    tags: OrganizationTagPolicy,
+) -> None:
+    """Every name the policy relies on must exist among the rules, spelled the same way."""
+    if not rules:
+        raise ValueError("organization tags policy requires at least one rule")
+    rule_tags = {rule.tag.casefold() for rule in rules}
+    prefix = tags.placement_namespace.casefold() + "/"
+    for rule in rules:
+        if rule.tag != rule.tag.lower():
+            # The rule resolver compares tags exactly while the policy compares
+            # them lowercased; lowercase rules keep both in step.
+            raise ValueError(
+                f"organization rule tag {rule.tag!r} must be lowercase when a tags "
+                "policy is declared"
+            )
+        if not rule.tag.casefold().startswith(prefix):
+            raise ValueError(
+                f"organization rule tag {rule.tag!r} is outside the placement namespace "
+                f"{tags.placement_namespace!r} declared by the tags policy"
+            )
+    aliases = [alias for subject in tags.subjects for alias in subject.aliases]
+    for alias in aliases:
+        if alias.casefold() in rule_tags:
+            raise ValueError(
+                f"organization subject alias {alias!r} collides with a declared rule tag"
+            )
+    for label, names in (
+        ("marker", tags.markers),
+        ("subject_exempt_tags entry", tags.subject_exempt_tags),
+    ):
+        for name in names:
+            if name.casefold() not in rule_tags:
+                raise ValueError(f"organization tags {label} {name!r} must be a declared rule tag")
 
 
 class VaultConfig(BaseModel):

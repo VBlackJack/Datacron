@@ -28,8 +28,15 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 - Memory protocol contract `1.1.0`: the shared discipline states the declared tag policy in one
   sentence and trims a few phrasings to stay under the client size ceiling. Reinstall the client
-  blocks with `datacron protocol install` after upgrading; vaults without an `organization.tags`
-  block are unaffected.
+  blocks with `datacron protocol install` after upgrading.
+- The `reorganize` JSON report now lists six `counts` keys on every vault, the three policy
+  counters staying at zero without a policy, and `--kind` accepts the three new names; every
+  other field of the report is unchanged. Vaults without an `organization.tags` block are not
+  judged.
+- Deployment constraint: an executable that predates this version refuses a `VAULT.yaml` that
+  declares `organization.tags` (`extra_forbidden`), so every Datacron installation sharing a
+  vault must be upgraded before the block is declared. Only `create_note_ai` and the
+  organization manifest are gated; body mutations are measured by `reorganize`, not refused.
 
 ## [2026.0911.00] - 2026-09-11
 

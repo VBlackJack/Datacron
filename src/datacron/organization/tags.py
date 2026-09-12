@@ -21,15 +21,20 @@ namespaces are admitted. Datacron ships no taxonomy. A vault without the block
 is unaffected: :func:`evaluate_tag_policy` returns nothing.
 
 One evaluation yields zero or more violations. The same function serves the
-planner (reported as deviations), ``create_note_ai`` (refused write) and the
-organization manifest (refused validation), so the three surfaces cannot drift.
+planner (reported as deviations), ``create_note_ai`` (refused creation) and
+the organization manifest (refused validation). Sharing the evaluation keeps
+the tag judgement identical; the surfaces still differ in what they judge
+(the planner also measures placement, naming and size) and in how they admit
+a path, which :func:`path_within_scope` aligns for the writer.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import PurePosixPath
 from typing import Final, final
 
 from datacron.core.config import OrganizationConfig, OrganizationTagPolicy
@@ -41,6 +46,7 @@ __all__ = [
     "TagViolationKind",
     "evaluate_tag_policy",
     "format_violations",
+    "path_within_scope",
 ]
 
 TAG_POLICY_ERROR_CODE: Final[str] = "tag_policy_violation"
@@ -74,6 +80,34 @@ class TagPolicyError(ValueError):
         self.rel_path = rel_path
         self.violations = violations
         super().__init__(f"{rel_path}: {format_violations(violations)}")
+
+
+def _canonical_parts(rel_path: str) -> tuple[str, ...]:
+    """Collapse separators and ``.`` segments; case follows the filesystem contract."""
+    parts = tuple(
+        part
+        for part in PurePosixPath(rel_path.replace("\\", "/")).parts
+        if part not in {"", ".", "/"}
+    )
+    if os.name == "nt":
+        return tuple(part.casefold() for part in parts)
+    return parts
+
+
+def path_within_scope(rel_path: str, scope: str) -> bool:
+    """True when ``rel_path`` lies strictly inside ``scope``, both vault-relative.
+
+    ``./_memory/x.md`` and ``_memory//x.md`` are the same path as
+    ``_memory/x.md``; a lexical prefix test would let the first two escape a
+    guard that the planner and the manifest apply after canonicalization. A
+    path containing ``..`` is never inside a scope: the writer's own path
+    confinement refuses it later with its own error.
+    """
+    path_parts = _canonical_parts(rel_path)
+    scope_parts = _canonical_parts(scope)
+    if ".." in path_parts or ".." in scope_parts or not scope_parts:
+        return False
+    return len(path_parts) > len(scope_parts) and path_parts[: len(scope_parts)] == scope_parts
 
 
 @final
@@ -135,8 +169,10 @@ def evaluate_tag_policy(
 ) -> tuple[TagViolation, ...]:
     """Return every violation of ``organization.tags`` for one note's effective tags.
 
-    Tags are compared lowercased, the way the planner aggregates them. A vault
-    without a declared policy yields an empty tuple.
+    Tags are compared lowercased, the way the planner aggregates them (the
+    configuration requires lowercase rule tags whenever a policy is declared,
+    so the rule resolver and this evaluation agree). A vault without a
+    declared policy yields an empty tuple.
     """
     policy = organization.tags
     if policy is None:
@@ -163,6 +199,7 @@ def evaluate_tag_policy(
 
 
 def _placement_violations(tags: list[str], vocabulary: _Vocabulary) -> Iterable[TagViolation]:
+    """Allowed placement sets: one rule tag, one marker, or one rule tag plus one marker."""
     placement = [tag for tag in tags if tag in vocabulary.rule_tags]
     if not placement:
         yield TagViolation(
@@ -171,13 +208,15 @@ def _placement_violations(tags: list[str], vocabulary: _Vocabulary) -> Iterable[
             detail="no placement tag among the declared rules",
             expected=f"one of: {', '.join(vocabulary.rule_tags)}",
         )
+        return
     non_marker = [tag for tag in placement if tag not in vocabulary.markers]
-    if len(non_marker) > 1:
+    markers = [tag for tag in placement if tag in vocabulary.markers]
+    if len(non_marker) > 1 or len(markers) > 1:
         yield TagViolation(
             kind=TagViolationKind.TAG_CARDINALITY,
-            tag=", ".join(non_marker),
+            tag=", ".join(placement),
             detail="several placement tags on one note",
-            expected="exactly one placement tag, plus a declared marker at most",
+            expected="exactly one placement tag, plus one declared marker at most",
         )
 
 
@@ -187,19 +226,34 @@ def _classify(
     subjects_present: list[str],
 ) -> TagViolation | None:
     """Judge one tag; record it in ``subjects_present`` when it is a registered subject."""
-    namespace = tag.split("/", 1)[0] if "/" in tag else None
     owner = vocabulary.alias_owner.get(tag)
-    if namespace is None:
-        return _alias_violation(tag, owner)
+    if owner is not None:
+        # An alias is refused whatever its spelling: bare, in the subject
+        # namespace, or in a namespace the vault otherwise admits.
+        return TagViolation(
+            kind=TagViolationKind.UNKNOWN_TAG,
+            tag=tag,
+            detail=f"alias of the registered subject {owner}",
+            expected=owner,
+        )
+    if "/" not in tag:
+        return None
+    return _classify_namespaced(tag, tag.split("/", 1)[0], vocabulary, subjects_present)
+
+
+def _classify_namespaced(
+    tag: str,
+    namespace: str,
+    vocabulary: _Vocabulary,
+    subjects_present: list[str],
+) -> TagViolation | None:
     if namespace == vocabulary.placement_namespace:
         return _placement_tag_violation(tag, vocabulary)
     if namespace == vocabulary.subject_namespace:
         if tag in vocabulary.subject_tags:
             subjects_present.append(tag)
             return None
-        return _alias_violation(tag, owner) or _unknown(
-            tag, "not in the declared subject registry", "a registered subject tag"
-        )
+        return _unknown(tag, "not in the declared subject registry", "a registered subject tag")
     if namespace in vocabulary.allowed_namespaces:
         return None
     return _unknown(
@@ -220,17 +274,6 @@ def _placement_tag_violation(tag: str, vocabulary: _Vocabulary) -> TagViolation 
 def _unknown(tag: str, detail: str, expected: str) -> TagViolation:
     return TagViolation(
         kind=TagViolationKind.UNKNOWN_TAG, tag=tag, detail=detail, expected=expected
-    )
-
-
-def _alias_violation(tag: str, owner: str | None) -> TagViolation | None:
-    if owner is None:
-        return None
-    return TagViolation(
-        kind=TagViolationKind.UNKNOWN_TAG,
-        tag=tag,
-        detail=f"alias of the registered subject {owner}",
-        expected=owner,
     )
 
 

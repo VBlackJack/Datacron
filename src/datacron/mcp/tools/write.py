@@ -70,7 +70,7 @@ from datacron.mcp.tools.write_validation import (
     _validate_rename_note_section_request,
     _validate_set_frontmatter_request,
 )
-from datacron.organization.tags import TagPolicyError, evaluate_tag_policy
+from datacron.organization.tags import TagPolicyError, evaluate_tag_policy, path_within_scope
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -160,9 +160,7 @@ def _enforce_tag_policy(app: DatacronApp, rel_path: str, tags: list[str], body: 
     organization = config.organization
     if organization.tags is None or organization.scope is None:
         return
-    normalized = rel_path.replace("\\", "/").strip("/").casefold()
-    scope = organization.scope.rstrip("/").casefold()
-    if not normalized.startswith(scope + "/"):
+    if not path_within_scope(rel_path, organization.scope):
         return
     violations = evaluate_tag_policy(extract_tags({"tags": tags}, body), organization)
     if violations:

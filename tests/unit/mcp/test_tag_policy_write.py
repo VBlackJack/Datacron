@@ -127,6 +127,15 @@ async def test_compliant_note_is_created(writable_app: DatacronApp) -> None:
     assert result["indexed"] is True
 
 
+async def test_equivalent_path_spellings_cannot_escape_the_guard(
+    writable_app: DatacronApp,
+) -> None:
+    for rel_path in ("./_memory/facts/2026-09-12-w.md", "_memory//facts/2026-09-12-w.md"):
+        result = await _create(writable_app, rel_path, ["memory/fact", "heimdall"])
+
+        assert result["error"]["code"] == "tag_policy_violation", rel_path
+
+
 async def test_notes_outside_the_scope_are_not_judged(writable_app: DatacronApp) -> None:
     result = await _create(writable_app, "_drafts/2026-09-12-scratch.md", ["heimdall"])
 
