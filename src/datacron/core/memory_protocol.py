@@ -36,11 +36,17 @@ FOLLOW_UP_MAX_RECORDS: Final[int] = 20
 FOLLOW_UP_MAX_TEXT: Final[int] = 4000
 FOLLOW_UP_MARKER_PREFIX: Final[str] = "datacron-follow-up:"
 
+# First sentence of the contract, also the line a user pastes into a client that has no
+# rules file and does not present server instructions (Claude Desktop chat).
+SESSION_START_INSTRUCTION: Final[str] = (
+    "Begin memory-dependent work with session_context; if unavailable, read _memory/INIT.md "
+    "with get_note."
+)
+
 MEMORY_DISCIPLINE: Final[str] = "\n".join(
     (
-        "Begin memory-dependent work with session_context; if unavailable, read _memory/INIT.md "
-        "with get_note. After context loss, reload. Fetch relevant project/person sources before "
-        "answering; paginate long notes. State coverage gaps, not false absence.",
+        SESSION_START_INSTRUCTION + " After context loss, reload. Fetch relevant project/person "
+        "sources before answering; paginate long notes. State coverage gaps, not false absence.",
         "Keep orientation brief: dated state, main outstanding commitment, next action. "
         "Capture useful confirmed information as it appears; do not wait for session end. "
         "Separate source claims, user reports, verified facts and proposals. A "

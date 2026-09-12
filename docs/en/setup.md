@@ -220,7 +220,10 @@ Gemini CLI, Codex, Windsurf, and VS Code. Antigravity is project-scoped only:
 `--client antigravity --scope project` manages the marked block in `<project>/GEMINI.md`
 and does not write a user-global instruction file. Cursor still requires a paste in
 **Settings > Rules** because its global user rules are only exposed through the UI. Claude
-Desktop relies on the MCP server instructions.
+Desktop has no rules file either, and its chat does not present the MCP server instructions
+to the model: `datacron protocol install --client claude-desktop` prints the one-line session
+start instruction to paste into your Claude preferences, and `protocol status` reports it as
+`manual`.
 
 LM Studio is deliberately absent from the protocol client list. Its official documentation
 does not define a global instruction file, so Datacron configures only its MCP server entry.

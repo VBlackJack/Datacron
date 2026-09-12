@@ -37,8 +37,10 @@ see the [frequently asked questions](faq.md).
 6. Finish. The installer adds `datacron.exe` to your **user PATH**, creates the Start
    menu shortcuts, then runs setup: it registers Datacron with each detected AI
    client, installs supported global memory instructions, and indexes the vault. Cursor still
-   shows a manual **Settings > Rules** step; Claude Desktop receives the instructions during
-   MCP initialization.
+   shows a manual **Settings > Rules** step. Claude Desktop has no rules file and its chat does
+   not present the server instructions to the model: paste the one-line session start
+   instruction printed by setup into your Claude preferences (see
+   [memory discipline](memory-discipline.md)).
 
 After installing, restart Claude Desktop (or your client) so it loads the Datacron
 server.

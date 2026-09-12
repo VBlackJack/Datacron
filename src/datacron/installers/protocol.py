@@ -23,7 +23,12 @@ from pathlib import Path
 from typing import Final, Literal, TypeAlias
 
 from datacron.core.logger import get_logger
-from datacron.core.memory_protocol import PROTOCOL_BLOCK, PROTOCOL_MARKER_BEGIN, PROTOCOL_MARKER_END
+from datacron.core.memory_protocol import (
+    PROTOCOL_BLOCK,
+    PROTOCOL_MARKER_BEGIN,
+    PROTOCOL_MARKER_END,
+    SESSION_START_INSTRUCTION,
+)
 from datacron.installers.mcp_clients import (
     ALL_CLIENT_IDS,
     ANTIGRAVITY,
@@ -268,7 +273,10 @@ def _apply_to_clients(
                     successful=True,
                     changed=False,
                     skipped=True,
-                    detail="server instructions available; client loading and behavior unverified",
+                    detail=(
+                        "no rules file and the chat does not present server instructions; "
+                        f"add this line to the Claude preferences: {SESSION_START_INSTRUCTION}"
+                    ),
                 )
             )
             continue

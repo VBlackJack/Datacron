@@ -25,6 +25,7 @@ from typer.testing import CliRunner
 import datacron.cli as cli_module
 from datacron import setup_wizard
 from datacron.cli import app
+from datacron.core.memory_protocol import SESSION_START_INSTRUCTION
 from datacron.installers import mcp_clients, protocol
 from datacron.installers.claude_desktop import MCPServerInvocation
 from datacron.installers.protocol import (
@@ -454,7 +455,8 @@ def test_all_uses_shared_detection_and_skips_claude_desktop(
 
     assert outcomes[0].client_id == "claude-desktop"
     assert outcomes[0].skipped is True
-    assert "server instructions" in outcomes[0].detail
+    assert "does not present server instructions" in outcomes[0].detail
+    assert SESSION_START_INSTRUCTION in outcomes[0].detail
     assert outcomes[1].instruction_path == fake_home / ".codex" / "AGENTS.md"
     assert outcomes[1].changed is True
     assert outcomes[2].instruction_path == (

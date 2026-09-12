@@ -103,8 +103,15 @@ Activation et comportement restent non vérifiés par cette commande.
 
 `datacron protocol install --client codex-cli --scope user` actualise le bloc géré en
 préservant les autres consignes. Redémarrer serveur et client pour recharger les schémas.
-Cursor global demande une installation manuelle ; un client sans fichier ne peut pas être
-certifié par inspection locale. Le repli get_note reste utilisable avec l'ancien serveur.
+Cursor global demande une installation manuelle. Claude Desktop est aussi en `manual` : sans
+fichier de règles, et son chat ne présentant pas les instructions du serveur MCP au modèle,
+le contrat ne l'atteint que par les préférences Claude de l'utilisateur. Y coller la première
+phrase du contrat, affichée par `datacron protocol install --client claude-desktop` : "Begin
+memory-dependent work with session_context; if unavailable, read _memory/INIT.md with
+get_note." Le résultat de `session_context` porte le texte complet du contrat dans
+`contract.instructions` ; un modèle qui suit cette ligne lit le reste depuis le serveur. Aucun
+des deux clients ne peut être certifié par inspection locale. Le repli get_note reste
+utilisable avec l'ancien serveur.
 
 ## Mise à jour vers 2026.0905.01
 

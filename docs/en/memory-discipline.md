@@ -108,8 +108,15 @@ datacron protocol install --client codex-cli --scope user
 
 Status is read-only JSON: `current`, `outdated`, `missing`, `invalid`, `manual` or `unverified`.
 Expected version/hash and detected block evidence are separate from `activation` and `behavior`,
-which remain `unverified`. Cursor global rules need manual installation; server-only clients
-cannot be certified by file inspection. Refresh owned blocks with the existing installer and
+which remain `unverified`. Cursor global rules need manual installation. Claude Desktop is
+`manual` too: it has no rules file, and its chat does not present the MCP server instructions
+to the model, so the contract reaches it only through the user's Claude preferences. Paste
+there the first sentence of the contract, printed by `datacron protocol install --client
+claude-desktop`: "Begin memory-dependent work with session_context; if unavailable, read
+_memory/INIT.md with get_note." The `session_context` result carries the full contract text
+in `contract.instructions`, so a model that follows that one line reads the rest from the
+server. Neither client can be certified by file inspection. Refresh owned blocks with the
+existing installer and
 restart the server/client so cached tool catalogs and instructions are reloaded. The previous
 server can still fall back to `get_note` until it is upgraded.
 

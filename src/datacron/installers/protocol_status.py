@@ -68,7 +68,7 @@ def protocol_status(
             "client": client_id,
             "scope": scope,
             "distribution": "manual"
-            if client_id == CURSOR and scope == SCOPE_USER
+            if client_id in {CURSOR, CLAUDE_DESKTOP} and scope == SCOPE_USER
             else "unverified",
             "activation": "unverified",
             "behavior": "unverified",
