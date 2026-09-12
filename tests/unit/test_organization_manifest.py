@@ -1193,8 +1193,9 @@ def test_adoption_refuses_a_manifest_target_whose_case_differs_from_the_file(
         _load_and_validate(case)
 
     # Case-insensitive filesystems resolve the file and refuse the identity;
-    # case-sensitive ones do not find the source at all.
-    assert error.value.code in {"source_identity_invalid", "source_missing"}
+    # case-sensitive ones do not find the source at all (missing, or two
+    # paths resolved by the scope), which was already refused before.
+    assert error.value.code in {"source_identity_invalid", "source_missing", "vault_path_invalid"}
 
 
 @pytest.mark.parametrize("raw_id", ["123", "false", "[]", "{}"])
