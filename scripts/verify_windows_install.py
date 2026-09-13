@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,10 @@ from mcp.types import TextContent
 
 _DEFAULT_TIMEOUT = 300
 _DISPOSABLE_FLAG = "DATACRON_DISPOSABLE_MACHINE"
+if sys.platform == "win32":
+    _CREATION_FLAGS = subprocess.CREATE_NO_WINDOW
+else:
+    _CREATION_FLAGS = 0
 
 
 def installation_guard(allow_install: bool) -> None:
@@ -33,13 +38,16 @@ def installation_guard(allow_install: bool) -> None:
         raise RuntimeError("Requires Windows, --allow-install and DATACRON_DISPOSABLE_MACHINE=1")
     if (Path(os.environ["LOCALAPPDATA"]) / "Programs" / "Datacron").exists():
         raise RuntimeError("An existing Datacron installation must not be replaced by this test")
-    import winreg  # noqa: PLC0415
+    if sys.platform == "win32":
+        import winreg  # noqa: PLC0415
 
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Datacron"):
-            raise RuntimeError("An existing Datacron installer registry entry was found")
-    except FileNotFoundError:
-        return
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Datacron"):
+                raise RuntimeError("An existing Datacron installer registry entry was found")
+        except FileNotFoundError:
+            return
+    else:
+        raise RuntimeError("Installer validation requires Windows")
 
 
 def digest(path: Path) -> str:
@@ -121,7 +129,7 @@ def main() -> None:
             check=True,
             timeout=args.timeout,
             env=env,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=_CREATION_FLAGS,
         )
         config = vault / ".datacron" / "VAULT.yaml"
         config_before = digest(config)
@@ -132,7 +140,7 @@ def main() -> None:
             check=True,
             timeout=args.timeout,
             env=env,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=_CREATION_FLAGS,
         )
         second = asyncio.run(bounded_smoke(executable, vault, env, args.timeout))
         if digest(config) != config_before or digest(fixture) != before:
@@ -152,7 +160,7 @@ def main() -> None:
             check=True,
             timeout=args.timeout,
             env=env,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=_CREATION_FLAGS,
         )
 
 
