@@ -16,10 +16,11 @@ Retrouver le contexte d'un projet, préparer un échange et garder la trace des 
 Datacron donne à ton assistant accès à une mémoire durable, lisible et modifiable en Markdown.
 Les notes restent utilisables indépendamment du client choisi.
 
-**Bibliothèque hors ligne (non publiée, disponible depuis les sources) :** préparez une
+**Bibliothèque hors ligne :** préparez une
 bibliothèque Markdown consultable dans Obsidian ou un lecteur local, avec accueil et
 index thématiques. Révisez les réécritures, découpages et archives proposés avant de
-modifier le vault source. Voir le [guide hors ligne](docs/fr/human-library.md).
+modifier le vault source. Voir le [guide hors ligne](docs/fr/human-library.md) et les
+[notes de version 2026.0913.02](docs/fr/offline-library-release-notes.md).
 
 | Besoin | Exemple de demande à ton assistant |
 |---|---|

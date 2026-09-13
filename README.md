@@ -18,10 +18,11 @@ Recover project context, prepare for a conversation, and keep track of commitmen
 Datacron gives your assistant durable memory in readable, editable Markdown. Your notes
 remain usable independently of the client you choose.
 
-**Offline library (unreleased, available from source):** build a browsable Markdown
+**Offline library:** build a browsable Markdown
 library for Obsidian or another local reader, with a home page and topic indexes.
 Review proposed rewrites, splits and archives before changing the source vault.
-See the [offline library guide](docs/en/human-library.md).
+See the [offline library guide](docs/en/human-library.md) and the
+[2026.0913.02 release notes](docs/en/offline-library-release-notes.md).
 
 | Need | Example request to your assistant |
 |---|---|
