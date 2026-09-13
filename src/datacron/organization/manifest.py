@@ -28,7 +28,6 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import MappingProxyType
 from typing import Annotated, Final, Literal, TypeAlias, final
@@ -43,7 +42,6 @@ from datacron.core.frontmatter import (
     FrontmatterError,
     build_tiered_alias_index,
     coerce_string_list,
-    extract_tags,
     parse,
     resolve_note_title,
 )
@@ -56,7 +54,7 @@ from datacron.core.scope import (
     assert_path_chain_without_links,
 )
 from datacron.core.vault import MIGRATED_ULID_SIDECAR_FILENAME, ULID_SIDECAR_FILENAME
-from datacron.organization.planner import OrganizationNoteSnapshot
+from datacron.organization.planner import OrganizationNoteSnapshot, snapshot_note
 from datacron.organization.tags import (
     TAG_POLICY_ERROR_CODE,
     evaluate_tag_policy,
@@ -560,14 +558,20 @@ class _ProjectedIdentity:
     frontmatter_id: str | None
     title: str
     aliases: tuple[str, ...]
-    tags: tuple[str, ...]
-    calendar_date: str | None
+    snapshot: OrganizationNoteSnapshot
     sha256: str
-    size: int
 
     @property
     def stem(self) -> str:
         return PurePosixPath(self.rel_path).stem
+
+    @property
+    def tags(self) -> tuple[str, ...]:
+        return self.snapshot.tags
+
+    @property
+    def size(self) -> int:
+        return self.snapshot.size_bytes
 
 
 def _canonical_json_bytes(value: object) -> bytes:
@@ -1402,27 +1406,6 @@ def _fallback_note_id(rel_path: str) -> str:
     return str(ULID.from_bytes(digest[:16]))
 
 
-def _calendar_date(metadata: Mapping[str, object]) -> str | None:
-    """Return the planner's created-then-updated local calendar date."""
-    for key in ("created", "updated"):
-        value = metadata.get(key)
-        if isinstance(value, datetime):
-            return value.date().isoformat()
-        if isinstance(value, date):
-            return value.isoformat()
-        if not isinstance(value, str) or not value.strip():
-            continue
-        candidate = value.strip()
-        try:
-            return datetime.fromisoformat(candidate).date().isoformat()
-        except ValueError:
-            try:
-                return date.fromisoformat(candidate).isoformat()
-            except ValueError:
-                continue
-    return None
-
-
 def _read_projected_identity(
     path: Path,
     *,
@@ -1461,10 +1444,8 @@ def _read_projected_identity(
             empty_h1_falls_back=True,
         ),
         aliases=tuple(coerce_string_list(metadata.get("aliases"), keep_empty_scalar=True)),
-        tags=tuple(extract_tags(metadata, body)),
-        calendar_date=_calendar_date(metadata),
+        snapshot=snapshot_note(rel_path, len(raw_bytes), metadata, body),
         sha256=sha256_bytes(raw_bytes),
-        size=len(raw_bytes),
     )
 
 
@@ -1513,10 +1494,8 @@ def _identity_from_payload(
             empty_h1_falls_back=True,
         ),
         aliases=operation.result.aliases,
-        tags=tuple(extract_tags(metadata, body)),
-        calendar_date=_calendar_date(metadata),
+        snapshot=snapshot_note(operation.target, len(payload.raw_bytes), metadata, body),
         sha256=payload.sha256,
-        size=len(payload.raw_bytes),
     )
 
 
@@ -1980,12 +1959,7 @@ def _project_scope_notes(
         organization_scope,
     )
     return tuple(
-        OrganizationNoteSnapshot(
-            rel_path=item.rel_path,
-            size_bytes=item.size,
-            tags=item.tags,
-            calendar_date=item.calendar_date,
-        )
+        item.snapshot
         for item in sorted(projected_identities.values(), key=lambda value: value.rel_path)
         if _path_belongs_to_organization_scope(item.rel_path, organization_scope)
     )

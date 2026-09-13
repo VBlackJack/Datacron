@@ -25,12 +25,23 @@ note tags  ->  first declared rule that matches  ->  expected folder + name
 
 ## The `organization` block in `.datacron/VAULT.yaml`
 
-The block holds two keys, and only two.
+The block holds five keys, and only five.
 
 | Key | Type | Purpose |
 |---|---|---|
 | `scope` | string | The vault subtree the measurement covers. |
 | `rules` | list | Placement rules, in priority order. |
+| `tags` | mapping | The optional [tag policy](#the-tags-block-a-declared-tag-policy). |
+| `state_note_min_notes` | integer, at least 1 | From how many notes a subject folder must carry a state note. Absent: `NO_STATE_NOTE` is not measured. |
+| `linking_since` | date | From which calendar date a new note of a subject folder must link to its state note. Absent: `UNLINKED` is not measured. |
+
+`state_note_min_notes` and `linking_since` are read strictly: a boolean is not a count, a
+number is not a date, and either key declared without a `tags` policy carrying a
+`subject_namespace` is a load-time error that names the key, because the folder
+measurements exist only over subject rules. **Upgrade every Datacron installation before
+declaring them**: an executable older than this version refuses the whole `VAULT.yaml` with
+an `extra_forbidden` validation error, which stops its server, exactly as it does for the
+`tags` block.
 
 `scope` is **required as soon as at least one rule is declared**. A rule list without a
 scope is a configuration error, not an implicit scope covering the whole vault.
@@ -180,9 +191,9 @@ which subject the note belongs to, the placement tag still says what the note is
 - **Every Datacron installation must be upgraded before the block is declared.** An
   executable that predates the policy refuses the whole `VAULT.yaml` with an
   `extra_forbidden` validation error, which stops its server; the key is not ignored.
-- **The JSON report lists six counters even without a policy.** The three policy counters
+- **The JSON report lists nine counters even without a policy.** The three policy counters
   are then always zero, and `--kind` accepts their names; the identity
-  `scanned = governed + unmatched` and every other field are unchanged.
+  `scanned = governed + unmatched + skipped` and every other field are unchanged.
 
 ```yaml
 organization:
@@ -213,8 +224,10 @@ organization:
 
 ## What is measured, and what is not
 
-Six gaps are reported, and nothing else. The first three measure a governed note against
-its rule; the last three exist only when the vault declares a `tags` policy.
+Nine gaps are reported, and nothing else. The first three measure a governed note against
+its rule; the next three exist only when the vault declares a `tags` policy; the last
+three measure the subject folders and the code fences. Every one of them compares the
+vault with a declared intent: the planner never invents a placement, a link or a note.
 
 | Kind | Meaning |
 |---|---|
@@ -224,6 +237,49 @@ its rule; the last three exist only when the vault declares a `tags` policy.
 | `UNGOVERNED` | The note carries no placement tag (policy declared only). |
 | `UNKNOWN_TAG` | A tag is an alias of a registered subject, an unregistered subject, an undeclared namespace, or a `memory/*` tag that is not a rule tag (policy declared only). |
 | `TAG_CARDINALITY` | Several placement tags, or several subject tags on a note whose placement tag is not exempt (policy declared only). |
+| `NO_STATE_NOTE` | A subject folder holds at least `state_note_min_notes` notes and none of them carries a `kind/*` tag (key declared only). |
+| `UNLINKED` | A note of a subject folder dated on or after `linking_since` carries no wikilink to the folder's state note (key declared only). |
+| `UNBALANCED_FENCE` | The body of a governed note has an odd number of code fence lines. |
+
+### State notes and links
+
+A **subject folder** is the folder of a [subject rule](#subject-rules): a rule whose tag
+lives in the policy's `subject_namespace`. The two keys therefore require a `tags` policy
+with a `subject_namespace`; declaring either without it is refused at load time rather
+than measured as nothing. Only the governed notes that actually sit in the rule folder
+count; a misplaced note is already `WRONG_FOLDER`.
+
+The **state note** of a folder is recognised by a tag of the `kind` namespace
+(`kind/platform`, `kind/development`, `kind/mission`), never by its stem. A folder may
+hold several; any of them satisfies a link. `NO_STATE_NOTE` is reported once per folder:
+its `rel_path` is the folder, its `detail` the note count, and it sorts with the note
+deviations by path.
+
+`UNLINKED` applies to the notes the convention asks to link, and only to them: a note
+whose calendar date (`created`, then `updated`, the same date as `{date}`) is on or after
+`linking_since`, that is not a state note itself, and whose stem does not contain
+`-history-` (a split history note is named `<subject>-history-<period>`). The stock before
+that date is not retrofitted. A note is linked when one of its `[[targets]]` names a state
+note of its folder by **stem**, by frontmatter **title**, or by one of its **aliases**,
+case-insensitively; `[[target#anchor]]` and `[[target|label]]` count for `target`, a
+wikilink inside a fenced block does not. When the folder has no state note, no `UNLINKED`
+is reported: the folder is either below the threshold or already `NO_STATE_NOTE`.
+
+`UNBALANCED_FENCE` needs no key. A fence line is a body line that starts with three
+backticks after at most three spaces of indentation; opening and closing fences follow
+the same rule, so a balanced body has an even count. A tilde fence (`~~~`) is out of
+scope. The gap matters because a note split on a line inside a fenced block leaves the
+rest of the note unparsed: the section selector no longer sees the headings that follow,
+while the index stays healthy.
+
+The rule is a line heuristic, and its limits are measured, not guaranteed. A fence opened
+with four or more backticks that contains a three-backtick line, and a closing fence
+followed by text on the same line, are both counted by the same rule, so such a body may
+be reported as unbalanced or pass as balanced. A body whose very first line is a fence
+indented four spaces is measured as flush, because the frontmatter parser strips the
+body's leading whitespace. The wikilink exclusion follows the same parity, so a link inside
+such a block may still count as a link. Line endings are folded to LF before counting, so
+a CRLF note measures the same from the filesystem and from a manifest payload.
 
 **Without a `tags` policy, a note no rule claims is not a deviation.** It is counted in
 `unmatched`, and Datacron never invents a placement for it. This is a property of the
@@ -256,6 +312,7 @@ other tags present and the rule order.
 datacron reorganize --vault /path/to/vault --dry-run
 datacron reorganize --vault /path/to/vault --dry-run --json
 datacron reorganize --vault /path/to/vault --dry-run --kind NAMING
+datacron reorganize --vault /path/to/vault --dry-run --freshness-days 60
 ```
 
 | Option | Purpose |
@@ -263,10 +320,19 @@ datacron reorganize --vault /path/to/vault --dry-run --kind NAMING
 | `--vault`, `-v` | Vault root. Fallback: `DATACRON_VAULT_ROOT`, then the current directory when it holds a `VAULT.yaml` under `.datacron`. |
 | `--dry-run` | **Required.** No other mode exists, and the flag must never become implicit. |
 | `--json` | Stable machine-readable report instead of text. |
-| `--kind` | Restrict the report to one kind: `WRONG_FOLDER`, `NAMING`, or `OVER_SIZE`. |
+| `--kind` | Restrict the report to one kind: `WRONG_FOLDER`, `NAMING`, `OVER_SIZE`, `UNGOVERNED`, `UNKNOWN_TAG`, `TAG_CARDINALITY`, `NO_STATE_NOTE`, `UNLINKED` or `UNBALANCED_FENCE`. |
+| `--freshness-days N` | Also list the state notes whose `last_verified` is missing or older than `N` days (positive integer). Informative: the exit code is unchanged. |
 
 `--dry-run` must be passed explicitly. Omitted, the command refuses to run. An unknown
 `--kind` value lists the expected values.
+
+### Freshness of the state notes
+
+A session that verifies a state note sets its `last_verified` frontmatter key. With
+`--freshness-days N`, the report lists every governed note tagged `kind/*` whose
+`last_verified` is missing, or older than `N` days relative to the run date (UTC calendar
+date). A note verified exactly `N` days ago is not listed. The list is sorted by path and
+never changes the exit code: it is a reading aid, not a deviation.
 
 With no rule declared, the command does not report an error: it states there is nothing to
 measure.
@@ -288,49 +354,67 @@ invalid configuration, a missing scope, or an unreadable vault yield `2`.
 ```text
 Organization report for /path/to/vault
   scanned 392 notes, 391 governed, 1 out of scope
-  WRONG_FOLDER   0
-  NAMING         0
-  OVER_SIZE      0
-  UNGOVERNED     0
-  UNKNOWN_TAG    0
-  TAG_CARDINALITY 0
+  WRONG_FOLDER     0
+  NAMING           0
+  OVER_SIZE        0
+  UNGOVERNED       0
+  UNKNOWN_TAG      0
+  TAG_CARDINALITY  0
+  NO_STATE_NOTE    0
+  UNLINKED         0
+  UNBALANCED_FENCE 0
 No deviation found.
+```
+
+With `--freshness-days 60`, a block follows the counters, one line per stale state note:
+
+```text
+Freshness (older than 60 days): 2
+  knowledge/subjects/alpha/alpha.md (project/alpha, 74 days)
+  knowledge/subjects/beta/beta.md (project/beta, never verified)
 ```
 
 ## The JSON contract
 
-`--json` emits a document whose schema is identified by `organization-plan-v1`. The
+`--json` emits a document whose schema is identified by `organization-plan-v2`. The
 serialization is deterministic: two-space indentation, sorted keys, non-ASCII characters
-preserved as-is.
+preserved as-is. Version 2 adds the three folder and fence counters and the optional
+`freshness` field; every field of version 1 keeps its meaning.
 
 | Field | Content |
 |---|---|
-| `schema` | `organization-plan-v1` |
+| `schema` | `organization-plan-v2` |
 | `vault_root` | The measured root |
 | `scope` | The declared scope |
 | `scanned` | Notes admitted within the scope |
 | `governed` | Notes a rule claims |
 | `unmatched` | Admitted notes no rule claims |
-| `counts` | Deviation count per kind |
+| `counts` | Deviation count per kind, one key per kind; keys are sorted alphabetically in the serialized document, and the declared kind order applies to the text report |
 | `deviations` | Gap list: `rel_path`, `kind`, `tag`, `detail`, `expected` |
 | `skipped` | Unreadable notes: `rel_path`, `reason` |
+| `freshness` | Present only with `--freshness-days`: `rel_path`, `tag`, `last_verified`, `age_days` (`null` when the date is missing) |
 
-The identity `scanned = governed + unmatched` always holds.
+The identity `scanned = governed + unmatched + skipped` always holds: a note the planner
+cannot read is scanned, then skipped, and is neither governed nor unmatched. A folder
+deviation (`NO_STATE_NOTE`) has the folder as `rel_path`; it changes none of the counters.
 
 ```json
 {
   "counts": {
     "NAMING": 0,
+    "NO_STATE_NOTE": 0,
     "OVER_SIZE": 0,
     "TAG_CARDINALITY": 0,
+    "UNBALANCED_FENCE": 0,
     "UNGOVERNED": 0,
     "UNKNOWN_TAG": 0,
+    "UNLINKED": 0,
     "WRONG_FOLDER": 0
   },
   "deviations": [],
   "governed": 391,
   "scanned": 392,
-  "schema": "organization-plan-v1",
+  "schema": "organization-plan-v2",
   "scope": "knowledge",
   "skipped": [],
   "unmatched": 1,
@@ -347,6 +431,12 @@ The two halves of the feature are separate, and the order is the sensible one:
 - The `apply_organization_manifest` MCP tool **applies** a content-addressed batch, in two
   steps: `mode="validate"` returns a token bound to the exact admitted state, then
   `mode="apply"` acts only when that exact token is presented.
+
+The projected report a validation signs is the same nine-kind report `reorganize` renders,
+computed from the bundle's payload bytes, so a payload that introduces an unbalanced fence
+or removes a link is visible in `projected_report_sha256` before anything is written. The
+projection has no run date, so it never carries the `freshness` field; the final report
+after apply is computed without it too, and the two hashes match.
 
 See the [user guide](user-guide.md) for using the tool, and
 [operational health](operational-health.md) for the maintenance window an application

@@ -20,9 +20,13 @@ JSON form is the contract other tools read; the text form is for the eye.
 from __future__ import annotations
 
 import json
-from typing import Any, Final
+from typing import Final
 
-from datacron.organization.planner import DeviationKind, OrganizationPlan
+from datacron.organization.planner import (
+    DeviationKind,
+    OrganizationPlan,
+    organization_plan_mapping,
+)
 
 __all__ = [
     "render_json",
@@ -34,42 +38,45 @@ _NO_RULES_MESSAGE: Final[str] = (
     "No organization rules declared in .datacron/VAULT.yaml -- nothing to measure."
 )
 _CLEAN_MESSAGE: Final[str] = "No deviation found."
-_SCHEMA_VERSION: Final[str] = "organization-plan-v1"
-
-
-def _as_mapping(plan: OrganizationPlan) -> dict[str, Any]:
-    """Build the stable, machine-readable shape of a plan."""
-    return {
-        "schema": _SCHEMA_VERSION,
-        "vault_root": plan.vault_root,
-        "scope": plan.scope,
-        "scanned": plan.scanned,
-        "governed": plan.governed,
-        "unmatched": plan.unmatched,
-        "counts": plan.counts_by_kind(),
-        "deviations": [
-            {
-                "rel_path": item.rel_path,
-                "kind": str(item.kind),
-                "tag": item.tag,
-                "detail": item.detail,
-                "expected": item.expected,
-            }
-            for item in plan.deviations
-        ],
-        "skipped": [{"rel_path": item.rel_path, "reason": item.reason} for item in plan.skipped],
-    }
+_FRESHNESS_HEADING: Final[str] = "Freshness (older than {days} days): {count}"
+_FRESHNESS_MISSING: Final[str] = "never verified"
+_FRESHNESS_AGE: Final[str] = "{age} days"
+_KIND_COLUMN_WIDTH: Final[int] = max(len(kind.value) for kind in DeviationKind)
 
 
 def render_json(plan: OrganizationPlan) -> str:
-    """Render a plan as deterministic JSON."""
-    return json.dumps(_as_mapping(plan), indent=2, sort_keys=True, ensure_ascii=False)
+    """Render a plan as deterministic JSON.
+
+    The document is the same mapping the manifest binding hashes, so a CLI
+    report and a bundle projection never disagree on shape.
+    """
+    return json.dumps(
+        organization_plan_mapping(plan),
+        indent=2,
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def _freshness_lines(plan: OrganizationPlan) -> list[str]:
+    """Render the informative freshness block, when the plan carries one."""
+    if plan.freshness is None or plan.freshness_days is None:
+        return []
+    lines = [_FRESHNESS_HEADING.format(days=plan.freshness_days, count=len(plan.freshness))]
+    for item in plan.freshness:
+        age = (
+            _FRESHNESS_MISSING
+            if item.age_days is None
+            else _FRESHNESS_AGE.format(age=item.age_days)
+        )
+        lines.append(f"  {item.rel_path} ({item.tag}, {age})")
+    return lines
 
 
 def render_text(plan: OrganizationPlan) -> str:
     """Render a plan as a compact operator-facing report."""
     if plan.scope is None:
-        return _NO_RULES_MESSAGE
+        return "\n".join([_NO_RULES_MESSAGE, *_freshness_lines(plan)])
 
     lines: list[str] = [
         f"{_SUMMARY_HEADING} for {plan.vault_root}",
@@ -77,9 +84,10 @@ def render_text(plan: OrganizationPlan) -> str:
     ]
     counts = plan.counts_by_kind()
     for kind in DeviationKind:
-        lines.append(f"  {kind.value:<14} {counts[kind.value]}")
+        lines.append(f"  {kind.value:<{_KIND_COLUMN_WIDTH}} {counts[kind.value]}")
     if plan.skipped:
-        lines.append(f"  skipped        {len(plan.skipped)}")
+        lines.append(f"  {'skipped':<{_KIND_COLUMN_WIDTH}} {len(plan.skipped)}")
+    lines.extend(_freshness_lines(plan))
 
     if not plan.deviations:
         lines.append(_CLEAN_MESSAGE)
@@ -88,5 +96,7 @@ def render_text(plan: OrganizationPlan) -> str:
     lines.append("")
     for item in plan.deviations:
         target = f" -> {item.expected}" if item.expected is not None else ""
-        lines.append(f"  {item.kind.value:<14} {item.rel_path} ({item.detail}){target}")
+        lines.append(
+            f"  {item.kind.value:<{_KIND_COLUMN_WIDTH}} {item.rel_path} ({item.detail}){target}"
+        )
     return "\n".join(lines)
