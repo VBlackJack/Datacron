@@ -7,6 +7,45 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [Unreleased]
+
+### Added
+
+- Three organization deviations, measured by `datacron reorganize` and projected by
+  `apply_organization_manifest` from the bundle's payload bytes, so the report signed at
+  validation equals the report measured after apply. `NO_STATE_NOTE`: a subject folder that
+  holds at least `organization.state_note_min_notes` governed notes and none tagged `kind/*`;
+  the deviation names the folder. `UNLINKED`: a note of a subject folder dated on or after
+  `organization.linking_since` that carries no wikilink to a state note of its folder, by
+  stem, frontmatter title or alias, case-insensitively; state notes and `-history-` stems
+  are exempt, and a wikilink inside a fenced block does not count. `UNBALANCED_FENCE`: a
+  governed note whose body has an odd number of lines starting with three backticks after at
+  most three spaces of indentation; it needs no key. Both new keys default to absent, which
+  means not measured, so an existing sidecar measures exactly what it measured before. A
+  subject folder is the folder of a rule whose tag lives in the tag policy's
+  `subject_namespace`; without a policy, the two folder kinds do not exist.
+- `datacron reorganize --freshness-days N` lists, after the counters, every governed note
+  tagged `kind/*` whose `last_verified` is missing or older than `N` days relative to the
+  UTC run date, sorted by path, as a `freshness` field in JSON and a `Freshness` block in
+  text. The list is informative: the exit code is unchanged, and the manifest projection,
+  which has no run date, never carries it.
+- The planner snapshot derives, once per note and without keeping any prose, the frontmatter
+  title and aliases, the wikilink targets outside fenced blocks, the fence line count and
+  the rendered `last_verified` day; both snapshot builders share one derivation.
+
+### Changed
+
+- The organization report schema is `organization-plan-v2`: `counts` lists nine kinds in
+  declared order, `--kind` accepts the three new names, and the text report aligns its
+  columns on the longest kind. A bundle validated under version 1 is not replayable across
+  the upgrade, which is acceptable: a validate token never survives any vault write either.
+- The `MISSING_KIND` gap sketched in the organization inventory is not implemented. With the
+  state note recognised by its `kind/*` tag rather than by its stem, "a state note without a
+  kind" is not measurable; `NO_STATE_NOTE` covers the same need at folder level.
+- The organization pages, in English and French, describe the nine kinds, the two keys, the
+  state note and link conventions, `--freshness-days`, the text and JSON samples and the
+  schema version.
+
 ## [2026.0912.03] - 2026-09-12
 
 ### Added
