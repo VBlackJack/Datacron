@@ -28,7 +28,6 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import MappingProxyType
 from typing import Annotated, Final, Literal, TypeAlias, final
@@ -1405,27 +1404,6 @@ def _collect_admitted_note_paths(vault_root: Path, scope: VaultScope) -> tuple[P
 def _fallback_note_id(rel_path: str) -> str:
     digest = hashlib.sha256(f"datacron-rel-path-id\x00{rel_path}".encode()).digest()
     return str(ULID.from_bytes(digest[:16]))
-
-
-def _calendar_date(metadata: Mapping[str, object]) -> str | None:
-    """Return the planner's created-then-updated local calendar date."""
-    for key in ("created", "updated"):
-        value = metadata.get(key)
-        if isinstance(value, datetime):
-            return value.date().isoformat()
-        if isinstance(value, date):
-            return value.isoformat()
-        if not isinstance(value, str) or not value.strip():
-            continue
-        candidate = value.strip()
-        try:
-            return datetime.fromisoformat(candidate).date().isoformat()
-        except ValueError:
-            try:
-                return date.fromisoformat(candidate).isoformat()
-            except ValueError:
-                continue
-    return None
 
 
 def _read_projected_identity(
