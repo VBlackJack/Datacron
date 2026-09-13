@@ -16,6 +16,15 @@ are not downloaded. Check unresolved references before relying on offline access
 This export retains the selected local note contents, including private content;
 keep it with the same access restrictions as the source vault.
 
+Use actual filenames as wikilink targets, for example
+`[[project-state|Project state]]`, or a vault-relative path such as
+`[[projects/project-state|Project state]]`. The text after `|` is the readable label.
+A link written directly to a frontmatter title or alias can resolve in Datacron
+while remaining unresolved in Obsidian. The library audit uses Datacron's
+resolution rules; verify legacy links in your reader as well. Preparation preserves
+source links. Repair their targets through a reviewed organization manifest when
+needed, keeping the labels and original note identities.
+
 For material retrieved from Confluence through Cortex, keep a short local summary
 with the source link, document update date and retrieval date. Compare it with
 recent project decisions before presenting an old procedure as current. A recent

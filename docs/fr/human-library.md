@@ -17,6 +17,15 @@ Vérifier les références non résolues avant de compter sur leur disponibilit�
 L'export conserve les contenus locaux sélectionnés, y compris privés : lui appliquer
 les mêmes restrictions d'accès qu'au vault source.
 
+Utiliser le vrai nom du fichier comme cible d'un wikilink, par exemple
+`[[etat-projet|État du projet]]`, ou un chemin relatif au vault tel que
+`[[projets/etat-projet|État du projet]]`. Le texte après `|` est le libellé lisible.
+Un lien visant directement un titre de frontmatter ou un alias peut fonctionner
+dans Datacron sans être résolu par Obsidian. L'audit de la bibliothèque applique
+les règles de Datacron : vérifier aussi les anciens liens dans le lecteur choisi.
+La préparation conserve les liens sources. Corriger leurs cibles par un manifeste
+d'organisation relu lorsque nécessaire, en gardant libellés et identités des notes.
+
 Pour un complément Confluence retrouvé via Cortex, conserver une synthèse locale
 courte avec le lien source, la date de mise à jour du document et la date de lecture.
 La confronter aux décisions récentes du projet avant de présenter une ancienne
