@@ -134,5 +134,5 @@ def test_ollama_docs_local_relative_links_resolve() -> None:
 
 def test_ollama_docs_readme_write_tool_count_is_current() -> None:
     """Keep the public write-tool inventory aligned with the measured registry."""
-    assert "| Écriture | 8 tools" in _read(REPOSITORY_ROOT / "README.fr.md")
-    assert "| Writing | 8 confined" in _read(REPOSITORY_ROOT / "README.md")
+    assert "| Écriture | 9 tools" in _read(REPOSITORY_ROOT / "README.fr.md")
+    assert "| Writing | 9 confined" in _read(REPOSITORY_ROOT / "README.md")

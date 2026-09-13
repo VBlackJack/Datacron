@@ -107,9 +107,12 @@ uppercase alphanumeric characters, but requires it to be preserved exactly in th
 channel never migrates an identity.
 
 `set_frontmatter` can change `origin`, `confidence`, `last_verified`, `supersedes`, `rejected`,
-`valid_from`, `invalid_at`, and `invalidated_by`; it also updates `updated` and preserves the
+`valid_from`, `invalid_at`, `invalidated_by`, and `last_id`; it also updates `updated` and preserves the
 Markdown body. An empty `rejected` list removes that key. Every unknown frontmatter key is
 preserved during serialization.
+
+`last_id` requires CAS and cannot decrease. See [note section operations](note-sections.md)
+for counter migration, exact heading reads, and previewed moves within one note.
 
 The observable temporal ranking is conservative:
 
@@ -244,11 +247,12 @@ read, advisory, and operational tools remain exposed.
 | Operational | `get_health` | Freshness, integrity, checksum, durability, and invariant evidence |
 | Write | `create_note_ai` | Creates a memory note without overwrite |
 | Write | `append_journal` | Appends an entry under a heading in an existing note |
-| Write | `set_frontmatter` | Changes only allowed lifecycle fields and `updated` |
+| Write | `set_frontmatter` | Changes allowed lifecycle fields, the monotone `last_id` counter, and `updated` |
 | Write | `patch_note_preamble` | Replaces or removes the preamble before the first recognized Markdown heading |
 | Write | `patch_note_section` | Replaces content under an existing heading while preserving its heading line |
 | Write | `delete_note_section` | Explicitly deletes an H2-H6 section and its subtree |
 | Write | `rename_note_section` | Renames an H2-H6 heading without changing its content |
+| Write | `move_note_section` | Previews or commits an exact subtree move within a note with mandatory CAS |
 | Write | `revert_note` | Restores exact bytes from a content-addressed history version |
 | Write | `apply_organization_manifest` | Validates and then applies a content-addressed organization bundle after exact confirmation |
 | Operational | `get_note_history` | Lists committed operation metadata for a note without reading prior bytes |

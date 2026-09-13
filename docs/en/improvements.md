@@ -4,7 +4,7 @@
 
 ## Replaying an ordinary write
 
-All eight ordinary note-writing tools accept an optional `request_id` (1-128 ASCII
+All nine ordinary note-writing tools accept an optional `request_id` (1-128 ASCII
 letters, digits, dots, underscores or hyphens; the first character must be alphanumeric).
 Generate a unique identifier per logical operation and preserve **every argument**, including
 `expected_hash`, when retrying. The key is scoped to the vault, across tools and clients.

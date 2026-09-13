@@ -255,6 +255,7 @@ datacron protocol uninstall --client all
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | Budget token des résultats de recherche. |
 | `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | Intervalle minimal entre les sweeps repair-on-read ; `0` = chaque lecture. |
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | Budget de `get_note(format="full")`. |
+| `DATACRON_SESSION_CONTEXT_SECTIONS` | sections du modèle INIT | objet JSON associant les notes aux chemins de titres des [extraits d'orientation](note-sections.md) ; `{}` conserve la lecture de la première page. |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | Taille cible max des chunks. |
 | `DATACRON_RIPGREP_PATH` | `rg` | Binaire ripgrep. Un chemin absolu est la forme fiable : un client MCP ne transmet pas son propre PATH au serveur qu'il demarre. |
 | `DATACRON_REGEX_FALLBACK_TIMEOUT_SECONDS` | `10.0` | Budget d'un balayage complet du repli indexe, utilise seulement quand ripgrep est absent. |

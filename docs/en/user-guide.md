@@ -58,6 +58,7 @@ atomic per file, versioned, and audited.
 | `patch_note_section` | Replaces the content under an existing heading, with compare-and-set (CAS). |
 | `delete_note_section` | Explicitly removes an H2-H6 section and its subtree. |
 | `rename_note_section` | Renames an H2-H6 section heading without changing its content. |
+| `move_note_section` | Previews or moves a section and its subtree beneath another heading in the same note, with CAS. See [section operations](note-sections.md). |
 | `revert_note` | Restores the exact bytes of a version kept in history. |
 | `apply_organization_manifest` | Validates and then applies a local content-addressed bundle containing at least one exact note operation and/or an exact `organization` configuration replacement. |
 

@@ -178,7 +178,7 @@ which subject the note belongs to, the placement tag still says what the note is
 ### What the policy does not cover
 
 - **Only creation and manifests are gated.** `append_journal`, `patch_note_section`,
-  `patch_note_preamble`, `rename_note_section`, `delete_note_section` and `revert_note`
+  `patch_note_preamble`, `rename_note_section`, `delete_note_section`, `move_note_section` and `revert_note`
   change a body without re-judging its tags: an entry that writes `#topic/x` in prose, or a
   restored historical version, can drift. `datacron reorganize` measures that drift; it is
   the control to run after such writes, not a reason to write inline tags.

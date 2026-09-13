@@ -188,7 +188,7 @@ sujet elle appartient, le tag de placement dit toujours ce qu'elle est.
 ### Ce que la politique ne couvre pas
 
 - **Seules la création et les manifestes sont gardés.** `append_journal`,
-  `patch_note_section`, `patch_note_preamble`, `rename_note_section`, `delete_note_section`
+  `patch_note_section`, `patch_note_preamble`, `rename_note_section`, `delete_note_section`, `move_note_section`
   et `revert_note` modifient un corps sans rejuger ses tags : une entrée qui écrit
   `#topic/x` en prose, ou une version historique restaurée, peut dériver.
   `datacron reorganize` mesure cette dérive ; c'est le contrôle à lancer après ces

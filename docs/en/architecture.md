@@ -36,7 +36,7 @@ The delivered foundation stays deliberately **minimalist**:
 
 **Delivered by this version after the Phase 0 foundation**:
 - Static FR↔EN query expansion at search time, configured by `VAULT.yaml`.
-- Write tools: `create_note_ai`, `append_journal`, `set_frontmatter`, `patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`, `revert_note`, and `apply_organization_manifest`, disabled by default without `DATACRON_WRITE_PATHS`, confined, and journaled. Single-note replacements are atomic; organization batches are crash-consistent and require a maintenance window because multi-path visibility is not instantaneous.
+- Write tools: `create_note_ai`, `append_journal`, `set_frontmatter`, `patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`, `move_note_section`, `revert_note`, and `apply_organization_manifest`, disabled by default without `DATACRON_WRITE_PATHS`, confined, and journaled. Single-note replacements are atomic; organization batches are crash-consistent and require a maintenance window because multi-path visibility is not instantaneous.
 - Conservative temporal re-ranking: explicit demotion of superseded notes and a light confidence penalty.
 
 **Still out of scope**:
@@ -135,7 +135,7 @@ flowchart TB
 
 ## 5. MCP catalog
 
-### 5.1 Tools (21)
+### 5.1 Tools (22)
 
 | Group | Tool | Description | Implementation |
 |---|---|---|---|
@@ -149,11 +149,12 @@ flowchart TB
 | Read | `get_backlinks` | Chunks whose wikilinks target a ULID or a resolved alias. | Wikilinks side-table |
 | Write | `create_note_ai` | Confined creation of a `_memory` note, without overwrite and with a durable journal. | VaultWriter + operation log |
 | Write | `append_journal` | Append under a heading with exact history and atomic write. | VaultWriter + operation log |
-| Write | `set_frontmatter` | Update lifecycle fields while preserving the Markdown body. | VaultWriter + frontmatter parser |
+| Write | `set_frontmatter` | Update lifecycle fields and the monotone last_id counter while preserving the Markdown body. | VaultWriter + frontmatter parser |
 | Write | `patch_note_preamble` | CAS replacement of the preamble before the first recognized Markdown heading. | VaultWriter + operation log |
 | Write | `patch_note_section` | CAS replacement of a section while preserving other sections. | VaultWriter + operation log |
 | Write | `delete_note_section` | Explicit deletion of an H2-H6 section and its subtree. | VaultWriter + operation log |
 | Write | `rename_note_section` | Rename an H2-H6 heading while preserving its content. | VaultWriter + operation log |
+| Write | `move_note_section` | Preview or commit an exact subtree move within a note. | VaultWriter + operation log |
 | Write | `revert_note` | Durable, reversible restore from content-addressed history. | History store + VaultWriter |
 | Write | `apply_organization_manifest` | Validate, then crash-consistently apply an exact organization bundle; multi-path visibility is not instantaneous. | Manifest validator + batch journal + VaultWriter |
 | Operational | `get_health` | Freshness, integrity, checksum, durability, and invariant evidence. | Read-only health scanner |

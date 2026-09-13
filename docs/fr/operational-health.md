@@ -146,7 +146,7 @@ Une note porte son identité à trois endroits : le champ `id` du frontmatter, l
 `.datacron/ulids.json` et l'index SQLite. `get_health` compte chaque désaccord dans
 `integrity.id_mismatches`, et une seule incohérence maintient `status` à `degraded`.
 
-`set_frontmatter` n'écrit que les champs de cycle de vie, `patch_note_preamble` édite le corps situé
+`set_frontmatter` écrit les champs de cycle de vie autorisés et le compteur monotone `last_id`, `patch_note_preamble` édite le corps situé
 avant le premier titre, et `datacron ops repair` résout des opérations bloquées, pas des identités.
 `revert_note` peut restaurer les octets exacts d'un historique, y compris un ancien `id`, mais
 seulement en inversant une opération enregistrée ; il ne peut ni choisir ni canonicaliser une
@@ -278,7 +278,7 @@ DATACRON_READ_ONLY=true
 ```
 
 Le registre MCP vivant omet alors `create_note_ai`, `append_journal`, `set_frontmatter`,
-`patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section` et
+`patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`, `move_note_section` et
 `revert_note`, ainsi que `apply_organization_manifest`. Les appels directs échouent aussi avec
 `ReadOnlyModeError`.
 
