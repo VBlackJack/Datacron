@@ -1,0 +1,166 @@
+# Copyright 2026 Julien Bombled
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Preview and commit an exact single-note section relocation."""
+
+from __future__ import annotations
+
+import time
+from typing import TYPE_CHECKING, Any
+
+from datacron.core.durability import DurabilityUnavailableError, ReadOnlyModeError
+from datacron.core.frontmatter import FrontmatterError
+from datacron.core.hashing import sha256_bytes
+from datacron.core.markdown_sections import move_note_section
+from datacron.core.operation_log import OperationContext
+from datacron.core.vault_writer import WriteConflictError
+from datacron.mcp.tools.payloads import _audit
+from datacron.mcp.tools.read import _read_note_by_rel_path
+from datacron.mcp.tools.write import _execute_write_tool, _reconcile_committed_write
+from datacron.mcp.tools.write_requests import replayable_write
+from datacron.mcp.tools.write_validation import (
+    _parse_preserving_bom_and_body_eols,
+    _validate_expected_hash,
+    _validate_heading_occurrence,
+)
+
+if TYPE_CHECKING:
+    from datacron.mcp.server import DatacronApp
+
+__all__ = ["_move_note_section_impl"]
+
+
+def _selector(heading: str, level: int | None, occurrence: int | None, expected_hash: str) -> str:
+    if not heading.strip() or "\n" in heading or "\r" in heading:
+        raise ValueError("heading must contain nonempty single-line text")
+    if level is not None and (type(level) is not int or level not in range(1, 7)):
+        raise ValueError("heading level must be an integer between 1 and 6")
+    _validate_heading_occurrence(occurrence, heading_level=level, expected_hash=expected_hash)
+    return heading.strip()
+
+
+@replayable_write
+async def _move_note_section_impl(
+    app: DatacronApp,
+    *,
+    rel_path: str,
+    heading: str,
+    destination_heading: str,
+    expected_hash: str | None = None,
+    heading_level: int | None = None,
+    heading_occurrence: int | None = None,
+    destination_level: int | None = None,
+    destination_occurrence: int | None = None,
+    confirm: bool = False,
+    actor: str = "direct-call",
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    """Preview by default; commit an explicitly confirmed exact-CAS section move."""
+    started = time.perf_counter()
+
+    async def action() -> dict[str, Any]:
+        app.write_policy.ensure_writable()
+        if type(confirm) is not bool:
+            raise ValueError("confirm must be a boolean")
+        cleaned_hash = _validate_expected_hash(expected_hash)
+        if cleaned_hash is None:
+            raise ValueError("expected_hash is required")
+        cleaned_path = rel_path.strip()
+        if not cleaned_path.endswith(".md"):
+            raise ValueError("rel_path must end with .md")
+        cleaned_heading = _selector(heading, heading_level, heading_occurrence, cleaned_hash)
+        cleaned_destination = _selector(
+            destination_heading, destination_level, destination_occurrence, cleaned_hash
+        )
+        app.scope.authorize_rel_path(cleaned_path, "write")
+        selection: dict[str, int] = {}
+
+        def mutation(raw: str) -> str:
+            nonlocal selection
+            # The durable writer normalizes EOLs. Refuse inputs where that would
+            # change any original byte beyond the requested relocation.
+            without_crlf = raw.replace("\r\n", "")
+            if "\r" in without_crlf or ("\r\n" in raw and "\n" in without_crlf):
+                raise ValueError("mixed or bare-CR line endings cannot be preserved exactly")
+            _, body, _ = _parse_preserving_bom_and_body_eols(raw)
+            if not raw.endswith(body):
+                raise ValueError(
+                    "Markdown body cannot be separated without changing original bytes"
+                )
+            moved, selection = move_note_section(
+                body,
+                cleaned_heading,
+                cleaned_destination,
+                heading_level=heading_level,
+                heading_occurrence=heading_occurrence,
+                destination_level=destination_level,
+                destination_occurrence=destination_occurrence,
+                source_context=raw,
+            )
+            # Preserve frontmatter, BOM, comments and timestamps verbatim.
+            return raw[: len(raw) - len(body)] + moved
+
+        if not confirm:
+            note = await _read_note_by_rel_path(app, cleaned_path)
+            if note.content_hash != cleaned_hash:
+                raise WriteConflictError("expected_hash does not match current note bytes")
+            projected = mutation(note.raw_content)
+            _audit("move_note_section", started, rel_path=cleaned_path, confirmed=False)
+            return {
+                "rel_path": cleaned_path,
+                "selection": selection,
+                "before_hash": cleaned_hash,
+                "projected_hash": sha256_bytes(projected.encode("utf-8")),
+                "committed": False,
+            }
+        parameters: dict[str, Any] = {
+            "heading": cleaned_heading,
+            "destination_heading": cleaned_destination,
+            "heading_level": heading_level,
+            "heading_occurrence": heading_occurrence,
+            "destination_level": destination_level,
+            "destination_occurrence": destination_occurrence,
+        }
+        content_hash = await app.vault_writer.mutate_note_atomic(
+            cleaned_path,
+            mutation,
+            expected_hash=cleaned_hash,
+            operation=OperationContext(
+                op="move_section", tool="move_note_section", actor=actor, parameters=parameters
+            ),
+        )
+        await _reconcile_committed_write(app, content_hash, cleaned_path)
+        _audit("move_note_section", started, rel_path=cleaned_path, confirmed=True)
+        return {
+            "rel_path": cleaned_path,
+            "selection": selection,
+            "before_hash": cleaned_hash,
+            "content_hash": content_hash,
+            "committed": True,
+            "indexed": True,
+        }
+
+    return await _execute_write_tool(
+        "move_note_section",
+        started,
+        action,
+        app=app,
+        audit_fields={"rel_path": rel_path},
+        expected=(
+            DurabilityUnavailableError,
+            ReadOnlyModeError,
+            FileNotFoundError,
+            FrontmatterError,
+            ValueError,
+        ),
+    )

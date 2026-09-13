@@ -24,6 +24,7 @@ from datacron.mcp.tools.search import (
     _search_regex_impl,
     _search_text_impl,
 )
+from datacron.mcp.tools.section_move import _move_note_section_impl
 from datacron.mcp.tools.write import (
     _append_journal_impl,
     _create_note_ai_impl,
@@ -48,6 +49,7 @@ __all__ = [
     "_get_note_history_impl",
     "_get_note_impl",
     "_list_notes_impl",
+    "_move_note_section_impl",
     "_patch_note_preamble_impl",
     "_patch_note_section_impl",
     "_rename_note_section_impl",

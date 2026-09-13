@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, Final
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.frontmatter import matches_frontmatter_filter
 from datacron.core.hashing import FRESHNESS_CONTRACT_ID
-from datacron.core.markdown_headings import markdown_headings
+from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.core.paths import PathConfinementError, read_ulid_mappings, sidecar_dir
 from datacron.core.scope import NoteAdmissionError
@@ -52,6 +52,7 @@ _VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map", "chunk"})
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
 _CHUNK_ID_SEPARATOR: Final[str] = "::"
+_MAX_HEADING_PATH_DEPTH: Final[int] = 6
 
 
 class StaleChunkError(ValueError):
@@ -206,9 +207,15 @@ async def _get_note_impl(
     fmt: str,
     offset: int = 0,
     limit: int | None = None,
+    heading_path: list[str] | None = None,
+    heading_occurrence: int | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     validation_error = _validate_get_note_request(fmt=fmt, offset=offset, limit=limit)
+    if validation_error is None:
+        section_error = _validate_section_request(id_or_path, fmt, heading_path, heading_occurrence)
+        if section_error is not None:
+            validation_error = (section_error, {})
     if validation_error is not None:
         exc, fields = validation_error
         return _error_response(
@@ -239,25 +246,25 @@ async def _get_note_impl(
             raise ValueError("format='chunk' requires an indexed chunk_id")
 
         note = await _resolve_note(app, id_or_path)
+        if note is None:
+            raise FileNotFoundError(f"No note found for {id_or_path!r}")
     except (NoteAdmissionError, FileNotFoundError, ValueError, PathConfinementError) as exc:
         return _error_response("get_note", exc, started, id_or_path=id_or_path, fmt=fmt)
     except Exception:
         return _internal_error_response("get_note", started, id_or_path=id_or_path, fmt=fmt)
 
-    if note is None:
-        return _error_response(
-            "get_note",
-            FileNotFoundError(f"No note found for {id_or_path!r}"),
-            started,
-            id_or_path=id_or_path,
-            fmt=fmt,
+    try:
+        payload = (
+            _build_section_payload(
+                app, note, heading_path, heading_occurrence, offset=offset, limit=limit
+            )
+            if heading_path is not None
+            else _build_map_payload(app, note)
+            if fmt == "map"
+            else _build_full_payload(app, note, offset=offset, limit=limit)
         )
-
-    payload = (
-        _build_map_payload(app, note)
-        if fmt == "map"
-        else _build_full_payload(app, note, offset=offset, limit=limit)
-    )
+    except ValueError as exc:
+        return _error_response("get_note", exc, started, id_or_path=id_or_path, fmt=fmt)
 
     _audit(
         "get_note",
@@ -270,6 +277,92 @@ async def _get_note_impl(
         note_rel_path=note.rel_path,
         truncated=bool(payload.get("truncated", False)),
     )
+    return payload
+
+
+def _validate_section_request(
+    id_or_path: str,
+    fmt: str,
+    heading_path: list[str] | None,
+    heading_occurrence: int | None,
+) -> ValueError | None:
+    if heading_path is None:
+        if heading_occurrence is not None:
+            return ValueError("heading_occurrence requires heading_path")
+        return None
+    if fmt != "full" or _CHUNK_ID_SEPARATOR in id_or_path:
+        return ValueError("heading_path requires a note input with format='full'")
+    if (
+        not isinstance(heading_path, list)
+        or not heading_path
+        or len(heading_path) > _MAX_HEADING_PATH_DEPTH
+        or any(not isinstance(part, str) or not part.strip() for part in heading_path)
+    ):
+        return ValueError("heading_path must contain 1 to 6 nonempty heading strings")
+    if heading_occurrence is not None and (
+        type(heading_occurrence) is not int or heading_occurrence < 1
+    ):
+        return ValueError("heading_occurrence must be a positive 1-based integer")
+    return None
+
+
+def _build_section_payload(
+    app: DatacronApp,
+    note: Note,
+    heading_path: list[str],
+    heading_occurrence: int | None,
+    *,
+    offset: int,
+    limit: int | None,
+) -> dict[str, Any]:
+    lines = note.content.splitlines(keepends=True)
+    headings = markdown_headings(lines)
+    ancestors: list[MarkdownHeading] = []
+    matches: list[tuple[int, list[MarkdownHeading]]] = []
+    for index, heading in enumerate(headings):
+        while ancestors and ancestors[-1].level >= heading.level:
+            ancestors.pop()
+        ancestors.append(heading)
+        if [ancestor.text for ancestor in ancestors] == heading_path:
+            matches.append((index, ancestors.copy()))
+    if not matches:
+        raise ValueError("heading_path does not match any heading ancestry")
+    if len(matches) > 1 and heading_occurrence is None:
+        raise ValueError("heading_path is ambiguous; supply heading_occurrence")
+    occurrence = heading_occurrence if heading_occurrence is not None else 1
+    if occurrence > len(matches):
+        raise ValueError("heading_occurrence exceeds the number of matching headings")
+    selected_index, selected_ancestors = matches[occurrence - 1]
+    selected = headings[selected_index]
+    end = next(
+        (item.start for item in headings[selected_index + 1 :] if item.level <= selected.level),
+        len(lines),
+    )
+    content = "".join(lines[selected.start : end])
+    line_offset = _content_line_offset(note)
+    line_start, line_end = line_offset + selected.start + 1, line_offset + end
+    returned_path = list(heading_path)
+    if app.secret_redactor.retrieval_enabled(app.settings):
+        content = app.secret_redactor.redact_fragment(
+            content, note.raw_content, line_start, line_end
+        )
+        returned_path = [
+            app.secret_redactor.redact_fragment(
+                ancestor.text,
+                note.raw_content,
+                line_offset + ancestor.start + 1,
+                line_offset + ancestor.end,
+            )
+            for ancestor in selected_ancestors
+        ]
+    payload = _build_full_payload(app, note, offset=offset, limit=limit, retrieval_content=content)
+    payload["section"] = {
+        "heading_path": [_sanitize_retrieval_metadata(app, part) for part in returned_path],
+        "heading_occurrence": occurrence,
+        "matching_headings": len(matches),
+        "line_start": line_start,
+        "line_end": line_end,
+    }
     return payload
 
 
@@ -422,10 +515,13 @@ async def _resolve_chunk_payload(app: DatacronApp, id_or_path: str) -> dict[str,
         return None
     try:
         chunk = await app.store.get_chunk(id_or_path)
-    except RuntimeError:
-        return None
+    except RuntimeError as exc:
+        raise ValueError("chunk_id cannot be resolved while the index is unavailable") from exc
     if chunk is None:
-        return None
+        raise ValueError(
+            "chunk_id does not exist in the index; read format=map and use an indexed "
+            "chunk_id returned by the server"
+        )
 
     note = await _read_note_by_rel_path(app, chunk.note_rel_path)
     indexed_notes = await app.store.list_indexed_notes()
@@ -466,10 +562,12 @@ def _build_full_payload(
     *,
     offset: int,
     limit: int | None,
+    retrieval_content: str | None = None,
 ) -> dict[str, Any]:
     max_tokens = app.settings.get_note_max_tokens
     max_chars = max_tokens * TOKEN_ESTIMATE_CHARS_PER_TOKEN
-    retrieval_content = _redact_retrieval_text(app, note.content)
+    if retrieval_content is None:
+        retrieval_content = _redact_retrieval_text(app, note.content)
     total_chars = len(retrieval_content)
     start = min(offset, total_chars)
     requested_limit = limit if limit is not None else max_chars
