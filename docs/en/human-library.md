@@ -25,6 +25,11 @@ resolution rules; verify legacy links in your reader as well. Preparation preser
 source links. Repair their targets through a reviewed organization manifest when
 needed, keeping the labels and original note identities.
 
+The export contains only the selected note scope. A link to a local note elsewhere
+in the full vault can therefore work in Obsidian while its target is absent from
+the export. Check these scope boundaries in the review report before using a
+standalone copy. Opening the complete local vault keeps those local notes available.
+
 For material retrieved from Confluence through Cortex, keep a short local summary
 with the source link, document update date and retrieval date. Compare it with
 recent project decisions before presenting an old procedure as current. A recent

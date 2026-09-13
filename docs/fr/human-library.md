@@ -26,6 +26,11 @@ les règles de Datacron : vérifier aussi les anciens liens dans le lecteur choi
 La préparation conserve les liens sources. Corriger leurs cibles par un manifeste
 d'organisation relu lorsque nécessaire, en gardant libellés et identités des notes.
 
+L'export ne contient que les notes du périmètre choisi. Un lien vers une note locale
+située ailleurs dans le vault complet peut donc fonctionner dans Obsidian alors que
+sa cible est absente de l'export. Vérifier ces limites dans le rapport de revue avant
+d'utiliser une copie autonome. Ouvrir le vault local complet conserve l'accès à ces notes.
+
 Pour un complément Confluence retrouvé via Cortex, conserver une synthèse locale
 courte avec le lien source, la date de mise à jour du document et la date de lecture.
 La confronter aux décisions récentes du projet avant de présenter une ancienne
