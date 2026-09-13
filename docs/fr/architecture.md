@@ -9,7 +9,6 @@ tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 **Français** | [English](../en/architecture.md)
 
 > **Statut** : v2.2 - Spec vivante de l'implémentation livrée par cette version
-> **Auteur** : Julien Bombled
 > **Date** : 2026-08-30
 > **Sources** :
 > - Code source et tests de régression actuels
@@ -135,13 +134,14 @@ flowchart TB
 
 ## 5. Catalogue MCP
 
-### 5.1 Tools (22)
+### 5.1 Tools (23)
 
 | Groupe | Tool | Description | Implémentation |
 |---|---|---|---|
 | Lecture | `session_context` | Contexte initial borné et protocole commun versionné. | MCP memory tools |
 | Lecture | `prepare_follow_up` | Prépare les suivis sourcés sans écrire. | MCP memory tools |
 | Lecture | `get_follow_up` | Dernières révisions des suivis structurés. | MCP memory tools |
+| Read | `get_write_progress` | Suivi des reçus et de l'index pour plusieurs notes, en lecture seule. | MCP memory tools |
 | Lecture | `list_notes` | Liste paginée, filtrable par dossier et tags, avec identité et métadonnées. | VaultReader filesystem |
 | Lecture | `get_note` | Note par ULID, chunk id ou chemin ; contenu paginé, chunk ou plan de headings. | VaultReader + index de chunks |
 | Lecture | `search_text` | Recherche BM25 avec snippets classés et démotion des notes supersédées. | SQLite FTS5 |
@@ -173,7 +173,7 @@ application restent deux surfaces distinctes, et aucune des deux ne déduit l'au
 
 | URI | Description | Taille typique |
 |---|---|---|
-| `datacron://vault/map` | Arbre folder/files avec titles (Gemini insight) | ~2k tokens |
+| `datacron://vault/map` | Arbre folder/files avec titles | ~2k tokens |
 | `datacron://vault/info` | Stats du vault (count, last index, version) | ~200 tokens |
 | `datacron://policy/active` | Politique en vigueur (vide/permissive en MVP) | ~100 tokens |
 
@@ -227,7 +227,7 @@ sans friction) ; une base de données comme source de vérité (le vault doit re
 sans Datacron).
 
 ### ADR-002 - Serveur MCP custom basé sur MCPServer
-Convergence Gemini ✅ + ChatGPT ✅. Direct FS, audit, confinement strict.
+Accès direct au système de fichiers, audit et confinement strict.
 Écarté : plugin Obsidian REST API (exige l'application ouverte) ; serveurs MCP filesystem
 génériques (ni audit, ni confinement, ni sémantique vault).
 
@@ -300,12 +300,11 @@ restaurations à `mtime` plus ancien.
 Écarté : `mtime` comme autorité unique (granularité exFAT 2 s, outils de sync préservant le
 `mtime`) ; relecture complète O(n) à chaque passe.
 
-### ADR-014 - Query-expansion FR↔EN statique avant vectoriel
-L'expansion est query-time, configurable par `VAULT.yaml`, et ferme le gap cross-lingue
-mesuré sans embeddings : recall@5 golden Julien 0.74 → 0.89, precision 0.29 → 0.32.
-Les embeddings restent gelés tant que la mesure ne justifie pas leur coût.
-Écarté : recherche vectorielle pure pour le gap cross-lingue (fermé par l'expansion statique
-à coût quasi nul) ; entrées de synonymes multi-mots (le tokenizer les rend inertes).
+### ADR-014 - Expansion statique FR/EN avant le vectoriel
+L'expansion lors de la recherche est configurable dans `VAULT.yaml`. Elle ajoute les
+synonymes déclarés avant la recherche lexicale. Son efficacité dépend du vocabulaire et
+des requêtes ; mesurer rappel et précision sur des exemples représentatifs avant d'ajouter
+des correspondances. Les entrées multi-mots ne conviennent pas à ce mécanisme par tokens.
 
 ### ADR-015 - Temporal re-ranking conservateur
 Le retrieval exploite seulement les signaux explicites : `supersedes` démote fortement les
@@ -466,11 +465,11 @@ datacron/                              # GitHub: VBlackJack/Datacron
 
 ## 8. Pipeline E2E - exemple concret
 
-**Scénario** : Julien dans Claude Desktop : *"Datacron, qu'est-ce que j'ai écrit récemment sur LanceDB ?"*
+**Scénario** : Utilisateur dans Claude Desktop : *"Datacron, qu'est-ce que j'ai écrit récemment sur LanceDB ?"*
 
 ```mermaid
 sequenceDiagram
-    participant J as Julien
+    participant J as Utilisateur
     participant C as Claude Desktop
     participant M as Datacron MCP
     participant DB as SQLite FTS5
@@ -547,33 +546,20 @@ remesuré.
 1. ~~**Modèle de chunker** - un seul splitter AST suffit-il, ou besoin de stratégies dédiées (code blocks, tables) dès v1 ?~~ → **Résolu (Sem 3.5)** : un seul splitter AST, plus un garde-fou de taille (`chunk_max_tokens`) qui redécoupe tout bloc trop gros sur frontières de lignes, avec stratégies dédiées CODE (fence + langue répétées) et TABLE (en-tête + séparateur répétés), et fallback de découpe intra-ligne. Découpe déterministe, sous-chunks à plages de lignes disjointes et sans trou.
 2. ~~**Format de citation** - quel format pour les chunks renvoyés ? `[[note#header]]` Obsidian-style, ou JSON structuré ?~~ -> **Résolu** : les outils de lecture MCP renvoient du JSON structuré. La lecture d'un chunk porte son identité, le chemin de la note, le chemin de section, la plage de lignes, le contenu sandboxé, les hashes de fraîcheur et la navigation `prev_chunk_id` / `next_chunk_id`.
 3. ~~**`get_note(format=map)`** - quel arbre exact renvoyer (juste headings, ou + counts/excerpts) ?~~ -> **Résolu** : le payload renvoie une liste plate `headings` dans l'ordre du document. Chaque entrée contient `level`, `text`, `path` et `chunk_id` ; le payload porte aussi le `chunk_count` total, sans compteurs ni extraits par heading.
-4. ~~**Eval set Julien** - quelles questions ?~~ → **Résolu partiellement** : golden set
-   `local/golden-julien.yaml` utilisé pour QE/TR ; prochaine étape = l'élargir avec cas
-   temporels et questions tueuses de deuxième génération.
+4. **Couverture des évaluations** : les cas fictifs sont dans `examples/conversations/`.
+   Ils vérifient les contrats de suivi, sans établir les performances de modèles externes.
 
 ---
 
-## 13. Méta - ce qu'on a évité grâce à la cross-review
+## 13. Bibliothèque hors ligne et révision
 
-| Élément v2.0 supprimé | Coût économisé (estimé) |
-|---|---|
-| Phase 4 LangGraph agent | ~3 semaines + complexité runtime |
-| Phase 5 OTel / LangSmith | ~1 semaine + maintenance |
-| Phase 6 Studio Tauri | ~4 semaines + multi-OS CI |
-| Phase 2 Contextual Retrieval (avant eval) | ~2 semaines + coût Ollama |
-| Phase 3 write tools (avant maturité HITL) | ~3 semaines + risque corruption |
-| Sandboxing classifier ML | maintenance perpétuelle + latence |
-| Tunnel HTTPS pour Cowork | devenu inutile après validation stdio locale en production le 2026-07-21 |
-| 5 packages Python workspace | overhead release engineering |
-| Docker + Homebrew + Tauri channels | ~1 semaine release eng × 3 |
+La CLI `library` lit le vault et produit un aperçu externe avec pages de navigation,
+pièces jointes locales, hashes des sources et manifeste d'organisation. Les recettes de
+consolidation indiquent leurs sources. Les originaux archivés conservent leur contenu
+et les liens vers leurs successeurs. L'application utilise les transactions d'organisation
+existantes après validation et révision ; la préparation n'applique jamais le manifeste.
 
-**Total économisé** : ~16 semaines + plusieurs domaines de complexité hors-scope.
-**Coût de la cross-review** : ~4 heures de prompt engineering + lecture + arbitrage.
+Voir [Bibliothèque hors ligne](human-library.md) pour les étapes et protections, et
+[Améliorations de fiabilité](improvements.md) pour les contrats de rejeu et d'indexation.
 
----
-
-*Document v2.2 vérifié le 2026-08-30 par rapport à l'implémentation livrée par cette version. Les
-rapports de recherche et décisions v2.1 restent des archives d'arbitrage.*
-
-
-Voir [Améliorations de fiabilité](improvements.md) pour le rejeu des écritures, l'indexation ciblée, la sélection Markdown commune et les contrôles qualité.
+*Mis à jour le 2026-09-13 pour l'implémentation source ; voir le changelog non publié.*

@@ -76,8 +76,8 @@ FR/EN, ambiguïtés, désambiguïsation, faits remplacés, chemins exclus et ré
 plus des cas durs : une note qui porte le nom du sujet face à des mentions en passant, un titre
 de section jamais répété dans son corps, le même titre dans deux notes projet, des requêtes
 bilingues sans expansion configurée, un index de backlog et une note d'archive qui répètent le
-sujet, et une note `invalid_at` derrière sa remplaçante. Un cas de distracteur reste imparfait
-tant que la démotion des archives n'existe pas ; il documente ce manque au lieu de le masquer.
+sujet, et une note `invalid_at` derrière sa remplaçante. Les distracteurs explicitement archivés sont rétrogradés par la politique de cycle de vie.
+Le corpus les conserve pour détecter les régressions de recherche d'état actuel.
 
 Deux seuils ne sont volontairement pas relevés davantage. Une question de fraîcheur interroge
 un terme nu que cinq notes portent à l'identique : BM25 leur donne le même score au chiffre

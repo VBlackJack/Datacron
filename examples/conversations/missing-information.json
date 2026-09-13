@@ -1,0 +1,18 @@
+{
+  "name": "missing-information",
+  "turns": [
+    "Find the project appointment. The fixture contains no appointment."
+  ],
+  "minimum_sessions": 1,
+  "required_tools": {
+    "session_context": 1
+  },
+  "required_final_text": [
+    "not found"
+  ],
+  "forbidden_final_text": [
+    "tomorrow"
+  ],
+  "cited_paths": [],
+  "verify_writes": true
+}

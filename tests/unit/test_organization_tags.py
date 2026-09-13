@@ -92,7 +92,7 @@ def test_vault_without_policy_reports_nothing() -> None:
 
 def test_compliant_note_has_no_violation() -> None:
     assert (
-        _kinds(["memory/fact", "memory/decision", "project/heimdall", "org/magellan", "ssh"]) == []
+        _kinds(["memory/fact", "memory/decision", "project/heimdall", "org/tailspin", "ssh"]) == []
     )
 
 

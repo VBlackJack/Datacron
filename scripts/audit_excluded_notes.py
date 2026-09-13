@@ -251,7 +251,7 @@ def _render(
         f"Vault: `{_ascii(str(root))}`",
         "Mode: read-only; no note was moved, modified, or reindexed.",
         "",
-        "## Verdict for Julien",
+        "## Operator verdict",
         "",
         f"The integrity scan sees {scan_count:,} Markdown notes and the index contains "
         f"{index_count:,}, leaving exactly {len(rows):,} excluded notes.",

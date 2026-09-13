@@ -44,7 +44,7 @@ def test_selector_uses_real_levels_and_ignores_fenced_headings() -> None:
 
 def _candidate(
     *,
-    source_content: str = "The current Windows team employer is Worldline.",
+    source_content: str = "The current Windows team employer is Woodgrove.",
 ) -> Candidate:
     target = SectionAssertion(
         note_id="01HQXR7K9YZ8M2N3PQRSTV4WX5",
@@ -54,7 +54,7 @@ def _candidate(
         chunk_id="01HQXR7K9YZ8M2N3PQRSTV4WX5::identity/employer::0000",
         line_start=5,
         line_end=7,
-        content="The Windows team employer is Magellan.",
+        content="The Windows team employer is Tailspin.",
     )
     source = SectionAssertion(
         note_id="01HQXR7K9YZ8M2N3PQRSTV4WX6",

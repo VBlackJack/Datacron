@@ -22,6 +22,7 @@ from uuid import uuid4
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.logger import get_logger
 from datacron.mcp.bounds import bounded_count as _bounded_count
+from datacron.mcp.guidance import ERROR_ACTIONS
 from datacron.mcp.sandbox import (
     sanitize_metadata_value,
 )
@@ -50,6 +51,9 @@ def _error_response(tool: str, exc: BaseException, started: float, **fields: Any
     code = getattr(exc, "code", None)
     if code is not None:
         error["code"] = code
+    action = ERROR_ACTIONS.get(code or type(exc).__name__)
+    if action:
+        error["next_action"] = action
     return {"error": error}
 
 
@@ -78,6 +82,7 @@ def _internal_error_response(tool: str, started: float, **fields: Any) -> dict[s
     )
     payload["error"]["code"] = _INTERNAL_ERROR_CODE
     payload["error"]["correlation_id"] = correlation_id
+    payload["error"]["next_action"] = ERROR_ACTIONS[_INTERNAL_ERROR_CODE]
     return payload
 
 

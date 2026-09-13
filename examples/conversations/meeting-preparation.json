@@ -1,0 +1,20 @@
+{
+  "name": "meeting-preparation",
+  "turns": [
+    "Read the meeting source and project state; prepare the next discussion."
+  ],
+  "minimum_sessions": 1,
+  "required_tools": {
+    "get_note": 1
+  },
+  "required_final_text": [
+    "waiting"
+  ],
+  "forbidden_final_text": [
+    "reminder scheduled"
+  ],
+  "cited_paths": [
+    "project.md"
+  ],
+  "verify_writes": true
+}

@@ -63,6 +63,9 @@ READ_ONLY_CALLS: Final[Mapping[str, Mapping[str, object]]] = MappingProxyType(
         "contradiction_scan": MappingProxyType({"mode": "scan", "detail": "summary"}),
         "get_health": MappingProxyType({"detail": "summary"}),
         "get_note_history": MappingProxyType({"note": "source.md", "limit": 20}),
+        "get_write_progress": MappingProxyType(
+            {"requests": [{"note": "source.md", "request_id": "probe"}]}
+        ),
         "audit_query": MappingProxyType({"limit": 20}),
     }
 )
@@ -84,6 +87,7 @@ _MIXED_READ_SEQUENCES: Final[tuple[tuple[str, ...], ...]] = (
         "get_backlinks",
         "get_health",
         "get_note_history",
+        "get_write_progress",
     ),
     (
         "get_note",

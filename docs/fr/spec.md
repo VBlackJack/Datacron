@@ -9,7 +9,6 @@ tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 **Français** | [English](../en/spec.md)
 
 > **Statut** : Spec v2.0 - normative pour l'implémentation livrée par cette version
-> **Auteur** : Julien Bombled
 > **Date** : 2026-08-30
 > **Remplace** : v1.1 (2026-05-17)
 > **Licence** : [Apache 2.0](../../LICENSE)
@@ -264,6 +263,7 @@ seuls les tools de lecture, advisory et opérationnels restent exposés.
 | Écriture | `move_note_section` | Prévisualise ou applique un déplacement exact de sous-arbre dans une note, avec CAS obligatoire |
 | Écriture | `revert_note` | Restaure les octets exacts d'une version d'historique adressée par hash |
 | Écriture | `apply_organization_manifest` | Valide puis applique, après confirmation exacte, un bundle d'organisation adressé par contenu |
+| Opérationnel | `get_write_progress` | Suivi des reçus multi-notes, conflits et indexations, en lecture seule. |
 | Opérationnel | `get_note_history` | Liste les métadonnées d'opérations validées d'une note sans lire les anciens octets |
 | Opérationnel | `audit_query` | Filtre le journal validé par période, tool ou note sans le modifier |
 

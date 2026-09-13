@@ -23,6 +23,7 @@ from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
 from datacron.core.models import SearchResult
 from datacron.core.paths import PathConfinementError
 from datacron.core.temporal import rerank_temporal
+from datacron.core.vault import DuplicateNoteIdentityError
 from datacron.indexing.reconcile import ReconcileStats, reconcile
 from datacron.indexing.ripgrep import (
     RegexFallbackError,
@@ -97,6 +98,8 @@ async def _search_text_impl(
             group_by_note=group_by_note,
             timings_ms=timings_ms,
         )
+    except DuplicateNoteIdentityError as exc:
+        return _error_response("search_text", exc, started, query=query)
     except Exception:
         return _internal_error_response("search_text", started, query=query)
 
@@ -319,7 +322,13 @@ async def _search_regex_impl(
         )
         raw_results = _filter_admitted_results(app, raw_results)
         raw_results = await protect_results(app, raw_results)
-    except (FileNotFoundError, RegexFallbackError, RegexGlobError, RipgrepOutputError) as exc:
+    except (
+        FileNotFoundError,
+        RegexFallbackError,
+        RegexGlobError,
+        RipgrepOutputError,
+        DuplicateNoteIdentityError,
+    ) as exc:
         mapped_exc = ValueError(str(exc)) if isinstance(exc, RegexFallbackError) else exc
         return _error_response("search_regex", mapped_exc, started, pattern=pattern, glob=glob)
     except RipgrepError as exc:
@@ -467,6 +476,8 @@ def _search_result_summary(
     }
     if note_matches is not None:
         summary["note_matches"] = note_matches
+    if result.lifecycle is not None:
+        summary["lifecycle"] = result.lifecycle
     return summary
 
 
@@ -600,13 +611,17 @@ async def _find_backlink_sources(
         if not await _chunk_links_to(app, chunk.wikilinks_out, target_note_id, alias_cache):
             continue
         seen_chunk_ids.add(chunk.chunk_id)
+        protected = await protect_results(app, [SearchResult(chunk=chunk, score=0, snippet="")])
+        safe_chunk = protected[0].chunk
         sources.append(
             {
-                "source_chunk_id": _redact_retrieval_text(app, chunk.chunk_id),
-                "source_note_id": chunk.note_id,
-                "source_note_rel_path": _redact_retrieval_text(app, chunk.note_rel_path),
-                "header_path": _sanitize_retrieval_metadata(app, chunk.header_path),
-                "section_title": _sanitize_optional_retrieval_metadata(app, chunk.section_title),
+                "source_chunk_id": _redact_retrieval_text(app, safe_chunk.chunk_id),
+                "source_note_id": safe_chunk.note_id,
+                "source_note_rel_path": _redact_retrieval_text(app, safe_chunk.note_rel_path),
+                "header_path": _sanitize_retrieval_metadata(app, safe_chunk.header_path),
+                "section_title": _sanitize_optional_retrieval_metadata(
+                    app, safe_chunk.section_title
+                ),
             }
         )
         if len(sources) >= limit:

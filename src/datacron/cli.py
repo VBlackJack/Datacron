@@ -87,6 +87,7 @@ from datacron.installers.protocol import (
     uninstall_memory_protocol,
 )
 from datacron.installers.protocol_status import protocol_status
+from datacron.organization.library_cli import app as library_app
 from datacron.scrubber import CanaryInitializationError, ScrubState, initialize_canaries
 from datacron.setup_wizard import (
     CLIENT_ALL,
@@ -241,6 +242,7 @@ ops_app = typer.Typer(
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(protocol_app, name="protocol")
 app.add_typer(ops_app, name="ops")
+app.add_typer(library_app, name="library")
 
 
 def _version_callback(value: bool) -> None:
@@ -261,7 +263,7 @@ def main(
     ),
 ) -> None:
     """Configure process logging except for the strictly read-only planner."""
-    if ctx.invoked_subcommand != "reorganize":
+    if ctx.invoked_subcommand not in {"reorganize", "library"}:
         configure_logging()
 
 

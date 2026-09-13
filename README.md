@@ -18,6 +18,11 @@ Recover project context, prepare for a conversation, and keep track of commitmen
 Datacron gives your assistant durable memory in readable, editable Markdown. Your notes
 remain usable independently of the client you choose.
 
+**Offline library (unreleased, available from source):** build a browsable Markdown
+library for Obsidian or another local reader, with a home page and topic indexes.
+Review proposed rewrites, splits and archives before changing the source vault.
+See the [offline library guide](docs/en/human-library.md).
+
 | Need | Example request to your assistant |
 |---|---|
 | Resume a project | "Where did we leave off? Find the decisions and next actions." |
@@ -88,6 +93,9 @@ remain readable and are not automatically converted.
 
 The server operates locally. Your client may send returned excerpts to its model provider;
 see [privacy and security](#privacy-and-security).
+
+For cached session contracts, archive ranking, resumable write tracking and
+conversation evaluation, see [daily workflow improvements](docs/en/daily-workflows.md).
 
 ## Quick start
 
@@ -204,10 +212,10 @@ clear error and create no file.
 To enable writing to a specific subfolder:
 
 ```powershell
-$env:DATACRON_VAULT_ROOT = "G:\_DATA"
-$env:DATACRON_READ_PATHS = "G:\_DATA"
-$env:DATACRON_WRITE_PATHS = "G:\_DATA\_memory"
-datacron mcp serve --vault G:\_DATA
+$env:DATACRON_VAULT_ROOT = "C:\Notes"
+$env:DATACRON_READ_PATHS = "C:\Notes"
+$env:DATACRON_WRITE_PATHS = "C:\Notes\_memory"
+datacron mcp serve --vault C:\Notes
 ```
 
 `datacron setup` can also apply the allowlist machine-wide (user environment
@@ -327,6 +335,7 @@ ULIDs, history, and the operation journal.
 | Tool | Description |
 |---|---|
 | `get_health` | returns the real state of index freshness, integrity, checksum, durability, and invariants |
+| `get_write_progress` | Inspect multi-note write receipts, conflicts and current indexing without retrying writes. |
 | `get_note_history` | lists the committed operation metadata of a note without reading historical content or modifying the journal |
 | `audit_query` | queries operation metadata by period, tool, or note without modifying the journal or the vault |
 
@@ -444,6 +453,7 @@ To get started:
 - [Use Datacron with Ollama](docs/en/ollama.md)
 - [Frequently asked questions](docs/en/faq.md)
 - [User guide](docs/en/user-guide.md)
+- [Offline library and note consolidation](docs/en/human-library.md)
 - [Daily memory, people, and commitments](docs/en/memory-discipline.md)
 
 Technical references:

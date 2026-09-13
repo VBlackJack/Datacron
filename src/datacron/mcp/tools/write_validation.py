@@ -131,6 +131,7 @@ def _validate_set_frontmatter_request(
     invalid_at: str | None,
     invalidated_by: str | None,
     last_id: str | None = None,
+    archived: bool | None = None,
 ) -> tuple[
     str,
     str | None,
@@ -155,6 +156,7 @@ def _validate_set_frontmatter_request(
             invalid_at,
             invalidated_by,
             last_id,
+            archived,
         )
     ):
         raise ValueError("nothing to update")

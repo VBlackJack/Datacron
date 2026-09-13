@@ -15,7 +15,7 @@ on:
         type: boolean
         default: true
   push:
-    branches: [main, "claude-code/**", "codex/**"]
+    branches: [main, "feature/**", "fix/**", "delivery/**"]
   pull_request:
     branches: [main]
 
@@ -71,6 +71,10 @@ jobs:
 
       - name: Blocking invariant gate
         run: uv run --python "${{ matrix.python-version }}" --frozen --extra dev python scripts/check_invariants.py
+
+      - name: Require Windows symlink test capability
+        if: runner.os == 'Windows'
+        run: uv run --frozen python scripts/check_symlink_support.py
 
       - name: Full regression suite with coverage
         run: uv run --python "${{ matrix.python-version }}" --frozen --extra dev pytest --cov=datacron --cov-report=term-missing

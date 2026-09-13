@@ -10,14 +10,86 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, Any
 
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
+from datacron.core.hashing import hash_text
+from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
 from datacron.core.models import Chunk, Note, SearchResult
+from datacron.core.security import REDACTED
+from datacron.indexing.chunker import _content_line_offset
 from datacron.mcp.sandbox import VAULT_CONTENT_CLOSE
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
+
+# '@' cannot occur in a heading slug, keeping aliases disjoint from stored IDs.
+OPAQUE_CHUNK_PATTERN = re.compile(r"^([0-9A-HJKMNP-TV-Z]{26})::@redacted-[0-9a-f]{64}::0000$")
+
+
+def opaque_chunk_id(chunk: Chunk) -> str:
+    """Return a deterministic, content-free retrieval alias for a stored chunk."""
+    return f"{chunk.note_id}::@redacted-{hash_text(chunk.chunk_id)}::0000"
+
+
+def protect_chunk_metadata(app: DatacronApp, note: Note, chunks: list[Chunk]) -> list[Chunk]:
+    """Protect heading ancestry before exporting text or its derived slug identifiers.
+
+    Stored chunks and hashes remain unchanged. An opaque alias can be resolved
+    against the indexed parent without disclosing the original heading slug.
+    """
+    if not app.secret_redactor.retrieval_enabled(app.settings):
+        return chunks
+    if app.secret_redactor.redact_text(note.raw_content) == note.raw_content:
+        return chunks
+    headings = markdown_headings(note.content.splitlines(keepends=True))
+    offset = _content_line_offset(note)
+    unsafe = {
+        item.start
+        for item in headings
+        if app.secret_redactor.redact_fragment(
+            item.text, note.raw_content, offset + item.start + 1, offset + item.end
+        )
+        != item.text
+    }
+    protected: list[Chunk] = []
+    for chunk in chunks:
+        safe_chunk = chunk
+        ancestors: list[MarkdownHeading] = []
+        for item in headings:
+            if item.start >= chunk.line_start - offset:
+                break
+            while ancestors and ancestors[-1].level >= item.level:
+                ancestors.pop()
+            ancestors.append(item)
+        if any(item.start in unsafe for item in ancestors):
+            safe_chunk = chunk.model_copy(
+                update={
+                    "chunk_id": opaque_chunk_id(chunk),
+                    "header_path": REDACTED,
+                    "section_title": REDACTED if chunk.section_title is not None else None,
+                }
+            )
+        protected.append(safe_chunk)
+    return protected
+
+
+def protect_note_title(app: DatacronApp, note: Note) -> str:
+    """Protect a title derived from a heading inside a context-sensitive secret."""
+    if not app.secret_redactor.retrieval_enabled(app.settings):
+        return note.title
+    offset = _content_line_offset(note)
+    for item in markdown_headings(note.content.splitlines(keepends=True)):
+        if (
+            item.text == note.title
+            and app.secret_redactor.redact_fragment(
+                item.text, note.raw_content, offset + item.start + 1, offset + item.end
+            )
+            != item.text
+        ):
+            return REDACTED
+    return app.secret_redactor.redact_text(note.title)
 
 
 async def protect_results(app: DatacronApp, results: list[SearchResult]) -> list[SearchResult]:
@@ -26,6 +98,7 @@ async def protect_results(app: DatacronApp, results: list[SearchResult]) -> list
         return results
     parents: dict[str, Note] = {}
     live_chunks: dict[str, dict[str, Chunk]] = {}
+    safe_chunks: dict[str, dict[str, Chunk]] = {}
     protected = []
     for result in results:
         chunk = result.chunk
@@ -35,6 +108,14 @@ async def protect_results(app: DatacronApp, results: list[SearchResult]) -> list
                 app.scope.authorize_note_rel_path(path)
             )
             live_chunks[path] = {item.chunk_id: item for item in app.chunker.chunk(parents[path])}
+            originals = list(live_chunks[path].values())
+            safe_chunks[path] = dict(
+                zip(
+                    live_chunks[path],
+                    protect_chunk_metadata(app, parents[path], originals),
+                    strict=True,
+                )
+            )
         note = parents[path]
         # Compare the actual returned chunk, not a later index metadata snapshot:
         # another request may have reindexed between search and this read. A
@@ -44,13 +125,13 @@ async def protect_results(app: DatacronApp, results: list[SearchResult]) -> list
         safe = app.secret_redactor.redact_fragment(
             chunk.content, note.raw_content, chunk.line_start, chunk.line_end
         )
-        safe_result = result
-        if safe != chunk.content:
-            safe_result = result.model_copy(
+        safe_result = result.model_copy(update={"chunk": safe_chunks[path][chunk.chunk_id]})
+        if safe != chunk.content or safe_result.chunk != chunk:
+            safe_result = safe_result.model_copy(
                 update={
                     "snippet": safe,
                     "redaction_source": safe,
-                    "chunk": chunk.model_copy(update={"content": safe}),
+                    "chunk": safe_result.chunk.model_copy(update={"content": safe}),
                 }
             )
         protected.append(safe_result)

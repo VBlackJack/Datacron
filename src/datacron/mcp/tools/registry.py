@@ -72,6 +72,8 @@ from datacron.mcp.tools.write import (
     _revert_note_impl,
     _set_frontmatter_impl,
 )
+from datacron.mcp.tools.write_progress import WriteReference
+from datacron.mcp.tools.write_progress import get_write_progress as build_write_progress
 
 _READ_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
     read_only_hint=True,
@@ -140,6 +142,8 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
             "subject finds ranked candidates without repairing the index. Coverage is"
             " explicit; candidates never establish a person's identity. Read next "
             "pages before relying on incomplete context."
+            " Send known_contract_hash only when that exact contract is already in"
+            " context; a match returns its identity without repeating instructions."
         ),
         annotations=_READ_ANNOTATIONS,
     )
@@ -148,11 +152,17 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         domain: SessionDomain = "all",
         note_paths: list[str] | None = None,
         max_tokens: int | None = None,
+        known_contract_hash: str | None = None,
     ) -> SessionContextOutput:
         return cast(
             "SessionContextOutput",
             await build_session_context(
-                app, subject=subject, domain=domain, note_paths=note_paths, max_tokens=max_tokens
+                app,
+                subject=subject,
+                domain=domain,
+                note_paths=note_paths,
+                max_tokens=max_tokens,
+                known_contract_hash=known_contract_hash,
             ),
         )
 
@@ -502,6 +512,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         invalid_at: str | None = None,
         invalidated_by: str | None = None,
         last_id: str | None = None,
+        archived: bool | None = None,
         expected_hash: str | None = None,
         request_id: str | None = None,
     ) -> SetFrontmatterOutput:
@@ -519,6 +530,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 invalid_at=invalid_at,
                 invalidated_by=invalidated_by,
                 last_id=last_id,
+                archived=archived,
                 expected_hash=expected_hash,
                 actor=app.identity_provider.identify(ctx).actor,
                 request_id=request_id,
@@ -792,6 +804,20 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 actor=app.identity_provider.identify(ctx).actor,
             ),
         )
+
+    @server.tool(
+        name="get_write_progress",
+        title="Check multi-note write progress",
+        description=(
+            "Check retained note/request_id references after a partial multi-note update. "
+            "Optionally include each original expected_hash to detect conflicts. Returns "
+            "per-request receipt, current-byte and index evidence with next actions. "
+            "Never writes or retries. Missing receipts do not prove no pending write exists."
+        ),
+        annotations=_READ_ANNOTATIONS,
+    )
+    async def get_write_progress(requests: list[WriteReference]) -> dict[str, Any]:
+        return await build_write_progress(app, requests)
 
     @server.tool(
         name="get_note_history",

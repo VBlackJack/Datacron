@@ -269,10 +269,10 @@ Write tools are **disabled by default**. Without `DATACRON_WRITE_PATHS` they ret
 error and create no file. To allow writing to a specific subfolder:
 
 ```powershell
-$env:DATACRON_VAULT_ROOT = "G:\_DATA"
-$env:DATACRON_READ_PATHS = "G:\_DATA"
-$env:DATACRON_WRITE_PATHS = "G:\_DATA\_memory;G:\_DATA\_drafts;G:\_DATA\_journal"
-datacron mcp serve --vault G:\_DATA
+$env:DATACRON_VAULT_ROOT = "C:\Notes"
+$env:DATACRON_READ_PATHS = "C:\Notes"
+$env:DATACRON_WRITE_PATHS = "C:\Notes\_memory;C:\Notes\_drafts;C:\Notes\_journal"
+datacron mcp serve --vault C:\Notes
 ```
 
 Writing stays confined to `DATACRON_WRITE_PATHS`, atomic (temp file + `os.replace`),

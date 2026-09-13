@@ -32,10 +32,13 @@ delegate here so the two paths cannot drift.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import TypedDict
 
 from datacron.core.logger import get_logger
+from datacron.core.models import Note
 from datacron.core.protocols import ASTChunker, FTS5Store, VaultReader
+from datacron.core.vault import DuplicateNoteIdentityError
 
 __all__ = ["IndexProgress", "ReconcileStats", "reconcile"]
 
@@ -79,6 +82,7 @@ async def reconcile(
     """
     indexed = await store.list_indexed_notes_with_mtime()
     live = await reader.stat_notes()
+    prepared = await _prepare_live_notes(reader, live, indexed, mtime_gate=mtime_gate)
 
     reindexed = 0
     deleted = 0
@@ -91,11 +95,11 @@ async def reconcile(
     # while keeping a stable frontmatter id, delete_note() clears the old row by
     # note_id and the live loop below reinserts it at the new path.
     for rel_path, (note_id, _content_hash, _fs_mtime) in indexed.items():
-        if rel_path not in live:
+        if rel_path not in live or (rel_path in prepared and prepared[rel_path].id != note_id):
             await store.delete_note(note_id)
             deleted += 1
 
-    for rel_path, (path, st_mtime_ns) in live.items():
+    for rel_path, (_path, st_mtime_ns) in live.items():
         entry = indexed.get(rel_path)
 
         # Cheap path: mtime unchanged -> trust the index, do not read or hash.
@@ -106,9 +110,9 @@ async def reconcile(
                 progress(completed, len(live))
             continue
 
-        note = await reader.read_note(path)
+        note = prepared[rel_path]
 
-        if entry is not None and entry[1] == note.content_hash:
+        if entry is not None and entry[0] == note.id and entry[1] == note.content_hash:
             # Content unchanged. If only the mtime moved, refresh the stored
             # mtime so the next pass can skip this note via the gate above.
             if entry[2] != st_mtime_ns:
@@ -120,11 +124,6 @@ async def reconcile(
             continue
 
         # New note, or content actually changed.
-        if entry is not None and entry[0] != note.id:
-            # Same path, different ULID (e.g. an `id` was added to frontmatter):
-            # drop the stale note before inserting the new one.
-            await store.delete_note(entry[0])
-            deleted += 1
         await store.upsert_note(note, chunker.chunk(note), fs_mtime_ns=st_mtime_ns)
         reindexed += 1
         completed += 1
@@ -150,3 +149,31 @@ async def reconcile(
         mtime_gate,
     )
     return stats
+
+
+async def _prepare_live_notes(
+    reader: VaultReader,
+    live: dict[str, tuple[Path, int]],
+    indexed: dict[str, tuple[str, str, int | None]],
+    *,
+    mtime_gate: bool,
+) -> dict[str, Note]:
+    """Validate projected identities before deleting or replacing any index rows.
+
+    Unchanged notes retain the existing mtime fast path. Changed notes are read
+    once and reused by the commit loop, including when two paths exchange IDs.
+    """
+    prepared: dict[str, Note] = {}
+    owners: dict[str, str] = {}
+    for rel_path, (path, mtime) in live.items():
+        entry = indexed.get(rel_path)
+        if entry is not None and mtime_gate and entry[2] is not None and entry[2] == mtime:
+            note_id = entry[0]
+        else:
+            note = await reader.read_note(path)
+            prepared[rel_path] = note
+            note_id = note.id
+        if note_id in owners:
+            raise DuplicateNoteIdentityError(note_id, owners[note_id], rel_path)
+        owners[note_id] = rel_path
+    return prepared

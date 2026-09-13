@@ -44,6 +44,7 @@ from datacron.core.models import Chunk, ChunkType, IndexStats, Note, SearchResul
 from datacron.core.paths import read_ulid_mappings
 from datacron.core.query_expansion import expand_terms, normalize_term_map
 from datacron.core.temporal import TemporalMeta
+from datacron.core.vault import DuplicateNoteIdentityError
 
 __all__ = ["SQLiteFTS5Store"]
 
@@ -665,6 +666,12 @@ class SQLiteFTS5Store:
         indexed_at = datetime.now(tz=UTC).isoformat()
         await connection.execute("BEGIN")
         try:
+            async with connection.execute(
+                "SELECT rel_path FROM notes WHERE note_id = ?", (note.id,)
+            ) as cursor:
+                owner = await cursor.fetchone()
+            if owner is not None and owner[0] != note.rel_path:
+                raise DuplicateNoteIdentityError(note.id, str(owner[0]), note.rel_path)
             await connection.execute(
                 "DELETE FROM chunks_fts WHERE note_id = ? OR note_rel_path = ?",
                 (note.id, note.rel_path),
@@ -1498,6 +1505,14 @@ def _temporal_meta_from_frontmatter(value: Any) -> TemporalMeta:
         valid_from=_optional_str(parsed.get("valid_from")),
         invalid_at=_optional_str(parsed.get("invalid_at")),
         invalidated_by=_optional_str(parsed.get("invalidated_by")),
+        archived=(
+            parsed.get("archived") is True
+            or str(parsed.get("status", "")).casefold() == "archived"
+            or bool(
+                {"meta/archive", "memory/archive"}
+                & {tag.casefold() for tag in coerce_string_list(parsed.get("tags"))}
+            )
+        ),
     )
 
 

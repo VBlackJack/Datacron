@@ -48,8 +48,10 @@ def replayable_write(
         parameters = {
             k: v for k, v in bound.arguments.items() if k not in {"app", "actor", "request_id"}
         }
-        if tool == "set_frontmatter" and parameters.get("last_id") is None:
-            parameters.pop("last_id", None)
+        if tool == "set_frontmatter":
+            for added_field in ("last_id", "archived"):
+                if parameters.get(added_field) is None:
+                    parameters.pop(added_field, None)
         fingerprint = hash_text(
             json.dumps(
                 {"tool": tool, "arguments": parameters},

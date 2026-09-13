@@ -16,6 +16,11 @@ Retrouver le contexte d'un projet, préparer un échange et garder la trace des 
 Datacron donne à ton assistant accès à une mémoire durable, lisible et modifiable en Markdown.
 Les notes restent utilisables indépendamment du client choisi.
 
+**Bibliothèque hors ligne (non publiée, disponible depuis les sources) :** préparez une
+bibliothèque Markdown consultable dans Obsidian ou un lecteur local, avec accueil et
+index thématiques. Révisez les réécritures, découpages et archives proposés avant de
+modifier le vault source. Voir le [guide hors ligne](docs/fr/human-library.md).
+
 | Besoin | Exemple de demande à ton assistant |
 |---|---|
 | Reprendre un projet | "Où en étions-nous ? Retrouve les décisions et les prochaines actions." |
@@ -87,6 +92,9 @@ Les anciennes notes en prose restent à consulter ; elles ne sont pas converties
 
 Le serveur travaille localement. Ton client peut transmettre les extraits retournés à son
 fournisseur de modèle : voir [vie privée et sécurité](#vie-privée-et-sécurité).
+
+Pour le contexte de session, les archives, la reprise des écritures et les évaluations,
+consulte [les parcours quotidiens](docs/fr/daily-workflows.md).
 
 ## Démarrage rapide
 
@@ -204,10 +212,10 @@ d'écriture renvoient une erreur claire et ne créent aucun fichier.
 Pour activer l'écriture sur un sous-dossier précis :
 
 ```powershell
-$env:DATACRON_VAULT_ROOT = "G:\_DATA"
-$env:DATACRON_READ_PATHS = "G:\_DATA"
-$env:DATACRON_WRITE_PATHS = "G:\_DATA\_memory"
-datacron mcp serve --vault G:\_DATA
+$env:DATACRON_VAULT_ROOT = "C:\Notes"
+$env:DATACRON_READ_PATHS = "C:\Notes"
+$env:DATACRON_WRITE_PATHS = "C:\Notes\_memory"
+datacron mcp serve --vault C:\Notes
 ```
 
 `datacron setup` peut aussi poser l'allowlist au niveau du poste (variable
@@ -327,6 +335,7 @@ les logs, les ULID internes, l'historique et le journal d'opérations.
 | Tool | Description |
 |---|---|
 | `get_health` | retourne l'état réel de fraîcheur de l'index, d'intégrité, de checksum, de durabilité et des invariants |
+| `get_write_progress` | Consulte les reçus multi-notes, conflits et indexations actuelles sans rejouer les écritures. |
 | `get_note_history` | liste les métadonnées d'opérations validées d'une note sans lire le contenu historique ni modifier le journal |
 | `audit_query` | interroge les métadonnées d'opérations par période, tool ou note sans modifier le journal ni le vault |
 
@@ -444,6 +453,7 @@ Pour démarrer :
 - [Utiliser Datacron avec Ollama](docs/fr/ollama.md)
 - [Questions fréquentes](docs/fr/faq.md)
 - [Guide utilisateur](docs/fr/user-guide.md)
+- [Bibliothèque hors ligne et consolidation des notes](docs/fr/human-library.md)
 - [Mémoire quotidienne, personnes et engagements](docs/fr/memory-discipline.md)
 
 Références techniques :

@@ -1,0 +1,111 @@
+# Copyright 2026 Julien Bombled
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+"""Deterministic grading of exported conversation traces, independent of a provider."""
+
+from __future__ import annotations
+
+from collections import Counter
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
+
+
+class ConversationCase(BaseModel):
+    """Explicit acceptance criteria; literal checks do not certify semantic truth."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    turns: list[str] = Field(default_factory=list)
+    minimum_sessions: int = Field(default=1, ge=1)
+    required_tools: dict[str, int] = Field(default_factory=dict)
+    required_final_text: list[str] = Field(default_factory=list)
+    forbidden_final_text: list[str] = Field(default_factory=list)
+    cited_paths: list[str] = Field(default_factory=list)
+    verify_writes: bool = True
+
+
+class TraceEvent(BaseModel):
+    """One observed tool exchange or final assistant answer with session identity."""
+
+    model_config = ConfigDict(extra="forbid")
+    session: str = Field(min_length=1)
+    tool: str | None = None
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+    answer: str | None = None
+
+
+def grade(case: ConversationCase, events: list[TraceEvent]) -> dict[str, Any]:
+    """Check declared outcomes, successful source reads and post-write verification."""
+    failures = []
+    if len({event.session for event in events}) < case.minimum_sessions:
+        failures.append("insufficient_sessions")
+    calls = Counter(e.tool for e in events if e.tool and "error" not in e.result)
+    for tool, minimum in case.required_tools.items():
+        if calls[tool] < minimum:
+            failures.append(f"missing_tool:{tool}")
+    final = next((e.answer for e in reversed(events) if e.answer is not None), "") or ""
+    if not final.strip():
+        failures.append("missing_final_answer")
+    for text in case.required_final_text:
+        if text.casefold() not in final.casefold():
+            failures.append(f"missing_final_text:{text}")
+    for text in case.forbidden_final_text:
+        if text.casefold() in final.casefold():
+            failures.append(f"forbidden_final_text:{text}")
+    read_paths = {
+        str(e.result.get("rel_path"))
+        for e in events
+        if e.tool == "get_note"
+        and "error" not in e.result
+        and e.result.get("content_hash")
+        and e.result.get("content")
+    }
+    for path in case.cited_paths:
+        if path not in read_paths or path not in final:
+            failures.append(f"unverified_citation:{path}")
+    if case.verify_writes:
+        failures.extend(_write_failures(events))
+    return {
+        "case": case.name,
+        "passed": not failures,
+        "failures": failures,
+        "sessions": len({e.session for e in events}),
+        "tool_calls": sum(calls.values()),
+        "evidence": "supplied_trace_and_literal_oracles_not_semantic_truth",
+    }
+
+
+def _write_failures(events: list[TraceEvent]) -> list[str]:
+    failures: list[str] = []
+    for index, event in enumerate(events):
+        if event.tool not in MUTATING_TOOL_NAMES or "error" in event.result:
+            continue
+        if not event.result.get("replayed") and event.result.get("indexed") is not True:
+            failures.append(f"unconfirmed_index:{index}")
+            continue
+        target = event.arguments.get("rel_path")
+        content_hash = event.result.get("content_hash")
+        if (
+            not target
+            or not content_hash
+            or not any(
+                later.tool == "get_note"
+                and later.result.get("rel_path") == target
+                and (
+                    event.result.get("replayed") or later.result.get("content_hash") == content_hash
+                )
+                and "error" not in later.result
+                and bool(later.result.get("content"))
+                for later in events[index + 1 :]
+            )
+        ):
+            failures.append(f"write_not_reread:{index}")
+    return failures

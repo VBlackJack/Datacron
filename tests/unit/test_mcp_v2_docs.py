@@ -208,9 +208,9 @@ def test_mcp_v2_docs_readme_catalogs_match_runtime_manifest(
     table_tools = _table_tool_names(content)
     table_mutators = _table_tool_names(_section(content, write_heading, operational_heading))
 
-    assert len(MCP_TOOL_CAPABILITIES) == 22
+    assert len(MCP_TOOL_CAPABILITIES) == 23
     assert len(MUTATING_TOOL_NAMES) == 10
-    assert len(READ_ONLY_TOOL_NAMES) == 12
+    assert len(READ_ONLY_TOOL_NAMES) == 13
     assert available_tools == set(MUTATING_TOOL_NAMES)
     assert table_tools == set(MCP_TOOL_CAPABILITIES)
     assert table_mutators == set(MUTATING_TOOL_NAMES)
@@ -304,9 +304,9 @@ def test_mcp_v2_docs_public_catalog_matches_runtime_manifest(relative_path: Path
         if f"`{tool_name}`" in line
     }
 
-    assert len(MCP_TOOL_CAPABILITIES) == 22
+    assert len(MCP_TOOL_CAPABILITIES) == 23
     assert len(MUTATING_TOOL_NAMES) == 10
-    assert len(READ_ONLY_TOOL_NAMES) == 12
+    assert len(READ_ONLY_TOOL_NAMES) == 13
     assert documented_tools == set(MCP_TOOL_CAPABILITIES)
     assert documented_mutators == set(MUTATING_TOOL_NAMES)
     assert documented_tools >= BL0038_TOOL_NAMES
@@ -546,14 +546,12 @@ def test_mcp_v2_docs_svg_and_source_descriptions_use_mcpserver() -> None:
         (
             Path("docs/fr/architecture.md"),
             "v1 = Claude Desktop + Code uniquement. Cowork via tunnel HTTPS en v1.x.",
-            "Document v2.2 vérifié le 2026-08-30 par rapport à l'implémentation "
-            "livrée par cette version.",
+            "Mis à jour le 2026-09-13 pour l'implémentation source",
         ),
         (
             Path("docs/en/architecture.md"),
             "v1 = Claude Desktop + Code only. Cowork via HTTPS tunnel in v1.x.",
-            "v2.2 document verified on 2026-08-30 against the implementation "
-            "delivered by this version.",
+            "Updated on 2026-09-13 for the source implementation",
         ),
     ],
 )

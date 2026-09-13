@@ -43,6 +43,12 @@ from datacron.mcp.tools.payloads import (
     _sanitize_retrieval_metadata,
     _validate_frontmatter_filter,
 )
+from datacron.mcp.tools.retrieval import (
+    OPAQUE_CHUNK_PATTERN,
+    opaque_chunk_id,
+    protect_chunk_metadata,
+    protect_note_title,
+)
 from datacron.mcp.tools.search import _repair_index_on_read
 
 if TYPE_CHECKING:
@@ -412,13 +418,15 @@ def _note_summary(app: DatacronApp, note: Note) -> dict[str, Any]:
 
 def _sanitized_note_metadata(app: DatacronApp, note: Note) -> dict[str, Any]:
     metadata = {
-        "title": note.title,
+        "title": protect_note_title(app, note),
         "tags": list(note.tags),
         "aliases": list(note.aliases),
         "frontmatter": dict(note.frontmatter),
     }
     if app.secret_redactor.retrieval_enabled(app.settings):
         metadata = app.secret_redactor.redact_value(metadata)
+        if metadata["frontmatter"].get("title") == note.title:
+            metadata["frontmatter"]["title"] = metadata["title"]
     return sanitize_payload_strings(metadata)
 
 
@@ -454,11 +462,10 @@ async def _resolve_note_by_ulid(app: DatacronApp, note_id: str) -> Note | None:
         if indexed_note is not None and indexed_note.id == note_id:
             return indexed_note
 
-    # The sidecar is authoritative when it covers every live note path. A
-    # healthy complete mapping can reject an unknown ULID after a stat-only
-    # sweep, without parsing and hashing the whole vault.
-    sidecar_note, sidecar_is_conclusive = await _resolve_note_from_sidecar(app, note_id)
-    if sidecar_note is not None or (sidecar_is_conclusive and indexed_rel_path is None):
+    # A sidecar hit is verified against current bytes. Path coverage alone
+    # cannot prove absence: a frontmatter ID may have changed since indexing.
+    sidecar_note = await _resolve_note_from_sidecar(app, note_id)
+    if sidecar_note is not None:
         return sidecar_note
 
     # Fallback: fresh notes can exist on disk before the next reindex.
@@ -471,11 +478,11 @@ async def _resolve_note_by_ulid(app: DatacronApp, note_id: str) -> Note | None:
 async def _resolve_note_from_sidecar(
     app: DatacronApp,
     note_id: str,
-) -> tuple[Note | None, bool]:
-    """Return a sidecar match and whether the lookup is authoritative."""
+) -> Note | None:
+    """Return a sidecar hit only after checking the live note identity."""
     sidecar_path = sidecar_dir(app.vault_root) / ULID_SIDECAR_FILENAME
     if not sidecar_path.is_file():
-        return None, False
+        return None
     try:
         mappings = await asyncio.to_thread(
             read_ulid_mappings,
@@ -483,19 +490,13 @@ async def _resolve_note_from_sidecar(
             require_string_pairs=True,
         )
     except (OSError, UnicodeError, ValueError):
-        return None, False
+        return None
 
     matching_paths = [rel_path for rel_path, mapped_id in mappings.items() if mapped_id == note_id]
     if len(matching_paths) == 1:
         note = await _try_read_note_by_rel_path(app, matching_paths[0])
-        return (note, True) if note is not None and note.id == note_id else (None, False)
-    if matching_paths:
-        return None, False
-    try:
-        live_paths = await app.vault_reader.stat_notes()
-    except OSError:
-        return None, False
-    return None, live_paths.keys() <= mappings.keys()
+        return note if note is not None and note.id == note_id else None
+    return None
 
 
 async def _try_read_note_by_rel_path(app: DatacronApp, rel_path: str) -> Note | None:
@@ -515,6 +516,9 @@ async def _resolve_chunk_payload(app: DatacronApp, id_or_path: str) -> dict[str,
         return None
     try:
         chunk = await app.store.get_chunk(id_or_path)
+        if chunk is None and (opaque_match := OPAQUE_CHUNK_PATTERN.fullmatch(id_or_path)):
+            candidates = await app.store.list_chunks_for_note(opaque_match[1])
+            chunk = next((item for item in candidates if opaque_chunk_id(item) == id_or_path), None)
     except RuntimeError as exc:
         raise ValueError("chunk_id cannot be resolved while the index is unavailable") from exc
     if chunk is None:
@@ -536,11 +540,17 @@ async def _resolve_chunk_payload(app: DatacronApp, id_or_path: str) -> dict[str,
             "indexed content_hash does not match current note bytes; reindex and retry"
         )
     chunks = await app.store.list_chunks_for_note(chunk.note_id)
-    prev_chunk_id, next_chunk_id = _chunk_neighbor_ids(chunks, chunk.chunk_id)
+    safe_chunks = protect_chunk_metadata(app, note, chunks)
+    safe_chunk = next(
+        safe
+        for original, safe in zip(chunks, safe_chunks, strict=True)
+        if original.chunk_id == chunk.chunk_id
+    )
+    prev_chunk_id, next_chunk_id = _chunk_neighbor_ids(safe_chunks, safe_chunk.chunk_id)
     return _build_chunk_payload(
         app,
         note,
-        chunk,
+        safe_chunk,
         prev_chunk_id=prev_chunk_id,
         next_chunk_id=next_chunk_id,
     )
@@ -614,7 +624,7 @@ def _build_chunk_payload(
         "chunk_id": _redact_retrieval_text(app, chunk.chunk_id),
         "note_id": chunk.note_id,
         "rel_path": _redact_retrieval_text(app, chunk.note_rel_path),
-        "title": _sanitize_retrieval_metadata(app, note.title),
+        "title": _sanitize_retrieval_metadata(app, protect_note_title(app, note)),
         "header_path": _sanitize_retrieval_metadata(app, chunk.header_path),
         "line_start": chunk.line_start,
         "line_end": chunk.line_end,
@@ -641,7 +651,7 @@ def _build_chunk_payload(
 
 
 def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
-    chunks = app.chunker.chunk(note)
+    chunks = protect_chunk_metadata(app, note, app.chunker.chunk(note))
     headings: list[dict[str, Any]] = []
     selected_headings = markdown_headings(note.content.splitlines(keepends=True))
     line_offset = _content_line_offset(note)
@@ -668,7 +678,7 @@ def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
     return {
         "id": note.id,
         "rel_path": _redact_retrieval_text(app, note.rel_path),
-        "title": _sanitize_retrieval_metadata(app, note.title),
+        "title": _sanitize_retrieval_metadata(app, protect_note_title(app, note)),
         "content_hash": note.content_hash,
         "note_content_hash": note.content_hash,
         "content_hash_contract": FRESHNESS_CONTRACT_ID,

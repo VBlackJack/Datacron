@@ -28,7 +28,7 @@ env/
 *.db-wal
 *.db-shm
 
-# Local-only directory (project convention): agent briefs, audits, studies,
+# Local-only directory (project convention): working briefs, audits, studies,
 # reviews, session reports, private eval data. Never committed.
 local/
 
@@ -56,10 +56,10 @@ logs/
 .env.local
 .env.*.local
 
-# Local agent session config
+# Local client configuration
 .claude/
 
-# AI / agent working artifacts -- kept local, never committed
+# Private workspace artifacts: never committed
 CLAUDE.md
 docs/agent-briefs/
 docs/reviews/

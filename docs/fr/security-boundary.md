@@ -90,6 +90,15 @@ $env:DATACRON_SECRET_REDACTION_PATTERNS = '["INTERNAL-[0-9]{8}"]'
 L'expurgation est une prévention de perte déterministe, pas une validation d'identifiants ni un
 nettoyage du vault. Des faux positifs sont possibles avec la valeur par défaut conservatrice.
 
+Les métadonnées des titres sont vérifiées dans la note parente complète, y compris
+avec les motifs multilignes personnalisés. Lorsqu'un titre protégé contribue au
+chemin d'un chunk, les cartes, recherches, backlinks et pointeurs de navigation
+renvoient un alias opaque à la place du slug du titre. Transmets cet alias inchangé
+à `get_note` : il retrouve le chunk indexé et conserve les contrôles de fraîcheur.
+Les identifiants stockés, les octets des notes et leurs hashes restent inchangés.
+Les snippets construits par la recherche ne peuvent pas réintroduire le titre
+protégé dans leurs libellés de contexte.
+
 ## Sortie du hash de contenu
 
 `get_note` renvoie aussi le hash de note exact aux octets sous `content_hash` et

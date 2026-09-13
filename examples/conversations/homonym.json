@@ -1,0 +1,18 @@
+{
+  "name": "homonym",
+  "turns": [
+    "Two Alex contacts have different employers. Ask which one before attributing a commitment."
+  ],
+  "minimum_sessions": 1,
+  "required_tools": {
+    "session_context": 1
+  },
+  "required_final_text": [
+    "which"
+  ],
+  "forbidden_final_text": [
+    "saved"
+  ],
+  "cited_paths": [],
+  "verify_writes": true
+}

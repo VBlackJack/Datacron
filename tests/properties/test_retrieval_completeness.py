@@ -58,8 +58,8 @@ async def _open_app(vault: Path) -> tuple[DatacronApp, SQLiteFTS5Store]:
 @pytest.mark.parametrize(
     ("query", "body", "tool"),
     [
-        ("WORLDLINE0004", "Exact identifier WORLDLINE0004 is present.", "text"),
-        (r"G:\_DATA\knowledge", r"Path G:\_DATA\knowledge is present.", "text"),
+        ("WOODGROVE0004", "Exact identifier WOODGROVE0004 is present.", "text"),
+        (r"C:\Notes\knowledge", r"Path C:\Notes\knowledge is present.", "text"),
         (
             "8ec9a00bfd09b3190ac6b22251dbb1aa95a0579d",
             "Hash 8ec9a00bfd09b3190ac6b22251dbb1aa95a0579d.",

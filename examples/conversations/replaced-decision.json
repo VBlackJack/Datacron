@@ -1,0 +1,20 @@
+{
+  "name": "replaced-decision",
+  "turns": [
+    "Read the old decision and its replacement. Explain which applies."
+  ],
+  "minimum_sessions": 1,
+  "required_tools": {
+    "get_note": 1
+  },
+  "required_final_text": [
+    "Decision B"
+  ],
+  "forbidden_final_text": [
+    "Decision A is current"
+  ],
+  "cited_paths": [
+    "decision-current.md"
+  ],
+  "verify_writes": true
+}

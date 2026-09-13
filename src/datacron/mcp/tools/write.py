@@ -439,6 +439,7 @@ async def _set_frontmatter_impl(
     invalid_at: str | None = None,
     invalidated_by: str | None = None,
     last_id: str | None = None,
+    archived: bool | None = None,
     expected_hash: str | None = None,
     actor: str = "direct-call",
     request_id: str | None = None,
@@ -469,11 +470,14 @@ async def _set_frontmatter_impl(
             invalid_at=invalid_at,
             invalidated_by=invalidated_by,
             last_id=last_id,
+            archived=archived,
         )
         cleaned_expected_hash = _validate_expected_hash(expected_hash)
         cleaned_last_id = _validate_backlog_last_id(last_id) if last_id is not None else None
         if cleaned_last_id is not None and cleaned_expected_hash is None:
             raise ValueError("expected_hash is required when setting last_id")
+        if archived is not None and (type(archived) is not bool or cleaned_expected_hash is None):
+            raise ValueError("archived requires a boolean and expected_hash")
         changed_fields: list[str] = []
         operation_parameters: dict[str, Any] = {"fields": ""}
 
@@ -482,6 +486,7 @@ async def _set_frontmatter_impl(
             if not metadata:
                 raise ValueError("note has no frontmatter")
             _set_backlog_last_id(metadata, changed_fields, cleaned_last_id)
+            _set_archived_flag(metadata, changed_fields, archived)
             if cleaned_confidence is not None:
                 _set_changed_frontmatter_field(
                     metadata,
@@ -591,6 +596,11 @@ async def _set_frontmatter_impl(
             ValueError,
         ),
     )
+
+
+def _set_archived_flag(metadata: dict[str, Any], fields: list[str], archived: bool | None) -> None:
+    if archived is not None:
+        _set_changed_frontmatter_field(metadata, fields, "archived", archived)
 
 
 def _set_backlog_last_id(

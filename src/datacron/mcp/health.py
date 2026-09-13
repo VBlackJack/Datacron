@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Final
 from datacron import __version__
 from datacron.core.hashing import index_generation_hash
 from datacron.mcp.bounds import bounded_count
+from datacron.mcp.guidance import health_guidance
 from datacron.mcp.sandbox import sanitize_metadata_value, sanitize_payload_strings
 from datacron.reliability import scan_vault_read_only
 from datacron.scrubber import read_scrubber_health
@@ -112,7 +113,7 @@ async def build_health(
         and (app.settings.durability != "strict" or app.durability_status.directory_flush_supported)
     )
     integrity = _build_integrity(scan, detail=detail, limit=bounded_limit)
-    return {
+    payload: dict[str, Any] = {
         "status": "critical" if scrubber_critical else ("healthy" if healthy else "degraded"),
         "server_version": __version__,
         "read_only": app.settings.read_only,
@@ -159,6 +160,9 @@ async def build_health(
             "scope_notes": evidence.get("scope_notes", {}),
         },
     }
+
+    payload["guidance"] = health_guidance(payload)
+    return payload
 
 
 def _build_recovery(

@@ -1,0 +1,21 @@
+{
+  "name": "project-resume",
+  "turns": [
+    "Save the validation commitment as pending.",
+    "Start a new session and recover what remains."
+  ],
+  "minimum_sessions": 2,
+  "required_tools": {
+    "get_note": 1
+  },
+  "required_final_text": [
+    "pending"
+  ],
+  "forbidden_final_text": [
+    "completed"
+  ],
+  "cited_paths": [
+    "project.md"
+  ],
+  "verify_writes": true
+}

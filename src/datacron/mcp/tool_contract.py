@@ -188,6 +188,7 @@ class SearchResultOutput(TypedDict):
     line_end: int
     token_count: int
     note_matches: NotRequired[int | None]
+    lifecycle: NotRequired[str | None]
 
 
 class SearchFiltersOutput(TypedDict, total=False):
@@ -451,6 +452,7 @@ class GetHealthOutput(TypedDict):
     recovery: HealthRecoveryOutput
     scrubber: dict[str, Any]
     invariants: HealthInvariantsOutput
+    guidance: NotRequired[list[dict[str, str]]]
 
 
 class CreatedNoteOutput(TypedDict):

@@ -9,7 +9,6 @@ tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 **English** | [Français](../fr/architecture.md)
 
 > **Status**: v2.2 - Living spec for the implementation delivered by this version
-> **Author**: Julien Bombled
 > **Date**: 2026-08-30
 > **Sources**:
 > - Current source code and regression tests
@@ -135,13 +134,14 @@ flowchart TB
 
 ## 5. MCP catalog
 
-### 5.1 Tools (22)
+### 5.1 Tools (23)
 
 | Group | Tool | Description | Implementation |
 |---|---|---|---|
 | Read | `session_context` | Bounded session context and versioned common protocol. | MCP memory tools |
 | Read | `prepare_follow_up` | Prepare sourced follow-up plans without writing. | MCP memory tools |
 | Read | `get_follow_up` | Latest structured follow-up revisions. | MCP memory tools |
+| Read | `get_write_progress` | Read-only multi-note receipt and index progress. | MCP memory tools |
 | Read | `list_notes` | Paginated list, filterable by folder and tags, with identity and metadata. | VaultReader filesystem |
 | Read | `get_note` | Note by ULID, chunk id, or path; paginated content, chunk, or heading outline. | VaultReader + chunk index |
 | Read | `search_text` | BM25 search with ranked snippets and demotion of superseded notes. | SQLite FTS5 |
@@ -173,7 +173,7 @@ distinct surfaces, and neither infers the other. See
 
 | URI | Description | Typical size |
 |---|---|---|
-| `datacron://vault/map` | Folder/file tree with titles (Gemini insight) | ~2k tokens |
+| `datacron://vault/map` | Folder/file tree with titles | ~2k tokens |
 | `datacron://vault/info` | Vault stats (count, last index, version) | ~200 tokens |
 | `datacron://policy/active` | Active policy (empty/permissive in MVP) | ~100 tokens |
 
@@ -224,7 +224,7 @@ Rejected: a normative DVS spec forcing frontmatter migration (adoption must be z
 a database as source of truth (the vault must stay readable without Datacron).
 
 ### ADR-002 - Custom MCPServer-based server
-Gemini ✅ + ChatGPT ✅ convergence. Direct FS, audit, strict confinement.
+Direct filesystem access, audit and strict confinement.
 Rejected: Obsidian REST API plugin (requires the app running); generic filesystem MCP servers
 (no audit, no confinement, no vault semantics).
 
@@ -293,12 +293,11 @@ Strict `==` comparison (never `<=`) to handle restores with an older `mtime`.
 Rejected: `mtime` as sole authority (exFAT 2 s granularity, sync tools preserving `mtime`);
 full O(n) re-read on every pass.
 
-### ADR-014 - Static FR↔EN query expansion before vectors
-Expansion is query-time, configurable by `VAULT.yaml`, and closes the measured cross-lingual
-gap without embeddings: golden Julien recall@5 0.74 → 0.89, precision 0.29 → 0.32. Embeddings
-stay frozen until measurement justifies their cost.
-Rejected: pure vector search for the cross-lingual gap (closed by static expansion at near-zero
-cost); multi-word synonym entries (the tokenizer makes them inert).
+### ADR-014 - Static FR/EN query expansion before vectors
+Query-time expansion is configurable through `VAULT.yaml`. It adds registered synonyms
+before lexical retrieval. Its effectiveness depends on the vocabulary and query set;
+measure recall and precision with representative fixtures before enabling new mappings.
+Multi-word entries are unsuitable for the token-based expansion mechanism.
 
 ### ADR-015 - Conservative temporal re-ranking
 Retrieval uses only explicit signals: `supersedes` strongly demotes replaced notes,
@@ -454,11 +453,11 @@ datacron/                              # GitHub: VBlackJack/Datacron
 
 ## 8. E2E pipeline - concrete example
 
-**Scenario**: Julien in Claude Desktop: *"Datacron, what did I recently write about LanceDB?"*
+**Scenario**: User in Claude Desktop: *"Datacron, what did I recently write about LanceDB?"*
 
 ```mermaid
 sequenceDiagram
-    participant J as Julien
+    participant J as User
     participant C as Claude Desktop
     participant M as Datacron MCP
     participant DB as SQLite FTS5
@@ -534,33 +533,20 @@ and releases; this section publishes no unmeasured remote status or counter.
 1. ~~**Chunker model** - is a single AST splitter enough, or do we need dedicated strategies (code blocks, tables) from v1?~~ → **Resolved (Week 3.5)**: a single AST splitter, plus a size guardrail (`chunk_max_tokens`) that re-splits any oversized block on line boundaries, with dedicated CODE (repeated fence + language) and TABLE (repeated header + separator) strategies, and an intra-line split fallback. Deterministic splitting, sub-chunks with disjoint, gap-free line ranges.
 2. ~~**Citation format** - which format for returned chunks? Obsidian-style `[[note#header]]`, or structured JSON?~~ -> **Resolved**: MCP read tools return structured JSON. A chunk read carries its identity, note path, section path, line range, sandboxed content, freshness hashes, and `prev_chunk_id` / `next_chunk_id` navigation.
 3. ~~**`get_note(format=map)`** - which exact tree to return (headings only, or + counts/excerpts)?~~ -> **Resolved**: the payload returns a flat `headings` list in document order. Each entry contains `level`, `text`, `path`, and `chunk_id`; the payload also carries the total `chunk_count`, without per-heading counts or excerpts.
-4. ~~**Julien eval set** - which questions?~~ → **Partially resolved**: golden set
-   `local/golden-julien.yaml` used for QE/TR; next step = expand it with temporal cases and
-   second-generation killer questions.
+4. **Evaluation coverage**: fictional acceptance cases live in `examples/conversations/`.
+   They exercise workflow contracts; they do not establish external model performance.
 
 ---
 
-## 13. Meta - what we avoided thanks to the cross-review
+## 13. Offline library and review boundary
 
-| Removed v2.0 element | Estimated cost saved |
-|---|---|
-| Phase 4 LangGraph agent | ~3 weeks + runtime complexity |
-| Phase 5 OTel / LangSmith | ~1 week + maintenance |
-| Phase 6 Tauri Studio | ~4 weeks + multi-OS CI |
-| Phase 2 Contextual Retrieval (before eval) | ~2 weeks + Ollama cost |
-| Phase 3 write tools (before HITL maturity) | ~3 weeks + corruption risk |
-| ML sandboxing classifier | perpetual maintenance + latency |
-| Cowork HTTPS tunnel | no longer needed after local stdio validation in production on 2026-07-21 |
-| 5 Python workspace packages | release-engineering overhead |
-| Docker + Homebrew + Tauri channels | ~1 week release eng × 3 |
+The `library` CLI reads the vault and writes an external preview with navigation pages,
+local attachments, source hashes and an organization manifest. Consolidation recipes
+identify their sources explicitly. Archived originals retain their content and links to
+successor notes. Applying changes uses the existing organization transaction machinery,
+after validation and review; preparing a library never applies that manifest itself.
 
-**Total saved**: ~16 weeks + several out-of-scope complexity domains.
-**Cross-review cost**: ~4 hours of prompt engineering + reading + arbitration.
+See [Offline library](human-library.md) for the workflow and safeguards, and
+[Reliability improvements](improvements.md) for replay and indexing contracts.
 
----
-
-*v2.2 document verified on 2026-08-30 against the implementation delivered by this version. The
-research reports and v2.1 decisions remain arbitration archives.*
-
-
-See [Reliability improvements](improvements.md) for request replay, targeted indexing, shared Markdown selection and quality gates.
+*Updated on 2026-09-13 for the source implementation; see the unreleased changelog.*

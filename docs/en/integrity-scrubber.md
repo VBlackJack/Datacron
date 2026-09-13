@@ -15,8 +15,8 @@ equivalent operator. Each invocation resumes the current pass and stops at the
 configured duration boundary.
 
 ```text
-datacron scrub-init --vault G:\_DATA
-datacron scrub --vault G:\_DATA
+datacron scrub-init --vault C:\Notes
+datacron scrub --vault C:\Notes
 ```
 
 `scrub-init` is a separate, explicit provisioning action. It creates missing
@@ -129,7 +129,7 @@ Generate the read-only index-gap report with configurable heuristic thresholds:
 
 ```text
 python scripts/audit_excluded_notes.py \
-  --vault-root G:\_DATA \
+  --vault-root C:\Notes \
   --output local/excluded_notes_audit.md
 ```
 

@@ -14,8 +14,7 @@
 """Shared pytest fixtures for the Datacron test suite.
 
 The demo vault under ``tests/fixtures/demo-vault/`` is the canonical fixture
-used by both Claude Code's core/MCP tests and Codex's indexing tests (per
-``docs/agent-briefs/01-contracts.md`` section 5). ``tmp_vault`` copies that vault
+used by the core, MCP and indexing tests. ``tmp_vault`` copies that vault
 into a per-test temporary directory so mutations stay isolated.
 """
 

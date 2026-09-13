@@ -395,14 +395,14 @@ def _mismatched_vault(
 
 
 def _duplicate_vault(runner: CliRunner, tmp_path: Path) -> Path:
-    return _indexed_vault(
+    vault = _indexed_vault(
         runner,
         tmp_path,
-        {
-            "one.md": _note_bytes(_CANONICAL_ID, "One"),
-            "two.md": _note_bytes(_CANONICAL_ID, "Two"),
-        },
+        {"one.md": _note_bytes(_CANONICAL_ID, "One")},
     )
+    # Introduce the collision after indexing: indexing itself now refuses it.
+    (vault / "two.md").write_bytes(_note_bytes(_CANONICAL_ID, "Two"))
+    return vault
 
 
 def _indexed_note_ids(vault: Path) -> dict[str, str]:
@@ -971,7 +971,7 @@ class TestIsCanonicalUlid:
     @pytest.mark.parametrize(
         ("value", "why"),
         [
-            ("01KVMTG0IA2AGENTSCPDC0616", "25 characters"),
+            ("01KVMTG0IA2BADIDSLABS0616", "25 characters"),
             ("01J000000000000000000000211", "27 characters"),
             ("01JIIIIIIIIIIIIIIIIIIIIIII", "I is excluded from Crockford base32"),
             ("01JLLLLLLLLLLLLLLLLLLLLLLL", "L is excluded"),

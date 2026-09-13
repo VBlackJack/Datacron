@@ -14,6 +14,6 @@ This note carries the `important: true` flag.
 |-------|-------|
 | Priority | High |
 | Status | Active |
-| Owner | Julien |
+| Owner | Jordan |
 
 A reference back to [[Welcome]].

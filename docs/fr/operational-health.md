@@ -172,6 +172,14 @@ quelle note garde l'ID est une décision éditoriale.
 
 ### `datacron ops repair-id`
 
+L'indexation incrémentale refuse les identités vivantes dupliquées avant de modifier
+les lignes de l'index. La réparation à la recherche renvoie `duplicate_note_identity`
+avec les chemins concernés ; elle ne remplace pas silencieusement une note par
+l'autre. Résous les doublons avant de réessayer. Un déplacement normal reste pris
+en charge lorsque l'ancien chemin n'existe plus. Pour une lecture par ULID, une
+absence dans le sidecar ne prouve pas l'absence de la note : Datacron vérifie les
+notes vivantes, car leur frontmatter peut avoir changé depuis l'indexation.
+
 ```text
 datacron ops repair-id --vault CHEMIN --rel-path NOTE.md --action adopt-index --expected-hash HASH --confirm NOTE.md
 ```

@@ -1328,7 +1328,7 @@ class TestGetNoteFull:
         assert calls == 1
 
     @pytest.mark.asyncio
-    async def test_unknown_ulid_with_healthy_sidecar_does_not_scan(
+    async def test_unknown_ulid_with_complete_sidecar_still_checks_live_identities(
         self,
         app_with_open_store: DatacronApp,
         tmp_vault: Path,
@@ -1363,7 +1363,7 @@ class TestGetNoteFull:
 
         assert "error" in result
         assert result["error"]["type"] == "FileNotFoundError"
-        assert calls == 0
+        assert calls == 1
 
     @pytest.mark.asyncio
     async def test_invalid_format_returns_error(self, app: DatacronApp) -> None:
@@ -4744,6 +4744,10 @@ class TestRecoveryRequiredMapping:
                 "message": "internal error",
                 "code": "internal_error",
                 "correlation_id": correlation_id,
+                "next_action": (
+                    "Use the correlation_id to locate the local diagnostic. Inspect the "
+                    "original receipt before retrying a write."
+                ),
             }
         }
         assert len(correlation_id) == 12

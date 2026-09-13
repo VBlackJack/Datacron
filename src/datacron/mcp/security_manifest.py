@@ -45,6 +45,9 @@ MCP_TOOL_CAPABILITIES: Final[MappingProxyType[str, ToolCapabilities]] = MappingP
             {"confined_vault_write", "organization_batch_apply"}
         ),
         "get_note_history": frozenset({"audit_metadata_read"}),
+        "get_write_progress": frozenset(
+            {"vault_read", "indexed_vault_read", "audit_metadata_read"}
+        ),
         "audit_query": frozenset({"audit_metadata_read"}),
     }
 )

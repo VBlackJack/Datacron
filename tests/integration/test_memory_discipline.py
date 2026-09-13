@@ -170,6 +170,7 @@ async def test_budget_refusals_are_typed_tool_errors_with_required_tokens(
     kernel_payload = json.loads(kernel.content[0].text)
     assert set(kernel_payload) == {"error"}
     required = kernel_payload["error"]["required_tokens"]
+    assert kernel_payload["error"].pop("next_action")
     assert kernel_payload["error"] == {
         "type": "ContextBudgetError",
         "message": f"session context requires at least {required} tokens",
@@ -202,7 +203,10 @@ async def test_live_context_handles_long_sources_and_homonyms(memory_app: Datacr
     result = await _call(app, "session_context", subject="Alex", domain="people")
     assert result["identity"] == "clarification_required"
     assert result["truncated"] is True
-    assert result["sources"][0]["next_offset"] == 2400
+    assert (
+        next(s for s in result["sources"] if s["rel_path"] == "_memory/INIT.md")["next_offset"]
+        == 2400
+    )
     # No stale index body is used after an out-of-band change.
     _note(app.vault_root, "person.md", _PERSON, "# Alex\n\nChanged role\n", ["memory/contact"])
     result = await _call(app, "session_context", subject="Alex", domain="people")

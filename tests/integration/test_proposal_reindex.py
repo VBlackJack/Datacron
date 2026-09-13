@@ -33,13 +33,13 @@ async def test_confirmation_after_offline_reindex(
         "target.md": (
             "01HQXR7K9YZ8M2N3PQRSTV4WX5",
             "# Target\n\n## Employer 2026-07-10\n\n"
-            "The Windows engineering employer is Magellan for the platform team.\n",
+            "The Windows engineering employer is Tailspin for the platform team.\n",
         ),
         "source.md": (
             "01HQXR7K9YZ8M2N3PQRSTV4WX6",
             prefix + "## Employer 2026-07-15\n\n"
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "the old Magellan statement for the platform team.\n",
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team.\n",
         ),
     }
     for name, (note_id, body) in bodies.items():

@@ -88,6 +88,14 @@ $env:DATACRON_SECRET_REDACTION_PATTERNS = '["INTERNAL-[0-9]{8}"]'
 Redaction is deterministic loss prevention, not credential validation or vault
 scrubbing. False positives are possible under the conservative default.
 
+Heading metadata is checked against the complete parent note, including custom
+multiline patterns. When a protected heading contributes to a chunk's ancestry,
+maps, search results, backlinks and chunk navigation return an opaque chunk alias
+instead of its heading slug. Pass that alias unchanged to `get_note`; it resolves
+the indexed chunk and retains the normal stale-source checks. Stored chunk IDs,
+note bytes and hashes are unchanged. Synthesized search snippets cannot reinsert
+the protected heading through their context labels.
+
 ## Content-hash output
 
 `get_note` also returns the byte-exact note hash under both `content_hash` and

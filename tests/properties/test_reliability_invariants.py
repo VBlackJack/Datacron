@@ -594,7 +594,7 @@ def test_invariant_manifest_collects_prop_01_through_prop_15() -> None:
 
 
 _REPAIRABLE_ID = "01J00000000000000000000031"
-_MALFORMED_IMPORT_ID = "01KVMTG0IA2AGENTSCPDC0616"
+_MALFORMED_IMPORT_ID = "01KVMTG0IA2BADIDSLABS0616"
 
 
 async def _id_mismatch_count(vault: Path) -> int:

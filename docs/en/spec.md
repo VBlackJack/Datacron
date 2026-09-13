@@ -9,7 +9,6 @@ tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 **English** | [Français](../fr/spec.md)
 
 > **Status**: Spec v2.0 - normative for the implementation delivered by this version
-> **Author**: Julien Bombled
 > **Date**: 2026-08-30
 > **Replaces**: v1.1 (2026-05-17)
 > **License**: [Apache 2.0](../../LICENSE)
@@ -255,6 +254,7 @@ read, advisory, and operational tools remain exposed.
 | Write | `move_note_section` | Previews or commits an exact subtree move within a note with mandatory CAS |
 | Write | `revert_note` | Restores exact bytes from a content-addressed history version |
 | Write | `apply_organization_manifest` | Validates and then applies a content-addressed organization bundle after exact confirmation |
+| Operational | `get_write_progress` | Read-only multi-note receipts, conflicts and index progress. |
 | Operational | `get_note_history` | Lists committed operation metadata for a note without reading prior bytes |
 | Operational | `audit_query` | Filters the committed journal by time, tool, or note without changing it |
 

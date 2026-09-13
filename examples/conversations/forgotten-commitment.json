@@ -1,0 +1,21 @@
+{
+  "name": "forgotten-commitment",
+  "turns": [
+    "Record an open commitment with no known deadline.",
+    "Recover that commitment in a new session."
+  ],
+  "minimum_sessions": 2,
+  "required_tools": {
+    "get_note": 1
+  },
+  "required_final_text": [
+    "unknown"
+  ],
+  "forbidden_final_text": [
+    "deadline tomorrow"
+  ],
+  "cited_paths": [
+    "project.md"
+  ],
+  "verify_writes": true
+}

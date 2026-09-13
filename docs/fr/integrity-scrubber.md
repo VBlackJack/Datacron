@@ -16,8 +16,8 @@ Planifie des invocations répétées avec le Planificateur de tâches Windows, c
 configurée.
 
 ```text
-datacron scrub-init --vault G:\_DATA
-datacron scrub --vault G:\_DATA
+datacron scrub-init --vault C:\Notes
+datacron scrub --vault C:\Notes
 ```
 
 `scrub-init` est une action de provisionnement séparée et explicite. Elle crée atomiquement les
@@ -133,7 +133,7 @@ Génère le rapport lecture seule d'écarts d'index avec des seuils heuristiques
 
 ```text
 python scripts/audit_excluded_notes.py \
-  --vault-root G:\_DATA \
+  --vault-root C:\Notes \
   --output local/excluded_notes_audit.md
 ```
 

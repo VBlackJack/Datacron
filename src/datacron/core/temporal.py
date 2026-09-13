@@ -33,6 +33,7 @@ class TemporalMeta:
     valid_from: str | None = None
     invalid_at: str | None = None
     invalidated_by: str | None = None
+    archived: bool = False
 
 
 def rerank_temporal(
@@ -69,10 +70,22 @@ def rerank_temporal(
         adjusted_result = (
             result if factor == 1.0 else result.model_copy(update={"score": result.score * factor})
         )
+        item = meta.get(result.chunk.note_id)
+        lifecycle = (
+            "superseded"
+            if result.chunk.note_id in superseded_ids
+            else "invalidated"
+            if item and item.invalid_at is not None
+            else "archived"
+            if item and item.archived
+            else None
+        )
+        if lifecycle:
+            adjusted_result = adjusted_result.model_copy(update={"lifecycle": lifecycle})
         adjusted.append((demoted_bucket, adjusted_result))
 
     if not signal_applied:
-        return list(results)
+        return [result for _bucket, result in adjusted]
 
     ranked = sorted(
         adjusted,
@@ -92,7 +105,8 @@ def _temporal_adjustment(
     confidence = item.confidence.lower() if item and item.confidence else None
     factor = CONFIDENCE_PENALTY.get(confidence or "", 1.0)
     is_historical = (
-        note_id in superseded_ids or (item is not None and item.invalid_at is not None)
+        note_id in superseded_ids
+        or (item is not None and (item.invalid_at is not None or item.archived))
     ) and not include_superseded
     if is_historical:
         factor *= SUPERSEDED_DEMOTION_FACTOR

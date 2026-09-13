@@ -39,8 +39,8 @@ from datacron.mcp.tools.write import _patch_note_section_impl
 _TODAY = date(2026, 7, 17)
 _OLD_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
 _NEW_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX6"
-_ONECERT_OLD_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX7"
-_ONECERT_NEW_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX8"
+_CERTLAB_OLD_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX7"
+_CERTLAB_NEW_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX8"
 _DELETED_STALE_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXB"
 _EXCLUDED_STALE_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXC"
 _DELETED_STALE_PATH: Final[str] = "_memory/facts/employer-deleted.md"
@@ -120,7 +120,7 @@ def _write_candidate_pair(vault: Path, *, source_content: str) -> tuple[Path, Pa
         (
             "# Employer history\n\n"
             "## Employer 2026-07-10\n\n"
-            "The Windows engineering employer is Magellan for the platform team.\n"
+            "The Windows engineering employer is Tailspin for the platform team.\n"
         ),
     )
     new = _write_note(
@@ -142,8 +142,8 @@ async def stale_contradiction_app(
     _write_candidate_pair(
         vault,
         source_content=(
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "the old Magellan statement for the platform team."
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team."
         ),
     )
     _write_note(
@@ -153,7 +153,7 @@ async def stale_contradiction_app(
         (
             "# Employer update\n\n## Employer 2026-07-16\n\n"
             f"CORRECTION: {_DELETED_STALE_MARKER}. The Windows engineering employer "
-            "is Contoso and replaces the old Magellan statement for the platform team.\n"
+            "is Contoso and replaces the old Tailspin statement for the platform team.\n"
         ),
     )
     _write_note(
@@ -163,7 +163,7 @@ async def stale_contradiction_app(
         (
             "# Employer update\n\n## Employer 2026-07-17\n\n"
             f"CORRECTION: {_EXCLUDED_STALE_MARKER}. The Windows engineering employer "
-            "is Fabrikam and replaces the old Magellan statement for the platform team.\n"
+            "is Fabrikam and replaces the old Tailspin statement for the platform team.\n"
         ),
     )
     settings = Settings(
@@ -259,8 +259,8 @@ async def test_live_scan_is_deterministic_bounded_and_read_only(
     _write_candidate_pair(
         vault,
         source_content=(
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "the old Magellan statement for the platform team."
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team."
         ),
     )
     before = _markdown_snapshot(vault)
@@ -343,8 +343,8 @@ async def test_summary_payload_is_compact_and_alternative_confirms_like_full(
     _write_candidate_pair(
         vault,
         source_content=(
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "the old Magellan statement for the platform team. "
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team. "
             + "Detailed audit documentation and migration context. "
             * 10
         ),
@@ -413,8 +413,8 @@ async def test_cap_does_not_change_candidates_below_threshold(
     _write_candidate_pair(
         vault,
         source_content=(
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "the old Magellan statement for the platform team."
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team."
         ),
     )
     high_cap_app = replace(
@@ -505,18 +505,18 @@ async def test_cross_project_with_explicit_temporal_order_can_suggest_contradict
     ("source_content", "expected_class"),
     [
         (
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "the old Magellan statement for the platform team.",
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team.",
             "CONTRADICTION",
         ),
         (
-            "MISE A JOUR: The Windows engineering employer remains Magellan; this "
+            "MISE A JOUR: The Windows engineering employer remains Tailspin; this "
             "clarifies the platform team reporting line.",
             "RAFFINEMENT",
         ),
         (
-            "Question ouverte: is the Windows engineering employer Magellan or "
-            "Worldline for the platform team?",
+            "Question ouverte: is the Windows engineering employer Tailspin or "
+            "Woodgrove for the platform team?",
             "QUESTION_OUVERTE",
         ),
     ],
@@ -544,55 +544,55 @@ async def test_previously_corrected_reference_cases_are_suppressed(
     app, vault = contradiction_app
     _write_note(
         vault,
-        "_memory/facts/org-cpdc-windows.md",
+        "_memory/facts/org-labs-windows.md",
         _OLD_ID,
         (
-            "# CPDC Windows\n\n## Entite / conventions 2026-07-10\n\n"
-            "Julien works for Worldline in the SYS Windows platform team.\n\n"
-            "> CORRECTION 2026-07-15 : The employer is now Magellan after the entity "
-            "split; platform names remain Worldline. Voir _memory/preferences/julien.md.\n"
+            "# LABS Windows\n\n## Entite / conventions 2026-07-10\n\n"
+            "Jordan works for Woodgrove in the SYS Windows platform team.\n\n"
+            "> CORRECTION 2026-07-15 : The employer is now Tailspin after the entity "
+            "split; platform names remain Woodgrove. Voir _memory/preferences/jordan.md.\n"
         ),
     )
     _write_note(
         vault,
-        "_memory/preferences/julien.md",
+        "_memory/preferences/jordan.md",
         _NEW_ID,
         (
-            "# Julien\n\n## Employer 2026-07-15\n\n"
-            "Julien works for Magellan after the entity split while Windows platform "
-            "names remain Worldline.\n"
+            "# Jordan\n\n## Employer 2026-07-15\n\n"
+            "Jordan works for Tailspin after the entity split while Windows platform "
+            "names remain Woodgrove.\n"
         ),
     )
     _write_note(
         vault,
-        "_memory/projects/onecert-windows-direction-juillet-2026.md",
-        _ONECERT_OLD_ID,
+        "_memory/projects/certlab-windows-direction-juillet-2026.md",
+        _CERTLAB_OLD_ID,
         (
-            "# OneCert direction\n\n"
+            "# CertLab direction\n\n"
             "## Decision produit 2026-07-08\n\n"
             "Hide Settings and Assignment by default and add Server Deck observability.\n\n"
             "> MISE A JOUR 2026-07-13 : The meeting confirmed two-level tabs, "
             "admin_mode and plugins as consumers. Voir "
-            "_memory/facts/onecert-windows-reunion-2026-07-13.md.\n\n"
+            "_memory/facts/certlab-windows-reunion-2026-07-13.md.\n\n"
             "## Arbitrage Server Deck vs WAC 2026-07-08\n\n"
             "Keep Server Deck read-first for certificate fleet observability; whether "
-            "OneCert or Charon owns the dashboard remains open.\n\n"
-            "> MISE A JOUR 2026-07-13 : Prefer the OneCert view for managed "
-            "certificates and Charon for discovery; Eric's answer remains open. Voir "
-            "_memory/facts/onecert-windows-reunion-2026-07-13.md.\n"
+            "CertLab or Portal owns the dashboard remains open.\n\n"
+            "> MISE A JOUR 2026-07-13 : Prefer the CertLab view for managed "
+            "certificates and Portal for discovery; Alex's answer remains open. Voir "
+            "_memory/facts/certlab-windows-reunion-2026-07-13.md.\n"
         ),
     )
     _write_note(
         vault,
-        "_memory/facts/onecert-windows-reunion-2026-07-13.md",
-        _ONECERT_NEW_ID,
+        "_memory/facts/certlab-windows-reunion-2026-07-13.md",
+        _CERTLAB_NEW_ID,
         (
-            "# OneCert meeting\n\n"
+            "# CertLab meeting\n\n"
             "## Product decisions 2026-07-13\n\n"
-            "OneCert uses two-level tabs, admin_mode and plugins as consumers.\n\n"
+            "CertLab uses two-level tabs, admin_mode and plugins as consumers.\n\n"
             "## Dashboard direction 2026-07-13\n\n"
-            "The OneCert view handles managed certificates while Charon discovers "
-            "unmanaged certificates; Eric's dashboard answer remains open.\n"
+            "The CertLab view handles managed certificates while Portal discovers "
+            "unmanaged certificates; Alex's dashboard answer remains open.\n"
         ),
     )
 
@@ -611,9 +611,9 @@ async def test_duplicate_same_level_heading_is_not_addressable(
         _OLD_ID,
         (
             "# Employer history\n\n## Employer 2026-07-10\n\n"
-            "The Windows engineering employer is Magellan for the platform team.\n\n"
+            "The Windows engineering employer is Tailspin for the platform team.\n\n"
             "## Employer 2026-07-10\n\n"
-            "The Windows engineering employer is Magellan for the platform team.\n"
+            "The Windows engineering employer is Tailspin for the platform team.\n"
         ),
     )
     _write_note(
@@ -622,8 +622,8 @@ async def test_duplicate_same_level_heading_is_not_addressable(
         _NEW_ID,
         (
             "# Employer update\n\n## Employer 2026-07-15\n\n"
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "Magellan for the platform team.\n"
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "Tailspin for the platform team.\n"
         ),
     )
 
@@ -644,8 +644,8 @@ async def test_confirmation_is_idempotent_and_write_cas_is_single_effect(
     _write_candidate_pair(
         vault,
         source_content=(
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "the old Magellan statement for the platform team."
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team."
         ),
     )
     scan = await _contradiction_scan_impl(app, today=_TODAY)
@@ -669,7 +669,7 @@ async def test_confirmation_is_idempotent_and_write_cas_is_single_effect(
     assert written["indexed"] is True
     assert replayed_write["error"]["type"] == "WriteConflictError"
     assert stale_confirmation["error"]["code"] == "proposal_token_stale_or_unknown"
-    retrieval = await _search_text_impl(app, query="worldline", limit=10)
+    retrieval = await _search_text_impl(app, query="woodgrove", limit=10)
     assert any(
         result["note_rel_path"] == "_memory/facts/employer-old.md"
         for result in retrieval["results"]
@@ -686,14 +686,14 @@ async def test_target_change_before_confirmation_refuses_without_write(
     target, _source = _write_candidate_pair(
         vault,
         source_content=(
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "the old Magellan statement for the platform team."
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team."
         ),
     )
     scan = await _contradiction_scan_impl(app, today=_TODAY)
     token = _suggested_token(scan)
     target.write_text(
-        target.read_text(encoding="utf-8").replace("Magellan", "Contoso"),
+        target.read_text(encoding="utf-8").replace("Tailspin", "Contoso"),
         encoding="utf-8",
         newline="",
     )
@@ -748,8 +748,8 @@ async def test_modern_auto_context_without_back_channel_skips_elicitation(
     _write_candidate_pair(
         vault,
         source_content=(
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "the old Magellan statement for the platform team."
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team."
         ),
     )
     baseline = await _contradiction_scan_impl(app, today=_TODAY)
@@ -773,8 +773,8 @@ async def test_legacy_context_with_back_channel_preserves_elicitation(
     _write_candidate_pair(
         vault,
         source_content=(
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "the old Magellan statement for the platform team."
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team."
         ),
     )
     ctx = _FakeContext(
@@ -798,8 +798,8 @@ async def test_decline_or_cancel_leaves_no_state_and_scan_replays(
     _write_candidate_pair(
         vault,
         source_content=(
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "the old Magellan statement for the platform team."
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team."
         ),
     )
     ctx = _FakeContext(action)
@@ -826,8 +826,8 @@ async def test_elicitation_accept_and_fallback_confirmation_match(
     _write_candidate_pair(
         vault,
         source_content=(
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "the old Magellan statement for the platform team."
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team."
         ),
     )
     baseline = await _contradiction_scan_impl(app, today=_TODAY)
@@ -852,8 +852,8 @@ async def test_client_without_form_capability_is_not_elicited(
     _write_candidate_pair(
         vault,
         source_content=(
-            "CORRECTION: The Windows engineering employer is Worldline and replaces "
-            "the old Magellan statement for the platform team."
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team."
         ),
     )
     ctx = _FakeContext("accept", form_capability=False)

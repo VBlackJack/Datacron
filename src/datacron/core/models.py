@@ -200,6 +200,7 @@ class SearchResult(BaseModel):
     score: float
     snippet: str
     redaction_source: str | None = None
+    lifecycle: str | None = None
     tier: int = Field(default=0, ge=0, le=1)
 
 

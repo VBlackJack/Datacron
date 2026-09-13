@@ -691,6 +691,10 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     }
     assert "rejected" in create_properties
     assert "rejected" in set_frontmatter_properties
+    assert "archived" in set_frontmatter_properties
+    assert set_frontmatter_properties["archived"]["default"] is None
+    assert "known_contract_hash" in tools["session_context"].input_schema["properties"]
+    assert "requests" in tools["get_write_progress"].input_schema["properties"]
     assert "last_id" in set_frontmatter_properties
     assert set_frontmatter_properties["last_id"]["default"] is None
     contradiction_properties = tools["contradiction_scan"].input_schema["properties"]
@@ -710,7 +714,7 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     assert "actionable" not in health_description
     delete_tool = tools["delete_note_section"]
     rename_tool = tools["rename_note_section"]
-    assert len(tools) == 22
+    assert len(tools) == 23
     organization_tool = tools["apply_organization_manifest"]
     organization_description = organization_tool.description or ""
     assert "crash-consistently apply" in organization_description

@@ -92,6 +92,7 @@ and retry the same call with the same token.
 | Tool | What it does |
 |---|---|
 | `get_health` | Real state: index freshness, integrity, checksum, durability, invariants. |
+| `get_write_progress` | Read-only multi-note receipts, conflicts and index progress. |
 | `get_note_history` | Metadata of a note's committed operations, without reading historical content. |
 | `audit_query` | Queries the operation journal by period, tool, or note, read-only. |
 | `contradiction_scan` | Scans for contradictions and proposes an explicit update without ever executing it. |
@@ -299,3 +300,7 @@ Use positive globs with `*`, `?`, character classes, and whole `**` path segment
 Negation, brace alternatives and backslash separators are refused with
 `regex_glob_invalid`. `regex_glob_no_files` means the filter selects no admitted indexed
 note; an empty successful result means the pattern did not produce a visible match.
+
+## Offline human-readable library
+
+[Prepare navigation, consolidate notes and review archives](human-library.md).

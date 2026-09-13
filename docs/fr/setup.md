@@ -277,10 +277,10 @@ renvoient une erreur claire et ne créent aucun fichier. Pour autoriser l'écrit
 sous-dossier précis :
 
 ```powershell
-$env:DATACRON_VAULT_ROOT = "G:\_DATA"
-$env:DATACRON_READ_PATHS = "G:\_DATA"
-$env:DATACRON_WRITE_PATHS = "G:\_DATA\_memory;G:\_DATA\_drafts;G:\_DATA\_journal"
-datacron mcp serve --vault G:\_DATA
+$env:DATACRON_VAULT_ROOT = "C:\Notes"
+$env:DATACRON_READ_PATHS = "C:\Notes"
+$env:DATACRON_WRITE_PATHS = "C:\Notes\_memory;C:\Notes\_drafts;C:\Notes\_journal"
+datacron mcp serve --vault C:\Notes
 ```
 
 L'écriture reste confinée à `DATACRON_WRITE_PATHS`, atomique (fichier temporaire +

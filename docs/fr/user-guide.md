@@ -95,6 +95,7 @@ absence de write, et rejoue le même appel avec le même token.
 | Outil | À quoi il sert |
 |---|---|
 | `get_health` | État réel : fraîcheur de l'index, intégrité, checksum, durabilité, invariants. |
+| `get_write_progress` | Suivi des reçus multi-notes, conflits et indexations, en lecture seule. |
 | `get_note_history` | Métadonnées des opérations validées d'une note, sans lire le contenu historique. |
 | `audit_query` | Interroge le journal d'opérations par période, outil ou note, en lecture seule. |
 | `contradiction_scan` | Analyse les contradictions et propose une mise à jour explicite sans jamais l'exécuter. |
@@ -310,3 +311,7 @@ Utilise des globs positifs avec `*`, `?`, classes de caractères et segments `**
 La négation, les alternatives entre accolades et les séparateurs antislash sont refusés
 avec `regex_glob_invalid`. `regex_glob_no_files` signale un filtre ne sélectionnant aucune
 note indexée admise ; un succès vide signifie que le motif n'a produit aucun résultat visible.
+
+## Bibliothèque lisible hors ligne
+
+[Préparer la navigation, consolider les notes et revoir les archives](human-library.md).

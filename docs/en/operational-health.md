@@ -155,6 +155,13 @@ an editorial decision.
 
 ### `datacron ops repair-id`
 
+Incremental indexing refuses duplicate live identities before changing index rows.
+Search read-repair reports `duplicate_note_identity` with the conflicting paths;
+it does not silently replace one note with the other. Resolve the duplicate
+identities before retrying. A normal move remains supported when the old path no
+longer exists. For a lookup by ULID, a sidecar miss alone is not proof of absence:
+Datacron checks live notes because frontmatter can have changed since indexing.
+
 ```text
 datacron ops repair-id --vault PATH --rel-path NOTE.md --action adopt-index --expected-hash HASH --confirm NOTE.md
 ```

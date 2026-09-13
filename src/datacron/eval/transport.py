@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -87,3 +87,23 @@ def _response_text(content: list[Any]) -> str:
         if isinstance(block, TextContent):
             return block.text
     raise TypeError("MCP search_text response contains no text block")
+
+
+ToolCall = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+@asynccontextmanager
+async def e2e_tool_transport(vault_root: Path, settings: Settings) -> AsyncIterator[ToolCall]:
+    """Open a fresh process for a multi-turn protocol scenario, including tool errors."""
+    async with Client(
+        stdio_client(_server_parameters(vault_root, settings)), mode="auto"
+    ) as session:
+
+        async def call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            response = await session.call_tool(name, arguments)
+            payload = json.loads(_response_text(response.content))
+            if not isinstance(payload, dict):
+                raise TypeError("MCP tool returned a non-object JSON payload")
+            return payload
+
+        yield call

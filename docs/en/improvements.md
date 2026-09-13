@@ -76,8 +76,8 @@ French, ambiguous and disambiguated queries, freshness, excluded paths and missi
 plus hard cases: a note titled after the subject against passing mentions, a section heading
 never repeated in its body, the same heading in two project notes, bilingual queries without
 configured expansion, a backlog index and an archive note repeating the subject, and an
-`invalid_at` note behind its replacement. One distractor case is expected to stay imperfect
-until archive demotion exists; it documents that gap rather than hiding it.
+`invalid_at` note behind its replacement. Explicitly archived distractors are demoted by the lifecycle policy. The corpus
+retains them to detect regressions in current-state retrieval.
 
 Two thresholds are deliberately not raised further. A freshness question asks a bare term that
 five notes carry identically, so BM25 scores them equal to the digit and their order falls to

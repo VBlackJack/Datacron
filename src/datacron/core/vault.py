@@ -72,6 +72,16 @@ MIGRATED_ULID_SIDECAR_FILENAME: Final[str] = "ulids.json.migrated"
 _H1_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}#\s+(.+?)\s*$", re.MULTILINE)
 
 
+class DuplicateNoteIdentityError(ValueError):
+    """Multiple paths claim one note identity; refuse index replacement."""
+
+    code = "duplicate_note_identity"
+
+    def __init__(self, note_id: str, first: str, second: str) -> None:
+        paths = sorted((first, second))
+        super().__init__(f"note ID {note_id} is claimed by {paths[0]!r} and {paths[1]!r}")
+
+
 @final
 @dataclass(frozen=True)
 class NoteAdmissionPolicy:

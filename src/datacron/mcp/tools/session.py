@@ -33,6 +33,7 @@ from datacron.core.memory_protocol import (
 from datacron.core.models import Note
 from datacron.core.paths import PathConfinementError
 from datacron.core.scope import NoteAdmissionError
+from datacron.core.temporal import rerank_temporal
 from datacron.indexing.ripgrep import ripgrep_available
 from datacron.mcp.tools.payloads import (
     _audit,
@@ -84,6 +85,7 @@ async def session_context(
     domain: SessionDomain = "all",
     note_paths: list[str] | None = None,
     max_tokens: int | None = None,
+    known_contract_hash: str | None = None,
 ) -> dict[str, Any]:
     """Return a complete protocol or explicit budget refusal, never mutate the index."""
     started = time.perf_counter()
@@ -118,11 +120,14 @@ async def session_context(
         "truncated": False,
     }
     maximum = budget * TOKEN_ESTIMATE_CHARS_PER_TOKEN
+    if known_contract_hash == CONTRACT_HASH:
+        result["contract"].pop("instructions")
+        result["contract"]["delivery"] = "unchanged"
     kernel_size = rendered_size(result)
     if kernel_size > maximum:
         return _budget_refusal(started, kernel_size)
     try:
-        paths = list(dict.fromkeys([*app.settings.session_context_paths, *(note_paths or [])]))
+        paths = list(dict.fromkeys([*(note_paths or []), *app.settings.session_context_paths]))
         if subject and subject.strip():
             # The store tokenizes plain text and implements its own AND/OR fallback.
             # Scoping by the domain tag keeps the bounded candidate list from being
@@ -133,17 +138,20 @@ async def session_context(
                 limit=app.settings.max_result_count,
                 tags=[domain_tag] if domain_tag else None,
             )
+            hits = rerank_temporal(
+                hits, await app.store.list_temporal_metadata(), include_superseded=False
+            )
+            ranked_paths = []
             for hit in hits:
                 if hit.chunk.note_rel_path not in paths and app.scope.allows_note_rel_path(
                     hit.chunk.note_rel_path
                 ):
-                    paths.append(hit.chunk.note_rel_path)
+                    ranked_paths.append(hit.chunk.note_rel_path)
+            paths = list(dict.fromkeys([*(note_paths or []), *ranked_paths, *paths]))
             result["coverage"] = "ranked_candidates_not_exhaustive"
-        matched_people = await _load_sources(app, paths, note_paths, domain, result)
+        matched_people, loaded_notes = await _load_sources(app, paths, note_paths, domain, result)
         result["identity"] = "clarification_required" if matched_people > 1 else "not_resolved"
-        while rendered_size(result) > maximum and result["sources"]:
-            result["sources"].pop()
-            result["omitted"] += 1
+        _fit_sources(app, result, maximum, loaded_notes)
         result["truncated"] = bool(
             result["omitted"] or any(x["truncated"] for x in result["sources"])
         )
@@ -163,6 +171,39 @@ async def session_context(
         return _internal_error_response("session_context", started)
 
 
+def _fit_sources(
+    app: DatacronApp, result: dict[str, Any], maximum: int, loaded_notes: list[Note]
+) -> None:
+    """Fit sources with valid continuation pointers, preserving the complete contract."""
+    while rendered_size(result) > maximum and result["sources"]:
+        # Preserve at least a bounded source and its exact continuation when
+        # the contract leaves too little room for the configured excerpt.
+        if len(result["sources"]) == 1:
+            note = loaded_notes[0]
+            low, high = 1, app.settings.session_note_chars
+            fitted = None
+            while low <= high:
+                allowance = (low + high) // 2
+                candidate = _full_source(app, note, allowance)
+                result["sources"] = [candidate]
+                result["truncated"] = True
+                if rendered_size(result) <= maximum:
+                    fitted = candidate
+                    low = allowance + 1
+                else:
+                    high = allowance - 1
+            if fitted is not None:
+                fitted["selection_mode"] = "budget_full_excerpt"
+                result["sources"] = [fitted]
+                # Selection metadata also counts towards the budget.
+                if rendered_size(result) <= maximum:
+                    break
+                fitted.pop("selection_mode")
+                break
+        result["sources"].pop()
+        result["omitted"] += 1
+
+
 def rendered_size(payload: object) -> int:
     """Use conservative ASCII JSON accounting including all outer fields."""
     return len(json.dumps(payload, ensure_ascii=True, indent=2))
@@ -174,8 +215,9 @@ async def _load_sources(
     note_paths: list[str] | None,
     domain: SessionDomain,
     result: dict[str, Any],
-) -> int:
+) -> tuple[int, list[Note]]:
     matched_people = 0
+    loaded_notes: list[Note] = []
     for path in paths:
         if len(result["sources"]) >= SESSION_MAX_NOTES:
             result["omitted"] += 1
@@ -193,11 +235,12 @@ async def _load_sources(
             matched_people += 1
         item = _orientation_source(app, note)
         result["sources"].append(item)
-    return matched_people
+        loaded_notes.append(note)
+    return matched_people, loaded_notes
 
 
-def _full_source(app: DatacronApp, note: Note) -> dict[str, Any]:
-    full = _build_full_payload(app, note, offset=0, limit=app.settings.session_note_chars)
+def _full_source(app: DatacronApp, note: Note, limit: int | None = None) -> dict[str, Any]:
+    full = _build_full_payload(app, note, offset=0, limit=limit or app.settings.session_note_chars)
     item = {
         key: full[key]
         for key in (

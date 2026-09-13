@@ -7,6 +7,34 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [Unreleased]
+
+### Added
+
+- Offline library commands (`audit`, `prepare`, `check`, `split`) build a readable
+  Markdown preview with navigation, local attachments and English or French labels.
+  Sourced consolidation recipes preserve originals and prepare a reviewable organization
+  manifest with source hashes, diffs and archive safeguards.
+- Prioritized session context with adaptive budgets and an optional cached contract hash.
+- Read-only `get_write_progress` reports durable receipts, conflicts and indexing status.
+- Fictional conversation acceptance cases, trace evaluation, concurrent session benchmarks,
+  and an opt-in Windows runtime validation workflow.
+
+### Changed
+
+- Explicit archive lifecycle metadata influences retrieval ranking and is writable through
+  `set_frontmatter` with concurrency checks and durable replay.
+- Health and tool errors include actionable recovery guidance.
+- English and French guides cover daily workflows and offline note organization.
+- Public examples use fictional identities and neutral local paths.
+
+### Fixed
+
+- Contextual redaction covers note titles, headings and ancestor metadata while returning
+  opaque chunk aliases without changing stored identities.
+- Duplicate note identities are rejected before index reconciliation mutates state.
+- Missing entries in a stale identity sidecar trigger live discovery rather than false absence.
+
 ## [2026.0913.01] - 2026-09-13
 
 ### Added
