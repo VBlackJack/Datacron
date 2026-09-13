@@ -7,7 +7,7 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
-## [Unreleased]
+## [2026.0913.00] - 2026-09-13
 
 ### Added
 
@@ -56,6 +56,12 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - The organization pages, in English and French, describe the nine kinds, the two keys, the
   state note and link conventions, `--freshness-days`, the text and JSON samples and the
   schema version.
+
+### Upgrade
+
+- No reindex and no protocol install: the index layout and the memory protocol are
+  unchanged. Upgrade every installation before declaring `state_note_min_notes` or
+  `linking_since` in `VAULT.yaml`; an older executable refuses the keys and stops its server.
 
 ## [2026.0912.03] - 2026-09-12
 
