@@ -118,6 +118,7 @@ def _build_case(
     create_id: str = _CREATE_ID,
     create_alias: str = "created-alias",
     target_config: bytes | None = None,
+    create_body: str = "created",
 ) -> _BundleCase:
     vault = tmp_path / "vault"
     memory = vault / "memory"
@@ -141,7 +142,7 @@ def _build_case(
     payloads: dict[str, bytes] = {}
     replace_after = _note(replace_id, "replace-title", ("replace-old",), "after")
     move_after = _note(_MOVE_ID, "move-title", ("move",), "after")
-    create_after = _note(create_id, "created-title", (create_alias,), "created")
+    create_after = _note(create_id, "created-title", (create_alias,), create_body)
     replace_digest = _operation_payload(payloads, replace_after)
     move_digest = _operation_payload(payloads, move_after)
     create_digest = _operation_payload(payloads, create_after)
@@ -503,6 +504,42 @@ def test_projected_planner_snapshot_matches_materialized_filesystem(tmp_path: Pa
     )
 
     assert hash_organization_plan(snapshot) == hash_organization_plan(filesystem)
+
+
+def test_projected_snapshot_reports_an_unbalanced_fence_like_the_applied_vault(
+    tmp_path: Path,
+) -> None:
+    case = _build_case(tmp_path, create_body="created\n```python\nx = 1\n")
+    _bundle, validated = _load_and_validate(case)
+    projected = plan_organization_snapshot(
+        case.vault,
+        validated.target_config,
+        validated.projected_notes,
+    )
+
+    for resolved in validated.operations:
+        target = case.vault / resolved.operation.target
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(resolved.payload.raw_bytes)
+        if resolved.kind == "move_replace_exact" and resolved.source_path is not None:
+            resolved.source_path.unlink()
+    assert validated.config_path is not None
+    assert validated.config_payload is not None
+    validated.config_path.write_bytes(validated.config_payload.raw_bytes)
+    applied = plan_organization(
+        case.vault,
+        validated.target_config,
+        settings=Settings(
+            vault_root=case.vault,
+            read_paths=[case.vault],
+            write_paths=[case.vault],
+        ),
+    )
+
+    assert projected.counts_by_kind()["UNBALANCED_FENCE"] == 1
+    assert [item.rel_path for item in projected.deviations] == ["memory/created.md"]
+    assert projected.freshness is None
+    assert hash_organization_plan(projected) == hash_organization_plan(applied)
 
 
 def test_sidecar_reserved_id_blocks_create_even_for_excluded_path(tmp_path: Path) -> None:

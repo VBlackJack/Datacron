@@ -439,10 +439,13 @@ def test_planner_reports_policy_gaps_only_when_the_policy_is_declared(tmp_path: 
     assert plan.deviations[0].expected == "project/heimdall"
     assert sorted(silent.counts_by_kind()) == [
         "NAMING",
+        "NO_STATE_NOTE",
         "OVER_SIZE",
         "TAG_CARDINALITY",
+        "UNBALANCED_FENCE",
         "UNGOVERNED",
         "UNKNOWN_TAG",
+        "UNLINKED",
         "WRONG_FOLDER",
     ]
 

@@ -1101,6 +1101,10 @@ _REORGANIZE_DRY_RUN_HELP: Final[str] = (
 )
 _REORGANIZE_JSON_HELP: Final[str] = "Emit the stable machine-readable report instead of text."
 _REORGANIZE_KIND_HELP: Final[str] = "Restrict the report to one deviation kind."
+_REORGANIZE_FRESHNESS_HELP: Final[str] = (
+    "Also list the state notes whose last_verified is missing or older than N days. "
+    "Informative: the exit code is unchanged."
+)
 _REORGANIZE_REQUIRES_DRY_RUN: Final[str] = (
     "datacron reorganize currently supports --dry-run only. Pass --dry-run explicitly: "
     "no other mode exists yet, and the flag must never become implicit."
@@ -1119,6 +1123,12 @@ def reorganize(
     dry_run: bool = typer.Option(False, "--dry-run", help=_REORGANIZE_DRY_RUN_HELP),
     as_json: bool = typer.Option(False, "--json", help=_REORGANIZE_JSON_HELP),
     kind: str | None = typer.Option(None, "--kind", help=_REORGANIZE_KIND_HELP),
+    freshness_days: int | None = typer.Option(
+        None,
+        "--freshness-days",
+        min=1,
+        help=_REORGANIZE_FRESHNESS_HELP,
+    ),
 ) -> None:
     """Measure how far the vault has drifted from the organization it declares.
 
@@ -1182,7 +1192,12 @@ def reorganize(
         )
 
     try:
-        plan = plan_organization(vault_root, config, settings=settings)
+        plan = plan_organization(
+            vault_root,
+            config,
+            settings=settings,
+            freshness_days=freshness_days,
+        )
     except (OrganizationConfigurationError, OSError) as exc:
         _error(
             _REORGANIZE_BAD_CONFIG.format(detail=str(exc)),

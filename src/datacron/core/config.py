@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Final, final
@@ -408,6 +409,10 @@ class OrganizationConfig(BaseModel):
     Datacron knows the *shape* of a rule and nothing else. Folder names and tag
     names come from the vault's own sidecar, never from this package, so a vault
     with a different taxonomy is served identically.
+
+    ``state_note_min_notes`` and ``linking_since`` switch on two folder-level
+    measurements over the subject rules; both stay off until the vault declares
+    them, so an existing sidecar measures exactly what it measured before.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -415,6 +420,8 @@ class OrganizationConfig(BaseModel):
     scope: str | None = None
     rules: tuple[OrganizationRule, ...] = ()
     tags: OrganizationTagPolicy | None = None
+    state_note_min_notes: int | None = Field(default=None, ge=1)
+    linking_since: date | None = None
 
     @field_validator("scope", mode="before")
     @classmethod

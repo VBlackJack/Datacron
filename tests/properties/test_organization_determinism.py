@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -24,18 +25,27 @@ import yaml
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from datacron.core.config import OrganizationConfig, OrganizationRule, VaultConfig
+from datacron.core.config import (
+    OrganizationConfig,
+    OrganizationRule,
+    OrganizationSubject,
+    OrganizationTagPolicy,
+    VaultConfig,
+)
 from datacron.organization import planner as planner_module
 from datacron.organization.report import render_json
 
 pytestmark = pytest.mark.invariants
 
+_NoteCase = tuple[str, str, str | None, bool, bool, str, str]
 _NOTE_CASE = st.tuples(
     st.sampled_from(("facts", "decisions", "projects", "nested/alpha", "nested/beta")),
     st.sampled_from(("memory/fact", "memory/decision", "project/datacron")),
     st.sampled_from(("2026-08-29", "2026-08-28", None)),
     st.booleans(),
     st.booleans(),
+    st.sampled_from(("", "kind/platform")),
+    st.sampled_from(("", "```\n", "```\n```\n", "[[datacron]]\n", "```\n[[datacron]]\n")),
 )
 
 
@@ -44,6 +54,11 @@ def _config() -> VaultConfig:
         organization=OrganizationConfig(
             scope="_memory",
             rules=(
+                OrganizationRule(
+                    tag="project/datacron",
+                    folder="_memory/projects",
+                    naming="{slug}",
+                ),
                 OrganizationRule(
                     tag="memory/fact",
                     folder="_memory/facts",
@@ -56,6 +71,14 @@ def _config() -> VaultConfig:
                     naming="{date}-{slug}",
                 ),
             ),
+            tags=OrganizationTagPolicy(
+                placement_namespace="memory",
+                subject_namespace="project",
+                subjects=(OrganizationSubject(tag="project/datacron"),),
+                allowed_namespaces=("kind",),
+            ),
+            state_note_min_notes=2,
+            linking_since=date(2026, 8, 29),
         )
     )
 
@@ -63,20 +86,25 @@ def _config() -> VaultConfig:
 def _write_case(
     root: Path,
     index: int,
-    case: tuple[str, str, str | None, bool, bool],
+    case: _NoteCase,
 ) -> Path:
-    folder, tag, created, malformed, oversized = case
+    folder, tag, created, malformed, oversized, state_tag, body_prefix = case
     stem = f"2026-08-29-note-{index}" if index % 2 == 0 else f"undated-note-{index}"
     path = root / "_memory" / folder / f"{stem}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     if malformed:
         path.write_bytes(b"\xff\xfe\x00")
         return path
-    metadata: dict[str, object] = {"title": f"note {index}", "tags": [tag]}
+    tags = [tag, "memory/fact"] if tag == "project/datacron" else [tag]
+    if state_tag:
+        tags.append(state_tag)
+    metadata: dict[str, object] = {"title": f"note {index}", "tags": tags}
+    if state_tag:
+        metadata["aliases"] = ["datacron"]
     if created is not None:
         metadata["created"] = created
     header = yaml.safe_dump(metadata, sort_keys=False).strip()
-    body = "x" * 2048 if oversized else "content"
+    body = body_prefix + ("x" * 2048 if oversized else "content")
     path.write_text(f"---\n{header}\n---\n\n{body}\n", encoding="utf-8")
     return path
 
@@ -84,7 +112,7 @@ def _write_case(
 @settings(max_examples=20, deadline=None)
 @given(cases=st.lists(_NOTE_CASE, min_size=1, max_size=12))
 def test_planning_is_byte_identical_for_opposite_discovery_orders(
-    cases: list[tuple[str, str, str | None, bool, bool]],
+    cases: list[_NoteCase],
 ) -> None:
     """Discovery order cannot affect paths, skipped notes, deviations or JSON."""
     with TemporaryDirectory(prefix="datacron-organization-property-") as temporary:
@@ -128,6 +156,13 @@ def test_planning_is_byte_identical_for_opposite_discovery_orders(
         assert rel_a == sorted(rel_a)
         assert rel_b == rel_a
         assert render_json(plan_a) == render_json(plan_b)
+        fresh_a = planner_module.plan_organization(
+            root, config, freshness_days=30, today=date(2026, 9, 13)
+        )
+        fresh_b = planner_module.plan_organization(
+            root, config, freshness_days=30, today=date(2026, 9, 13)
+        )
+        assert render_json(fresh_a) == render_json(fresh_b)
 
         def preserve_discovery_order(
             discovered: Iterable[Path],

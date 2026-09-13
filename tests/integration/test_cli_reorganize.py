@@ -207,7 +207,8 @@ def test_json_output_is_valid_and_stable(runner: CliRunner, tmp_path: Path) -> N
 
     assert first.exit_code == 1
     payload = json.loads(first.stdout)
-    assert payload["schema"] == "organization-plan-v1"
+    assert payload["schema"] == "organization-plan-v2"
+    assert "freshness" not in payload
     assert payload["scope"] == "_memory"
     assert payload["counts"]["WRONG_FOLDER"] == 1
     assert first.stdout == second.stdout
@@ -224,6 +225,110 @@ def test_kind_filter_narrows_the_report(runner: CliRunner, tmp_path: Path) -> No
 
     assert filtered.exit_code == 0
     assert json.loads(filtered.stdout)["deviations"] == []
+
+
+@pytest.mark.parametrize("kind", ["NO_STATE_NOTE", "UNLINKED", "UNBALANCED_FENCE"])
+def test_kind_filter_accepts_the_folder_and_fence_kinds(
+    runner: CliRunner,
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    _make_vault(tmp_path)
+    _write_note(tmp_path, "_memory/facts/undated.md", "memory/fact")
+
+    filtered = runner.invoke(
+        app,
+        ["reorganize", "--dry-run", "--json", "--kind", kind, "--vault", str(tmp_path)],
+    )
+
+    assert filtered.exit_code == 0
+    assert json.loads(filtered.stdout)["deviations"] == []
+
+
+def test_unknown_kind_lists_the_nine_kinds(runner: CliRunner, tmp_path: Path) -> None:
+    _make_vault(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["reorganize", "--dry-run", "--kind", "NOPE", "--vault", str(tmp_path)],
+    )
+
+    _assert_configuration_error(result)
+    for kind in ("NO_STATE_NOTE", "UNLINKED", "UNBALANCED_FENCE"):
+        assert kind in result.stderr
+
+
+def test_unbalanced_fence_is_reported_by_the_cli(runner: CliRunner, tmp_path: Path) -> None:
+    _make_vault(tmp_path)
+    note = tmp_path / "_memory" / "facts" / "2026-08-29-fenced.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text(
+        "---\ntitle: note\ncreated: 2026-08-29\ntags:\n  - memory/fact\n---\n\n```\nopen\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["reorganize", "--dry-run", "--json", "--vault", str(tmp_path)])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["counts"]["UNBALANCED_FENCE"] == 1
+    assert payload["deviations"][0]["detail"] == "1 fence lines"
+
+
+def _write_state_note(root: Path, rel_path: str, *, last_verified: str | None) -> None:
+    path = root / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    verified = "" if last_verified is None else f"last_verified: {last_verified}\n"
+    path.write_text(
+        "---\ntitle: state\ncreated: 2026-08-29\n"
+        f"{verified}tags:\n  - memory/fact\n  - kind/platform\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+
+
+def test_freshness_option_lists_stale_state_notes_without_changing_the_exit_code(
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    _make_vault(tmp_path)
+    _write_state_note(tmp_path, "_memory/facts/2026-08-29-stale.md", last_verified="2020-01-01")
+    _write_state_note(tmp_path, "_memory/facts/2026-08-29-never.md", last_verified=None)
+
+    text = runner.invoke(
+        app,
+        ["reorganize", "--dry-run", "--freshness-days", "60", "--vault", str(tmp_path)],
+    )
+    as_json = runner.invoke(
+        app,
+        ["reorganize", "--dry-run", "--json", "--freshness-days", "60", "--vault", str(tmp_path)],
+    )
+    plain = runner.invoke(app, ["reorganize", "--dry-run", "--json", "--vault", str(tmp_path)])
+
+    assert text.exit_code == 0
+    assert "Freshness (older than 60 days): 2" in text.stdout
+    assert "_memory/facts/2026-08-29-never.md (memory/fact, never verified)" in text.stdout
+    assert as_json.exit_code == 0
+    freshness = json.loads(as_json.stdout)["freshness"]
+    assert [item["rel_path"] for item in freshness] == [
+        "_memory/facts/2026-08-29-never.md",
+        "_memory/facts/2026-08-29-stale.md",
+    ]
+    assert freshness[0]["age_days"] is None
+    assert freshness[1]["last_verified"] == "2020-01-01"
+    assert freshness[1]["age_days"] > 60
+    assert "freshness" not in json.loads(plain.stdout)
+
+
+def test_freshness_days_must_be_positive(runner: CliRunner, tmp_path: Path) -> None:
+    _make_vault(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["reorganize", "--dry-run", "--freshness-days", "0", "--vault", str(tmp_path)],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
 
 
 @pytest.mark.parametrize(
