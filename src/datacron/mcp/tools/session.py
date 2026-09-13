@@ -30,11 +30,16 @@ from datacron.core.memory_protocol import (
     SESSION_MIN_TOKENS,
     SESSION_SUBJECT_CHARS,
 )
+from datacron.core.models import Note
 from datacron.core.paths import PathConfinementError
 from datacron.core.scope import NoteAdmissionError
 from datacron.indexing.ripgrep import ripgrep_available
-from datacron.mcp.tools.payloads import _audit, _error_response, _internal_error_response
-from datacron.mcp.tools.read import _build_full_payload
+from datacron.mcp.tools.payloads import (
+    _audit,
+    _error_response,
+    _internal_error_response,
+)
+from datacron.mcp.tools.read import _build_full_payload, _build_section_payload
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -186,24 +191,118 @@ async def _load_sources(
                 continue
         if "memory/contact" in note.tags:
             matched_people += 1
-        full = _build_full_payload(app, note, offset=0, limit=app.settings.session_note_chars)
-        item = {
-            key: full[key]
+        item = _orientation_source(app, note)
+        result["sources"].append(item)
+    return matched_people
+
+
+def _full_source(app: DatacronApp, note: Note) -> dict[str, Any]:
+    full = _build_full_payload(app, note, offset=0, limit=app.settings.session_note_chars)
+    item = {
+        key: full[key]
+        for key in (
+            "id",
+            "rel_path",
+            "title",
+            "content_hash",
+            "content",
+            "next_offset",
+            "truncated",
+        )
+    }
+    item["next_read"] = {
+        "tool": "get_note",
+        "id_or_path": full["rel_path"],
+        "offset": full["next_offset"] or 0,
+        "format": "full",
+    }
+    return item
+
+
+def _orientation_source(app: DatacronApp, note: Note) -> dict[str, Any]:
+    preferences = app.settings.session_context_sections.get(note.rel_path, [])
+    if not preferences:
+        return _full_source(app, note)
+    note_allowance = min(
+        app.settings.session_note_chars,
+        app.settings.get_note_max_tokens * TOKEN_ESTIMATE_CHARS_PER_TOKEN,
+    )
+    allowance, remainder = divmod(note_allowance, len(preferences))
+    excerpts: list[dict[str, Any]] = []
+    omitted: list[dict[str, Any]] = []
+    unavailable: list[dict[str, Any]] = []
+    fallback_selections: list[dict[str, Any]] = []
+    for index, heading_path in enumerate(preferences):
+        quota = allowance + (index < remainder)
+        try:
+            # Validate every requested section, even when its quota is zero.
+            selected = _build_section_payload(
+                app, note, heading_path, None, offset=0, limit=max(1, quota)
+            )
+        except ValueError as exc:
+            # No unique source span exists, so do not reflect the configured selector.
+            unavailable_selection = {"preference_index": index + 1, "reason": str(exc)}
+            unavailable.append(unavailable_selection)
+            fallback_selections.append(unavailable_selection)
+            continue
+        fallback_selections.append({"preference_index": index + 1, "section": selected["section"]})
+        next_offset = selected["next_offset"] if quota else 0
+        safe_selector = selected["section"]["heading_path"] == heading_path
+        pointer = (
+            {
+                "tool": "get_note",
+                "id_or_path": note.id,
+                "format": "full",
+                "heading_path": selected["section"]["heading_path"],
+                "heading_occurrence": selected["section"]["heading_occurrence"],
+                "offset": next_offset,
+            }
+            if next_offset is not None and safe_selector
+            else None
+        )
+        if not quota:
+            omitted.append(
+                {
+                    "section": selected["section"],
+                    "reason": "note_character_allowance",
+                    "next_read": pointer,
+                }
+            )
+            continue
+        excerpt = {
+            key: selected[key]
             for key in (
-                "id",
-                "rel_path",
-                "title",
-                "content_hash",
+                "section",
                 "content",
+                "content_hash",
+                "offset",
                 "next_offset",
+                "returned_chars",
+                "total_chars",
                 "truncated",
             )
         }
-        item["next_read"] = {
-            "tool": "get_note",
-            "id_or_path": full["rel_path"],
-            "offset": full["next_offset"] or 0,
-            "format": "full",
+        excerpt["next_read"] = pointer
+        if not safe_selector:
+            excerpt["continuation_unavailable"] = "heading_selector_redacted"
+        excerpts.append(excerpt)
+    if unavailable:
+        item = _full_source(app, note)
+        item["section_selection"] = {
+            "mode": "full_fallback",
+            "reason": "requested_section_unavailable",
+            "unavailable_sections": unavailable,
+            "omitted_sections": fallback_selections,
         }
-        result["sources"].append(item)
-    return matched_people
+        return item
+    summary = _build_full_payload(app, note, offset=0, limit=1)
+    return {
+        **{key: summary[key] for key in ("id", "rel_path", "title", "content_hash")},
+        "excerpts": excerpts,
+        "section_selection": {
+            "mode": "sections",
+            "unavailable_sections": [],
+            "omitted_sections": omitted,
+        },
+        "truncated": bool(omitted or any(excerpt["truncated"] for excerpt in excerpts)),
+    }

@@ -21,6 +21,15 @@ from typing import Final
 CONTRACT_ID: Final[str] = "datacron-memory"
 CONTRACT_VERSION: Final[str] = "1.1.0"
 SESSION_DEFAULT_PATHS: Final[tuple[str, ...]] = ("_memory/INIT.md",)
+SESSION_DEFAULT_SECTIONS: Final[dict[str, tuple[tuple[str, ...], ...]]] = {
+    "_memory/INIT.md": (
+        ("INIT — bootstrap de session", "Où vivent les choses"),
+        ("INIT — bootstrap de session", "Comment écrire (mémoire) — résumé, détail dans README.md"),
+    ),
+}
+SESSION_MAX_SECTIONS: Final[int] = 8
+SESSION_MAX_HEADING_DEPTH: Final[int] = 6
+SESSION_MAX_HEADING_CHARS: Final[int] = 512
 SESSION_MAX_NOTES: Final[int] = 8
 SESSION_NOTE_CHARS: Final[int] = 2400
 SESSION_SUBJECT_CHARS: Final[int] = 256

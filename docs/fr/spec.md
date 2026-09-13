@@ -114,9 +114,12 @@ borné à 26 caractères alphanumériques majuscules, mais impose de le préserv
 résultat : ce canal ne migre jamais une identité.
 
 `set_frontmatter` peut modifier `origin`, `confidence`, `last_verified`, `supersedes`,
-`rejected`, `valid_from`, `invalid_at` et `invalidated_by`; il met aussi `updated` à jour et
+`rejected`, `valid_from`, `invalid_at`, `invalidated_by` et `last_id`; il met aussi `updated` à jour et
 préserve le corps Markdown. Une liste `rejected` vide supprime cette clé. Toute clé de
 frontmatter inconnue est préservée lors d'une sérialisation.
+
+`last_id` exige CAS et ne peut pas diminuer. Consultez les [opérations de section](note-sections.md)
+pour la migration du compteur, la lecture par titres et les déplacements prévisualisés.
 
 Le ranking temporel observable est conservateur:
 
@@ -253,11 +256,12 @@ seuls les tools de lecture, advisory et opérationnels restent exposés.
 | Opérationnel | `get_health` | Fraîcheur, intégrité, checksum, durabilité et preuves d'invariants |
 | Écriture | `create_note_ai` | Crée une note mémoire sans overwrite |
 | Écriture | `append_journal` | Ajoute une entrée sous un heading d'une note existante |
-| Écriture | `set_frontmatter` | Modifie uniquement les champs de cycle de vie autorisés et `updated` |
+| Écriture | `set_frontmatter` | Modifie les champs de cycle de vie autorisés, le compteur monotone `last_id` et `updated` |
 | Écriture | `patch_note_preamble` | Remplace ou supprime le préambule avant le premier titre Markdown reconnu |
 | Écriture | `patch_note_section` | Remplace le contenu sous un heading existant en conservant la ligne du heading |
 | Écriture | `delete_note_section` | Supprime explicitement une section H2-H6 et son sous-arbre |
 | Écriture | `rename_note_section` | Renomme un titre H2-H6 sans modifier son contenu |
+| Écriture | `move_note_section` | Prévisualise ou applique un déplacement exact de sous-arbre dans une note, avec CAS obligatoire |
 | Écriture | `revert_note` | Restaure les octets exacts d'une version d'historique adressée par hash |
 | Écriture | `apply_organization_manifest` | Valide puis applique, après confirmation exacte, un bundle d'organisation adressé par contenu |
 | Opérationnel | `get_note_history` | Liste les métadonnées d'opérations validées d'une note sans lire les anciens octets |

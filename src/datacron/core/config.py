@@ -34,7 +34,11 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from datacron.core.memory_protocol import (
     SESSION_DEFAULT_PATHS,
+    SESSION_DEFAULT_SECTIONS,
+    SESSION_MAX_HEADING_CHARS,
+    SESSION_MAX_HEADING_DEPTH,
     SESSION_MAX_NOTES,
+    SESSION_MAX_SECTIONS,
     SESSION_NOTE_CHARS,
 )
 from datacron.core.query_expansion import default_query_expansion, normalize_term_map
@@ -713,6 +717,44 @@ class Settings(BaseSettings):
         max_length=SESSION_MAX_NOTES,
     )
     session_note_chars: int = Field(default=SESSION_NOTE_CHARS, ge=1)
+    session_context_sections: dict[str, list[list[str]]] = Field(
+        default_factory=lambda: {
+            path: [list(heading_path) for heading_path in sections]
+            for path, sections in SESSION_DEFAULT_SECTIONS.items()
+        }
+    )
+
+    @field_validator("session_context_sections")
+    @classmethod
+    def _validate_session_sections(
+        cls, value: dict[str, list[list[str]]]
+    ) -> dict[str, list[list[str]]]:
+        if len(value) > SESSION_MAX_NOTES:
+            raise ValueError("session_context_sections exceeds the orientation note limit")
+        for path, sections in value.items():
+            if (
+                not path
+                or "\\" in path
+                or path.startswith("/")
+                or ":" in path
+                or ".." in path.split("/")
+            ):
+                raise ValueError("session_context_sections requires vault-relative note paths")
+            if len(sections) > SESSION_MAX_SECTIONS:
+                raise ValueError("session_context_sections exceeds the per-note section limit")
+            seen: set[tuple[str, ...]] = set()
+            for heading_path in sections:
+                if not 1 <= len(heading_path) <= SESSION_MAX_HEADING_DEPTH or any(
+                    not heading.strip() or len(heading) > SESSION_MAX_HEADING_CHARS
+                    for heading in heading_path
+                ):
+                    raise ValueError("session_context_sections contains an invalid heading path")
+                identity = tuple(heading_path)
+                if identity in seen:
+                    raise ValueError("session_context_sections contains duplicate heading paths")
+                seen.add(identity)
+        return value
+
     max_result_count: int = Field(default=DEFAULT_MAX_RESULT_COUNT, ge=1)
     repair_min_interval_seconds: float = Field(
         default=DEFAULT_REPAIR_MIN_INTERVAL_SECONDS,

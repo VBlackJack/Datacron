@@ -4,7 +4,7 @@
 
 ## Rejouer une écriture
 
-Les huit outils ordinaires d'écriture acceptent `request_id`, facultatif : 1 à 128 caractères
+Les neuf outils ordinaires d'écriture acceptent `request_id`, facultatif : 1 à 128 caractères
 ASCII parmi lettres, chiffres, points, tirets et underscores, avec une lettre ou un chiffre
 en premier. Utiliser un identifiant unique par opération logique. Lors d'une nouvelle tentative,
 conserver **tous les arguments**, y compris `expected_hash`. La clé est commune au vault,

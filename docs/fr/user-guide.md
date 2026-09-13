@@ -60,6 +60,7 @@ sont confinées, atomiques par fichier, historisées et auditées.
 | `patch_note_section` | Remplace le contenu sous un titre existant, avec contrôle de version (CAS). |
 | `delete_note_section` | Supprime explicitement une section H2-H6 et son sous-arbre. |
 | `rename_note_section` | Renomme un titre de section H2-H6 sans modifier son contenu. |
+| `move_note_section` | Prévisualise ou déplace une section et son sous-arbre sous un autre titre de la même note, avec CAS. Voir les [opérations de section](note-sections.md). |
 | `revert_note` | Restaure les octets exacts d'une version conservée dans l'historique. |
 | `apply_organization_manifest` | Valide puis applique un bundle local adressé par contenu contenant au moins une opération exacte sur une note et/ou un remplacement exact de la configuration `organization`. |
 

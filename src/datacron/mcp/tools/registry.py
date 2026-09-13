@@ -20,6 +20,7 @@ from typing import Any, Final, cast
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
+from pydantic import StrictBool, StrictInt
 
 from datacron.core.scope import SingleTenantVaultScope
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
@@ -39,6 +40,7 @@ from datacron.mcp.tool_contract import (
     ListNotesOutput,
     MemoryConfidence,
     MemoryOrigin,
+    MoveNoteSectionOutput,
     OrganizationManifestMode,
     PatchNotePreambleOutput,
     PatchNoteSectionOutput,
@@ -57,6 +59,7 @@ from datacron.mcp.tools.ops import _audit_query_impl, _get_health_impl, _get_not
 from datacron.mcp.tools.organization import _apply_organization_manifest_impl
 from datacron.mcp.tools.read import _get_note_impl, _list_notes_impl
 from datacron.mcp.tools.search import _get_backlinks_impl, _search_regex_impl, _search_text_impl
+from datacron.mcp.tools.section_move import _move_note_section_impl
 from datacron.mcp.tools.session import SessionDomain
 from datacron.mcp.tools.session import session_context as build_session_context
 from datacron.mcp.tools.write import (
@@ -243,7 +246,10 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
             "reads ignore offset/limit. For note inputs, format='full' returns the "
             "sandbox-wrapped body and offset/limit page large notes by character range; "
             "format='map' returns the heading outline only (cheap to scan before "
-            "requesting full content)."
+            "requesting full content). heading_path selects exact rendered heading ancestry "
+            "including its subtree; repeated paths require a 1-based heading_occurrence. "
+            "Section reads require full format and a note input, include source line spans "
+            "and the original note hash, and paginate relative to the redacted section."
         ),
         annotations=_READ_ANNOTATIONS,
     )
@@ -252,6 +258,8 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         format: GetNoteFormat = "full",
         offset: int = 0,
         limit: int | None = None,
+        heading_path: list[str] | None = None,
+        heading_occurrence: StrictInt | None = None,
     ) -> GetNoteOutput:
         return cast(
             "GetNoteOutput",
@@ -261,6 +269,8 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 fmt=format,
                 offset=offset,
                 limit=limit,
+                heading_path=heading_path,
+                heading_occurrence=heading_occurrence,
             ),
         )
 
@@ -473,7 +483,9 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
             "discarded options so a future agent does not propose them again. Update "
             "frontmatter fields on an existing memory note. This write operation only "
             "changes origin, confidence, last_verified, supersedes, rejected, valid_from, "
-            "invalid_at, invalidated_by, and the automatic updated timestamp; the Markdown "
+            "invalid_at, invalidated_by, last_id, and the automatic updated timestamp. "
+            "last_id requires expected_hash, accepts BL- plus at least four ASCII digits, "
+            "and cannot decrease an existing valid counter. The Markdown "
             "body is preserved."
         ),
         annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
@@ -489,6 +501,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         valid_from: str | None = None,
         invalid_at: str | None = None,
         invalidated_by: str | None = None,
+        last_id: str | None = None,
         expected_hash: str | None = None,
         request_id: str | None = None,
     ) -> SetFrontmatterOutput:
@@ -505,6 +518,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 valid_from=valid_from,
                 invalid_at=invalid_at,
                 invalidated_by=invalidated_by,
+                last_id=last_id,
                 expected_hash=expected_hash,
                 actor=app.identity_provider.identify(ctx).actor,
                 request_id=request_id,
@@ -663,6 +677,53 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 heading_occurrence=heading_occurrence,
                 actor=app.identity_provider.identify(ctx).actor,
                 request_id=request_id,
+            ),
+        )
+
+    @server.tool(
+        name="move_note_section",
+        title="Move a note section",
+        description=(
+            "Use this to preview an exact single-note H2-H6 subtree move to an existing heading's "
+            "final child position. Both headings must exist; no releveling. Requires "
+            "expected_hash. Default confirm=false returns selection coordinates and "
+            "before/projected hashes without writing; confirm=true commits with durable "
+            "history and index reconciliation. Preserves all text and frontmatter bytes; "
+            "mixed EOLs, unsafe boundaries and invalid child hierarchy are refused. "
+            "AST selectors support ATX/Setext and ignore fences. Duplicate titles require "
+            "the respective level and 1-based occurrence. Use a stable request_id when "
+            "committing for durable replay receipts."
+        ),
+        annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
+    )
+    async def move_note_section(
+        rel_path: str,
+        heading: str,
+        destination_heading: str,
+        expected_hash: str,
+        ctx: Context[Any, Any],
+        heading_level: StrictInt | None = None,
+        heading_occurrence: StrictInt | None = None,
+        destination_level: StrictInt | None = None,
+        destination_occurrence: StrictInt | None = None,
+        confirm: StrictBool = False,
+        request_id: str | None = None,
+    ) -> MoveNoteSectionOutput:
+        return cast(
+            "MoveNoteSectionOutput",
+            await _move_note_section_impl(
+                app,
+                rel_path=rel_path,
+                heading=heading,
+                destination_heading=destination_heading,
+                expected_hash=expected_hash,
+                heading_level=heading_level,
+                heading_occurrence=heading_occurrence,
+                destination_level=destination_level,
+                destination_occurrence=destination_occurrence,
+                confirm=confirm,
+                request_id=request_id,
+                actor=app.identity_provider.identify(ctx).actor,
             ),
         )
 

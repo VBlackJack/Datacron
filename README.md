@@ -190,6 +190,7 @@ Useful environment variables:
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | token budget for search results |
 | `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | minimum interval between repair-on-read sweeps; `0` = every read |
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | budget for `get_note(format="full")` |
+| `DATACRON_SESSION_CONTEXT_SECTIONS` | INIT template sections | JSON mapping of note paths to heading paths for bounded [orientation excerpts](docs/en/note-sections.md) |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | target maximum chunk size |
 | `DATACRON_RIPGREP_PATH` | `rg` | ripgrep binary |
 
@@ -217,11 +218,12 @@ Available write tools:
 
 - `create_note_ai`: creates a typed Markdown note, without overwrite.
 - `append_journal`: adds an entry under a heading of an existing note.
-- `set_frontmatter`: updates lifecycle fields and the `rejected` options list without modifying the Markdown body.
+- `set_frontmatter`: updates lifecycle fields, the `rejected` options list, and the monotone `last_id` counter without modifying the Markdown body.
 - `patch_note_preamble`: replaces or removes the Markdown preamble before the first recognized Markdown heading (ATX or Setext), with mandatory CAS control.
 - `patch_note_section`: replaces the content under an existing heading with CAS control.
 - `delete_note_section`: explicitly deletes an H2-H6 section (ATX or Setext) and its subtree.
 - `rename_note_section`: renames only the title of an H2-H6 section (ATX or Setext).
+- `move_note_section`: previews or commits an exact H2-H6 subtree move within a note, with mandatory CAS.
 - `revert_note`: restores the exact bytes of a version kept in history.
 - `apply_organization_manifest`: validates and then applies a local content-addressed bundle
   after confirmation bound to the exact admitted organization pre-state.
@@ -279,7 +281,7 @@ ULIDs, history, and the operation journal.
 | Vault reading | `list_notes`, `get_note`, resources `datacron://vault/map`, `vault/info`, `policy/active` |
 | Search | SQLite FTS5/BM25, FR↔EN query expansion, temporal re-rank, `ripgrep` via `search_regex` |
 | Local graph | Wikilinks and backlinks via `get_backlinks` |
-| Writing | 8 confined note tools + 1 organization batch, journaled and disabled by default without `DATACRON_WRITE_PATHS` |
+| Writing | 9 confined note tools + 1 organization batch, journaled and disabled by default without `DATACRON_WRITE_PATHS` |
 | MCP transport | Python MCP SDK v2 through `MCPServer`, local stdio only; modern `2026-07-28` protocol and legacy `2025-11-25` compatibility, with no HTTP listener |
 | Index | `datacron index` incremental, `datacron reindex` full, conditional repair on read |
 | Organization | Optional `organization` block in `VAULT.yaml`; `datacron reorganize --dry-run` measures the gap read-only, `apply_organization_manifest` applies |
@@ -300,7 +302,7 @@ ULIDs, history, and the operation journal.
 | `prepare_follow_up` | Prepare sourced follow-up plans without writing. |
 | `get_follow_up` | Latest structured follow-up revisions with snapshot-bound pagination. |
 | `list_notes` | returns a paginated list, filterable by folder, tags, and frontmatter key/value pairs, with ULID, title, tags, aliases, and dates |
-| `get_note` | reads a note by ULID, chunk id, or relative path, as paginated content, chunk, or heading outline |
+| `get_note` | reads a note or an exact heading subtree, with pagination, chunk lookup, or a heading outline |
 | `search_text` | runs a BM25 search on the FTS5 index with ranked snippets and stale notes demoted by default |
 | `search_regex` | runs a regex search via ripgrep and resolves the found lines to indexed chunks |
 | `get_backlinks` | returns chunks whose wikilinks target a ULID or a resolved alias |
@@ -311,9 +313,10 @@ ULIDs, history, and the operation journal.
 |---|---|
 | `create_note_ai` | creates a new typed `_memory` note, confined to allowed paths, without overwrite and with a durable journal |
 | `append_journal` | adds a Markdown entry under a heading, with confinement, exact history, and atomic write |
-| `set_frontmatter` | updates only the lifecycle fields, the `rejected` list, and the `updated` date, preserving the Markdown body |
+| `set_frontmatter` | updates allowed lifecycle fields, `rejected`, the monotone `last_id` counter, and `updated`, preserving the Markdown body |
 | `patch_note_preamble` | replaces or removes the preamble before the first recognized Markdown heading (ATX or Setext), with mandatory CAS and suffix preservation |
 | `patch_note_section` | replaces the content of an existing heading with CAS, exact history, and preservation of other sections |
+| `move_note_section` | previews or commits an exact subtree move beneath an existing heading in the same note |
 | `delete_note_section` | explicitly deletes an H2-H6 section (ATX or Setext) and its subtree, with optional CAS and exact history |
 | `rename_note_section` | renames the title of an H2-H6 section (ATX or Setext) without modifying its content or subtree |
 | `revert_note` | restores a note from its content-addressed history; the operation stays durable, reversible, and audited |
@@ -447,6 +450,7 @@ Technical references:
 
 - [Vault conventions (SPEC)](docs/en/spec.md)
 - [Vault organization](docs/en/organization.md)
+- [Read and reorganize note sections](docs/en/note-sections.md)
 - [Architecture and public surface](docs/en/architecture.md)
 - [Security boundary](docs/en/security-boundary.md)
 - [Integrity scrubber](docs/en/integrity-scrubber.md)

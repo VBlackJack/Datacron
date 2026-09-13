@@ -7,6 +7,27 @@ Releases use **Calendar Versioning**: `YYYY.MMDD.XX` - UTC year, zero-padded mon
 and a two-digit same-day build counter starting at `00` (e.g. `2026.0714.00`). Git tags are
 prefixed with `v` (e.g. `v2026.0714.00`).
 
+## [2026.0913.01] - 2026-09-13
+
+### Added
+
+- `move_note_section` previews and commits exact heading subtree moves within one note,
+  with mandatory CAS, explicit confirmation, durable replay and index reconciliation.
+- `get_note` reads an exact heading ancestry and its subtree with section-relative
+  pagination, source coordinates and the original note hash.
+- `set_frontmatter` accepts a monotone `last_id` backlog counter with mandatory CAS.
+  Existing requests without this field retain their durable replay fingerprints.
+- Configurable section excerpts in `session_context` make orientation headings available
+  within the existing note and response budgets, with explicit continuation and fallback.
+- Missing-heading write errors provide bounded, sanitized suggestions without selecting
+  or changing a section automatically.
+
+### Fixed
+
+- An unknown chunk identifier now returns an explicit error instead of the whole parent note.
+- Release preflight validates effective and committed identities against the configured
+  GitHub noreply email, replacing the obsolete empty-email requirement.
+
 ## [2026.0913.00] - 2026-09-13
 
 ### Added

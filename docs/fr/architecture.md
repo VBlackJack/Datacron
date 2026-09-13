@@ -36,7 +36,7 @@ Le socle livré reste volontairement **minimaliste** :
 
 **Livré par cette version après le socle Phase 0** :
 - Query-expansion FR↔EN statique au moment de la recherche, configurée par `VAULT.yaml`.
-- Write tools : `create_note_ai`, `append_journal`, `set_frontmatter`, `patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`, `revert_note` et `apply_organization_manifest`, désactivés par défaut sans `DATACRON_WRITE_PATHS`, confinés et historisés. Les remplacements d'une note sont atomiques ; les lots d'organisation sont crash-consistents et exigent une fenêtre de maintenance, car leur visibilité multi-chemins n'est pas instantanée.
+- Write tools : `create_note_ai`, `append_journal`, `set_frontmatter`, `patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`, `move_note_section`, `revert_note` et `apply_organization_manifest`, désactivés par défaut sans `DATACRON_WRITE_PATHS`, confinés et historisés. Les remplacements d'une note sont atomiques ; les lots d'organisation sont crash-consistents et exigent une fenêtre de maintenance, car leur visibilité multi-chemins n'est pas instantanée.
 - Temporal re-ranking conservateur : démotion explicite des notes supersédées et pénalité légère de confidence.
 
 **Toujours hors scope** :
@@ -135,7 +135,7 @@ flowchart TB
 
 ## 5. Catalogue MCP
 
-### 5.1 Tools (21)
+### 5.1 Tools (22)
 
 | Groupe | Tool | Description | Implémentation |
 |---|---|---|---|
@@ -149,11 +149,12 @@ flowchart TB
 | Lecture | `get_backlinks` | Chunks dont les wikilinks ciblent un ULID ou un alias résolu. | Side-table wikilinks |
 | Écriture | `create_note_ai` | Création confinée d'une note `_memory`, sans overwrite et avec journal durable. | VaultWriter + operation log |
 | Écriture | `append_journal` | Ajout sous un heading avec historique exact et écriture atomique. | VaultWriter + operation log |
-| Écriture | `set_frontmatter` | Mise à jour des champs de cycle de vie en préservant le corps Markdown. | VaultWriter + frontmatter parser |
+| Écriture | `set_frontmatter` | Mise à jour des champs de cycle de vie et du compteur monotone last_id en préservant le corps Markdown. | VaultWriter + frontmatter parser |
 | Écriture | `patch_note_preamble` | Remplacement CAS du préambule avant le premier titre Markdown reconnu. | VaultWriter + operation log |
 | Écriture | `patch_note_section` | Remplacement CAS d'une section avec préservation des autres sections. | VaultWriter + operation log |
 | Écriture | `delete_note_section` | Suppression explicite d'une section H2-H6 et de son sous-arbre. | VaultWriter + operation log |
 | Écriture | `rename_note_section` | Renommage d'un titre H2-H6 en préservant le contenu. | VaultWriter + operation log |
+| Écriture | `move_note_section` | Prévisualisation ou déplacement exact de sous-arbre dans une note. | VaultWriter + operation log |
 | Écriture | `revert_note` | Restauration durable et réversible depuis l'historique adressé par contenu. | History store + VaultWriter |
 | Écriture | `apply_organization_manifest` | Valide, puis applique de façon crash-consistent un lot d'organisation exact ; la visibilité multi-chemins n'est pas instantanée. | Manifest validator + batch journal + VaultWriter |
 | Opérationnel | `get_health` | Fraîcheur, intégrité, checksum, durabilité et preuves d'invariants. | Health scanner read-only |

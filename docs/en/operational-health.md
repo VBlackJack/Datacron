@@ -131,7 +131,7 @@ A note carries its identity in three places: the frontmatter `id` field, the `.d
 sidecar, and the SQLite index. `get_health` reports every disagreement in `integrity.id_mismatches`,
 and any mismatch keeps `status` at `degraded`.
 
-`set_frontmatter` writes only lifecycle fields, `patch_note_preamble` edits the body placed before
+`set_frontmatter` writes allowed lifecycle fields and the monotone `last_id` counter, `patch_note_preamble` edits the body placed before
 the first heading, and `datacron ops repair` resolves blocked operations rather than identities.
 `revert_note` can restore exact history bytes, including an earlier `id`, but only by reversing a
 recorded operation; it cannot choose or canonicalize an identity. A divergent note therefore had
@@ -255,7 +255,7 @@ DATACRON_READ_ONLY=true
 ```
 
 The live MCP registry then omits `create_note_ai`, `append_journal`, `set_frontmatter`,
-`patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`,
+`patch_note_preamble`, `patch_note_section`, `delete_note_section`, `rename_note_section`, `move_note_section`,
 `revert_note`, and `apply_organization_manifest`. Direct calls also fail with `ReadOnlyModeError`.
 
 The guarantee includes the `.datacron` sidecar: startup recovery is skipped, the

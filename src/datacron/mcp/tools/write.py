@@ -32,6 +32,7 @@ from datacron.core.durability import (
 from datacron.core.frontmatter import FrontmatterError, extract_tags, serialize
 from datacron.core.markdown_headings import heading_before, markdown_headings
 from datacron.core.markdown_sections import (
+    HEADING_SUGGESTION_MAX_CHARS,
     HeadingNotFoundError,
     append_entry_to_heading,
     find_section_span,
@@ -48,7 +49,13 @@ from datacron.core.paths import PathConfinementError, sidecar_vault_config
 from datacron.core.vault_writer import UlidCollisionError
 from datacron.core.write_request import ReplayedWriteError
 from datacron.indexing.reconcile import ReconcileStats
-from datacron.mcp.tools.payloads import _LOGGER, _audit, _error_response, _internal_error_response
+from datacron.mcp.tools.payloads import (
+    _LOGGER,
+    _audit,
+    _error_response,
+    _internal_error_response,
+    _sanitize_retrieval_metadata,
+)
 from datacron.mcp.tools.read import _resolve_note
 from datacron.mcp.tools.search import (
     _invalidate_alias_cache_if_index_changed,
@@ -57,11 +64,14 @@ from datacron.mcp.tools.search import (
 from datacron.mcp.tools.write_requests import replayable_write
 from datacron.mcp.tools.write_validation import (
     _RENAME_H1_REFUSAL_MESSAGE,
+    _backlog_counter_key,
     _clean_string_list,
     _map_write_path_error,
     _parse_preserving_bom_and_body_eols,
+    _patch_frontmatter_fields,
     _serialize_preserving_bom,
     _validate_append_journal_request,
+    _validate_backlog_last_id,
     _validate_delete_note_section_request,
     _validate_expected_hash,
     _validate_memory_frontmatter,
@@ -142,9 +152,41 @@ async def _execute_write_tool(
     except expected as exc:
         final = remap(exc) if remap is not None else exc
         fields = expected_audit_fields(exc) if expected_audit_fields is not None else audit_fields
-        return _error_response(tool, final, started, **fields)
+        payload = _error_response(tool, final, started, **fields)
+        if isinstance(exc, HeadingNotFoundError):
+            _add_heading_suggestions(app, payload, exc)
+        return payload
     except Exception:
         return _internal_error_response(tool, started, **audit_fields)
+
+
+def _add_heading_suggestions(
+    app: DatacronApp, payload: dict[str, Any], exc: HeadingNotFoundError
+) -> None:
+    """Enrich a response after its generic error has already been audited."""
+    suggestions: list[dict[str, Any]] = []
+    for index, candidate in enumerate(exc.suggestions):
+        text = candidate["heading"]
+        if app.secret_redactor.retrieval_enabled(app.settings):
+            start, end = exc.suggestion_spans[index]
+            text = app.secret_redactor.redact_fragment(text, exc.source_context, start, end)
+        safe_heading = _sanitize_retrieval_metadata(app, text)
+        bounded_heading = safe_heading[:HEADING_SUGGESTION_MAX_CHARS]
+        suggestions.append(
+            {
+                "heading": bounded_heading,
+                "heading_level": candidate["heading_level"],
+                "heading_occurrence": candidate["heading_occurrence"],
+                "selection_ready": bounded_heading == candidate["heading"],
+            }
+        )
+    payload["error"]["suggestions"] = suggestions
+    payload["error"]["suggestion_hint"] = (
+        "No section was selected. Suggestions use rendered AST text, not Markdown markup. "
+        "Only selection_ready=true titles can be passed unchanged with their level and "
+        "occurrence; sanitized or truncated titles are display-only. Use get_note "
+        "format=map to inspect headings. No suggestion is applied automatically."
+    )
 
 
 def _enforce_tag_policy(app: DatacronApp, rel_path: str, tags: list[str], body: str) -> None:
@@ -396,6 +438,7 @@ async def _set_frontmatter_impl(
     valid_from: str | None = None,
     invalid_at: str | None = None,
     invalidated_by: str | None = None,
+    last_id: str | None = None,
     expected_hash: str | None = None,
     actor: str = "direct-call",
     request_id: str | None = None,
@@ -425,8 +468,12 @@ async def _set_frontmatter_impl(
             valid_from=valid_from,
             invalid_at=invalid_at,
             invalidated_by=invalidated_by,
+            last_id=last_id,
         )
         cleaned_expected_hash = _validate_expected_hash(expected_hash)
+        cleaned_last_id = _validate_backlog_last_id(last_id) if last_id is not None else None
+        if cleaned_last_id is not None and cleaned_expected_hash is None:
+            raise ValueError("expected_hash is required when setting last_id")
         changed_fields: list[str] = []
         operation_parameters: dict[str, Any] = {"fields": ""}
 
@@ -434,6 +481,7 @@ async def _set_frontmatter_impl(
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             if not metadata:
                 raise ValueError("note has no frontmatter")
+            _set_backlog_last_id(metadata, changed_fields, cleaned_last_id)
             if cleaned_confidence is not None:
                 _set_changed_frontmatter_field(
                     metadata,
@@ -496,6 +544,8 @@ async def _set_frontmatter_impl(
                 )
             operation_parameters["fields"] = ",".join(changed_fields)
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
+            if cleaned_last_id is not None:
+                return _patch_frontmatter_fields(raw, metadata, changed_fields)
             return _serialize_preserving_bom(metadata, body, has_bom=has_bom)
 
         content_hash = await app.vault_writer.mutate_note_atomic(
@@ -541,6 +591,18 @@ async def _set_frontmatter_impl(
             ValueError,
         ),
     )
+
+
+def _set_backlog_last_id(
+    metadata: dict[str, Any], changed_fields: list[str], last_id: str | None
+) -> None:
+    if last_id is None:
+        return
+    if "last_id" in metadata:
+        previous = _validate_backlog_last_id(metadata["last_id"])
+        if _backlog_counter_key(last_id) < _backlog_counter_key(previous):
+            raise ValueError("last_id must not decrease")
+    _set_changed_frontmatter_field(metadata, changed_fields, "last_id", last_id)
 
 
 def _set_changed_frontmatter_field(
@@ -689,6 +751,7 @@ async def _patch_note_section_impl(
                 cleaned_heading,
                 cleaned_heading_level,
                 heading_occurrence=cleaned_heading_occurrence,
+                source_context=raw,
             )
             selected = heading_before(lines, content_start)
             matched_level, matched_text = selected.level, selected.text
@@ -825,9 +888,15 @@ async def _rename_note_section_impl(
                     cleaned_heading,
                     cleaned_heading_level,
                     heading_occurrence=cleaned_heading_occurrence,
+                    source_context=raw,
                 )
             except HeadingNotFoundError as exc:
-                raise HeadingNotFoundError("heading not found; nothing to rename") from exc
+                raise HeadingNotFoundError(
+                    "heading not found; nothing to rename",
+                    suggestions=exc.suggestions,
+                    source_context=exc.source_context,
+                    suggestion_spans=exc.suggestion_spans,
+                ) from exc
             selected = heading_before(lines, content_start)
             heading_index = selected.start
             matched_level, matched_text = selected.level, selected.text
@@ -954,6 +1023,7 @@ async def _delete_note_section_impl(
                 cleaned_heading,
                 cleaned_heading_level,
                 heading_occurrence=cleaned_heading_occurrence,
+                source_context=raw,
             )
             selected = heading_before(lines, content_start)
             heading_index = selected.start

@@ -16,27 +16,56 @@
 from __future__ import annotations
 
 import re
-from typing import Final
+from difflib import SequenceMatcher
+from typing import Final, TypedDict
 
-from datacron.core.markdown_headings import markdown_headings
+from datacron.core.markdown_headings import heading_before, markdown_headings
 
 __all__ = [
+    "HEADING_SUGGESTION_MAX_CHARS",
     "HeadingNotFoundError",
     "append_entry_to_heading",
     "find_section_span",
+    "move_note_section",
     "parse_heading_line",
     "patch_note_preamble",
     "rename_atx_heading_line",
     "section_replacement_block",
 ]
 
+HEADING_SUGGESTION_MAX_CHARS: Final[int] = 160
+_HEADING_SUGGESTION_LIMIT: Final[int] = 5
+_HEADING_SUGGESTION_MIN_SIMILARITY: Final[float] = 0.35
+_HEADING_SUGGESTION_PREFIX_SIMILARITY: Final[float] = 0.8
+
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
+
+
+class HeadingSuggestion(TypedDict):
+    """Internal candidate; text must be sanitized before retrieval export."""
+
+    heading: str
+    heading_level: int
+    heading_occurrence: int
 
 
 class HeadingNotFoundError(ValueError):
     """No section matches the requested heading."""
 
     code: Final[str] = "heading_not_found"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        suggestions: list[HeadingSuggestion] | None = None,
+        source_context: str = "",
+        suggestion_spans: list[tuple[int, int]] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.suggestions = suggestions if suggestions is not None else []
+        self.source_context = source_context
+        self.suggestion_spans = suggestion_spans if suggestion_spans is not None else []
 
 
 def append_entry_to_heading(body: str, heading: str, entry: str) -> str:
@@ -65,6 +94,7 @@ def find_section_span(
     heading_level: int | None,
     *,
     heading_occurrence: int | None = None,
+    source_context: str | None = None,
 ) -> tuple[int, int]:
     """Return the content span for one unambiguous matching heading."""
     headings = markdown_headings(lines)
@@ -73,12 +103,67 @@ def find_section_span(
         for item in headings
         if item.text == heading and (heading_level is None or item.level == heading_level)
     ]
-    content_start, level = _select_heading_match(matches, heading_occurrence)
+    try:
+        content_start, level = _select_heading_match(matches, heading_occurrence)
+    except HeadingNotFoundError as exc:
+        exc.suggestions = _heading_suggestions(lines, heading, heading_level)
+        body = "".join(lines)
+        exc.source_context = source_context if source_context is not None else body
+        offset = (
+            len(exc.source_context[: len(exc.source_context) - len(body)].splitlines())
+            if exc.source_context.endswith(body)
+            else None
+        )
+        for candidate in exc.suggestions:
+            selected = [
+                item
+                for item in headings
+                if item.text == candidate["heading"] and item.level == candidate["heading_level"]
+            ][candidate["heading_occurrence"] - 1]
+            exc.suggestion_spans.append(
+                (selected.start + 1 + offset, selected.end + offset)
+                if offset is not None
+                else (1, len(exc.source_context.splitlines()))
+            )
+        raise
     content_end = next(
         (item.start for item in headings if item.start >= content_start and item.level <= level),
         len(lines),
     )
     return content_start, content_end
+
+
+def _heading_suggestions(
+    lines: list[str], heading: str, heading_level: int | None
+) -> list[HeadingSuggestion]:
+    """Rank bounded AST candidates; retain full text until boundary redaction."""
+    query = heading.casefold()[:HEADING_SUGGESTION_MAX_CHARS]
+    occurrences: dict[tuple[str, int], int] = {}
+    ranked: list[tuple[float, int, HeadingSuggestion]] = []
+    for item in markdown_headings(lines):
+        key = (item.text, item.level)
+        occurrences[key] = occurrences.get(key, 0) + 1
+        if heading_level is not None and item.level != heading_level:
+            continue
+        comparable = item.text.casefold()[:HEADING_SUGGESTION_MAX_CHARS]
+        similarity = SequenceMatcher(None, query, comparable, autojunk=False).ratio()
+        if query and comparable.startswith(query):
+            similarity = max(similarity, _HEADING_SUGGESTION_PREFIX_SIMILARITY)
+        if similarity < _HEADING_SUGGESTION_MIN_SIMILARITY:
+            continue
+        ranked.append(
+            (
+                similarity,
+                item.start,
+                {
+                    "heading": item.text,
+                    "heading_level": item.level,
+                    "heading_occurrence": occurrences[key],
+                },
+            )
+        )
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [candidate for _, _, candidate in ranked[:_HEADING_SUGGESTION_LIMIT]]
 
 
 def _select_heading_match(
@@ -200,3 +285,97 @@ def _entry_block(entry: str, *, prefix: str, suffix: str) -> str:
     entry_block = entry if entry.endswith("\n") else f"{entry}\n"
     trailing = "" if not suffix or suffix.startswith("\n") else "\n"
     return f"{leading}{entry_block}{trailing}"
+
+
+def move_note_section(
+    body: str,
+    heading: str,
+    destination_heading: str,
+    *,
+    heading_level: int | None = None,
+    heading_occurrence: int | None = None,
+    destination_level: int | None = None,
+    destination_occurrence: int | None = None,
+    source_context: str | None = None,
+) -> tuple[str, dict[str, int]]:
+    """Move an exact heading subtree to an existing heading's final child position.
+
+    Args:
+        body: Exact Markdown body, without frontmatter.
+        heading: Source heading text from the shared AST map.
+        destination_heading: Existing destination heading text.
+        heading_level: Optional source level filter.
+        heading_occurrence: Optional one-based source occurrence.
+        destination_level: Optional destination level filter.
+        destination_occurrence: Optional one-based destination occurrence.
+        source_context: Optional exact full note for contextual error redaction.
+
+    Returns:
+        The reordered body and content-free selected heading coordinates.
+
+    Raises:
+        ValueError: If selection, hierarchy or exact boundary preservation is unsafe.
+    """
+    lines = body.splitlines(keepends=True)
+    start, end = find_section_span(
+        lines,
+        heading,
+        heading_level,
+        heading_occurrence=heading_occurrence,
+        source_context=source_context,
+    )
+    dest_start, dest_end = find_section_span(
+        lines,
+        destination_heading,
+        destination_level,
+        heading_occurrence=destination_occurrence,
+        source_context=source_context,
+    )
+    source = heading_before(lines, start)
+    destination = heading_before(lines, dest_start)
+    if source.level == 1:
+        raise ValueError("move_note_section only supports source heading levels 2 through 6")
+    if source.start == destination.start:
+        raise ValueError("source and destination select the same section")
+    if source.start < destination.start < end:
+        raise ValueError("destination is a descendant of the source section")
+    if source.level <= destination.level:
+        raise ValueError("source level must be greater than destination level; no releveling")
+    headings = markdown_headings(lines)
+    remaining = [item for item in headings if not source.start <= item.start < end]
+    parent = next(
+        (
+            item
+            for item in reversed(remaining)
+            if item.start < dest_end and item.level < source.level
+        ),
+        None,
+    )
+    if parent != destination:
+        raise ValueError(
+            "source cannot be appended as a final child without changing heading levels"
+        )
+    moved = lines[source.start : end]
+    retained = lines[: source.start] + lines[end:]
+    insert_at = dest_end - (end - source.start if source.start < dest_end else 0)
+    reordered = retained[:insert_at] + moved + retained[insert_at:]
+    rendered = "".join(reordered)
+    if rendered == body:
+        raise ValueError("section placement is unchanged; nothing to move")
+    if any(line and not line.endswith(("\n", "\r")) for line in reordered[:-1]):
+        raise ValueError("move boundary requires an added newline; exact preservation refused")
+    expected = [item for item in remaining if item.start < dest_end]
+    expected += [item for item in headings if source.start <= item.start < end]
+    expected += [item for item in remaining if item.start >= dest_end]
+    actual = markdown_headings(rendered.splitlines(keepends=True))
+    if [(item.level, item.text) for item in actual] != [
+        (item.level, item.text) for item in expected
+    ]:
+        raise ValueError("move changes Markdown heading interpretation; exact preservation refused")
+    return rendered, {
+        "source_level": source.level,
+        "source_start_line": source.start + 1,
+        "source_end_line": end,
+        "destination_level": destination.level,
+        "destination_start_line": destination.start + 1,
+    }

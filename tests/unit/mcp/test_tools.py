@@ -1169,22 +1169,26 @@ class TestGetNoteFull:
         )
 
     @pytest.mark.asyncio
-    async def test_missing_chunk_with_valid_ulid_falls_back_to_full_note(
-        self, app_with_open_store: DatacronApp, tmp_vault: Path
+    async def test_missing_chunk_with_valid_ulid_returns_explicit_error(
+        self, app_with_open_store: DatacronApp, tmp_vault: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from datacron.mcp.tools import _get_note_impl
 
         note = await app_with_open_store.vault_reader.read_note(tmp_vault / "welcome.md")
 
+        async def refuse_parent_read(*args: Any, **kwargs: Any) -> None:
+            raise AssertionError("A missing chunk must not read the parent note")
+
+        monkeypatch.setattr("datacron.mcp.tools.read._resolve_note", refuse_parent_read)
         result = await _get_note_impl(
             app_with_open_store,
             id_or_path=f"{note.id}::missing/chunk::9999",
             fmt="full",
         )
 
-        assert result["format"] == "full"
-        assert result["id"] == note.id
-        assert result["rel_path"] == "welcome.md"
+        assert result["error"]["type"] == "ValueError"
+        assert "chunk_id does not exist" in result["error"]["message"]
+        assert "content" not in result
 
     @pytest.mark.asyncio
     async def test_malformed_chunk_id_returns_existing_structured_error(
@@ -1198,10 +1202,8 @@ class TestGetNoteFull:
             fmt="full",
         )
 
-        assert result["error"]["type"] == "FileNotFoundError"
-        assert result["error"]["message"] == (
-            "No note found for 'not-a-valid-ulid::missing/chunk::9999'"
-        )
+        assert result["error"]["type"] == "ValueError"
+        assert "chunk_id does not exist" in result["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_chunk_sanitizes_note_title_and_header_path(
@@ -4896,3 +4898,244 @@ class TestAudit:
         assert log_files
         contents = log_files[0].read_text(encoding="utf-8")
         assert "AUDIT tool=get_note" in contents
+
+
+class TestBacklogLastId:
+    @pytest.mark.asyncio
+    async def test_counter_lifecycle_cas_replay_and_preservation(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/backlog-counter.md"
+        target, raw = _write_memory_note(tmp_vault, rel_path, "# Backlog\n\nUntouched body.\n")
+        raw = raw.replace("---\n", "---\n# Comment\ncustom: 'literal' # inline\n", 1)
+        target.write_bytes(raw.encode())
+        for expected in (None, "0" * 64):
+            refused = await _set_frontmatter_impl(
+                writable_app, rel_path=rel_path, last_id="BL-9999", expected_hash=expected
+            )
+            assert "error" in refused
+            assert target.read_bytes() == raw.encode()
+        first = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            last_id="BL-9999",
+            expected_hash=hash_text(raw),
+            request_id="backlog-counter-init",
+        )
+        assert first["updated"]["fields"] == ["last_id"]
+        assert first["indexed"] is True
+        committed = target.read_bytes()
+        assert (tmp_vault / ".datacron/history" / hash_text(raw)).read_bytes() == raw.encode()
+        replay = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            last_id="BL-9999",
+            expected_hash=hash_text(raw),
+            request_id="backlog-counter-init",
+        )
+        assert replay["content_hash"] == first["content_hash"]
+        assert target.read_bytes() == committed
+        conflict = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            last_id="BL-10000",
+            expected_hash=hash_text(raw),
+            request_id="backlog-counter-init",
+        )
+        assert "error" in conflict
+        assert target.read_bytes() == committed
+        decrease = await _set_frontmatter_impl(
+            writable_app, rel_path=rel_path, last_id="BL-9998", expected_hash=first["content_hash"]
+        )
+        assert "error" in decrease
+        assert target.read_bytes() == committed
+        same = await _set_frontmatter_impl(
+            writable_app, rel_path=rel_path, last_id="BL-9999", expected_hash=first["content_hash"]
+        )
+        assert same["updated"]["fields"] == []
+        increase = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            last_id="BL-10000",
+            confidence="low",
+            expected_hash=same["content_hash"],
+        )
+        assert increase["updated"]["fields"] == ["last_id", "confidence"]
+        metadata, body = parse(target.read_text(encoding="utf-8"))
+        assert metadata["last_id"] == "BL-10000"
+        assert metadata["confidence"] == "low"
+        assert metadata["custom"] == "literal"
+        assert body == "# Backlog\n\nUntouched body."
+        assert b"# Comment\ncustom: 'literal' # inline\n" in target.read_bytes()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "",
+            "BL-123",
+            "bl-0123",
+            "BL-\uff11\uff12\uff13\uff14",
+            " BL-0123",
+            "BL-0123\n",
+            True,
+            123,
+        ],
+    )
+    async def test_invalid_input_never_writes(
+        self, writable_app: DatacronApp, tmp_vault: Path, value: Any
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/backlog-invalid.md"
+        target, raw = _write_memory_note(tmp_vault, rel_path, "# Untouched\n")
+        original = target.read_bytes()
+        result = await _set_frontmatter_impl(
+            writable_app, rel_path=rel_path, last_id=value, expected_hash=hash_text(raw)
+        )
+        assert "error" in result
+        assert target.read_bytes() == original
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "header",
+        [
+            "last_id: true",
+            "last_id: null",
+            "last_id: bad",
+            "last_id: BL-0100\nlast_id: BL-0001",
+            "custom: &x BL-0001\nlast_id: *x",
+        ],
+    )
+    async def test_unsafe_existing_metadata_refused(
+        self, writable_app: DatacronApp, tmp_vault: Path, header: str
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/backlog-malformed.md"
+        target, raw = _write_memory_note(tmp_vault, rel_path, "# Untouched\n")
+        raw = raw.replace("---\n", f"---\n{header}\n", 1)
+        target.write_bytes(raw.encode())
+        result = await _set_frontmatter_impl(
+            writable_app, rel_path=rel_path, last_id="BL-0200", expected_hash=hash_text(raw)
+        )
+        assert "error" in result
+        assert target.read_bytes() == raw.encode()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("eol", "bom"), [("\n", ""), ("\r\n", ""), ("\r\n", "\ufeff")])
+    async def test_last_id_exact_unrelated_bytes(
+        self, writable_app: DatacronApp, tmp_vault: Path, eol: str, bom: str
+    ) -> None:
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/backlog-eols.md"
+        target, raw = _write_memory_note(tmp_vault, rel_path, "# Body\n\nTail.\n")
+        raw = bom + raw.replace("---\n", "---\n# exact\ncustom: 'quoted' # inline\n", 1).replace(
+            "\n", eol
+        )
+        target.write_bytes(raw.encode())
+        result = await _set_frontmatter_impl(
+            writable_app, rel_path=rel_path, last_id="BL-0001", expected_hash=hash_text(raw)
+        )
+        assert "error" not in result
+        final = target.read_bytes().decode()
+        assert final.startswith(
+            bom + "---" + eol + "# exact" + eol + "custom: 'quoted' # inline" + eol
+        )
+        assert final.endswith(eol + "# Body" + eol + eol + "Tail." + eol)
+        assert (tmp_vault / ".datacron/history" / hash_text(raw)).read_bytes() == raw.encode()
+
+    @pytest.mark.asyncio
+    async def test_pre_upgrade_durable_request_replays(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from inspect import unwrap
+
+        from datacron.core.write_request import ACTIVE_WRITE_REQUEST, WriteRequest
+        from datacron.mcp.tools import _set_frontmatter_impl
+
+        rel_path = "_memory/facts/backlog-old-receipt.md"
+        target, raw = _write_memory_note(tmp_vault, rel_path, "# Legacy\n")
+        # These are exactly the pre-last_id public defaults, persisted by the old writer.
+        arguments = {
+            "rel_path": rel_path,
+            "confidence": "low",
+            "last_verified": None,
+            "supersedes": None,
+            "rejected": None,
+            "origin": None,
+            "valid_from": None,
+            "invalid_at": None,
+            "invalidated_by": None,
+            "expected_hash": hash_text(raw),
+        }
+        fingerprint = hash_text(
+            json.dumps(
+                {"tool": "set_frontmatter", "arguments": arguments},
+                sort_keys=True,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        )
+        request_id = "legacy-frontmatter-request"
+        legacy_request = WriteRequest(hash_text(request_id), fingerprint)
+        token = ACTIVE_WRITE_REQUEST.set(legacy_request)
+        try:
+            written = await unwrap(_set_frontmatter_impl)(
+                writable_app, rel_path=rel_path, confidence="low", expected_hash=hash_text(raw)
+            )
+        finally:
+            ACTIVE_WRITE_REQUEST.reset(token)
+        assert legacy_request.record is not None
+        committed = target.read_bytes()
+        replay = await _set_frontmatter_impl(
+            writable_app,
+            rel_path=rel_path,
+            confidence="low",
+            expected_hash=hash_text(raw),
+            request_id=request_id,
+        )
+        assert replay["replayed"] is True
+        assert replay["content_hash"] == written["content_hash"]
+        assert target.read_bytes() == committed
+
+    @pytest.mark.asyncio
+    async def test_registry_last_id_input_output_contract(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        from mcp.client import Client
+
+        from datacron.mcp.server import create_server
+
+        rel_path = "_memory/facts/backlog-registry.md"
+        target, raw = _write_memory_note(tmp_vault, rel_path, "# Registry\n")
+        async with Client(create_server(writable_app), mode="auto") as client:
+            result = await client.call_tool(
+                "set_frontmatter",
+                {
+                    "rel_path": rel_path,
+                    "last_id": "BL-0001",
+                    "expected_hash": hash_text(raw),
+                    "request_id": "backlog-registry",
+                },
+            )
+            assert result.is_error is False
+            assert result.structured_content is not None
+            assert result.structured_content["updated"]["fields"] == ["last_id"]
+            assert result.structured_content["indexed"] is True
+            assert result.structured_content["committed"] is True
+            committed = target.read_bytes()
+            refused = await client.call_tool(
+                "set_frontmatter",
+                {
+                    "rel_path": rel_path,
+                    "last_id": True,
+                    "expected_hash": result.structured_content["content_hash"],
+                },
+            )
+            assert refused.is_error is True
+            assert target.read_bytes() == committed

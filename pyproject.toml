@@ -223,3 +223,6 @@ exclude_lines = [
 dev = [
     "pytest-xdist>=3.8.0",
 ]
+
+[tool.datacron.release]
+expected_email = "222413562+VBlackJack@users.noreply.github.com"
