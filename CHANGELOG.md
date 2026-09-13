@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0913.02] - 2026-09-13
+
 ### Added
 
 - Offline library commands (`audit`, `prepare`, `check`, `split`) build a readable
