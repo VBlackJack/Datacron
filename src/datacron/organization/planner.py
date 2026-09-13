@@ -42,7 +42,7 @@ from datacron.core.config import (
     VaultConfig,
     get_settings,
 )
-from datacron.core.frontmatter import FrontmatterError, coerce_string_list, extract_tags, parse
+from datacron.core.frontmatter import FrontmatterError, extract_tags, parse
 from datacron.core.paths import PathConfinementError, assert_within_paths
 from datacron.core.scope import NoteAdmissionError, SingleTenantVaultScope
 from datacron.core.vault import SKIPPED_FOLDERS, NoteAdmissionPolicy
@@ -85,6 +85,9 @@ _WIKILINK_PATTERN: Final[re.Pattern[str]] = re.compile(r"\[\[([^\[\]]+)\]\]")
 _WIKILINK_LABEL_SEPARATOR: Final[str] = "|"
 _WIKILINK_ANCHOR_SEPARATOR: Final[str] = "#"
 _LAST_VERIFIED_KEY: Final[str] = "last_verified"
+_CRLF: Final[str] = "\r\n"
+_CR: Final[str] = "\r"
+_LF: Final[str] = "\n"
 _TITLE_KEY: Final[str] = "title"
 _ALIASES_KEY: Final[str] = "aliases"
 
@@ -508,12 +511,30 @@ def _frontmatter_title(metadata: Mapping[str, object]) -> str | None:
 
 
 def _frontmatter_aliases(metadata: Mapping[str, object]) -> tuple[str, ...]:
-    """Return the frontmatter aliases, strings only, blanks dropped."""
-    return tuple(
-        alias
-        for alias in coerce_string_list(metadata.get(_ALIASES_KEY), keep_empty_scalar=True)
-        if alias
-    )
+    """Return the frontmatter aliases that are already strings, blanks dropped.
+
+    A number or a mapping in the list is not an alias: coercing it to text
+    would let ``[[123]]`` satisfy a link the author never declared.
+    """
+    value = metadata.get(_ALIASES_KEY)
+    candidates: tuple[object, ...]
+    if isinstance(value, str):
+        candidates = (value,)
+    elif isinstance(value, (list, tuple)):
+        candidates = tuple(value)
+    else:
+        return ()
+    return tuple(item.strip() for item in candidates if isinstance(item, str) and item.strip())
+
+
+def _normalize_line_endings(body: str) -> str:
+    """Fold CRLF and lone CR to LF so both snapshot builders scan the same lines.
+
+    The filesystem scan reads notes with universal newlines while the manifest
+    projection decodes raw payload bytes; without this fold a CRLF note would
+    yield different fence counts or link targets on the two paths.
+    """
+    return body.replace(_CRLF, _LF).replace(_CR, _LF)
 
 
 def _is_fence_line(line: str) -> bool:
@@ -561,11 +582,12 @@ def snapshot_note(
     This is the single derivation both the filesystem scan and the manifest
     projection use; nothing here keeps a reference to ``body``.
     """
-    fence_lines, wikilink_targets = _scan_body(body)
+    normalized = _normalize_line_endings(body)
+    fence_lines, wikilink_targets = _scan_body(normalized)
     return OrganizationNoteSnapshot(
         rel_path=rel_path,
         size_bytes=size_bytes,
-        tags=tuple(extract_tags(dict(metadata), body)),
+        tags=tuple(extract_tags(dict(metadata), normalized)),
         calendar_date=_frontmatter_calendar_date(metadata),
         title=_frontmatter_title(metadata),
         aliases=_frontmatter_aliases(metadata),
@@ -913,7 +935,9 @@ def plan_organization(
     published before it existed.
 
     ``freshness_days`` adds the informative freshness list, measured against
-    ``today`` (the UTC calendar date when omitted).
+    ``today`` (the UTC calendar date when omitted). A vault without rules still
+    answers the option, with an empty list, so the JSON field is present
+    whenever the caller asked for it.
     """
     organization = config.organization
     if organization is None or not organization.rules:
@@ -925,6 +949,8 @@ def plan_organization(
             unmatched=0,
             deviations=(),
             skipped=(),
+            freshness_days=freshness_days,
+            freshness=None if freshness_days is None else (),
         )
 
     context = _prepare_context(vault_root, config, settings or get_settings())

@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Final, final
@@ -412,7 +412,10 @@ class OrganizationConfig(BaseModel):
 
     ``state_note_min_notes`` and ``linking_since`` switch on two folder-level
     measurements over the subject rules; both stay off until the vault declares
-    them, so an existing sidecar measures exactly what it measured before.
+    them, so an existing sidecar measures exactly what it measured before. They
+    are read strictly (a boolean is not a count, a number is not a date) and
+    require a tag policy with a ``subject_namespace``: without subject rules the
+    measurements cannot exist, and a silent no-op would hide a misconfiguration.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -420,8 +423,37 @@ class OrganizationConfig(BaseModel):
     scope: str | None = None
     rules: tuple[OrganizationRule, ...] = ()
     tags: OrganizationTagPolicy | None = None
-    state_note_min_notes: int | None = Field(default=None, ge=1)
+    state_note_min_notes: int | None = None
     linking_since: date | None = None
+
+    @field_validator("state_note_min_notes", mode="before")
+    @classmethod
+    def _strict_state_note_min_notes(cls, value: object) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"organization state_note_min_notes must be an integer; got {value!r}")
+        if value < 1:
+            raise ValueError(f"organization state_note_min_notes must be at least 1; got {value}")
+        return value
+
+    @field_validator("linking_since", mode="before")
+    @classmethod
+    def _strict_linking_since(cls, value: object) -> date | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            try:
+                return date.fromisoformat(value.strip())
+            except ValueError as exc:
+                raise ValueError(
+                    f"organization linking_since must be a YYYY-MM-DD date; got {value!r}"
+                ) from exc
+        raise ValueError(f"organization linking_since must be a date; got {value!r}")
 
     @field_validator("scope", mode="before")
     @classmethod
@@ -458,6 +490,17 @@ class OrganizationConfig(BaseModel):
             raise ValueError("organization scope is required when rules are declared")
         if self.tags is not None:
             _validate_tag_policy_against_rules(self.rules, self.tags)
+        subject_namespace = None if self.tags is None else self.tags.subject_namespace
+        if subject_namespace is None:
+            for key, value in (
+                ("state_note_min_notes", self.state_note_min_notes),
+                ("linking_since", self.linking_since),
+            ):
+                if value is not None:
+                    raise ValueError(
+                        f"organization {key} requires organization.tags.subject_namespace: "
+                        "the folder measurements exist only over subject rules"
+                    )
         return self
 
 

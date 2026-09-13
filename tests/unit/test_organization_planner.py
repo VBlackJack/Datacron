@@ -25,6 +25,7 @@ import yaml
 from pydantic import ValidationError
 
 from datacron.core.config import OrganizationConfig, OrganizationRule, VaultConfig
+from datacron.core.frontmatter import parse
 from datacron.organization.planner import (
     DeviationKind,
     OrganizationConfigurationError,
@@ -517,13 +518,20 @@ def test_no_state_note_ignores_notes_outside_the_rule_folder(tmp_path: Path) -> 
     assert set(_kinds(plan)) == {DeviationKind.WRONG_FOLDER}
 
 
-def test_subject_rules_need_a_declared_subject_namespace(tmp_path: Path) -> None:
-    for index in range(3):
-        _write(tmp_path, f"{_SUBJECT_FOLDER}/note-{index}.md", _SUBJECT_TAGS)
-
-    plan = plan_organization(tmp_path, _subject_config(min_notes=3, with_policy=False))
-
-    assert plan.deviations == ()
+@pytest.mark.parametrize(
+    ("argument", "value", "key"),
+    [("min_notes", 3, "state_note_min_notes"), ("since", "2026-09-01", "linking_since")],
+)
+def test_folder_keys_without_a_subject_namespace_are_a_configuration_error(
+    argument: str,
+    value: object,
+    key: str,
+) -> None:
+    """A silent no-op would hide a misconfiguration; the message names the key."""
+    with pytest.raises(
+        ValidationError, match=f"{key} requires organization.tags.subject_namespace"
+    ):
+        _subject_config(with_policy=False, **{argument: value})  # type: ignore[arg-type]
 
 
 def test_unlinked_is_reported_for_a_dated_note_without_link(tmp_path: Path) -> None:
@@ -845,3 +853,127 @@ def test_invalid_folder_measurement_keys_are_rejected_at_load(key: str, value: o
                 key: value,
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("state_note_min_notes", True),
+        ("state_note_min_notes", "5"),
+        ("state_note_min_notes", 2.0),
+        ("linking_since", 0),
+        ("linking_since", 20260901),
+        ("linking_since", True),
+    ],
+)
+def test_folder_keys_are_read_strictly(key: str, value: object) -> None:
+    """A boolean is not a count and a number is not a date."""
+    organization: dict[str, object] = {
+        "scope": "_memory",
+        "rules": [
+            {"tag": "project/heimdall", "folder": _SUBJECT_FOLDER},
+            {"tag": "memory/fact", "folder": "_memory/facts"},
+        ],
+        "tags": {
+            "placement_namespace": "memory",
+            "subject_namespace": "project",
+            "subjects": ["project/heimdall"],
+        },
+        key: value,
+    }
+
+    with pytest.raises(ValidationError, match=key):
+        OrganizationConfig.model_validate(organization)
+
+
+def test_linking_since_accepts_a_date_and_an_iso_string() -> None:
+    as_date = _subject_config(since="2026-09-01").organization
+    assert as_date is not None
+    assert as_date.linking_since == date(2026, 9, 1)
+    organization: dict[str, object] = {
+        "scope": "_memory",
+        "rules": [
+            {"tag": "project/heimdall", "folder": _SUBJECT_FOLDER},
+            {"tag": "memory/fact", "folder": "_memory/facts"},
+        ],
+        "tags": {
+            "placement_namespace": "memory",
+            "subject_namespace": "project",
+            "subjects": ["project/heimdall"],
+        },
+        "linking_since": date(2026, 9, 2),
+    }
+
+    assert OrganizationConfig.model_validate(organization).linking_since == date(2026, 9, 2)
+
+
+def test_a_numeric_alias_never_satisfies_a_link(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        f"{_SUBJECT_FOLDER}/heimdall.md",
+        _STATE_TAGS,
+        aliases=[123],  # type: ignore[list-item]
+        created="2026-01-01",
+    )
+    _write(
+        tmp_path,
+        f"{_SUBJECT_FOLDER}/linked.md",
+        _SUBJECT_TAGS,
+        body="[[123]]\n",
+        created="2026-09-10",
+    )
+
+    plan = plan_organization(tmp_path, _subject_config(since="2026-09-01"))
+
+    assert _kinds(plan) == [DeviationKind.UNLINKED]
+
+
+_CRLF_FRONTMATTER = (
+    "---\r\ntitle: crlf\r\naliases:\r\n  - one\r\ntags:\r\n  - memory/fact\r\n---\r\n\r\n"
+)
+_CRLF_BODY = (
+    "See [[Alpha]] and [[beta|label]].\r\n"
+    "```\r\n#hidden [[fenced]]\r\n```\r\n"
+    "#visible\r\n"
+    "```\r\nopen fence\r\n"
+)
+
+
+@pytest.mark.parametrize("with_frontmatter", [True, False], ids=["frontmatter", "bare"])
+def test_crlf_note_yields_the_same_snapshot_on_both_paths(
+    tmp_path: Path,
+    with_frontmatter: bool,
+) -> None:
+    """The scan reads universal newlines; the projection decodes raw bytes."""
+    raw = ((_CRLF_FRONTMATTER if with_frontmatter else "") + _CRLF_BODY).encode("utf-8")
+    note = tmp_path / "crlf.md"
+    note.write_bytes(raw)
+
+    scanned_metadata, scanned_body = parse(note.read_text(encoding="utf-8"))
+    projected_metadata, projected_body = parse(raw.decode("utf-8"))
+    scanned = snapshot_note("_memory/crlf.md", len(raw), scanned_metadata, scanned_body)
+    projected = snapshot_note("_memory/crlf.md", len(raw), projected_metadata, projected_body)
+
+    assert scanned == projected
+    assert scanned.fence_lines == 3
+    assert scanned.wikilink_targets == ("alpha", "beta")
+    expected_tags = ("memory/fact", "visible") if with_frontmatter else ("visible",)
+    assert scanned.tags == expected_tags
+    if with_frontmatter:
+        assert scanned.aliases == ("one",)
+
+
+def test_vault_without_rules_still_answers_the_freshness_option(tmp_path: Path) -> None:
+    _write(tmp_path, "_memory/facts/whatever.md", ["memory/fact", "kind/platform"])
+
+    plan = plan_organization(tmp_path, VaultConfig(), freshness_days=60, today=_TODAY)
+    without = plan_organization(tmp_path, VaultConfig())
+
+    assert plan.scope is None
+    assert plan.freshness_days == 60
+    assert plan.freshness == ()
+    assert json.loads(render_json(plan))["freshness"] == []
+    assert "freshness" not in json.loads(render_json(without))
+    text = render_text(plan)
+    assert text.startswith("No organization rules")
+    assert text.endswith("Freshness (older than 60 days): 0")

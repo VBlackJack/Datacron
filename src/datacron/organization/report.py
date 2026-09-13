@@ -76,7 +76,7 @@ def _freshness_lines(plan: OrganizationPlan) -> list[str]:
 def render_text(plan: OrganizationPlan) -> str:
     """Render a plan as a compact operator-facing report."""
     if plan.scope is None:
-        return _NO_RULES_MESSAGE
+        return "\n".join([_NO_RULES_MESSAGE, *_freshness_lines(plan)])
 
     lines: list[str] = [
         f"{_SUMMARY_HEADING} for {plan.vault_root}",

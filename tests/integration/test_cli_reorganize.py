@@ -319,6 +319,28 @@ def test_freshness_option_lists_stale_state_notes_without_changing_the_exit_code
     assert "freshness" not in json.loads(plain.stdout)
 
 
+def test_vault_without_rules_still_answers_the_freshness_option(
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    _make_vault(tmp_path, with_rules=False)
+
+    text = runner.invoke(
+        app,
+        ["reorganize", "--dry-run", "--freshness-days", "60", "--vault", str(tmp_path)],
+    )
+    as_json = runner.invoke(
+        app,
+        ["reorganize", "--dry-run", "--json", "--freshness-days", "60", "--vault", str(tmp_path)],
+    )
+
+    assert text.exit_code == 0
+    assert "nothing to measure" in text.stdout
+    assert "Freshness (older than 60 days): 0" in text.stdout
+    assert as_json.exit_code == 0
+    assert json.loads(as_json.stdout)["freshness"] == []
+
+
 def test_freshness_days_must_be_positive(runner: CliRunner, tmp_path: Path) -> None:
     _make_vault(tmp_path)
 
