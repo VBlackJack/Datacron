@@ -263,7 +263,7 @@ datacron reorganize --vault /path/to/vault --dry-run --json
 
 `--json` rend un document stable identifié par `organization-plan-v2`, sérialisé de façon
 déterministe : deux exécutions sur un vault inchangé produisent le même rapport. Les compteurs
-vérifient toujours `scanned = governed + unmatched`, et une note qu'aucune règle ne réclame est
+vérifient toujours `scanned = governed + unmatched + skipped`, et une note qu'aucune règle ne réclame est
 comptée dans `unmatched` sans être un écart.
 
 Schéma complet, gabarits de nom et contrat de rapport :

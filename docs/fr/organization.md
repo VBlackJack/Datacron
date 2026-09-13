@@ -38,6 +38,14 @@ Le bloc porte cinq clés, et cinq seulement.
 | `state_note_min_notes` | entier, au moins 1 | A partir de combien de notes un dossier de sujet doit porter une note d'état. Absente : `NO_STATE_NOTE` n'est pas mesuré. |
 | `linking_since` | date | A partir de quelle date calendaire une nouvelle note d'un dossier de sujet doit lier sa note d'état. Absente : `UNLINKED` n'est pas mesuré. |
 
+`state_note_min_notes` et `linking_since` sont lues strictement : un booléen n'est pas un
+compte, un nombre n'est pas une date, et l'une ou l'autre déclarée sans politique `tags`
+portant un `subject_namespace` est une erreur au chargement qui nomme la clé, parce que les
+mesures de dossier n'existent que sur les règles de sujet. **Mettre à niveau chaque
+installation de Datacron avant de les déclarer** : un exécutable antérieur à cette version
+refuse tout le `VAULT.yaml` avec une erreur de validation `extra_forbidden`, ce qui arrête
+son serveur, exactement comme pour le bloc `tags`.
+
 `scope` est **obligatoire dès qu'au moins une règle est déclarée**. Une liste de règles sans
 portée est une erreur de configuration, pas une portée implicite couvrant tout le vault.
 
@@ -196,7 +204,7 @@ sujet elle appartient, le tag de placement dit toujours ce qu'elle est.
   validation `extra_forbidden`, ce qui arrête son serveur ; la clé n'est pas ignorée.
 - **Le rapport JSON liste neuf compteurs même sans politique.** Les trois compteurs de
   politique valent alors toujours zéro, et `--kind` accepte leurs noms ; l'identité
-  `scanned = governed + unmatched` et tous les autres champs sont inchangés.
+  `scanned = governed + unmatched + skipped` et tous les autres champs sont inchangés.
 
 ```yaml
 organization:
@@ -248,10 +256,10 @@ lien ni une note.
 ### Notes d'état et rattachements
 
 Un **dossier de sujet** est le dossier d'une [règle de sujet](#les-regles-de-sujet) : une
-règle dont le tag vit dans le `subject_namespace` de la politique. Sans politique, ou sans
-espace de noms de sujet, il n'y a pas de dossier de sujet et ni `NO_STATE_NOTE` ni
-`UNLINKED` n'existent. Seules comptent les notes gouvernées qui sont réellement dans le
-dossier de la règle ; une note mal placée est déjà `WRONG_FOLDER`.
+règle dont le tag vit dans le `subject_namespace` de la politique. Les deux clés exigent
+donc une politique `tags` avec un `subject_namespace` ; en déclarer une sans lui est refusé
+au chargement plutôt que mesuré comme rien. Seules comptent les notes gouvernées qui sont
+réellement dans le dossier de la règle ; une note mal placée est déjà `WRONG_FOLDER`.
 
 La **note d'état** d'un dossier se reconnaît à un tag de l'espace `kind` (`kind/platform`,
 `kind/development`, `kind/mission`), jamais à son stem. Un dossier peut en contenir
@@ -277,6 +285,17 @@ nombre pair. Une délimitation par tildes (`~~~`) est hors périmètre. L'écart
 qu'une scission de note sur une ligne située dans un bloc de code laisse le reste de la
 note non analysé : le sélecteur de sections ne voit plus les titres qui suivent, alors
 que l'index reste sain.
+
+La règle est une heuristique par ligne, et ses limites sont mesurées, pas garanties. Une
+délimitation ouverte avec quatre accents graves ou plus qui contient une ligne à trois
+accents graves, et une délimitation fermante suivie de texte sur la même ligne, sont
+comptées par la même règle, de sorte qu'un tel corps peut être rapporté comme
+déséquilibré ou passer pour équilibré. Un corps dont la toute première ligne est une
+délimitation indentée de quatre espaces est mesuré comme non indenté, parce que l'analyseur
+de frontmatter retire les espaces de tête du corps. L'exclusion des wikilinks suit la même
+parité, donc un lien dans un tel bloc peut encore compter comme un lien. Les fins de ligne
+sont ramenées à LF avant le comptage, de sorte qu'une note en CRLF se mesure de la même
+façon depuis le système de fichiers et depuis un payload de manifeste.
 
 **Sans politique `tags`, une note qu'aucune règle ne réclame n'est pas un écart.** Elle est
 comptée dans `unmatched`, et Datacron ne lui invente jamais un placement. C'est une
@@ -390,13 +409,15 @@ sens.
 | `scanned` | Notes admises dans la portée |
 | `governed` | Notes qu'une règle réclame |
 | `unmatched` | Notes admises qu'aucune règle ne réclame |
-| `counts` | Nombre d'écarts par nature, les neuf natures dans l'ordre déclaré |
+| `counts` | Nombre d'écarts par nature, une clé par nature ; les clés sont triées alphabétiquement dans le document sérialisé, et l'ordre déclaré des natures s'applique au rapport texte |
 | `deviations` | Liste d'écarts : `rel_path`, `kind`, `tag`, `detail`, `expected` |
 | `skipped` | Notes illisibles : `rel_path`, `reason` |
 | `freshness` | Présent seulement avec `--freshness-days` : `rel_path`, `tag`, `last_verified`, `age_days` (`null` quand la date manque) |
 
-L'identité `scanned = governed + unmatched` est toujours vraie. Un écart de dossier
-(`NO_STATE_NOTE`) a le dossier pour `rel_path` ; il ne change aucun des trois compteurs.
+L'identité `scanned = governed + unmatched + skipped` est toujours vraie : une note que le
+planner ne peut pas lire est balayée, puis ignorée, et n'est ni gouvernée ni hors règle.
+Un écart de dossier (`NO_STATE_NOTE`) a le dossier pour `rel_path` ; il ne change aucun
+des compteurs.
 
 ```json
 {

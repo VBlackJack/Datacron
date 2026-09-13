@@ -35,6 +35,14 @@ The block holds five keys, and only five.
 | `state_note_min_notes` | integer, at least 1 | From how many notes a subject folder must carry a state note. Absent: `NO_STATE_NOTE` is not measured. |
 | `linking_since` | date | From which calendar date a new note of a subject folder must link to its state note. Absent: `UNLINKED` is not measured. |
 
+`state_note_min_notes` and `linking_since` are read strictly: a boolean is not a count, a
+number is not a date, and either key declared without a `tags` policy carrying a
+`subject_namespace` is a load-time error that names the key, because the folder
+measurements exist only over subject rules. **Upgrade every Datacron installation before
+declaring them**: an executable older than this version refuses the whole `VAULT.yaml` with
+an `extra_forbidden` validation error, which stops its server, exactly as it does for the
+`tags` block.
+
 `scope` is **required as soon as at least one rule is declared**. A rule list without a
 scope is a configuration error, not an implicit scope covering the whole vault.
 
@@ -185,7 +193,7 @@ which subject the note belongs to, the placement tag still says what the note is
   `extra_forbidden` validation error, which stops its server; the key is not ignored.
 - **The JSON report lists nine counters even without a policy.** The three policy counters
   are then always zero, and `--kind` accepts their names; the identity
-  `scanned = governed + unmatched` and every other field are unchanged.
+  `scanned = governed + unmatched + skipped` and every other field are unchanged.
 
 ```yaml
 organization:
@@ -236,10 +244,10 @@ vault with a declared intent: the planner never invents a placement, a link or a
 ### State notes and links
 
 A **subject folder** is the folder of a [subject rule](#subject-rules): a rule whose tag
-lives in the policy's `subject_namespace`. Without a policy, or without a subject
-namespace, there is no subject folder and neither `NO_STATE_NOTE` nor `UNLINKED` exists.
-Only the governed notes that actually sit in the rule folder count; a misplaced note is
-already `WRONG_FOLDER`.
+lives in the policy's `subject_namespace`. The two keys therefore require a `tags` policy
+with a `subject_namespace`; declaring either without it is refused at load time rather
+than measured as nothing. Only the governed notes that actually sit in the rule folder
+count; a misplaced note is already `WRONG_FOLDER`.
 
 The **state note** of a folder is recognised by a tag of the `kind` namespace
 (`kind/platform`, `kind/development`, `kind/mission`), never by its stem. A folder may
@@ -263,6 +271,15 @@ the same rule, so a balanced body has an even count. A tilde fence (`~~~`) is ou
 scope. The gap matters because a note split on a line inside a fenced block leaves the
 rest of the note unparsed: the section selector no longer sees the headings that follow,
 while the index stays healthy.
+
+The rule is a line heuristic, and its limits are measured, not guaranteed. A fence opened
+with four or more backticks that contains a three-backtick line, and a closing fence
+followed by text on the same line, are both counted by the same rule, so such a body may
+be reported as unbalanced or pass as balanced. A body whose very first line is a fence
+indented four spaces is measured as flush, because the frontmatter parser strips the
+body's leading whitespace. The wikilink exclusion follows the same parity, so a link inside
+such a block may still count as a link. Line endings are folded to LF before counting, so
+a CRLF note measures the same from the filesystem and from a manifest payload.
 
 **Without a `tags` policy, a note no rule claims is not a deviation.** It is counted in
 `unmatched`, and Datacron never invents a placement for it. This is a property of the
@@ -372,13 +389,14 @@ preserved as-is. Version 2 adds the three folder and fence counters and the opti
 | `scanned` | Notes admitted within the scope |
 | `governed` | Notes a rule claims |
 | `unmatched` | Admitted notes no rule claims |
-| `counts` | Deviation count per kind, the nine kinds in declared order |
+| `counts` | Deviation count per kind, one key per kind; keys are sorted alphabetically in the serialized document, and the declared kind order applies to the text report |
 | `deviations` | Gap list: `rel_path`, `kind`, `tag`, `detail`, `expected` |
 | `skipped` | Unreadable notes: `rel_path`, `reason` |
 | `freshness` | Present only with `--freshness-days`: `rel_path`, `tag`, `last_verified`, `age_days` (`null` when the date is missing) |
 
-The identity `scanned = governed + unmatched` always holds. A folder deviation
-(`NO_STATE_NOTE`) has the folder as `rel_path`; it changes none of the three counters.
+The identity `scanned = governed + unmatched + skipped` always holds: a note the planner
+cannot read is scanned, then skipped, and is neither governed nor unmatched. A folder
+deviation (`NO_STATE_NOTE`) has the folder as `rel_path`; it changes none of the counters.
 
 ```json
 {
