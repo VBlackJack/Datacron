@@ -96,6 +96,34 @@ async def test_open_creates_schema(tmp_path: Path) -> None:
     assert {"notes", "chunks_fts", "ulid_paths", "index_meta"} <= tables
 
 
+async def test_upsert_waits_for_existing_writer_before_identity_read(
+    tmp_path: Path, note_factory: NoteFactory
+) -> None:
+    """An identity check must not upgrade a read lock while another writer owns it."""
+    store = SQLiteFTS5Store()
+    db_path = _db_path(tmp_path)
+    await store.open(db_path)
+    note = note_factory(id=_NOTE_ID, rel_path="welcome.md")
+    try:
+        async with aiosqlite.connect(db_path) as blocker:
+            await blocker.execute("BEGIN IMMEDIATE")
+            await blocker.execute("UPDATE index_meta SET value = '7' WHERE key = 'generation'")
+            pending = asyncio.create_task(store.upsert_note(note, []))
+            try:
+                # Give the independent connection time to reach its busy handler.
+                await asyncio.sleep(0.1)
+                await blocker.commit()
+                await asyncio.wait_for(pending, timeout=_SUBPROCESS_TIMEOUT_SECONDS)
+            finally:
+                if not pending.done():
+                    pending.cancel()
+                    await asyncio.gather(pending, return_exceptions=True)
+        assert await store.get_note_id("welcome.md") == _NOTE_ID
+        assert await store.get_generation() == 7
+    finally:
+        await store.close()
+
+
 async def test_generation_counter_and_legacy_default(tmp_path: Path) -> None:
     db_path = _db_path(tmp_path)
     store = SQLiteFTS5Store()

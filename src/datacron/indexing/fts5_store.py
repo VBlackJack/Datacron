@@ -664,7 +664,9 @@ class SQLiteFTS5Store:
         _validate_chunks_belong_to_note(note, chunks)
 
         indexed_at = datetime.now(tz=UTC).isoformat()
-        await connection.execute("BEGIN")
+        # Reserve the writer before reading identity ownership. Deferred transactions
+        # can deadlock when independent clients both promote a shared read lock.
+        await connection.execute("BEGIN IMMEDIATE")
         try:
             async with connection.execute(
                 "SELECT rel_path FROM notes WHERE note_id = ?", (note.id,)

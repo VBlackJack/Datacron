@@ -17,6 +17,13 @@ Vérifier les références non résolues avant de compter sur leur disponibilit�
 L'export conserve les contenus locaux sélectionnés, y compris privés : lui appliquer
 les mêmes restrictions d'accès qu'au vault source.
 
+Pour un complément Confluence retrouvé via Cortex, conserver une synthèse locale
+courte avec le lien source, la date de mise à jour du document et la date de lecture.
+La confronter aux décisions récentes du projet avant de présenter une ancienne
+procédure comme actuelle. Un index récemment actualisé ne prouve pas que sa source
+reste valide. Les références externes restent indisponibles hors ligne tant que
+leur contenu utile n'a pas été conservé localement.
+
 ## Préparer la navigation
 
 Créer un fichier JSON hors du vault. Adapter chemins et tags à la politique existante ;

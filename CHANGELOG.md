@@ -30,6 +30,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- Concurrent index upserts reserve the SQLite write transaction before checking note
+  identity, preventing read-to-write lock conflicts between independent clients.
 - Contextual redaction covers note titles, headings and ancestor metadata while returning
   opaque chunk aliases without changing stored identities.
 - Duplicate note identities are rejected before index reconciliation mutates state.

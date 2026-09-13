@@ -16,6 +16,12 @@ are not downloaded. Check unresolved references before relying on offline access
 This export retains the selected local note contents, including private content;
 keep it with the same access restrictions as the source vault.
 
+For material retrieved from Confluence through Cortex, keep a short local summary
+with the source link, document update date and retrieval date. Compare it with
+recent project decisions before presenting an old procedure as current. A recent
+index refresh does not prove that the source is still valid. External references
+remain unavailable offline unless their relevant content is captured locally.
+
 ## Prepare navigation
 
 Create an options JSON file outside your vault. Adapt paths and tags to its
