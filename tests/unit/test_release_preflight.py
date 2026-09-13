@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +27,10 @@ import pytest
 _ROOT = Path(__file__).resolve().parents[2]
 _SCRIPT = _ROOT / "scripts" / "release_preflight.py"
 _RELEASE_BATCH = _ROOT / "scripts" / "release.bat"
+_PROJECT_CONFIG = (_ROOT / "pyproject.toml").read_bytes()
+_EXPECTED_EMAIL = tomllib.loads(_PROJECT_CONFIG.decode("utf-8"))["tool"]["datacron"]["release"][
+    "expected_email"
+]
 _VERSION = "2026.0829.00"
 _VERSION_PATHS = ("server.json", "src/datacron/__init__.py")
 
@@ -49,6 +54,8 @@ def _run(
     # configuration (hooks, signing, identity guards); each test sets what it needs.
     merged_env["GIT_CONFIG_GLOBAL"] = os.devnull
     merged_env["GIT_CONFIG_NOSYSTEM"] = "1"
+    for key in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL", "GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
+        merged_env.pop(key, None)
     if env is not None:
         merged_env.update(env)
     return subprocess.run(
@@ -130,12 +137,13 @@ def release_repo(tmp_path: Path) -> _ReleaseRepo:
         encoding="utf-8",
         newline="\n",
     )
+    (root / "pyproject.toml").write_bytes(_PROJECT_CONFIG)
     (root / "README.md").write_text("Datacron\n", encoding="utf-8", newline="\n")
     _git(root, "add", ".")
     _git(root, "commit", "-m", "test: initialize release repository")
     _git(root, "remote", "add", "origin", str(remote))
     _git(root, "push", "-u", "origin", "main")
-    _git(root, "config", "user.email", "")
+    _git(root, "config", "user.email", _EXPECTED_EMAIL)
     base_sha = _git(root, "rev-parse", "HEAD").stdout.strip()
     return _ReleaseRepo(root=root, remote=remote, base_sha=base_sha)
 
@@ -360,7 +368,7 @@ def test_committed_phase_rejects_and_hides_object_emails(
     if object_kind == "tag":
         _git(release_repo.root, "config", "user.email", sentinel)
     _git(release_repo.root, "tag", "-a", f"v{_VERSION}", "-m", f"Datacron {_VERSION}")
-    _git(release_repo.root, "config", "user.email", "")
+    _git(release_repo.root, "config", "user.email", _EXPECTED_EMAIL)
 
     result = _preflight(release_repo, "committed")
 
@@ -388,3 +396,77 @@ def test_release_batch_wires_all_phases_and_one_atomic_push() -> None:
     assert "git add src\\datacron\\__init__.py server.json CHANGELOG.md" not in content
     assert "--force" not in content
     assert "core.hooksPath" not in content
+
+
+@pytest.mark.parametrize("phase", ["clean", "committed"])
+@pytest.mark.parametrize("variable", ["GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"])
+@pytest.mark.parametrize(
+    "email", ["", "private@example.com", "malformed", "123+foreign@users.noreply.github.com"]
+)
+def test_effective_identity_requires_exact_configured_noreply(
+    release_repo: _ReleaseRepo, phase: str, variable: str, email: str
+) -> None:
+    if phase == "committed":
+        _commit_and_tag(release_repo)
+    result = _preflight(release_repo, phase, env={variable: email})
+    assert result.returncode == 1
+    assert "effective" in result.stderr
+    assert "project release identity" in result.stderr
+    if email:
+        assert email not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("role", ["author", "committer", "tagger"])
+@pytest.mark.parametrize(
+    "email", ["", "private@example.com", "malformed", "123+foreign@users.noreply.github.com"]
+)
+def test_committed_objects_require_exact_configured_noreply(
+    release_repo: _ReleaseRepo, role: str, email: str
+) -> None:
+    _stage_version_changes(release_repo)
+    commit_env = {}
+    if role != "tagger":
+        commit_env[f"GIT_{role.upper()}_EMAIL"] = email
+    _git(release_repo.root, "commit", "-m", f"chore(version): {_VERSION}", env=commit_env)
+    tag_env = {"GIT_COMMITTER_EMAIL": email} if role == "tagger" else {}
+    _git(release_repo.root, "tag", "-a", f"v{_VERSION}", "-m", f"Datacron {_VERSION}", env=tag_env)
+    result = _preflight(release_repo, "committed")
+    assert result.returncode == 1
+    assert (
+        "release tagger" in result.stderr if role == "tagger" else "release commit" in result.stderr
+    )
+    if email:
+        assert email not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        "",
+        "[tool.datacron.release]\nexpected_email = true\n",
+        "[tool.datacron.release]\nexpected_email = ''\n",
+        "[tool.datacron.release]\nexpected_email = 'private@example.com'\n",
+        "[broken",
+    ],
+)
+def test_invalid_project_release_identity_fails_closed(
+    release_repo: _ReleaseRepo, config: str
+) -> None:
+    (release_repo.root / "pyproject.toml").write_text(config, encoding="utf-8")
+    _git(release_repo.root, "add", "pyproject.toml")
+    _git(release_repo.root, "commit", "-m", "test: invalid release configuration")
+    _git(release_repo.root, "push", "origin", "main")
+    current = _git(release_repo.root, "rev-parse", "HEAD").stdout.strip()
+    result = _preflight(release_repo, "clean", base_sha=current)
+    assert result.returncode == 1
+    assert "project release identity" in result.stderr
+
+
+def test_missing_project_release_identity_fails_closed(release_repo: _ReleaseRepo) -> None:
+    _git(release_repo.root, "rm", "pyproject.toml")
+    _git(release_repo.root, "commit", "-m", "test: missing release configuration")
+    _git(release_repo.root, "push", "origin", "main")
+    current = _git(release_repo.root, "rev-parse", "HEAD").stdout.strip()
+    result = _preflight(release_repo, "clean", base_sha=current)
+    assert result.returncode == 1
+    assert "project release identity configuration" in result.stderr
