@@ -16,10 +16,11 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Final, Literal, TypedDict
 
-from datacron.core.markdown_headings import heading_before, markdown_headings
+from datacron.core.markdown_headings import MarkdownHeading, heading_before, markdown_headings
 
 __all__ = [
     "HEADING_SUGGESTION_MAX_CHARS",
@@ -374,6 +375,50 @@ def move_note_section(
         ValueError: If selection, hierarchy or exact boundary preservation is unsafe.
     """
     lines = body.splitlines(keepends=True)
+    move = _select_move(
+        lines,
+        heading,
+        destination_heading,
+        heading_level=heading_level,
+        heading_occurrence=heading_occurrence,
+        destination_level=destination_level,
+        destination_occurrence=destination_occurrence,
+        source_context=source_context,
+    )
+    reordered = _splice(lines, move)
+    rendered = "".join(reordered)
+    _verify_move(body, lines, reordered, rendered, move)
+    return rendered, {
+        "source_level": move.source.level,
+        "source_start_line": move.source.start + 1,
+        "source_end_line": move.end,
+        "destination_level": move.destination.level,
+        "destination_start_line": move.destination.start + 1,
+    }
+
+
+@dataclass(frozen=True)
+class _Move:
+    """The selected source subtree and destination section of one move."""
+
+    source: MarkdownHeading
+    end: int
+    destination: MarkdownHeading
+    dest_end: int
+
+
+def _select_move(
+    lines: list[str],
+    heading: str,
+    destination_heading: str,
+    *,
+    heading_level: int | None,
+    heading_occurrence: int | None,
+    destination_level: int | None,
+    destination_occurrence: int | None,
+    source_context: str | None,
+) -> _Move:
+    """Select both sections and refuse every move the hierarchy rules forbid."""
     start, end = find_section_span(
         lines,
         heading,
@@ -416,27 +461,39 @@ def move_note_section(
         raise ValueError(
             "source cannot be appended as a final child without changing heading levels"
         )
-    moved = lines[source.start : end]
-    retained = lines[: source.start] + lines[end:]
-    insert_at = dest_end - (end - source.start if source.start < dest_end else 0)
-    reordered = retained[:insert_at] + moved + retained[insert_at:]
-    rendered = "".join(reordered)
+    return _Move(source=source, end=end, destination=destination, dest_end=dest_end)
+
+
+def _splice(lines: list[str], move: _Move) -> list[str]:
+    """Return the lines with the source subtree appended as the destination's last child."""
+    moved = lines[move.source.start : move.end]
+    retained = lines[: move.source.start] + lines[move.end :]
+    removed_before = move.end - move.source.start if move.source.start < move.dest_end else 0
+    insert_at = move.dest_end - removed_before
+    return retained[:insert_at] + moved + retained[insert_at:]
+
+
+def _verify_move(
+    body: str, lines: list[str], reordered: list[str], rendered: str, move: _Move
+) -> None:
+    """Refuse a move that changes nothing, needs a newline or reinterprets a heading."""
     if rendered == body:
         raise ValueError("section placement is unchanged; nothing to move")
     if any(line and not line.endswith(("\n", "\r")) for line in reordered[:-1]):
         raise ValueError("move boundary requires an added newline; exact preservation refused")
-    expected = [item for item in remaining if item.start < dest_end]
-    expected += [item for item in headings if source.start <= item.start < end]
-    expected += [item for item in remaining if item.start >= dest_end]
+    expected = _expected_headings(lines, move)
     actual = markdown_headings(rendered.splitlines(keepends=True))
     if [(item.level, item.text) for item in actual] != [
         (item.level, item.text) for item in expected
     ]:
         raise ValueError("move changes Markdown heading interpretation; exact preservation refused")
-    return rendered, {
-        "source_level": source.level,
-        "source_start_line": source.start + 1,
-        "source_end_line": end,
-        "destination_level": destination.level,
-        "destination_start_line": destination.start + 1,
-    }
+
+
+def _expected_headings(lines: list[str], move: _Move) -> list[MarkdownHeading]:
+    """The heading sequence the move must produce: the subtree lands at its new place only."""
+    headings = markdown_headings(lines)
+    remaining = [item for item in headings if not move.source.start <= item.start < move.end]
+    expected = [item for item in remaining if item.start < move.dest_end]
+    expected += [item for item in headings if move.source.start <= item.start < move.end]
+    expected += [item for item in remaining if item.start >= move.dest_end]
+    return expected
