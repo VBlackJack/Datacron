@@ -28,9 +28,10 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
+from pydantic.fields import FieldInfo
 from ulid import ULID
 
-from datacron.core.config import reset_settings_cache
+from datacron.core.config import Settings, reset_settings_cache
 from datacron.core.hashing import hash_text
 from datacron.core.logger import shutdown_logging
 from datacron.core.models import Chunk, ChunkType, Note
@@ -42,35 +43,21 @@ ChunkFactory = Callable[..., Chunk]
 _DEMO_VAULT_DIR: Final[Path] = Path(__file__).parent / "fixtures" / "demo-vault"
 FROZEN_TIMESTAMP: Final[datetime] = datetime(2026, 5, 17, 12, 0, 0, tzinfo=UTC)
 
-_ENV_VARS: Final[tuple[str, ...]] = (
-    "DATACRON_LOG_LEVEL",
-    "DATACRON_LOG_DIR",
-    "DATACRON_READ_PATHS",
-    "DATACRON_WRITE_PATHS",
-    "DATACRON_VAULT_ROOT",
-    "DATACRON_MAX_RESULT_TOKENS",
-    "DATACRON_MAX_RESULT_COUNT",
-    "DATACRON_REPAIR_MIN_INTERVAL_SECONDS",
-    "DATACRON_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS",
-    "DATACRON_EVAL_REGRESSION_TOLERANCE",
-    "DATACRON_CONTRADICTION_MAX_PAIRS",
-    "DATACRON_CONTRADICTION_MAX_CANDIDATES",
-    "DATACRON_CONTRADICTION_MAX_PER_NOTE_PAIR",
-    "DATACRON_CONTRADICTION_SUMMARY_EVIDENCE_CHARS",
-    "DATACRON_RIPGREP_PATH",
-    "DATACRON_CHUNK_MAX_TOKENS",
-    "DATACRON_REDACT_SECRETS",
-    "DATACRON_SECRET_REDACTION_PATTERNS",
-    "DATACRON_READ_ONLY",
-    "DATACRON_DURABILITY",
-    "DATACRON_TOOL_DESCRIPTION_PROFILE",
-    "DATACRON_SCRUB_NOTES_PER_SECOND",
-    "DATACRON_SCRUB_MEBIBYTES_PER_SECOND",
-    "DATACRON_SCRUB_MAX_DURATION_SECONDS",
-    "DATACRON_SCRUB_CHECKPOINT_INTERVAL_NOTES",
-    "DATACRON_SCRUB_CHECKPOINT_PATH",
-    "DATACRON_SCRUB_CANARY_DIR",
-    "DATACRON_SCRUB_CANARIES",
+
+def _settings_env_var(name: str, field: FieldInfo) -> str:
+    """The environment variable pydantic-settings reads for one Settings field."""
+    alias = field.validation_alias if isinstance(field.validation_alias, str) else field.alias
+    if alias:
+        return alias.upper()
+    prefix = str(Settings.model_config.get("env_prefix", ""))
+    return f"{prefix}{name}".upper()
+
+
+# Derived from the model so that a new Settings field is stripped without editing this
+# list; test_isolated_env_strips_every_settings_variable guards the derivation. The former
+# manual list named no variable outside Settings, so nothing is appended by hand here.
+_ENV_VARS: Final[tuple[str, ...]] = tuple(
+    sorted(_settings_env_var(name, field) for name, field in Settings.model_fields.items())
 )
 
 
@@ -87,6 +74,12 @@ def _isolated_env(
     yield
     shutdown_logging()
     reset_settings_cache()
+
+
+@pytest.fixture
+def isolated_env_vars() -> frozenset[str]:
+    """The variables the autouse isolation strips, for the guard test."""
+    return frozenset(_ENV_VARS)
 
 
 @pytest.fixture(scope="session")

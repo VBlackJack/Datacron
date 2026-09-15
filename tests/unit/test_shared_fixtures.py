@@ -14,8 +14,10 @@ loudly before Codex sees the breakage.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 
+from datacron.core.config import Settings
 from datacron.core.hashing import hash_text
 from datacron.core.models import Chunk, ChunkType, Note
 
@@ -65,3 +67,23 @@ def test_chunk_factory_bound_to_note(
     assert chunk.note_id == note.id
     assert chunk.note_rel_path == "foo/bar.md"
     assert chunk.chunk_id == f"{note.id}::intro::0003"
+
+
+def test_isolated_env_strips_every_settings_variable(
+    isolated_env_vars: frozenset[str],
+) -> None:
+    """A Settings field without its variable in the fixture leaks host state into tests.
+
+    Reproduced before the fixture derived its list from the model: exporting
+    DATACRON_SESSION_CONTEXT_SECTIONS made test_default_preferences_select_no_sections
+    fail while the manual list silently ignored eight fields.
+    """
+    prefix = str(Settings.model_config.get("env_prefix", ""))
+    expected = {f"{prefix}{name}".upper() for name in Settings.model_fields}
+
+    missing = sorted(expected - isolated_env_vars)
+
+    assert not missing, f"Settings fields without an isolated variable: {missing}"
+    # The autouse fixture strips every variable, then pins only the log directory.
+    leaked = sorted(name for name in isolated_env_vars if name in os.environ)
+    assert leaked == ["DATACRON_LOG_DIR"], leaked
