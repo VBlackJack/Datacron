@@ -88,6 +88,7 @@ When `next_offset` is not null, repeat the call with `offset=next_offset` and
 `total` counts matching current records; `omitted` counts records after this page. Continue
 until `next_offset` is null. Any requested-note or filter change invalidates the snapshot;
 restart at offset zero without `expected_snapshot` on `follow_up_snapshot_changed`.
+A negative offset, or an offset beyond `total`, returns `follow_up_offset_invalid`.
 If a single record cannot fit, `follow_up_record_too_large` requests a larger
 `DATACRON_MAX_RESULT_TOKENS` budget or a paginated `get_note` read instead of returning
 an empty page that cannot advance. Returned text is sandboxed even for older revisions;

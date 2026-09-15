@@ -87,8 +87,17 @@ async def get_follow_up(
 ) -> dict[str, Any]:
     """Read the latest revision per identity; disclose legacy and freshness limitations."""
     started = time.perf_counter()
-    if not note_paths or len(note_paths) > SESSION_MAX_NOTES or offset < 0:
+    if not note_paths or len(note_paths) > SESSION_MAX_NOTES:
         return _error_response("get_follow_up", ValueError("note count exceeds bounds"), started)
+    if offset < 0:
+        return _error_response(
+            "get_follow_up",
+            FollowUpReadError(
+                "follow_up_offset_invalid",
+                f"offset {offset} is negative; offset must be between 0 and total",
+            ),
+            started,
+        )
     try:
         records: list[dict[str, Any]] = []
         sources: list[tuple[str, str]] = []
@@ -166,7 +175,10 @@ def _page(
     records: list[dict[str, Any]], legacy: int, offset: int, snapshot: str, maximum: int
 ) -> dict[str, Any]:
     if offset > len(records):
-        raise ValueError("follow-up offset exceeds total")
+        raise FollowUpReadError(
+            "follow_up_offset_invalid",
+            f"offset {offset} exceeds total {len(records)}; restart at offset 0",
+        )
     page = records[offset:]
     output: dict[str, Any] = {
         "records": page,

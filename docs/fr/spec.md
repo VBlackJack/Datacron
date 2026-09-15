@@ -496,7 +496,8 @@ Cette spec et l'implémentation de référence [Datacron](../../README.fr.md) so
 Commencer à zéro, puis continuer avec `offset=next_offset` et
 `expected_snapshot=snapshot_hash`, en conservant `note_paths` et `include_closed`.
 Une modification d'une note demandée ou du filtre retourne `follow_up_snapshot_changed` :
-recommencer à zéro. Un enregistrement trop volumineux retourne `follow_up_record_too_large` :
+recommencer à zéro. Un offset négatif ou supérieur à `total` retourne
+`follow_up_offset_invalid`. Un enregistrement trop volumineux retourne `follow_up_record_too_large` :
 augmenter `DATACRON_MAX_RESULT_TOKENS` ou lire la source avec `get_note`. Le budget couvre
 la réponse de suivi sérialisée complète. Voir [Discipline mémoire](memory-discipline.md).
 

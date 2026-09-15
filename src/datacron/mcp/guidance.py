@@ -42,6 +42,10 @@ ERROR_ACTIONS: Final[dict[str, str]] = {
         "Use the correlation_id to locate the local diagnostic. Inspect the "
         "original receipt before retrying a write."
     ),
+    "follow_up_offset_invalid": (
+        "Restart at offset 0, or continue with the next_offset and snapshot_hash "
+        "returned by the previous page."
+    ),
 }
 
 
