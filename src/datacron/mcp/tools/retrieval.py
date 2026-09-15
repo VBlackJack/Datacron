@@ -18,7 +18,7 @@ from datacron.core.hashing import hash_text
 from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
 from datacron.core.models import Chunk, Note, SearchResult
 from datacron.core.security import REDACTED
-from datacron.indexing.chunker import _content_line_offset
+from datacron.indexing.chunker import content_line_offset
 from datacron.mcp.sandbox import VAULT_CONTENT_CLOSE
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ def protect_chunk_metadata(app: DatacronApp, note: Note, chunks: list[Chunk]) ->
     if app.secret_redactor.redact_text(note.raw_content) == note.raw_content:
         return chunks
     headings = markdown_headings(note.content.splitlines(keepends=True))
-    offset = _content_line_offset(note)
+    offset = content_line_offset(note)
     unsafe = {
         item.start
         for item in headings
@@ -79,7 +79,7 @@ def protect_note_title(app: DatacronApp, note: Note) -> str:
     """Protect a title derived from a heading inside a context-sensitive secret."""
     if not app.secret_redactor.retrieval_enabled(app.settings):
         return note.title
-    offset = _content_line_offset(note)
+    offset = content_line_offset(note)
     for item in markdown_headings(note.content.splitlines(keepends=True)):
         if (
             item.text == note.title

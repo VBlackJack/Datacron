@@ -55,6 +55,7 @@ from datacron.core.models import Note
 from datacron.core.paths import read_ulid_mappings
 
 __all__ = [
+    "H1_PATTERN",
     "FilesystemVaultReader",
     "JsonIdStore",
     "NoteAdmissionPolicy",
@@ -69,7 +70,10 @@ SKIPPED_FOLDERS: Final[frozenset[str]] = frozenset(
 )
 ULID_SIDECAR_FILENAME: Final[str] = "ulids.json"
 MIGRATED_ULID_SIDECAR_FILENAME: Final[str] = "ulids.json.migrated"
-_H1_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}#\s+(.+?)\s*$", re.MULTILINE)
+# The first-level ATX heading a note title falls back to when its frontmatter has no
+# title: the same rule for the reader and for every other module that derives a title.
+H1_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}#\s+(.+?)\s*$", re.MULTILINE)
+_H1_PATTERN: Final[re.Pattern[str]] = H1_PATTERN
 
 
 class DuplicateNoteIdentityError(ValueError):

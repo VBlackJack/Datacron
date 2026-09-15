@@ -33,7 +33,7 @@ _NON_ALPHANUMERIC_PATTERN = re.compile(r"[^a-z0-9]+")
 _REPEATED_DASH_PATTERN = re.compile(r"-+")
 _HEADING_SEPARATOR: Final[str] = " / "
 
-__all__ = ["MarkdownChunker"]
+__all__ = ["MarkdownChunker", "content_line_offset"]
 
 
 @final
@@ -76,7 +76,7 @@ class MarkdownChunker:
 
     def _chunk(self, note: Note) -> list[Chunk]:
         source_lines = note.content.splitlines(keepends=True)
-        line_offset = _content_line_offset(note)
+        line_offset = content_line_offset(note)
         document = block_token.Document(source_lines)
         blocks = list(document.children or [])
         if not blocks:
@@ -379,7 +379,12 @@ def _block_line_range(source_lines: list[str], blocks: list[Any], index: int) ->
     return line_start, line_end
 
 
-def _content_line_offset(note: Note) -> int:
+def content_line_offset(note: Note) -> int:
+    """Return the number of raw lines that precede the body of ``note``.
+
+    Chunk line numbers are body-relative; readers add this offset to report
+    positions in the note as stored, frontmatter included.
+    """
     if not note.content:
         return 0
     # Frontmatter parsing normalizes EOLs and strips surrounding whitespace.

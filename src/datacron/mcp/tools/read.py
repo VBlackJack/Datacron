@@ -28,7 +28,7 @@ from datacron.core.models import Chunk, ChunkType, Note
 from datacron.core.paths import PathConfinementError, read_ulid_mappings, sidecar_dir
 from datacron.core.scope import NoteAdmissionError
 from datacron.core.vault import ULID_SIDECAR_FILENAME
-from datacron.indexing.chunker import _content_line_offset
+from datacron.indexing.chunker import content_line_offset
 from datacron.mcp.sandbox import (
     sanitize_payload_strings,
     wrap_vault_content,
@@ -345,7 +345,7 @@ def _build_section_payload(
         len(lines),
     )
     content = "".join(lines[selected.start : end])
-    line_offset = _content_line_offset(note)
+    line_offset = content_line_offset(note)
     line_start, line_end = line_offset + selected.start + 1, line_offset + end
     returned_path = list(heading_path)
     if app.secret_redactor.retrieval_enabled(app.settings):
@@ -654,7 +654,7 @@ def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
     chunks = protect_chunk_metadata(app, note, app.chunker.chunk(note))
     headings: list[dict[str, Any]] = []
     selected_headings = markdown_headings(note.content.splitlines(keepends=True))
-    line_offset = _content_line_offset(note)
+    line_offset = content_line_offset(note)
     for chunk in chunks:
         if chunk.chunk_type is not ChunkType.HEADING:
             continue

@@ -41,6 +41,7 @@ from rich.progress import Progress, TaskID, TextColumn
 
 from datacron import __version__
 from datacron.bootstrap import initialize_vault
+from datacron.cli_library import app as library_app
 from datacron.core.config import (
     DEFAULT_DURABILITY_MODE,
     LOG_FILENAME_PATTERN,
@@ -66,7 +67,7 @@ from datacron.core.paths import (
     sidecar_vault_config,
 )
 from datacron.core.scope import SingleTenantVaultScope
-from datacron.core.vault import build_configured_reader
+from datacron.core.vault import ULID_SIDECAR_FILENAME, build_configured_reader
 from datacron.core.vault_writer import (
     FilesystemVaultWriter,
     VaultLockBusyError,
@@ -87,7 +88,6 @@ from datacron.installers.protocol import (
     uninstall_memory_protocol,
 )
 from datacron.installers.protocol_status import protocol_status
-from datacron.organization.library_cli import app as library_app
 from datacron.scrubber import CanaryInitializationError, ScrubState, initialize_canaries
 from datacron.setup_wizard import (
     CLIENT_ALL,
@@ -827,7 +827,7 @@ def _realign_sidecar_entry(vault_root: Path, rel_path: str, note_id: str) -> Non
     over the primary file and writes the merged result back, so repairing one note
     would silently stamp every stale migrated mapping onto unrelated notes.
     """
-    path = sidecar_dir(vault_root) / "ulids.json"
+    path = sidecar_dir(vault_root) / ULID_SIDECAR_FILENAME
     payload: dict[str, str] = {}
     if path.is_file():
         payload = dict(
@@ -869,7 +869,7 @@ async def _realign_index_identity(
     config = _load_vault_yaml(vault_root) or VaultConfig()
     reader = build_configured_reader(vault_root)
     chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
-    store = SQLiteFTS5Store(term_map=config.query_expansion)
+    store = SQLiteFTS5Store(term_map=config.query_expansion, archive_tags=config.archive_tags)
     await store.open(db_path)
     try:
         indexed = await store.list_indexed_notes_with_mtime()
@@ -1320,7 +1320,7 @@ async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
 
     reader = build_configured_reader(vault_root)
     chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
-    store = SQLiteFTS5Store(term_map=config.query_expansion)
+    store = SQLiteFTS5Store(term_map=config.query_expansion, archive_tags=config.archive_tags)
     await store.open(db_path)
     started = time.perf_counter()
     try:
@@ -1454,7 +1454,7 @@ async def _run_eval(  # noqa: PLR0912 -- command orchestration covers optional o
             message = f"No eval baseline found at {baseline_path(vault_root)}."
             _print(json.dumps({"error": message}) if json_output else message)
             return 1
-    store = SQLiteFTS5Store(term_map=config.query_expansion)
+    store = SQLiteFTS5Store(term_map=config.query_expansion, archive_tags=config.archive_tags)
     ripgrep = RipgrepWrapper()
     datacron_app = build_app(
         settings=settings,
