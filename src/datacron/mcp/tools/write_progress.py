@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -24,7 +25,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.hashing import hash_text
 from datacron.core.memory_protocol import FOLLOW_UP_MAX_RECORDS
+from datacron.core.paths import PathConfinementError
+from datacron.core.scope import NoteAdmissionError
 from datacron.mcp.tools.payloads import _error_response, _internal_error_response
+from datacron.mcp.tools.read import _ULID_PATTERN, _resolve_note
 from datacron.mcp.tools.session import rendered_size
 
 if TYPE_CHECKING:
@@ -36,40 +40,55 @@ class WriteReference(BaseModel):
     """A retained request key and target, optionally with its original CAS hash."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    note: str = Field(min_length=1, max_length=1024)
+    note: str = Field(
+        min_length=1,
+        max_length=1024,
+        description=(
+            "Vault-relative path or note ULID of the write target, as accepted by "
+            "get_note_history and revert_note."
+        ),
+    )
     request_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
     expected_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class _Target:
+    """An admitted write target: its live path and, for a ULID reference, its identity."""
+
+    rel_path: str
+    note_id: str | None
+
+    def matches(self, record: OperationRecord) -> bool:
+        return record.rel_path == self.rel_path or (
+            self.note_id is not None and record.note_id == self.note_id
+        )
 
 
 async def get_write_progress(app: DatacronApp, requests: list[WriteReference]) -> dict[str, Any]:
     """Inspect each admitted target independently; never replay or repair a write."""
     started = time.perf_counter()
-    if not requests or len(requests) > FOLLOW_UP_MAX_RECORDS:
-        return _error_response(
-            "get_write_progress", ValueError("request count exceeds bounds"), started
-        )
-    if len({(r.note, r.request_id) for r in requests}) != len(requests):
-        return _error_response(
-            "get_write_progress", ValueError("duplicate request reference"), started
-        )
     try:
-        # Authorize the entire request before exposing any journal evidence.
-        for request in requests:
-            app.scope.authorize_note_rel_path(request.note)
+        if not requests or len(requests) > FOLLOW_UP_MAX_RECORDS:
+            raise ValueError("request count exceeds bounds")
+        if len({(r.note, r.request_id) for r in requests}) != len(requests):
+            raise ValueError("duplicate request reference")
+        # Admit and resolve every reference before exposing any journal evidence.
+        targets = [await _resolve_target(app, request.note) for request in requests]
         records = await app.vault_writer.list_operations()
         indexed = await app.store.list_indexed_notes_with_mtime()
         items = []
-        for ordinal, request in enumerate(requests, 1):
+        for ordinal, (request, target) in enumerate(zip(requests, targets, strict=True), 1):
             receipt = next(
                 (
                     r
                     for r in reversed(records)
-                    if r.rel_path == request.note
+                    if target.matches(r)
                     and r.parameters.get("request_key_hash") == hash_text(request.request_id)
                 ),
                 None,
             )
-            item = await _inspect_target(app, request, receipt, indexed)
+            item = await _inspect_target(app, target, request.expected_hash, receipt, indexed)
             item["request_index"] = ordinal
             items.append(item)
         result = {
@@ -86,15 +105,39 @@ async def get_write_progress(app: DatacronApp, requests: list[WriteReference]) -
                 started,
             )
         return result
+    except (NoteAdmissionError, PathConfinementError) as exc:
+        return _error_response("get_write_progress", _admission_error(exc), started)
     except ValueError as exc:
         return _error_response("get_write_progress", exc, started)
     except Exception:
         return _internal_error_response("get_write_progress", started)
 
 
+def _admission_error(exc: NoteAdmissionError | PathConfinementError) -> NoteAdmissionError:
+    """Map a refused reference to the typed admission error, never to an internal one."""
+    if isinstance(exc, NoteAdmissionError):
+        return exc
+    # The confinement message may name host paths; the class of failure is enough.
+    return NoteAdmissionError("write target escapes the admitted vault")
+
+
+async def _resolve_target(app: DatacronApp, reference: str) -> _Target:
+    """Admit a path or ULID reference; a ULID resolves through the same lookup as get_note."""
+    note_id: str | None = None
+    rel_path = reference
+    if _ULID_PATTERN.match(reference):
+        note = await _resolve_note(app, reference)
+        if note is None:
+            raise NoteAdmissionError(f"Note identity is not a live note: {reference!r}")
+        note_id, rel_path = note.id, note.rel_path
+    app.scope.authorize_note_rel_path(rel_path)
+    return _Target(rel_path=rel_path, note_id=note_id)
+
+
 async def _inspect_target(
     app: DatacronApp,
-    request: WriteReference,
+    target: _Target,
+    expected_hash: str | None,
     receipt: OperationRecord | None,
     indexed: dict[str, tuple[str, str, int | None]],
 ) -> dict[str, Any]:
@@ -102,8 +145,9 @@ async def _inspect_target(
     if receipt:
         item.update(operation_id=receipt.operation_id, committed_hash=receipt.after_hash)
     try:
-        note = await app.vault_reader.read_note(app.scope.authorize_note_rel_path(request.note))
-    except (OSError, ValueError):
+        note = await app.vault_reader.read_note(app.scope.authorize_note_rel_path(target.rel_path))
+    except (OSError, ValueError, NoteAdmissionError, PathConfinementError):
+        # A target admitted a moment ago can vanish before it is read: report it, never fail.
         item.update(status="target_unavailable", next_action="inspect_target_before_retry")
         return item
     item["current_hash"] = note.content_hash
@@ -118,7 +162,7 @@ async def _inspect_target(
             item.update(
                 status="committed_index_incomplete", next_action="repair_index_do_not_repeat"
             )
-    elif request.expected_hash is not None and request.expected_hash != note.content_hash:
+    elif expected_hash is not None and expected_hash != note.content_hash:
         item.update(status="conflict", next_action="inspect_original_request_then_reprepare")
     else:
         # A missing committed receipt does not prove there is no pending transaction.

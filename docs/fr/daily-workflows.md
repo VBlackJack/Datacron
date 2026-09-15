@@ -40,8 +40,9 @@ pas de tag non déclaré pour archiver une note.
 
 ## Reprendre une mise à jour partielle
 
-Conserve le `request_id`, le chemin et les arguments de chaque écriture préparée.
-Appelle `get_write_progress` avec, par exemple :
+Conserve le `request_id`, la cible et les arguments de chaque écriture préparée.
+`note` accepte le chemin relatif au vault ou l'ULID de la note, comme `get_note_history`
+et `revert_note`. Appelle `get_write_progress` avec, par exemple :
 
 ```json
 {"requests":[
@@ -65,9 +66,11 @@ L'outil reste en lecture seule ; il ne promet pas un instantané atomique multi-
 
 Un reçu absent renvoie `committed=null` : cela ne prouve pas l'absence d'opération
 pendante. Le hash du reçu est historique ; `current_hash` vient d'une lecture
-ponctuelle. Toutes les références sont confinées avant de retourner le journal.
-Un groupe trop volumineux est refusé et doit être divisé. Aucun reçu ne constitue
-une autorisation pour une nouvelle écriture.
+ponctuelle. Toutes les références sont confinées avant de retourner le journal : une
+référence qui n'est pas une note vivante admise, ou qui sort du vault, est refusée avec
+l'erreur typée `note_not_admitted` avant toute inspection. Un groupe trop volumineux est
+refusé et doit être divisé. Aucun reçu ne constitue une autorisation pour une nouvelle
+écriture.
 
 ## Comprendre les diagnostics
 

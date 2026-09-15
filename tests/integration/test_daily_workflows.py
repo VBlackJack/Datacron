@@ -236,10 +236,67 @@ async def test_progress_reports_index_loss_and_unknown_commit_honestly(tmp_path:
         refused = await get_write_progress(
             app, [WriteReference(note="../outside.md", request_id="save-one")]
         )
-        assert "error" in refused
+        assert refused["error"]["code"] == "note_not_admitted"
         assert "items" not in refused
         assert (await app.vault_reader.read_note(tmp_path / "note.md")).content_hash == receipt[
             "content_hash"
         ]
+    finally:
+        await app.store.close()
+
+
+async def test_progress_refuses_unadmitted_references_with_typed_errors(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from datacron.mcp.tools.write import _append_journal_impl
+    from datacron.mcp.tools.write_progress import WriteReference, get_write_progress
+
+    (tmp_path / "note.md").write_text(serialize({"title": "Note"}, "# Note\n\n## Journal\n"))
+    app = build_app(settings=settings(tmp_path), vault_root=tmp_path)
+    await app.store.open(sidecar_index_db(tmp_path))
+    try:
+        receipt = await _append_journal_impl(
+            app, rel_path="note.md", heading="Journal", entry="Saved", request_id="save-one"
+        )
+        assert receipt["indexed"]
+        with caplog.at_level(logging.ERROR):
+            for reference in ("never-created.md", "../outside.md"):
+                refused = await get_write_progress(
+                    app, [WriteReference(note=reference, request_id="save-one")]
+                )
+                assert refused["error"]["code"] == "note_not_admitted", refused
+                assert "correlation_id" not in refused["error"]
+                assert "items" not in refused
+        assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+    finally:
+        await app.store.close()
+
+
+async def test_progress_accepts_a_note_ulid_like_history_tools(tmp_path: Path) -> None:
+    from datacron.mcp.tools.write import _append_journal_impl
+    from datacron.mcp.tools.write_progress import WriteReference, get_write_progress
+
+    (tmp_path / "note.md").write_text(serialize({"title": "Note"}, "# Note\n\n## Journal\n"))
+    app = build_app(settings=settings(tmp_path), vault_root=tmp_path)
+    await app.store.open(sidecar_index_db(tmp_path))
+    try:
+        await _append_journal_impl(
+            app, rel_path="note.md", heading="Journal", entry="Saved", request_id="save-one"
+        )
+        note = await app.vault_reader.read_note(tmp_path / "note.md")
+        by_path = await get_write_progress(
+            app, [WriteReference(note="note.md", request_id="save-one")]
+        )
+        by_ulid = await get_write_progress(
+            app, [WriteReference(note=note.id, request_id="save-one")]
+        )
+        assert by_path["items"][0]["status"] == "committed_current"
+        assert by_ulid == by_path
+        unknown = await get_write_progress(
+            app, [WriteReference(note="01J00000000000000000000099", request_id="save-one")]
+        )
+        assert unknown["error"]["code"] == "note_not_admitted"
     finally:
         await app.store.close()
