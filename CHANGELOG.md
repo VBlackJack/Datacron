@@ -9,6 +9,22 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Changed
+
+- `session_context` selects no orientation section by default: the two French headings of
+  one particular `INIT.md` that were built into the package are gone. An orientation note
+  without configured sections returns its opening text and reports `section_selection.mode`
+  as `full` with the reason `no_sections_configured`, so every orientation source now
+  carries `section_selection`. Select sections through `DATACRON_SESSION_CONTEXT_SECTIONS`;
+  the note-sections page documents the JSON format with an example.
+- The archive tags and the state-note namespace are declared once, in the core
+  configuration. A vault overrides the archive tags through `organization.tags.archive_tags`
+  in `VAULT.yaml`; the index, the offline library and the planner follow the same source.
+  The planner names its expectation for a missing state note as `one note carrying any
+  kind/* tag`, which is what it checks.
+- The library command module lives outside the domain package (`datacron.cli_library`);
+  the `datacron library` commands and their help are unchanged.
+
 ### Fixed
 
 - The frontmatter pair table is indexed by `note_id`, so every index write removes a
@@ -30,6 +46,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   destination message names `destination_level` and `destination_occurrence`.
 - `get_follow_up` returns `follow_up_offset_invalid`, with a next action, for a negative
   offset or one beyond `total`.
+- A `session_context` fallback report no longer shares one entry between
+  `unavailable_sections` and `omitted_sections`.
 
 ## [2026.0913.02] - 2026-09-13
 
