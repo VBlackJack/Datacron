@@ -395,57 +395,80 @@ confirmation token.
 
 ```
 datacron/                              # GitHub: VBlackJack/Datacron
-├── README.md                          # Product manifesto
-├── SPEC.md                            # Internal vault conventions reference
-├── CHANGELOG.md                       # Unreleased changes
+├── README.md / README.fr.md           # Product manifesto (EN / FR)
+├── CHANGELOG.md                       # Engineering log, English only
 ├── LICENSE                            # Apache 2.0
 ├── pyproject.toml                     # Single Python package
 ├── uv.lock                            # Frozen runtime + dev dependencies
+├── server.json                        # MCP Registry descriptor
 ├── src/datacron/
 │   ├── __init__.py                    # version, public API
+│   ├── bootstrap.py                   # Vault bootstrap shared by init and setup
 │   ├── cli.py                         # Typer entry point (`datacron`)
-│   ├── core/
-│   │   ├── config.py                  # Constants, env loading (zero hardcoding)
-│   │   ├── durability.py              # Atomic writes + durability policy
-│   │   ├── logger.py                  # Explicit FileLogger at entrypoints
-│   │   ├── operation_log.py           # History and durable journal
-│   │   ├── paths.py                   # Path confinement enforcement
-│   │   ├── hashing.py                 # SHA256 + ULID
-│   │   ├── frontmatter.py             # YAML parser (python-frontmatter)
-│   │   ├── temporal.py                # Temporal retrieval re-ranking
-│   │   └── vault_writer.py            # Confined note transactions
+│   ├── cli_library.py                 # `datacron library` offline navigation commands
+│   ├── contradictions.py              # Live contradiction candidates and proposals
+│   ├── reliability.py                 # Read-only reliability scan
+│   ├── scrubber.py                    # Resumable integrity scrubber
+│   ├── setup_wizard.py                # Guided `datacron setup`
+│   ├── core/                          # Config (zero hardcoding), paths, hashing,
+│   │                                  # frontmatter, durability, operation log,
+│   │                                  # vault reader/writer, scope, sections
 │   ├── mcp/
 │   │   ├── server.py                  # MCPServer entry (`datacron mcp serve`)
 │   │   ├── tools/                     # Read/write/ops/advisory tools, split by concern
 │   │   ├── resources.py               # 3 resources
 │   │   ├── health.py                  # Operational health payload
-│   │   ├── security_manifest.py      # Closed tool-capability manifest
+│   │   ├── security_manifest.py       # Closed tool-capability manifest
 │   │   └── sandbox.py                 # Content wrapping + escaping
 │   ├── indexing/
 │   │   ├── chunker.py                 # AST-based Markdown chunker
 │   │   ├── fts5_store.py              # SQLite FTS5 wrapper
-│   │   ├── rebuild.py                  # Offline atomic reindex
-│   │   ├── reconcile.py                # Incremental reconciliation
-│   │   ├── ripgrep.py                 # subprocess wrapper
+│   │   ├── rebuild.py                 # Offline atomic reindex
+│   │   ├── reconcile.py               # Incremental reconciliation
+│   │   ├── ripgrep.py                 # subprocess wrapper + indexed regex fallback
 │   │   └── wikilinks.py               # graph extraction
+│   ├── organization/                  # Rules, tags, planner, manifest, offline library
 │   ├── eval/
-│   │   └── harness.py                 # Retrieval eval framework (44 questions)
-│   ├── installers/
-│   │   └── claude_desktop.py          # config writer
-│   ├── reliability.py                 # Read-only reliability scan
-│   └── scrubber.py                    # Resumable integrity scrubber
-├── tests/
+│   │   ├── harness.py                 # Retrieval eval framework
+│   │   ├── conversation_trace.py      # Conversation trace evaluation
+│   │   ├── baseline.py / metrics.py   # Versioned baselines and metric functions
+│   │   └── transport.py               # End-to-end MCP transport for eval smoke mode
+│   └── installers/
+│       ├── claude_desktop.py          # Claude Desktop config writer
+│       ├── mcp_clients.py             # Other MCP client registrations
+│       ├── protocol.py                # Memory protocol installer
+│       └── protocol_status.py         # Read-only protocol distribution diagnostics
+├── packaging/
+│   ├── datacron_launcher.py           # PyInstaller entry point
+│   └── windows/                       # Inno Setup script and installer build
+├── tests/                             # unit/, integration/, properties/, fixtures/
 ├── docs/
-│   ├── fr/ en/                        # Bilingual documentation
-│   ├── audits/ etudes/ archive/
+│   ├── en/ fr/                        # Bilingual documentation
 │   └── assets/architecture-overview.svg
 ├── examples/
-│   └── eval-questions.example.yaml
+│   ├── eval-questions.example.yaml
+│   └── conversations/                 # Conversation trace samples
 ├── scripts/
-│   ├── audit_excluded_notes.py
-│   ├── check_invariants.py
-│   └── reliability_scan.py
-├── .github/workflows/ci.yml           # ruff + mypy + pytest + shellcheck
+│   ├── check_invariants.py            # ruff + mypy + invariant tests (pre-push gate)
+│   ├── ci_scope.py                    # Documentation-only CI matrix
+│   ├── bump_version.py                # CalVer bump
+│   ├── release_preflight.py           # Release Git invariants, phase by phase
+│   ├── release.bat                    # Windows release driver
+│   ├── build_installer.ps1 / .sh      # Standalone installer builds
+│   ├── mcp_registry_publish.sh        # MCP Registry publication after PyPI
+│   ├── reliability_scan.py            # Read-only reliability scan
+│   ├── audit_excluded_notes.py        # Excluded-note audit
+│   ├── evaluate_conversation_trace.py # Conversation trace evaluation
+│   ├── benchmark_sessions.py          # Independent MCP processes benchmark
+│   ├── benchmark_writes.py            # Write throughput benchmark
+│   ├── check_symlink_support.py       # Windows CI symlink capability check
+│   ├── prepare_windows_sandbox.py     # Offline Windows Sandbox validation bundle
+│   └── verify_windows_install.py      # Installed-executable verification
+├── .github/workflows/
+│   ├── ci.yml                         # ruff + mypy + pytest + shellcheck + pip-audit
+│   ├── runtime-validation.yml         # Manual Windows runtime validation
+│   ├── release.yml                    # Standalone executables and Windows installer
+│   └── publish-pypi.yml               # PyPI and MCP Registry publication
 └── .gitignore
 ```
 
@@ -549,4 +572,4 @@ after validation and review; preparing a library never applies that manifest its
 See [Offline library](human-library.md) for the workflow and safeguards, and
 [Reliability improvements](improvements.md) for replay and indexing contracts.
 
-*Updated on 2026-09-13 for the source implementation; see the unreleased changelog.*
+*Updated on 2026-09-15 for the source implementation.*

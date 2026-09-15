@@ -93,6 +93,7 @@ include = [
     "README.md",
     "README.fr.md",
     "LICENSE",
+    "docs/en/spec.md",
     "docs/fr/spec.md",
     "pyproject.toml",
 ]

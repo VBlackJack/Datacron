@@ -34,7 +34,7 @@ Le bloc porte cinq clés, et cinq seulement.
 |---|---|---|
 | `scope` | chaîne | Sous-arbre du vault sur lequel porte la mesure. |
 | `rules` | liste | Règles de placement, dans l'ordre de priorité. |
-| `tags` | dictionnaire | La [politique de tags](#le-bloc-tags-une-politique-de-tags-declaree) optionnelle. |
+| `tags` | dictionnaire | La [politique de tags](#le-bloc-tags--une-politique-de-tags-déclarée) optionnelle. |
 | `state_note_min_notes` | entier, au moins 1 | A partir de combien de notes un dossier de sujet doit porter une note d'état. Absente : `NO_STATE_NOTE` n'est pas mesuré. |
 | `linking_since` | date | A partir de quelle date calendaire une nouvelle note d'un dossier de sujet doit lier sa note d'état. Absente : `UNLINKED` n'est pas mesuré. |
 
@@ -126,7 +126,7 @@ pas seulement dans un rapport.
 
 | Clé | Obligatoire | Rôle |
 |---|---|---|
-| `placement_namespace` | oui | L'espace de noms des tags de placement (`memory` quand les règles sont `memory/fact`, `memory/project`, ...). Chaque tag de règle y vit, ou nomme un sujet déclaré (voir [les règles de sujet](#les-regles-de-sujet)). |
+| `placement_namespace` | oui | L'espace de noms des tags de placement (`memory` quand les règles sont `memory/fact`, `memory/project`, ...). Chaque tag de règle y vit, ou nomme un sujet déclaré (voir [les règles de sujet](#les-règles-de-sujet)). |
 | `markers` | non | Tags de règle qui peuvent accompagner le tag de placement comme marqueur transversal (`memory/decision` sur un fait qui tranche quelque chose). |
 | `subject_namespace` | non | L'espace de noms qui nomme le sujet auquel une note appartient (`project`). |
 | `subjects` | non | Le registre fermé des tags de sujet, chacun avec des `aliases` optionnels : les graphies à signaler plutôt qu'à accepter en silence. Une chaîne seule est un sujet sans alias. |
@@ -256,7 +256,7 @@ lien ni une note.
 
 ### Notes d'état et rattachements
 
-Un **dossier de sujet** est le dossier d'une [règle de sujet](#les-regles-de-sujet) : une
+Un **dossier de sujet** est le dossier d'une [règle de sujet](#les-règles-de-sujet) : une
 règle dont le tag vit dans le `subject_namespace` de la politique. Les deux clés exigent
 donc une politique `tags` avec un `subject_namespace` ; en déclarer une sans lui est refusé
 au chargement plutôt que mesuré comme rien. Seules comptent les notes gouvernées qui sont
