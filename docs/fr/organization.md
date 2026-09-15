@@ -147,7 +147,9 @@ Trois surfaces appliquent la même évaluation :
 
 - `create_note_ai` refuse une note de la portée dont les tags effectifs enfreignent la
   politique, avec une erreur typée dont le `code` est `tag_policy_violation` et dont le
-  message nomme chaque infraction et ce qui était attendu. Rien n'est écrit.
+  message nomme chaque infraction et ce qui était attendu. Rien n'est écrit. La politique
+  est lue au démarrage du serveur, avec le reste de `VAULT.yaml` : redémarre le serveur
+  après l'avoir modifiée.
 - `apply_organization_manifest` refuse, à la validation, un lot dont les notes
   **résultantes** enfreignent la politique de la configuration cible, avec le même code. Les
   notes que le lot ne touche pas ne sont pas jugées, pour qu'un nettoyage incrémental reste

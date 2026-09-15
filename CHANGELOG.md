@@ -30,6 +30,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- `create_note_ai` enforces the tag policy that the server read at startup, with the rest
+  of `VAULT.yaml`, instead of parsing the file again on every creation. Editing the
+  policy now takes effect after a server restart, like the excluded folders and the
+  query expansion already did.
 - One first-level heading pattern: `core.vault.H1_PATTERN` is the only definition, and
   the batch transaction and the organization manifest import it. The manifest previously
   kept its own pattern without the CommonMark indentation tolerance, so a title derived

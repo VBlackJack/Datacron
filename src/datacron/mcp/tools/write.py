@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any, Final
 
 from ulid import ULID
 
-from datacron.core.config import load_vault_config
 from datacron.core.durability import (
     DurabilityUnavailableError,
     ReadOnlyModeError,
@@ -45,7 +44,7 @@ from datacron.core.operation_log import (
     OperationContext,
     OperationLogError,
 )
-from datacron.core.paths import PathConfinementError, sidecar_vault_config
+from datacron.core.paths import PathConfinementError
 from datacron.core.vault_writer import UlidCollisionError
 from datacron.core.write_request import ReplayedWriteError
 from datacron.indexing.reconcile import ReconcileStats
@@ -192,15 +191,15 @@ def _add_heading_suggestions(
 def _enforce_tag_policy(app: DatacronApp, rel_path: str, tags: list[str], body: str) -> None:
     """Refuse a creation whose effective tags break the vault's declared policy.
 
-    The policy lives in ``.datacron/VAULT.yaml`` (``organization.tags``); a vault
-    without it is unaffected. Effective tags include inline ``#tag`` occurrences
-    in the body, exactly as the planner aggregates them, so a compliant
+    The policy lives in ``.datacron/VAULT.yaml`` (``organization.tags``) and is the
+    one ``build_app`` read at startup, like the rest of the vault configuration; a
+    vault without it is unaffected. Effective tags include inline ``#tag``
+    occurrences in the body, exactly as the planner aggregates them, so a compliant
     frontmatter cannot be undone by prose.
     """
-    config = load_vault_config(sidecar_vault_config(app.vault_root))
-    if config is None or config.organization is None:
+    organization = app.organization
+    if organization is None:
         return
-    organization = config.organization
     if organization.tags is None or organization.scope is None:
         return
     # Judge the destination the writer will actually use: "_memory/x/../y.md" and an

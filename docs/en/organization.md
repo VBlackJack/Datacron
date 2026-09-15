@@ -142,7 +142,8 @@ Three surfaces apply the same evaluation:
 
 - `create_note_ai` refuses a note inside the scope whose effective tags break the policy,
   with a typed error whose `code` is `tag_policy_violation` and whose message names every
-  violation and what was expected. Nothing is written.
+  violation and what was expected. Nothing is written. The policy is read when the
+  server starts, with the rest of `VAULT.yaml`: restart the server after editing it.
 - `apply_organization_manifest` refuses, at validation, a bundle whose **result** notes break
   the policy of the target configuration, with the same code. Notes the bundle does not
   touch are not judged, so an incremental cleanup stays possible.
