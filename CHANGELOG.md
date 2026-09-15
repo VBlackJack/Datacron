@@ -11,6 +11,18 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- The offline library resolves links through casefolded lookup tables built once per
+  audit, parses each note body once for the audit and the navigation, and `prepare`
+  checks the bundle it just wrote against the notes it just read. An audit of 2000 notes
+  with 24 links each drops from minutes to seconds; findings are unchanged.
+- One wikilink parser: the organization planner and the offline library extract wikilink
+  targets through the indexing parser. The planner no longer counts a wikilink inside inline
+  code, an escaped `\[[...]]` or a tilde fence as a link, and the library normalizes the
+  whitespace inside `[[ target ]]` the way the index does.
+- `datacron library` options carry help text, `--vault` falls back to `DATACRON_VAULT_ROOT`
+  and then to a current directory that holds `.datacron/VAULT.yaml`, like the other vault
+  commands, and each command documents its exit codes in `--help`. An explicit vault binds
+  the read and write scope of the command like every other vault command.
 - `session_context` selects no orientation section by default: the two French headings of
   one particular `INIT.md` that were built into the package are gone. An orientation note
   without configured sections returns its opening text and reports `section_selection.mode`
