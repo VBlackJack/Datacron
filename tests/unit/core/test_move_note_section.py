@@ -15,7 +15,11 @@
 
 import pytest
 
-from datacron.core.markdown_sections import move_note_section
+from datacron.core.markdown_sections import (
+    AmbiguousHeadingError,
+    HeadingNotFoundError,
+    move_note_section,
+)
 
 
 def test_move_preserves_subtree_and_every_byte() -> None:
@@ -83,3 +87,33 @@ def test_move_within_destination_to_last_child() -> None:
     body = "# Root\n\n## Archive\n\n### Item\n\n### Prior\n"
     result, _ = move_note_section(body, "Item", "Archive")
     assert result == "# Root\n\n## Archive\n\n### Prior\n### Item\n\n"
+
+
+def test_destination_errors_name_the_destination_selector_and_parameters() -> None:
+    body = "# Root\n\n### Item\n\n## Archive\nfirst\n\n## Archive\nsecond\n"
+    with pytest.raises(HeadingNotFoundError) as missing:
+        move_note_section(body, "Item", "Missing")
+    assert missing.value.selector == "destination"
+    assert str(missing.value).startswith("destination heading not found")
+
+    with pytest.raises(AmbiguousHeadingError) as ambiguous:
+        move_note_section(body, "Item", "Archive")
+    assert ambiguous.value.selector == "destination"
+    assert "destination_level" in str(ambiguous.value)
+    assert "destination_occurrence" in str(ambiguous.value)
+    assert "heading_occurrence" not in str(ambiguous.value)
+
+
+def test_source_errors_keep_the_source_selector_and_parameters() -> None:
+    body = "# Root\n\n### Item\nfirst\n\n### Item\nsecond\n\n## Archive\n"
+    with pytest.raises(HeadingNotFoundError) as missing:
+        move_note_section(body, "Missing", "Archive")
+    assert missing.value.selector == "source"
+    assert str(missing.value).startswith("heading not found")
+
+    with pytest.raises(AmbiguousHeadingError) as ambiguous:
+        move_note_section(body, "Item", "Archive")
+    assert ambiguous.value.selector == "source"
+    assert "heading_level" in str(ambiguous.value)
+    assert "heading_occurrence" in str(ambiguous.value)
+    assert "destination_level" not in str(ambiguous.value)

@@ -21,7 +21,11 @@ from typing import TYPE_CHECKING, Any
 from datacron.core.durability import DurabilityUnavailableError, ReadOnlyModeError
 from datacron.core.frontmatter import FrontmatterError
 from datacron.core.hashing import sha256_bytes
-from datacron.core.markdown_sections import move_note_section
+from datacron.core.markdown_sections import (
+    SectionSelector,
+    SectionSelectorError,
+    move_note_section,
+)
 from datacron.core.operation_log import OperationContext
 from datacron.core.vault_writer import WriteConflictError
 from datacron.mcp.tools.payloads import _audit
@@ -67,6 +71,8 @@ async def _move_note_section_impl(
 ) -> dict[str, Any]:
     """Preview by default; commit an explicitly confirmed exact-CAS section move."""
     started = time.perf_counter()
+    # Remembered so the error payload can say which selector failed to pick a section.
+    failed_selector: SectionSelector | None = None
 
     async def action() -> dict[str, Any]:
         app.write_policy.ensure_writable()
@@ -86,7 +92,7 @@ async def _move_note_section_impl(
         selection: dict[str, int] = {}
 
         def mutation(raw: str) -> str:
-            nonlocal selection
+            nonlocal selection, failed_selector
             # The durable writer normalizes EOLs. Refuse inputs where that would
             # change any original byte beyond the requested relocation.
             without_crlf = raw.replace("\r\n", "")
@@ -97,16 +103,20 @@ async def _move_note_section_impl(
                 raise ValueError(
                     "Markdown body cannot be separated without changing original bytes"
                 )
-            moved, selection = move_note_section(
-                body,
-                cleaned_heading,
-                cleaned_destination,
-                heading_level=heading_level,
-                heading_occurrence=heading_occurrence,
-                destination_level=destination_level,
-                destination_occurrence=destination_occurrence,
-                source_context=raw,
-            )
+            try:
+                moved, selection = move_note_section(
+                    body,
+                    cleaned_heading,
+                    cleaned_destination,
+                    heading_level=heading_level,
+                    heading_occurrence=heading_occurrence,
+                    destination_level=destination_level,
+                    destination_occurrence=destination_occurrence,
+                    source_context=raw,
+                )
+            except SectionSelectorError as exc:
+                failed_selector = exc.selector
+                raise
             # Preserve frontmatter, BOM, comments and timestamps verbatim.
             return raw[: len(raw) - len(body)] + moved
 
@@ -150,7 +160,7 @@ async def _move_note_section_impl(
             "indexed": True,
         }
 
-    return await _execute_write_tool(
+    payload = await _execute_write_tool(
         "move_note_section",
         started,
         action,
@@ -164,3 +174,6 @@ async def _move_note_section_impl(
             ValueError,
         ),
     )
+    if failed_selector is not None and "error" in payload:
+        payload["error"]["selector"] = failed_selector
+    return payload

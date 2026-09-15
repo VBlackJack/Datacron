@@ -109,3 +109,6 @@ Write errors retain the `heading_not_found` code and provide bounded suggestions
 using exact rendered titles, levels and occurrences. Suggestions are sanitized and
 never select a section automatically. A truncated or redacted suggestion is marked
 as unsuitable for direct selection; reread the outline before choosing a target.
+`move_note_section` errors also carry `selector`: `source` when the heading to move was
+not selected, `destination` when the destination heading is missing or ambiguous. A
+destination message names `destination_level` and `destination_occurrence`.

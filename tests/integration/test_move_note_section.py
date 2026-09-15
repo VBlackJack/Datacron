@@ -241,3 +241,56 @@ async def test_read_only_hides_move_tool(tmp_path: Path) -> None:
         vault_root=tmp_path,
     )
     assert "move_note_section" not in {tool.name for tool in await create_server(app).list_tools()}
+
+
+@pytest.mark.parametrize(
+    ("heading", "destination", "code", "selector", "parameter"),
+    [
+        ("Item", "Archiv", "heading_not_found", "destination", None),
+        ("Item", "Archive", "heading_ambiguous", "destination", "destination_level"),
+        ("Nope", "Archive", "heading_not_found", "source", None),
+    ],
+)
+async def test_selector_errors_name_the_failing_side(
+    tmp_path: Path,
+    heading: str,
+    destination: str,
+    code: str,
+    selector: str,
+    parameter: str | None,
+) -> None:
+    body = "# Root\n\n## Active\n\n### Item\n\nDone\n\n## Archive\nfirst\n\n## Archive\nsecond\n"
+    raw = serialize({"id": "01J00000000000000000000091"}, body).encode()
+    path = tmp_path / "note.md"
+    path.write_bytes(raw)
+    app = build_app(
+        settings=Settings(vault_root=tmp_path, read_paths=[tmp_path], write_paths=[tmp_path]),
+        vault_root=tmp_path,
+    )
+    await app.store.open(sidecar_index_db(tmp_path))
+    try:
+        result = await create_server(app).call_tool(
+            "move_note_section",
+            {
+                "rel_path": "note.md",
+                "heading": heading,
+                "destination_heading": destination,
+                "expected_hash": sha256_bytes(raw),
+            },
+        )
+        assert isinstance(result, CallToolResult)
+        assert result.is_error
+        assert isinstance(result.content[0], TextContent)
+        error = json.loads(result.content[0].text)["error"]
+        assert error["code"] == code
+        assert error["selector"] == selector
+        if parameter is not None:
+            assert parameter in error["message"]
+            assert "destination_occurrence" in error["message"]
+            assert "heading_occurrence" not in error["message"]
+        elif selector == "destination":
+            assert error["suggestions"][0]["heading"] == "Archive"
+        assert path.read_bytes() == raw
+        assert not await app.vault_writer.list_operations()
+    finally:
+        await app.store.close()

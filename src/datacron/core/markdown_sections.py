@@ -17,13 +17,16 @@ from __future__ import annotations
 
 import re
 from difflib import SequenceMatcher
-from typing import Final, TypedDict
+from typing import Final, Literal, TypedDict
 
 from datacron.core.markdown_headings import heading_before, markdown_headings
 
 __all__ = [
     "HEADING_SUGGESTION_MAX_CHARS",
+    "AmbiguousHeadingError",
     "HeadingNotFoundError",
+    "SectionSelector",
+    "SectionSelectorError",
     "append_entry_to_heading",
     "find_section_span",
     "move_note_section",
@@ -49,7 +52,34 @@ class HeadingSuggestion(TypedDict):
     heading_occurrence: int
 
 
-class HeadingNotFoundError(ValueError):
+SectionSelector = Literal["source", "destination"]
+
+# The parameter names a caller must use to disambiguate each selector of a move.
+_SELECTOR_PARAMETERS: Final[dict[str, tuple[str, str]]] = {
+    "source": ("heading_level", "heading_occurrence"),
+    "destination": ("destination_level", "destination_occurrence"),
+}
+_SELECTOR_SUBJECTS: Final[dict[str, str]] = {
+    "source": "heading",
+    "destination": "destination heading",
+}
+
+
+class SectionSelectorError(ValueError):
+    """A heading selector did not identify exactly one section."""
+
+    def __init__(self, message: str, *, selector: SectionSelector = "source") -> None:
+        super().__init__(message)
+        self.selector: SectionSelector = selector
+
+
+class AmbiguousHeadingError(SectionSelectorError):
+    """More than one section matches the requested heading."""
+
+    code: Final[str] = "heading_ambiguous"
+
+
+class HeadingNotFoundError(SectionSelectorError):
     """No section matches the requested heading."""
 
     code: Final[str] = "heading_not_found"
@@ -61,8 +91,9 @@ class HeadingNotFoundError(ValueError):
         suggestions: list[HeadingSuggestion] | None = None,
         source_context: str = "",
         suggestion_spans: list[tuple[int, int]] | None = None,
+        selector: SectionSelector = "source",
     ) -> None:
-        super().__init__(message)
+        super().__init__(message, selector=selector)
         self.suggestions = suggestions if suggestions is not None else []
         self.source_context = source_context
         self.suggestion_spans = suggestion_spans if suggestion_spans is not None else []
@@ -95,8 +126,15 @@ def find_section_span(
     *,
     heading_occurrence: int | None = None,
     source_context: str | None = None,
+    selector: SectionSelector = "source",
+    typed_errors: bool = False,
 ) -> tuple[int, int]:
-    """Return the content span for one unambiguous matching heading."""
+    """Return the content span for one unambiguous matching heading.
+
+    ``selector`` names the side of a move the lookup serves; ``typed_errors`` makes an
+    ambiguous or out-of-range selection raise a ``SectionSelectorError`` carrying it
+    instead of a plain ``ValueError``.
+    """
     headings = markdown_headings(lines)
     matches = [
         (item.end, item.level)
@@ -104,7 +142,9 @@ def find_section_span(
         if item.text == heading and (heading_level is None or item.level == heading_level)
     ]
     try:
-        content_start, level = _select_heading_match(matches, heading_occurrence)
+        content_start, level = _select_heading_match(
+            matches, heading_occurrence, selector, typed_errors=typed_errors
+        )
     except HeadingNotFoundError as exc:
         exc.suggestions = _heading_suggestions(lines, heading, heading_level)
         body = "".join(lines)
@@ -169,24 +209,41 @@ def _heading_suggestions(
 def _select_heading_match(
     matches: list[tuple[int, int]],
     heading_occurrence: int | None,
+    selector: SectionSelector = "source",
+    *,
+    typed_errors: bool = False,
 ) -> tuple[int, int]:
+    subject = _SELECTOR_SUBJECTS[selector]
+    level_parameter, occurrence_parameter = _SELECTOR_PARAMETERS[selector]
+
+    def refuse(message: str, *, ambiguous: bool = False) -> ValueError:
+        # Single-selector tools keep their plain ValueError contract; a move, which has
+        # two selectors, asks for typed errors that name the selector that failed.
+        if not typed_errors:
+            return ValueError(message)
+        error_type = AmbiguousHeadingError if ambiguous else SectionSelectorError
+        return error_type(message, selector=selector)
+
     if heading_occurrence is None:
         if not matches:
-            raise HeadingNotFoundError("heading not found; no section selected")
+            raise HeadingNotFoundError(
+                f"{subject} not found; no section selected", selector=selector
+            )
         if len(matches) > 1:
-            raise ValueError(
-                f"heading is ambiguous ({len(matches)} matches); pass heading_level for "
-                "inter-level matches, or pass heading_level, heading_occurrence, and "
-                "expected_hash for same-level duplicates"
+            raise refuse(
+                f"{subject} is ambiguous ({len(matches)} matches); pass {level_parameter} "
+                f"for inter-level matches, or pass {level_parameter}, {occurrence_parameter}, "
+                "and expected_hash for same-level duplicates",
+                ambiguous=True,
             )
         return matches[0]
     if isinstance(heading_occurrence, bool) or not isinstance(heading_occurrence, int):
-        raise ValueError("heading_occurrence must be an integer")
+        raise refuse(f"{occurrence_parameter} must be an integer")
     if heading_occurrence < 1:
-        raise ValueError("heading_occurrence must be at least 1")
+        raise refuse(f"{occurrence_parameter} must be at least 1")
     if heading_occurrence > len(matches):
-        raise ValueError(
-            f"heading_occurrence {heading_occurrence} is out of range for "
+        raise refuse(
+            f"{occurrence_parameter} {heading_occurrence} is out of range for "
             f"{len(matches)} matching headings"
         )
     return matches[heading_occurrence - 1]
@@ -323,6 +380,8 @@ def move_note_section(
         heading_level,
         heading_occurrence=heading_occurrence,
         source_context=source_context,
+        selector="source",
+        typed_errors=True,
     )
     dest_start, dest_end = find_section_span(
         lines,
@@ -330,6 +389,8 @@ def move_note_section(
         destination_level,
         heading_occurrence=destination_occurrence,
         source_context=source_context,
+        selector="destination",
+        typed_errors=True,
     )
     source = heading_before(lines, start)
     destination = heading_before(lines, dest_start)
