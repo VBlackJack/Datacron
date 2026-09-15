@@ -387,7 +387,7 @@ def move_note_section(
     )
     reordered = _splice(lines, move)
     rendered = "".join(reordered)
-    _verify_move(body, lines, reordered, rendered, move)
+    _verify_move(body, reordered, rendered, move)
     return rendered, {
         "source_level": move.source.level,
         "source_start_line": move.source.start + 1,
@@ -405,6 +405,10 @@ class _Move:
     end: int
     destination: MarkdownHeading
     dest_end: int
+    # The heading map of the body and the headings outside the moved subtree, computed
+    # once at selection time and reused by the verification.
+    headings: list[MarkdownHeading]
+    remaining: list[MarkdownHeading]
 
 
 def _select_move(
@@ -461,7 +465,14 @@ def _select_move(
         raise ValueError(
             "source cannot be appended as a final child without changing heading levels"
         )
-    return _Move(source=source, end=end, destination=destination, dest_end=dest_end)
+    return _Move(
+        source=source,
+        end=end,
+        destination=destination,
+        dest_end=dest_end,
+        headings=headings,
+        remaining=remaining,
+    )
 
 
 def _splice(lines: list[str], move: _Move) -> list[str]:
@@ -473,15 +484,13 @@ def _splice(lines: list[str], move: _Move) -> list[str]:
     return retained[:insert_at] + moved + retained[insert_at:]
 
 
-def _verify_move(
-    body: str, lines: list[str], reordered: list[str], rendered: str, move: _Move
-) -> None:
+def _verify_move(body: str, reordered: list[str], rendered: str, move: _Move) -> None:
     """Refuse a move that changes nothing, needs a newline or reinterprets a heading."""
     if rendered == body:
         raise ValueError("section placement is unchanged; nothing to move")
     if any(line and not line.endswith(("\n", "\r")) for line in reordered[:-1]):
         raise ValueError("move boundary requires an added newline; exact preservation refused")
-    expected = _expected_headings(lines, move)
+    expected = _expected_headings(move)
     actual = markdown_headings(rendered.splitlines(keepends=True))
     if [(item.level, item.text) for item in actual] != [
         (item.level, item.text) for item in expected
@@ -489,11 +498,9 @@ def _verify_move(
         raise ValueError("move changes Markdown heading interpretation; exact preservation refused")
 
 
-def _expected_headings(lines: list[str], move: _Move) -> list[MarkdownHeading]:
+def _expected_headings(move: _Move) -> list[MarkdownHeading]:
     """The heading sequence the move must produce: the subtree lands at its new place only."""
-    headings = markdown_headings(lines)
-    remaining = [item for item in headings if not move.source.start <= item.start < move.end]
-    expected = [item for item in remaining if item.start < move.dest_end]
-    expected += [item for item in headings if move.source.start <= item.start < move.end]
-    expected += [item for item in remaining if item.start >= move.dest_end]
+    expected = [item for item in move.remaining if item.start < move.dest_end]
+    expected += [item for item in move.headings if move.source.start <= item.start < move.end]
+    expected += [item for item in move.remaining if item.start >= move.dest_end]
     return expected
