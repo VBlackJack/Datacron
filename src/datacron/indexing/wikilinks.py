@@ -21,7 +21,7 @@ from typing import Final, final
 
 from datacron.core.models import Chunk, ChunkType, Wikilink
 
-__all__ = ["RegexWikilinksExtractor", "extract_wikilink_targets"]
+__all__ = ["RegexWikilinksExtractor", "extract_wikilink_anchors", "extract_wikilink_targets"]
 
 _WIKILINK_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?<!\\)\[\["
@@ -58,6 +58,19 @@ class RegexWikilinksExtractor:
             )
             for match in _iter_wikilink_matches(chunk.content, chunk.chunk_type)
         ]
+
+
+def extract_wikilink_anchors(content: str, chunk_type: ChunkType) -> list[tuple[str, str | None]]:
+    """Return ``(target, header)`` pairs from searchable Markdown regions, in order.
+
+    The offline library resolves a wikilink with its header anchor attached, so it
+    needs both parts as the same parser found them; ``extract_wikilink_targets``
+    remains the target-only view of the same matches.
+    """
+    return [
+        (_normalize_part(match.group("target")), _normalize_optional_part(match.group("header")))
+        for match in _iter_wikilink_matches(content, chunk_type)
+    ]
 
 
 def extract_wikilink_targets(content: str, chunk_type: ChunkType) -> list[str]:

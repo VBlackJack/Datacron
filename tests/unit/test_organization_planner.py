@@ -720,7 +720,8 @@ def test_snapshot_derives_content_free_link_and_fence_facts() -> None:
         body,
     )
 
-    assert snapshot.wikilink_targets == ("alpha", "beta", "tilde-is-not-a-fence")
+    # The canonical parser skips both fence kinds; only the backtick fence lines count.
+    assert snapshot.wikilink_targets == ("alpha", "beta")
     assert snapshot.fence_lines == 2
     assert snapshot.fence_balanced is True
     assert snapshot.title == "Titled"
