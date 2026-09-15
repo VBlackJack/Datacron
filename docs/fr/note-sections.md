@@ -117,5 +117,6 @@ assainies et ne sélectionnent jamais une section automatiquement. Une suggestio
 tronquée ou expurgée est signalée comme impropre à une sélection directe ; relisez
 le plan avant de choisir la cible. Les erreurs de `move_note_section` portent aussi
 `selector` : `source` quand le titre à déplacer n'a pas été sélectionné, `destination`
-quand le titre de destination est absent ou ambigu. Le message de destination nomme
-`destination_level` et `destination_occurrence`.
+quand le titre de destination est absent, ambigu ou sélectionné avec une occurrence
+invalide. Une sélection ambiguë retourne le code `heading_ambiguous` avec un `next_action` ;
+le message de destination nomme `destination_level` et `destination_occurrence`.

@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.durability import DurabilityUnavailableError, ReadOnlyModeError
 from datacron.core.frontmatter import FrontmatterError
@@ -44,12 +44,34 @@ if TYPE_CHECKING:
 __all__ = ["_move_note_section_impl"]
 
 
-def _selector(heading: str, level: int | None, occurrence: int | None, expected_hash: str) -> str:
-    if not heading.strip() or "\n" in heading or "\r" in heading:
-        raise ValueError("heading must contain nonempty single-line text")
-    if level is not None and (type(level) is not int or level not in range(1, 7)):
-        raise ValueError("heading level must be an integer between 1 and 6")
-    _validate_heading_occurrence(occurrence, heading_level=level, expected_hash=expected_hash)
+# The shared validator speaks of the source parameters; a destination has its own names.
+_DESTINATION_PARAMETERS: Final[dict[str, str]] = {
+    "heading_occurrence": "destination_occurrence",
+    "heading_level": "destination_level",
+    "heading ": "destination heading ",
+}
+
+
+def _selector(
+    heading: str,
+    level: int | None,
+    occurrence: int | None,
+    expected_hash: str,
+    selector: SectionSelector = "source",
+) -> str:
+    try:
+        if not heading.strip() or "\n" in heading or "\r" in heading:
+            raise ValueError("heading must contain nonempty single-line text")
+        if level is not None and (type(level) is not int or level not in range(1, 7)):
+            raise ValueError("heading level must be an integer between 1 and 6")
+        _validate_heading_occurrence(occurrence, heading_level=level, expected_hash=expected_hash)
+    except ValueError as exc:
+        if selector == "source":
+            raise
+        message = str(exc)
+        for source_name, destination_name in _DESTINATION_PARAMETERS.items():
+            message = message.replace(source_name, destination_name)
+        raise SectionSelectorError(message, selector=selector) from exc
     return heading.strip()
 
 
@@ -75,6 +97,7 @@ async def _move_note_section_impl(
     failed_selector: SectionSelector | None = None
 
     async def action() -> dict[str, Any]:
+        nonlocal failed_selector
         app.write_policy.ensure_writable()
         if type(confirm) is not bool:
             raise ValueError("confirm must be a boolean")
@@ -84,10 +107,20 @@ async def _move_note_section_impl(
         cleaned_path = rel_path.strip()
         if not cleaned_path.endswith(".md"):
             raise ValueError("rel_path must end with .md")
-        cleaned_heading = _selector(heading, heading_level, heading_occurrence, cleaned_hash)
-        cleaned_destination = _selector(
-            destination_heading, destination_level, destination_occurrence, cleaned_hash
-        )
+        try:
+            cleaned_heading = _selector(
+                heading, heading_level, heading_occurrence, cleaned_hash, "source"
+            )
+            cleaned_destination = _selector(
+                destination_heading,
+                destination_level,
+                destination_occurrence,
+                cleaned_hash,
+                "destination",
+            )
+        except SectionSelectorError as exc:
+            failed_selector = exc.selector
+            raise
         app.scope.authorize_rel_path(cleaned_path, "write")
         selection: dict[str, int] = {}
 

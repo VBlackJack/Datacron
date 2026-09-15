@@ -294,3 +294,39 @@ async def test_selector_errors_name_the_failing_side(
         assert not await app.vault_writer.list_operations()
     finally:
         await app.store.close()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        ({"destination_occurrence": 0}, "destination_occurrence must be at least 1"),
+        ({"destination_occurrence": 5}, "destination_occurrence requires destination_level"),
+    ],
+)
+async def test_invalid_destination_selectors_name_the_destination(
+    tmp_path: Path, arguments: dict[str, Any], message: str
+) -> None:
+    body = "# Root\n\n## Active\n\n### Item\n\nDone\n\n## Archive\n"
+    raw = serialize({"id": "01J00000000000000000000091"}, body).encode()
+    path = tmp_path / "note.md"
+    path.write_bytes(raw)
+    app = build_app(
+        settings=Settings(vault_root=tmp_path, read_paths=[tmp_path], write_paths=[tmp_path]),
+        vault_root=tmp_path,
+    )
+    await app.store.open(sidecar_index_db(tmp_path))
+    try:
+        result = await _move_note_section_impl(
+            app,
+            rel_path="note.md",
+            heading="Item",
+            destination_heading="Archive",
+            expected_hash=sha256_bytes(raw),
+            **arguments,
+        )
+        assert result["error"]["message"] == message
+        assert result["error"]["selector"] == "destination"
+        assert "heading_occurrence" not in result["error"]["message"]
+        assert path.read_bytes() == raw
+    finally:
+        await app.store.close()
