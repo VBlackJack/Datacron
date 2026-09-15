@@ -88,7 +88,7 @@ def parse(raw: str) -> tuple[dict[str, Any], str]:
     parser strips surrounding whitespace, so the blank line after the closing
     delimiter and the trailing newline are both dropped, and CRLF is normalized
     to LF. Callers that must round-trip a note without rewriting bytes they did
-    not intend to touch use ``_parse_preserving_bom_and_body_eols`` instead.
+    not intend to touch use ``parse_preserving_bom_and_body_eols`` instead.
 
     A leading UTF-8 BOM is tolerated. ``str.lstrip`` does not treat U+FEFF as
     whitespace and the YAML parser does not skip it either, so without this a
