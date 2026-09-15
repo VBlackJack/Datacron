@@ -407,57 +407,80 @@ de confirmation.
 
 ```
 datacron/                              # GitHub: VBlackJack/Datacron
-├── README.md                          # Manifeste produit
-├── SPEC.md                            # Internal vault conventions reference
-├── CHANGELOG.md                       # Changements non publiés
+├── README.md / README.fr.md           # Manifeste produit (EN / FR)
+├── CHANGELOG.md                       # Journal d'ingénierie, anglais seul
 ├── LICENSE                            # Apache 2.0
 ├── pyproject.toml                     # Package Python unique
 ├── uv.lock                            # Dépendances runtime + dev figées
+├── server.json                        # Descripteur du MCP Registry
 ├── src/datacron/
-│   ├── __init__.py                    # version, public API
-│   ├── cli.py                         # Typer entry point (`datacron`)
-│   ├── core/
-│   │   ├── config.py                  # Constants, env loading (zero hardcoding)
-│   │   ├── durability.py              # Atomic writes + durability policy
-│   │   ├── logger.py                  # FileLogger explicite aux entrypoints
-│   │   ├── operation_log.py           # Historique et journal durable
-│   │   ├── paths.py                   # Path confinement enforcement
-│   │   ├── hashing.py                 # SHA256 + ULID
-│   │   ├── frontmatter.py             # YAML parser (python-frontmatter)
-│   │   ├── temporal.py                # Temporal retrieval re-ranking
-│   │   └── vault_writer.py            # Transactions de notes confinées
+│   ├── __init__.py                    # version, API publique
+│   ├── bootstrap.py                   # Bootstrap du vault partagé par init et setup
+│   ├── cli.py                         # Point d'entrée Typer (`datacron`)
+│   ├── cli_library.py                 # Commandes `datacron library` (navigation hors ligne)
+│   ├── contradictions.py              # Candidats et propositions de contradiction
+│   ├── reliability.py                 # Scan de fiabilité en lecture seule
+│   ├── scrubber.py                    # Scrubber d'intégrité reprenable
+│   ├── setup_wizard.py                # `datacron setup` guidé
+│   ├── core/                          # Config (zero hardcoding), chemins, hachage,
+│   │                                  # frontmatter, durabilité, journal d'opérations,
+│   │                                  # lecteur/écrivain du vault, scope, sections
 │   ├── mcp/
-│   │   ├── server.py                  # MCPServer entry (`datacron mcp serve`)
-│   │   ├── tools/                     # Tools read/write/ops/advisory, split by concern
+│   │   ├── server.py                  # Entrée MCPServer (`datacron mcp serve`)
+│   │   ├── tools/                     # Tools read/write/ops/advisory, par domaine
 │   │   ├── resources.py               # 3 resources
-│   │   ├── health.py                  # Operational health payload
-│   │   ├── security_manifest.py      # Closed tool-capability manifest
-│   │   └── sandbox.py                 # Content wrapping + escaping
+│   │   ├── health.py                  # Payload de santé opérationnelle
+│   │   ├── security_manifest.py       # Manifeste fermé des capacités des tools
+│   │   └── sandbox.py                 # Enveloppe et échappement du contenu
 │   ├── indexing/
-│   │   ├── chunker.py                 # AST-based Markdown chunker
-│   │   ├── fts5_store.py              # SQLite FTS5 wrapper
-│   │   ├── rebuild.py                  # Offline atomic reindex
-│   │   ├── reconcile.py                # Incremental reconciliation
-│   │   ├── ripgrep.py                 # subprocess wrapper
-│   │   └── wikilinks.py               # graph extraction
+│   │   ├── chunker.py                 # Chunker Markdown basé sur l'AST
+│   │   ├── fts5_store.py              # Enveloppe SQLite FTS5
+│   │   ├── rebuild.py                 # Réindexation atomique hors ligne
+│   │   ├── reconcile.py               # Réconciliation incrémentale
+│   │   ├── ripgrep.py                 # Enveloppe subprocess + repli regex indexé
+│   │   └── wikilinks.py               # Extraction du graphe
+│   ├── organization/                  # Règles, tags, planificateur, manifeste, bibliothèque
 │   ├── eval/
-│   │   └── harness.py                 # Cadre d'eval retrieval (44 questions)
-│   ├── installers/
-│   │   └── claude_desktop.py          # config writer
-│   ├── reliability.py                 # Read-only reliability scan
-│   └── scrubber.py                    # Resumable integrity scrubber
-├── tests/
+│   │   ├── harness.py                 # Cadre d'eval retrieval
+│   │   ├── conversation_trace.py      # Évaluation de traces de conversation
+│   │   ├── baseline.py / metrics.py   # Baselines versionnées et fonctions de métriques
+│   │   └── transport.py               # Transport MCP de bout en bout pour l'eval
+│   └── installers/
+│       ├── claude_desktop.py          # Écriture de la config Claude Desktop
+│       ├── mcp_clients.py             # Enregistrement des autres clients MCP
+│       ├── protocol.py                # Installation du protocole mémoire
+│       └── protocol_status.py         # Diagnostic de distribution du protocole
+├── packaging/
+│   ├── datacron_launcher.py           # Point d'entrée PyInstaller
+│   └── windows/                       # Script Inno Setup et build de l'installeur
+├── tests/                             # unit/, integration/, properties/, fixtures/
 ├── docs/
-│   ├── fr/ en/                        # Documentation bilingue (ce document : fr/architecture.md)
-│   ├── audits/ etudes/ archive/
+│   ├── en/ fr/                        # Documentation bilingue (ce document : fr/architecture.md)
 │   └── assets/architecture-overview.svg
 ├── examples/
-│   └── eval-questions.example.yaml
+│   ├── eval-questions.example.yaml
+│   └── conversations/                 # Exemples de traces de conversation
 ├── scripts/
-│   ├── audit_excluded_notes.py
-│   ├── check_invariants.py
-│   └── reliability_scan.py
-├── .github/workflows/ci.yml           # ruff + mypy + pytest + shellcheck
+│   ├── check_invariants.py            # ruff + mypy + tests d'invariants (garde pre-push)
+│   ├── ci_scope.py                    # Matrice CI réduite pour la documentation seule
+│   ├── bump_version.py                # Incrément CalVer
+│   ├── release_preflight.py           # Invariants Git de release, phase par phase
+│   ├── release.bat                    # Pilote de release Windows
+│   ├── build_installer.ps1 / .sh      # Builds de l'installeur autonome
+│   ├── mcp_registry_publish.sh        # Publication au MCP Registry après PyPI
+│   ├── reliability_scan.py            # Scan de fiabilité en lecture seule
+│   ├── audit_excluded_notes.py        # Audit des notes exclues
+│   ├── evaluate_conversation_trace.py # Évaluation d'une trace de conversation
+│   ├── benchmark_sessions.py          # Benchmark de processus MCP indépendants
+│   ├── benchmark_writes.py            # Benchmark du débit d'écriture
+│   ├── check_symlink_support.py       # Vérification des symlinks en CI Windows
+│   ├── prepare_windows_sandbox.py     # Bundle de validation Windows Sandbox hors ligne
+│   └── verify_windows_install.py      # Vérification de l'exécutable installé
+├── .github/workflows/
+│   ├── ci.yml                         # ruff + mypy + pytest + shellcheck + pip-audit
+│   ├── runtime-validation.yml         # Validation runtime Windows manuelle
+│   ├── release.yml                    # Exécutables autonomes et installeur Windows
+│   └── publish-pypi.yml               # Publication PyPI et MCP Registry
 └── .gitignore
 ```
 
@@ -562,4 +585,4 @@ existantes après validation et révision ; la préparation n'applique jamais le
 Voir [Bibliothèque hors ligne](human-library.md) pour les étapes et protections, et
 [Améliorations de fiabilité](improvements.md) pour les contrats de rejeu et d'indexation.
 
-*Mis à jour le 2026-09-13 pour l'implémentation source ; voir le changelog non publié.*
+*Mis à jour le 2026-09-15 pour l'implémentation source.*

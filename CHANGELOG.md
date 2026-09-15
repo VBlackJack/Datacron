@@ -9,7 +9,32 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- `publish-pypi` refuses to build a distribution when the pushed tag is not `v` followed by
+  `datacron.__version__`, read through the CalVer normalizer that `check_invariants.py`
+  uses. `scripts/release_preflight.py` gains a `tagged` phase with the same check, and its
+  `committed` phase applies it before the tag is pushed. PyPI is immutable; the Windows leg
+  of `release.yml` was the only place that compared the two.
+- A documentation link guard checks every internal anchor of the English and French pages
+  and of both READMEs against the headings GitHub derives (accented letters kept, a colon
+  between two spaces becomes a double hyphen), and every page under `docs/en` and `docs/fr`
+  must be listed by its language index.
+
 ### Changed
+
+- The test suite strips every `Settings` variable from the environment before each test.
+  The list is derived from the model fields and the `DATACRON_` prefix, and a guard test
+  fails when a field has no isolated variable; the former manual list ignored eight fields,
+  so a host `DATACRON_SESSION_CONTEXT_SECTIONS` changed a session-sections test result.
+- The documentation indexes list the daily workflows, note sections, offline library,
+  reliability, contradiction, follow-up, frontmatter audit, proposal token and release notes
+  pages; four French anchors point at the slugs GitHub derives; the architecture layout tree
+  is regenerated from the repository and its footer keeps the date only. The sdist ships
+  `docs/en/spec.md` next to `docs/fr/spec.md`.
+- Error-path tests cover the vault glob segment semantics and refusals, the reference
+  bounds, duplicate, budget, vanished-target and conflict paths of `get_write_progress`,
+  and the source-side selector and `rel_path` refusals of `move_note_section`.
 
 - The offline library resolves links through casefolded lookup tables built once per
   audit, parses each note body once for the audit and the navigation, and `prepare`

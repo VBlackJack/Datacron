@@ -33,3 +33,28 @@ et maintient un vault Markdown depuis Claude, sans envoyer le vault complet dans
 | [Frontière de sécurité](security-boundary.md) | Confinement lecture/écriture, garanties, modèle de menace local. |
 | [Scrubber d'intégrité](integrity-scrubber.md) | Détection de corruption silencieuse, sentinelles, passes de scrub. |
 | [Santé opérationnelle et durabilité](operational-health.md) | Mode lecture seule certifié, politique de durabilité, `get_health`. |
+
+## Travailler au quotidien
+
+| Document | Pour quoi |
+|---|---|
+| [Parcours quotidiens et validation mesurée](daily-workflows.md) | Orientation de session, suivi sourcé, progression des écritures et parcours d'archivage, avec la preuve mesurée derrière chacun. |
+| [Lire et réorganiser les sections d'une note](note-sections.md) | Sélectionner, déplacer, renommer et supprimer des sections depuis le plan des titres ; configurer les sections lues par une session. |
+| [Lire ses notes sans connexion](human-library.md) | Préparer une bibliothèque Markdown navigable du vault pour Obsidian ou un explorateur de fichiers, la réviser, puis appliquer son manifeste. |
+
+## Référence
+
+| Document | Pour quoi |
+|---|---|
+| [Écritures fiables et qualité de recherche](improvements.md) | Rejeu des écritures ordinaires par `request_id`, contrats d'indexation et mesures de qualité de recherche. |
+| [Propositions de contradiction complètes](contradiction-proposals.md) | Comment une proposition de contradiction reste complète dans son budget, avec références sourcées datées et preuves en sandbox. |
+| [Stockage et présentation des suivis](follow-up-storage.md) | Ce que `prepare_follow_up` stocke et comment `get_follow_up` le présente. |
+| [Champs audités du frontmatter](frontmatter-audit.md) | Les champs de cycle de vie qu'une écriture de frontmatter enregistre dans le journal d'opérations. |
+| [Durée de validité des tokens de proposition](proposal-token-lifetime.md) | Un token de proposition `cs2:` porte une date de proposition, pas une durée de vie. |
+
+## Notes de version
+
+| Document | Pour quoi |
+|---|---|
+| [Datacron 2026.0913.02 : bibliothèque hors ligne](offline-library-release-notes.md) | La version qui a ajouté la bibliothèque Markdown locale. |
+| [Version à venir : correctifs du test de surface](surface-fixes-release-notes.md) | Les fils de titres aux vrais niveaux Markdown et la réindexation qu'ils imposent. |
