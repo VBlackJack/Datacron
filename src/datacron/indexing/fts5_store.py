@@ -20,7 +20,7 @@ import json
 import re
 import sqlite3
 import time
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -30,6 +30,7 @@ import aiosqlite
 
 from datacron.core.config import (
     CHUNK_CONTEXT_SEPARATOR,
+    DEFAULT_ARCHIVE_TAGS,
     SEARCH_CONTENT_WEIGHT,
     SEARCH_CONTEXT_WEIGHT,
 )
@@ -44,15 +45,17 @@ from datacron.core.models import Chunk, ChunkType, IndexStats, Note, SearchResul
 from datacron.core.paths import read_ulid_mappings
 from datacron.core.query_expansion import expand_terms, normalize_term_map
 from datacron.core.temporal import TemporalMeta
-from datacron.core.vault import DuplicateNoteIdentityError
+from datacron.core.vault import (
+    MIGRATED_ULID_SIDECAR_FILENAME,
+    ULID_SIDECAR_FILENAME,
+    DuplicateNoteIdentityError,
+)
 
 __all__ = ["SQLiteFTS5Store"]
 
 _LOGGER = get_logger(__name__)
 
 _FTS5_TERM_PATTERN: Final[re.Pattern[str]] = re.compile(r"\w+", flags=re.UNICODE)
-_ULID_SIDECAR_FILENAME: Final[str] = "ulids.json"
-_MIGRATED_ULID_SIDECAR_FILENAME: Final[str] = "ulids.json.migrated"
 
 _CREATE_NOTES_SQL: Final[str] = """
 CREATE TABLE IF NOT EXISTS notes (
@@ -592,11 +595,19 @@ async def _has_context_column(connection: aiosqlite.Connection) -> bool:
 class SQLiteFTS5Store:
     """Persistent SQLite-backed implementation of the FTS5Store contract."""
 
-    def __init__(self, term_map: Mapping[str, Sequence[str]] | None = None) -> None:
+    def __init__(
+        self,
+        term_map: Mapping[str, Sequence[str]] | None = None,
+        *,
+        archive_tags: Iterable[str] = DEFAULT_ARCHIVE_TAGS,
+    ) -> None:
         self._conn: aiosqlite.Connection | None = None
         self._db_path: Path | None = None
         self._read_only = False
         self._term_map = normalize_term_map(term_map or {})
+        # The vault's archive tags decide TemporalMeta.archived; the caller passes the
+        # ones its tag policy declares, so the index never carries a taxonomy of its own.
+        self._archive_tags = frozenset(tag.casefold() for tag in archive_tags)
         self._temporal_metadata_cache: tuple[int, dict[str, TemporalMeta]] | None = None
         # ``None`` until the open index has been inspected for the ``context`` column
         # and the frontmatter pair table.
@@ -990,7 +1001,9 @@ class SQLiteFTS5Store:
         async with connection.execute(_LIST_TEMPORAL_METADATA_SQL) as cursor:
             rows = cast("list[sqlite3.Row]", await cursor.fetchall())
         metadata = {
-            str(row["note_id"]): _temporal_meta_from_frontmatter(row["frontmatter_json"])
+            str(row["note_id"]): _temporal_meta_from_frontmatter(
+                row["frontmatter_json"], self._archive_tags
+            )
             for row in rows
         }
         if generation != 0:
@@ -1269,8 +1282,8 @@ class SQLiteFTS5Store:
         writeback: bool,
     ) -> None:
         sidecar_dir = db_path.parent.parent
-        ulids_path = sidecar_dir / _ULID_SIDECAR_FILENAME
-        migrated_path = sidecar_dir / _MIGRATED_ULID_SIDECAR_FILENAME
+        ulids_path = sidecar_dir / ULID_SIDECAR_FILENAME
+        migrated_path = sidecar_dir / MIGRATED_ULID_SIDECAR_FILENAME
 
         source_path = ulids_path if ulids_path.exists() else migrated_path
         if not source_path.exists():
@@ -1503,7 +1516,7 @@ def _wikilinks_from_json(value: Any) -> list[str]:
     return [str(item) for item in parsed]
 
 
-def _temporal_meta_from_frontmatter(value: Any) -> TemporalMeta:
+def _temporal_meta_from_frontmatter(value: Any, archive_tags: frozenset[str]) -> TemporalMeta:
     if value is None:
         return TemporalMeta(confidence=None, supersedes=[])
     parsed = json.loads(str(value))
@@ -1519,8 +1532,7 @@ def _temporal_meta_from_frontmatter(value: Any) -> TemporalMeta:
             parsed.get("archived") is True
             or str(parsed.get("status", "")).casefold() == "archived"
             or bool(
-                {"meta/archive", "memory/archive"}
-                & {tag.casefold() for tag in coerce_string_list(parsed.get("tags"))}
+                archive_tags & {tag.casefold() for tag in coerce_string_list(parsed.get("tags"))}
             )
         ),
     )

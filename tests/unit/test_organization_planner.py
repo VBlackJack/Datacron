@@ -422,7 +422,7 @@ def test_planner_writes_nothing_to_the_vault(tmp_path: Path) -> None:
 _SUBJECT_FOLDER = "_memory/subjects/heimdall"
 _SUBJECT_TAGS = ["memory/fact", "project/heimdall"]
 _STATE_TAGS = [*_SUBJECT_TAGS, "kind/platform"]
-_STATE_EXPECTED = "one note tagged kind/platform, kind/development or kind/mission"
+_STATE_EXPECTED = "one note carrying any kind/* tag"
 _TODAY = date(2026, 9, 13)
 
 

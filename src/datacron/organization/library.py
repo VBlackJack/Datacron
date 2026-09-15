@@ -9,15 +9,18 @@ import hashlib
 import posixpath
 import re
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 
 from mistletoe import block_token
 
+from datacron.core.config import DEFAULT_ARCHIVE_TAGS, load_vault_config
 from datacron.core.frontmatter import coerce_string_list, parse
 from datacron.core.markdown_headings import markdown_headings, token_text
 from datacron.core.models import Note
+from datacron.core.paths import sidecar_vault_config
 from datacron.core.scope import assert_path_chain_without_links
 from datacron.core.vault import build_configured_reader
 from datacron.organization.library_models import Finding, LibraryAudit, LibraryOptions
@@ -131,7 +134,21 @@ def resolve_link(source: str, target: str, wiki: bool, notes: list[Note]) -> tup
     return "note", selected
 
 
-def lifecycle(note: Note, notes: list[Note], superseded: set[str] | None = None) -> str:
+def vault_archive_tags(vault: Path) -> frozenset[str]:
+    """Return the archive tags the vault's tag policy declares, else the shared defaults."""
+    config = load_vault_config(sidecar_vault_config(vault))
+    if config is None:
+        return frozenset(tag.casefold() for tag in DEFAULT_ARCHIVE_TAGS)
+    return config.archive_tags
+
+
+def lifecycle(
+    note: Note,
+    notes: list[Note],
+    superseded: set[str] | None = None,
+    *,
+    archive_tags: Iterable[str] = DEFAULT_ARCHIVE_TAGS,
+) -> str:
     """Use explicit lifecycle evidence only; missing evidence never proves validity."""
     if superseded is None:
         superseded = {i for n in notes for i in coerce_string_list(n.frontmatter.get("supersedes"))}
@@ -140,7 +157,8 @@ def lifecycle(note: Note, notes: list[Note], superseded: set[str] | None = None)
         return "historical"
     if str(meta.get("status", "")).casefold() in {"archived", "historical", "superseded"}:
         return "historical"
-    if {"meta/archive", "memory/archive"}.intersection(note.tags):
+    archived_tags = {tag.casefold() for tag in archive_tags}
+    if archived_tags.intersection(tag.casefold() for tag in note.tags):
         return "historical"
     if str(meta.get("confidence", "")).casefold() == "low" or not meta.get("last_verified"):
         return "review"
@@ -208,7 +226,13 @@ def markdown_link(source: str, target: str, label: str) -> str:
     return f"[{escaped}]({quote(relative, safe='/')})"
 
 
-def navigation(notes: list[Note], options: LibraryOptions, captured: str) -> dict[str, str]:
+def navigation(
+    notes: list[Note],
+    options: LibraryOptions,
+    captured: str,
+    *,
+    archive_tags: Iterable[str] = DEFAULT_ARCHIVE_TAGS,
+) -> dict[str, str]:
     """Render a home and folder maps as ordinary Markdown, with sourced task links."""
     text = TEXT[options.language]
     parent = PurePosixPath(options.home).parent
@@ -218,7 +242,7 @@ def navigation(notes: list[Note], options: LibraryOptions, captured: str) -> dic
             folders[str(PurePosixPath(note.rel_path).parent)].append(note)
     pages: dict[str, str] = {}
     superseded = {i for n in notes for i in coerce_string_list(n.frontmatter.get("supersedes"))}
-    states = {n.rel_path: lifecycle(n, notes, superseded) for n in notes}
+    states = {n.rel_path: lifecycle(n, notes, superseded, archive_tags=archive_tags) for n in notes}
     area_links: dict[str, list[str]] = defaultdict(list)
     home = [
         f"# {text['home']}",
