@@ -29,7 +29,7 @@ from datacron.core import config as core_config
 from datacron.core.markdown_headings import markdown_headings
 from datacron.core.markdown_sections import find_section_span
 from datacron.core.models import Chunk, ChunkType, Note
-from datacron.mcp.sandbox import wrap_vault_content
+from datacron.mcp.sandbox import sanitize_metadata_value, wrap_vault_content
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -1001,7 +1001,8 @@ def _section_reference(app: DatacronApp, section: SectionAssertion) -> dict[str,
     return {
         "note_id": section.note_id,
         "note_rel_path": _redact(app, section.note_rel_path),
-        "header_path": _redact(app, section.header_path),
+        # A heading is vault-controlled metadata: redacted, then escaped like any other.
+        "header_path": sanitize_metadata_value(_redact(app, section.header_path)),
         "chunk_id": section.chunk_id,
         "line_start": section.line_start,
         "line_end": section.line_end,
