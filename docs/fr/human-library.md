@@ -66,6 +66,11 @@ datacron library prepare --vault VAULT --options OPTIONS.json --output NOUVEAU_D
 datacron library check --vault VAULT --output NOUVEAU_DOSSIER
 ```
 
+`--vault` est facultatif : sans lui, les commandes utilisent `DATACRON_VAULT_ROOT`, puis le
+dossier courant s'il contient `.datacron/VAULT.yaml`, comme les autres commandes du vault.
+Chaque commande sort avec 0 en cas de succès et 2 quand le vault, les options, la recette ou
+le bundle ne peuvent pas être lus ou sont invalides ; `--help` liste toutes les options.
+
 `audit` affiche un JSON sans écrire de journal, d'identifiant ou d'index. `prepare`
 exige un nouveau dossier extérieur au vault. Il produit :
 
