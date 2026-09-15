@@ -118,12 +118,25 @@ def test_health_import_does_not_initialize_tool_registry(tmp_path: Path) -> None
 #
 # ``core`` and ``organization`` are the domain layers: they must not import the MCP
 # transport at runtime (an import under ``if TYPE_CHECKING:`` is a type annotation, not
-# a dependency). And no package reaches into another package's private names: a helper
-# two packages need is published under a public name where it belongs.
+# a dependency). ``core`` is also the bottom layer: it must not depend on
+# ``organization`` at runtime. And no package reaches into another package's private
+# names: a helper two packages need is published under a public name where it belongs.
 
 _SOURCE_ROOT = Path(__file__).resolve().parents[2] / "src" / "datacron"
 _DOMAIN_PACKAGES = ("core", "organization")
 _TRANSPORT_PACKAGE = "datacron.mcp"
+_BOTTOM_PACKAGE = "core"
+_ORGANIZATION_PACKAGE = "datacron.organization"
+# Runtime edges from ``core`` up to ``organization`` that predate this guard: the batch
+# transaction and the vault writer consume the organization manifest types. Each entry
+# is a debt to retire by moving the shared types down into ``core``, never a licence
+# for a new edge; the guard also fails when an entry no longer matches a live import.
+_CORE_TO_ORGANIZATION_DEBTS = frozenset(
+    {
+        ("src/datacron/core/batch_transaction.py", "datacron.organization.manifest"),
+        ("src/datacron/core/vault_writer.py", "datacron.organization.manifest"),
+    }
+)
 # Private cross-package imports that predate this guard and sit outside the lot that
 # introduced it. Each entry is a debt: remove it when the name gets a public home, and
 # never add one to make a new import pass.
@@ -183,8 +196,13 @@ def _imported_package(node: ast.ImportFrom, module_path: Path) -> str:
     return parts[1] if (_SOURCE_ROOT / parts[1]).is_dir() else ""
 
 
+def _targets_package(targets: list[str], package: str) -> bool:
+    return any(target == package or target.startswith(package + ".") for target in targets)
+
+
 def _boundary_violations() -> list[str]:
     findings: list[str] = []
+    live_debts: set[tuple[str, str]] = set()
     for module_path in sorted(_SOURCE_ROOT.rglob("*.py")):
         package = _module_package(module_path)
         relative = module_path.relative_to(_SOURCE_ROOT.parents[1]).as_posix()
@@ -195,11 +213,16 @@ def _boundary_violations() -> list[str]:
                 if isinstance(node, ast.Import)
                 else [node.module or ""]
             )
-            if package in _DOMAIN_PACKAGES and any(
-                target == _TRANSPORT_PACKAGE or target.startswith(_TRANSPORT_PACKAGE + ".")
-                for target in targets
-            ):
+            if package in _DOMAIN_PACKAGES and _targets_package(targets, _TRANSPORT_PACKAGE):
                 findings.append(f"{relative}:{node.lineno}: {package} imports {targets[0]}")
+            if package == _BOTTOM_PACKAGE and _targets_package(targets, _ORGANIZATION_PACKAGE):
+                edge = (relative, targets[0])
+                if edge in _CORE_TO_ORGANIZATION_DEBTS:
+                    live_debts.add(edge)
+                else:
+                    findings.append(
+                        f"{relative}:{node.lineno}: core imports {targets[0]} at runtime"
+                    )
             if isinstance(node, ast.ImportFrom):
                 imported_package = _imported_package(node, module_path)
                 if imported_package and imported_package != package:
@@ -211,6 +234,10 @@ def _boundary_violations() -> list[str]:
                                 f"{relative}:{node.lineno}: imports private "
                                 f"{alias.name} from datacron.{imported_package}"
                             )
+    findings.extend(
+        f"{path}: the debt entry for {module} no longer matches a runtime import; retire it"
+        for path, module in sorted(_CORE_TO_ORGANIZATION_DEBTS - live_debts)
+    )
     return findings
 
 
