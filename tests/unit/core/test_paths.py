@@ -20,6 +20,7 @@ from datacron.core.paths import (
     assert_within_read_paths,
     assert_within_write_paths,
     is_within,
+    read_ulid_sidecar_strict,
     sidecar_dir,
     sidecar_index_db,
     sidecar_index_dir,
@@ -94,3 +95,53 @@ class TestSidecarHelpers:
             sidecar_index_db(tmp_path) == tmp_path.resolve() / ".datacron" / "index" / "datacron.db"
         )
         assert sidecar_vault_config(tmp_path) == tmp_path.resolve() / ".datacron" / "VAULT.yaml"
+
+
+class TestReadUlidSidecarStrict:
+    """The compare-and-set reader returns the exact bytes and refuses ambiguous files."""
+
+    def test_returns_raw_bytes_and_string_pairs(self, tmp_path: Path) -> None:
+        sidecar = tmp_path / "ulids.json"
+        raw = b'{"a.md": "01J5S0C0000000000000000001", "b.md": "01J5S0C0000000000000000002"}'
+        sidecar.write_bytes(raw)
+
+        raw_bytes, mapping = read_ulid_sidecar_strict(sidecar, max_bytes=1024)
+
+        assert raw_bytes == raw
+        assert mapping == {
+            "a.md": "01J5S0C0000000000000000001",
+            "b.md": "01J5S0C0000000000000000002",
+        }
+
+    @pytest.mark.parametrize(
+        ("content", "fragment"),
+        [
+            (b"", "must not be empty"),
+            (b'{"a.md": "x", "a.md": "y"}', "duplicate JSON object key"),
+            (b'{"a.md": NaN}', "non-finite JSON constant"),
+            (b'{"a.md": 1}', "only string pairs"),
+            (b'["a.md"]', "only string pairs"),
+            (b'{"a.md": "\xff"}', "not strict UTF-8"),
+        ],
+    )
+    def test_refuses_ambiguous_or_malformed_content(
+        self, tmp_path: Path, content: bytes, fragment: str
+    ) -> None:
+        sidecar = tmp_path / "ulids.json"
+        sidecar.write_bytes(content)
+
+        with pytest.raises(ValueError, match=fragment):
+            read_ulid_sidecar_strict(sidecar, max_bytes=1024)
+
+    def test_refuses_a_file_over_the_byte_bound(self, tmp_path: Path) -> None:
+        sidecar = tmp_path / "ulids.json"
+        sidecar.write_bytes(b'{"a.md": "' + b"x" * 64 + b'"}')
+
+        with pytest.raises(ValueError, match="limit is 16"):
+            read_ulid_sidecar_strict(sidecar, max_bytes=16)
+
+    def test_refuses_a_missing_or_non_regular_path(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="not a regular file"):
+            read_ulid_sidecar_strict(tmp_path / "missing.json", max_bytes=1024)
+        with pytest.raises(ValueError, match="not a regular file"):
+            read_ulid_sidecar_strict(tmp_path, max_bytes=1024)

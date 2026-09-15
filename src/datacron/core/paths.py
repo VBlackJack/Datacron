@@ -42,6 +42,9 @@ __all__ = [
     "assert_within_write_paths",
     "is_within",
     "read_ulid_mappings",
+    "read_ulid_sidecar_strict",
+    "reject_duplicate_json_keys",
+    "reject_nonfinite_json_constant",
     "sidecar_dir",
     "sidecar_index_db",
     "sidecar_index_dir",
@@ -77,6 +80,63 @@ def read_ulid_mappings(
             if isinstance(rel_path, str) and isinstance(note_id, str)
         }
     return {str(rel_path): str(note_id) for rel_path, note_id in data.items()}
+
+
+def reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Build one JSON object while refusing ambiguous duplicate keys."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        result[key] = value
+    return result
+
+
+def reject_nonfinite_json_constant(value: str) -> object:
+    """Reject Python's non-standard NaN and infinity JSON extensions."""
+    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
+
+
+def read_ulid_sidecar_strict(path: Path, *, max_bytes: int) -> tuple[bytes, dict[str, str]]:
+    """Read a ULID sidecar for compare-and-set: its exact bytes and its string pairs.
+
+    Stricter than :func:`read_ulid_mappings`: the sidecar must be a regular file of at
+    most ``max_bytes``, nonempty, strict UTF-8, and one JSON object of string pairs
+    without duplicate keys or non-finite constants. The caller resolves the path chain
+    (symlink refusal) before calling, and maps ``OSError`` and ``ValueError`` to its own
+    error class.
+    """
+    if not path.is_file():
+        raise ValueError(f"ULID sidecar is not a regular file: {path.name}")
+    size = path.stat().st_size
+    if size > max_bytes:
+        raise ValueError(f"ULID sidecar {path.name} is {size} bytes; limit is {max_bytes}")
+    with path.open("rb") as stream:
+        raw_bytes = stream.read(max_bytes + 1)
+    if len(raw_bytes) > max_bytes:
+        raise ValueError(
+            f"ULID sidecar {path.name} exceeds the {max_bytes}-byte bounded-read limit"
+        )
+    if not raw_bytes:
+        raise ValueError(f"ULID sidecar must not be empty: {path.name}")
+    try:
+        text = raw_bytes.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"ULID sidecar {path.name} is not strict UTF-8: {exc}") from exc
+    parsed = json.loads(
+        text,
+        object_pairs_hook=reject_duplicate_json_keys,
+        parse_constant=reject_nonfinite_json_constant,
+    )
+    if not isinstance(parsed, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str) for key, value in parsed.items()
+    ):
+        raise ValueError(f"ULID sidecar must contain only string pairs: {path.name}")
+    return raw_bytes, {
+        key: value
+        for key, value in parsed.items()
+        if isinstance(key, str) and isinstance(value, str)
+    }
 
 
 def _resolve(path: Path) -> Path:

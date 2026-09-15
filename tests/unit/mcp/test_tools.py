@@ -28,6 +28,7 @@ from datacron.core.config import Settings
 from datacron.core.durability import RecoveryRequiredError
 from datacron.core.frontmatter import parse, serialize
 from datacron.core.hashing import hash_text
+from datacron.core.markdown_headings import MarkdownHeading
 from datacron.core.models import Note
 from datacron.core.operation_log import OperationContext, OperationRecord
 from datacron.core.paths import sidecar_dir
@@ -1401,6 +1402,35 @@ class TestGetNoteFull:
 
 
 class TestGetNoteMap:
+    @pytest.mark.asyncio
+    async def test_map_parses_headings_once_under_redaction(
+        self, app: DatacronApp, tmp_vault: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The map, the chunk protection and the title protection share one parse."""
+        from datacron.core.markdown_headings import markdown_headings
+        from datacron.mcp.tools import _get_note_impl
+
+        (tmp_vault / "secretive.md").write_text(
+            "---\nid: 01J5M0P0000000000000000001\n---\n"
+            "# Secretive\n\n## Credentials\n\npassword=hunter2-example\n\n## Plain\n\nText.\n",
+            encoding="utf-8",
+        )
+        calls: list[int] = []
+        original = markdown_headings
+
+        def counting(lines: list[str]) -> list[MarkdownHeading]:
+            calls.append(len(lines))
+            return original(lines)
+
+        monkeypatch.setattr("datacron.mcp.tools.read.markdown_headings", counting)
+        monkeypatch.setattr("datacron.mcp.tools.retrieval.markdown_headings", counting)
+
+        result = await _get_note_impl(app, id_or_path="secretive.md", fmt="map")
+
+        assert result["format"] == "map"
+        assert "hunter2" not in str(result)
+        assert len(calls) == 1, calls
+
     @pytest.mark.asyncio
     async def test_map_returns_headings(self, app: DatacronApp) -> None:
         from datacron.mcp.tools import _get_note_impl

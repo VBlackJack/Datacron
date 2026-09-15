@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 import yaml
 
-from datacron.core.config import Settings
+from datacron.core.config import Settings, VaultConfig, load_vault_config
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.mcp.server import DatacronApp, build_app
@@ -148,3 +148,25 @@ async def test_notes_outside_the_scope_are_not_judged(writable_app: DatacronApp)
     result = await _create(writable_app, "_drafts/2026-09-12-scratch.md", ["heimdall"])
 
     assert "error" not in result
+
+
+async def test_policy_comes_from_the_app_not_from_a_config_read_per_call(
+    writable_app: DatacronApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """build_app read VAULT.yaml once; a creation must not open and parse it again."""
+    calls: list[Path] = []
+
+    def counting(path: Path) -> VaultConfig | None:
+        calls.append(path)
+        return load_vault_config(path)
+
+    monkeypatch.setattr("datacron.mcp.tools.write.load_vault_config", counting, raising=False)
+    assert writable_app.organization is not None
+    assert writable_app.organization.tags is not None
+
+    result = await _create(
+        writable_app, "_memory/facts/2026-09-15-y.md", ["memory/fact", "heimdall"]
+    )
+
+    assert result["error"]["code"] == "tag_policy_violation"
+    assert calls == []

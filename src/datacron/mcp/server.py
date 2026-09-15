@@ -60,7 +60,13 @@ from mcp.types import (
 from pydantic import AnyUrl
 
 from datacron import __version__
-from datacron.core.config import Settings, VaultConfig, get_settings, load_vault_config
+from datacron.core.config import (
+    OrganizationConfig,
+    Settings,
+    VaultConfig,
+    get_settings,
+    load_vault_config,
+)
 from datacron.core.durability import (
     DurabilityStatus,
     WritePolicy,
@@ -140,6 +146,9 @@ class DatacronApp:
     write_policy: WritePolicy
     reconcile_lock: asyncio.Lock
     repair_state: RepairState
+    # The organization block of VAULT.yaml as read at startup; the tag policy that
+    # create_note_ai enforces comes from here, not from a read per call.
+    organization: OrganizationConfig | None = None
 
 
 @final
@@ -356,6 +365,7 @@ def build_app(
     return DatacronApp(
         settings=resolved_settings,
         vault_root=resolved_root,
+        organization=vault_config.organization,
         vault_reader=resolved_reader,
         chunker=chunker,
         store=store,

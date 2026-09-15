@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.hashing import hash_text
 from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
+from datacron.core.markdown_sections import heading_ancestry
 from datacron.core.models import Chunk, Note, SearchResult
 from datacron.core.security import REDACTED
 from datacron.indexing.chunker import content_line_offset
@@ -33,17 +34,25 @@ def opaque_chunk_id(chunk: Chunk) -> str:
     return f"{chunk.note_id}::@redacted-{hash_text(chunk.chunk_id)}::0000"
 
 
-def protect_chunk_metadata(app: DatacronApp, note: Note, chunks: list[Chunk]) -> list[Chunk]:
+def protect_chunk_metadata(
+    app: DatacronApp,
+    note: Note,
+    chunks: list[Chunk],
+    *,
+    headings: list[MarkdownHeading] | None = None,
+) -> list[Chunk]:
     """Protect heading ancestry before exporting text or its derived slug identifiers.
 
     Stored chunks and hashes remain unchanged. An opaque alias can be resolved
     against the indexed parent without disclosing the original heading slug.
+    ``headings`` lets a caller that already parsed the note share that parse.
     """
     if not app.secret_redactor.retrieval_enabled(app.settings):
         return chunks
     if app.secret_redactor.redact_text(note.raw_content) == note.raw_content:
         return chunks
-    headings = markdown_headings(note.content.splitlines(keepends=True))
+    if headings is None:
+        headings = markdown_headings(note.content.splitlines(keepends=True))
     offset = content_line_offset(note)
     unsafe = {
         item.start
@@ -53,16 +62,16 @@ def protect_chunk_metadata(app: DatacronApp, note: Note, chunks: list[Chunk]) ->
         )
         != item.text
     }
+    trails = heading_ancestry(headings)
     protected: list[Chunk] = []
     for chunk in chunks:
         safe_chunk = chunk
+        # The chunk's ancestry is the trail of the last heading that starts before it.
         ancestors: list[MarkdownHeading] = []
-        for item in headings:
+        for index, item in enumerate(headings):
             if item.start >= chunk.line_start - offset:
                 break
-            while ancestors and ancestors[-1].level >= item.level:
-                ancestors.pop()
-            ancestors.append(item)
+            ancestors = trails[index]
         if any(item.start in unsafe for item in ancestors):
             safe_chunk = chunk.model_copy(
                 update={
@@ -75,12 +84,23 @@ def protect_chunk_metadata(app: DatacronApp, note: Note, chunks: list[Chunk]) ->
     return protected
 
 
-def protect_note_title(app: DatacronApp, note: Note) -> str:
-    """Protect a title derived from a heading inside a context-sensitive secret."""
+def protect_note_title(
+    app: DatacronApp, note: Note, *, headings: list[MarkdownHeading] | None = None
+) -> str:
+    """Protect a title derived from a heading inside a context-sensitive secret.
+
+    ``headings`` lets a caller that already parsed the note share that parse.
+    """
     if not app.secret_redactor.retrieval_enabled(app.settings):
         return note.title
+    if app.secret_redactor.redact_text(note.raw_content) == note.raw_content:
+        # No heading of a clean note can hide a context-sensitive secret; the title
+        # itself may still come from a filename, so it keeps its own redaction.
+        return app.secret_redactor.redact_text(note.title)
+    if headings is None:
+        headings = markdown_headings(note.content.splitlines(keepends=True))
     offset = content_line_offset(note)
-    for item in markdown_headings(note.content.splitlines(keepends=True)):
+    for item in headings:
         if (
             item.text == note.title
             and app.secret_redactor.redact_fragment(

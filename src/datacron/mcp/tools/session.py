@@ -231,7 +231,7 @@ async def _load_sources(
             tag = SESSION_DOMAIN_TAGS.get(domain)
             if tag and tag not in note.tags:
                 continue
-        if "memory/contact" in note.tags:
+        if SESSION_DOMAIN_TAGS["people"] in note.tags:
             matched_people += 1
         item = _orientation_source(app, note)
         result["sources"].append(item)

@@ -9,6 +9,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Security
+
+- `contradiction_scan` no longer exposes a `chunk_id` whose heading slug carries a secret:
+  when the redactor changes a section's `header_path`, its `target` or `source` reference
+  carries `chunk_id: null` and `chunk_id_redacted: true`. Confirmation is unaffected, the
+  `proposal_token` alone identifies the candidate.
+
 ### Added
 
 - `publish-pypi` refuses to build a distribution when the pushed tag is not `v` followed by
@@ -23,6 +30,22 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- The index reconcile pre-pass keeps only the identity and content hash of each note it
+  reads, then reads a changed note again when it commits it, so `datacron index --full` and
+  `apply_organization_manifest` no longer hold every note of the vault in memory (a full pass
+  over 2000 synthetic notes peaks at 2.4 MiB of traced allocations instead of 14.6 MiB, for
+  about six percent more time). The progress counter now also advances during that
+  pre-pass, for every note whose content is unchanged; a new or changed note still
+  counts when it is committed.
+- `create_note_ai` enforces the tag policy that the server read at startup, with the rest
+  of `VAULT.yaml`, instead of parsing the file again on every creation. Editing the
+  policy now takes effect after a server restart, like the excluded folders and the
+  query expansion already did.
+- One first-level heading pattern: `core.vault.H1_PATTERN` is the only definition, and
+  the batch transaction and the organization manifest import it. The manifest previously
+  kept its own pattern without the CommonMark indentation tolerance, so a title derived
+  from an H1 indented by one to three spaces now matches the reader, the planner and the
+  offline library instead of falling back to the filename.
 - The test suite strips every `Settings` variable from the environment before each test.
   The list is derived from the model fields and the `DATACRON_` prefix, and a guard test
   fails when a field has no isolated variable; the former manual list ignored eight fields,

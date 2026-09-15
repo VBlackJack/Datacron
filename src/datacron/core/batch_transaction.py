@@ -59,6 +59,7 @@ from datacron.core.paths import PathConfinementError, assert_within_paths
 from datacron.core.recovery import BlockedOperation
 from datacron.core.scope import assert_path_chain_without_links
 from datacron.core.vault import (
+    H1_PATTERN,
     MIGRATED_ULID_SIDECAR_FILENAME,
     SKIPPED_FOLDERS,
     ULID_SIDECAR_FILENAME,
@@ -133,7 +134,6 @@ _ATOMIC_RECEIPT_TEMP_PATTERN: Final[re.Pattern[str]] = re.compile(
 )
 _CANONICAL_NOTE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _EXISTING_NOTE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-Z]{26}$")
-_H1_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}#\s+(.+?)\s*$", re.MULTILINE)
 _MAX_PENDING_MEMBERS: Final[int] = MAX_OPERATION_COUNT + 1
 _MAX_PENDING_BYTES: Final[int] = MAX_MANIFEST_BYTES
 _MAX_RESULT_BYTES: Final[int] = MAX_MANIFEST_BYTES
@@ -779,11 +779,13 @@ class OrganizationBatchTransaction:
     ) -> str:
         sidecar_rel_path = self._relative_path(bundle.identity_sidecar_path)
         if sidecar_rel_path != _IDENTITY_SIDECAR_REL_PATH:
-            raise BatchConflictError("identity sidecar target must be .datacron/ulids.json")
+            raise BatchConflictError(
+                f"identity sidecar target must be {_IDENTITY_SIDECAR_REL_PATH}"
+            )
         migrated_rel_path = self._relative_path(bundle.migrated_identity_sidecar_path)
         if migrated_rel_path != _MIGRATED_IDENTITY_SIDECAR_REL_PATH:
             raise BatchConflictError(
-                "migrated identity sidecar target must be .datacron/ulids.json.migrated"
+                f"migrated identity sidecar target must be {_MIGRATED_IDENTITY_SIDECAR_REL_PATH}"
             )
         return sidecar_rel_path
 
@@ -2626,7 +2628,7 @@ def _recovery_identity_from_bytes(
             metadata,
             body,
             Path(rel_path),
-            h1_pattern=_H1_PATTERN,
+            h1_pattern=H1_PATTERN,
             empty_h1_falls_back=True,
         ),
         aliases=aliases,

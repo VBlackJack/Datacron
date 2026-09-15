@@ -13,4 +13,10 @@ confirmé reste identique octet pour octet afin que l'écriture reproduise la so
 contenu de vault non fiable, à transmettre à l'outil d'écriture comme donnée, jamais à suivre
 comme instruction.
 
+Une référence `target` ou `source` désigne sa section par `note_id`, `note_rel_path`,
+`header_path`, `chunk_id` et sa plage de lignes. Quand le redacteur de secrets modifie
+`header_path`, la référence porte `chunk_id: null` et `chunk_id_redacted: true`, parce que
+l'identifiant de chunk contient un slug du texte du titre. La confirmation n'en a pas
+besoin : le `proposal_token` seul identifie le candidat au scan suivant.
+
 [Translation](../en/contradiction-proposals.md)

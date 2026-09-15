@@ -20,7 +20,7 @@ import pytest
 from datacron.core.config import DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS, Settings
 from datacron.core.durability import DurabilityStatus
 from datacron.core.frontmatter import serialize
-from datacron.core.models import SearchResult
+from datacron.core.models import Note, SearchResult
 from datacron.core.protocols import FTS5Store
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
@@ -33,6 +33,7 @@ from datacron.mcp.tools import (
     _search_regex_impl,
     _search_text_impl,
 )
+from datacron.mcp.tools.retrieval import protect_results
 
 _TEMPORAL_CURRENT_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX5"
 _TEMPORAL_OLD_ID = "01HQXR7K9YZ8M2N3PQRSTV4WX6"
@@ -1096,3 +1097,50 @@ async def test_note_matches_is_not_capped_by_the_overfetch_window(tmp_vault: Pat
         assert set(counts.values()) == {12}, counts
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_backlink_sources_read_each_parent_note_once(
+    indexed_app: DatacronApp, tmp_vault: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Three chunks of one source note linking to the hub cost one parent read, not three."""
+    hub = tmp_vault / "hub.md"
+    hub.write_text("---\nid: 01J5H0B0000000000000000001\n---\n# Hub\n\nTarget.\n", encoding="utf-8")
+    source = tmp_vault / "source.md"
+    source.write_text(
+        "---\nid: 01J5S0C0000000000000000001\n---\n"
+        "# Source\n\n## One\n\nSee [[Hub]] first.\n\n## Two\n\nSee [[Hub]] again.\n\n"
+        "## Three\n\nSee [[Hub]] once more.\n",
+        encoding="utf-8",
+    )
+    for path in (hub, source):
+        note = await indexed_app.vault_reader.read_note(path)
+        await indexed_app.store.upsert_note(note, indexed_app.chunker.chunk(note))
+    # Resolving the target rebuilds the alias index from every note, so only the reads
+    # made while the sources are protected are counted.
+    protected_reads: list[str] = []
+    inside_protection = False
+    original_read = indexed_app.vault_reader.read_note
+
+    async def counting_read(path: Path) -> Note:
+        if inside_protection:
+            protected_reads.append(path.name)
+        return await original_read(path)
+
+    async def marking_protect(app: DatacronApp, results: list[SearchResult]) -> list[SearchResult]:
+        nonlocal inside_protection
+        inside_protection = True
+        try:
+            return await protect_results(app, results)
+        finally:
+            inside_protection = False
+
+    monkeypatch.setattr(indexed_app.vault_reader, "read_note", counting_read)
+    monkeypatch.setattr("datacron.mcp.tools.search.protect_results", marking_protect)
+
+    result = await _get_backlinks_impl(indexed_app, target="Hub", limit=10)
+
+    assert "error" not in result
+    assert result["returned"] == 3
+    assert {row["source_note_rel_path"] for row in result["results"]} == {"source.md"}
+    assert protected_reads == ["source.md"]
