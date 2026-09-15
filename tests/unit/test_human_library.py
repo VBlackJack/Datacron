@@ -7,20 +7,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 from ulid import ULID
 
 from datacron.cli import app
-from datacron.core.config import Settings
+from datacron.core.config import Settings, get_settings
 from datacron.core.frontmatter import parse, serialize
+from datacron.core.hashing import hash_text
+from datacron.core.models import Note
 from datacron.organization.library import (
     audit_library,
+    build_link_index,
     lifecycle,
     links_and_tasks,
     markdown_link,
+    navigation,
+    parse_links_and_tasks,
     read_library,
     resolve_link,
 )
@@ -86,9 +93,10 @@ async def test_prepare_is_read_only_and_links_open_offline(
     preview_notes = await read_library(output / "preview", options)
     generated = [n for n in preview_notes if n.frontmatter.get("library_generated")]
     assert generated
+    index = build_link_index(preview_notes)
     for note in generated:
         for target, wiki in links_and_tasks(note.content)[0]:
-            assert resolve_link(note.rel_path, target, wiki, preview_notes)[0] == "note"
+            assert resolve_link(note.rel_path, target, wiki, index)[0] == "note"
     assert "Cases ouvertes" in (output / "preview/notes/accueil.md").read_text(encoding="utf-8")
 
 
@@ -408,6 +416,222 @@ async def test_obsidian_relative_attachment_is_available_in_preview(
     await prepare_library(vault, output, options, settings)
     assert (output / "preview/notes/diagram.png").read_bytes() == b"local-image"
     assert "Mes connaissances" in (output / "preview/notes/accueil.md").read_text(encoding="utf-8")
+
+
+def _indexed_note(rel_path: str, title: str, body: str, aliases: list[str] | None = None) -> Note:
+    raw = serialize({"id": str(ULID()), "title": title, "aliases": aliases or []}, body)
+    return Note(
+        id=str(ULID()),
+        path=Path("vault") / rel_path,
+        rel_path=rel_path,
+        title=title,
+        frontmatter={"title": title, "aliases": aliases or []},
+        content=body,
+        raw_content=raw,
+        created=datetime(2026, 9, 1, tzinfo=UTC),
+        updated=datetime(2026, 9, 1, tzinfo=UTC),
+        content_hash=hash_text(raw),
+        tags=[],
+        aliases=aliases or [],
+    )
+
+
+def test_resolve_link_covers_every_outcome_with_case_collisions() -> None:
+    notes = [
+        _indexed_note("notes/alpha.md", "Alpha", "# Alpha\n\n## Intro\n\nBody.\n", ["Alias One"]),
+        # The title of one note is the stem of another: the title tier must win.
+        _indexed_note("notes/beta.md", "Gamma", "# Beta\n"),
+        _indexed_note("notes/gamma.md", "beta", "# Gamma\n"),
+        _indexed_note("notes/dup1.md", "Dup", "# Dup one\n"),
+        _indexed_note("notes/dup2.md", "DUP", "# Dup two\n"),
+    ]
+    index = build_link_index(notes)
+    resolve = partial(resolve_link, "notes/alpha.md")
+
+    assert resolve("https://example.com/x", False, index) == ("external", "https://example.com/x")
+    assert resolve("notes/alpha", True, index) == ("note", "notes/alpha.md")
+    assert resolve("ALPHA", True, index) == ("note", "notes/alpha.md")
+    assert resolve("alias one", True, index) == ("note", "notes/alpha.md")
+    assert resolve("beta", True, index) == ("note", "notes/gamma.md")
+    assert resolve("gamma", True, index) == ("note", "notes/beta.md")
+    assert resolve("dup", True, index) == ("ambiguous", "dup")
+    assert resolve("missing", True, index) == ("local_unresolved", "missing")
+    assert resolve("./Beta.md", False, index) == ("note", "notes/beta.md")
+    assert resolve("./nope.md", False, index) == ("local_unresolved", "notes/nope.md")
+    assert resolve("Alpha#Intro", True, index) == ("note", "notes/alpha.md")
+    assert resolve("Alpha#intro", True, index) == ("note", "notes/alpha.md")
+    assert resolve("Alpha#Nope", True, index) == ("anchor_unverified", "notes/alpha.md#Nope")
+    assert resolve("#intro", True, index) == ("note", "notes/alpha.md")
+    assert resolve("", True, index) == ("note", "notes/alpha.md")
+
+
+def test_every_wikilink_parser_agrees_on_the_probe() -> None:
+    from datacron.core.models import ChunkType
+    from datacron.indexing.wikilinks import extract_wikilink_targets
+    from datacron.organization.planner import snapshot_note
+
+    body = (
+        "`[[inline-code]]` \\[[escaped]] [[Real Target|label]] [[ spaced ]]\n\n"
+        "~~~\n[[in-tilde-fence]]\n~~~\n"
+    )
+    expected = ["Real Target", "spaced"]
+    assert extract_wikilink_targets(body, ChunkType.NARRATIVE) == expected
+    snapshot = snapshot_note("_memory/x.md", len(body), {}, body)
+    assert snapshot.wikilink_targets == ("real target", "spaced")
+    # The inner whitespace is normalized by the canon; a naive regex kept " spaced ".
+    assert [target for target, wiki in links_and_tasks(body)[0] if wiki] == expected
+
+
+def test_links_keep_document_order_and_header_anchors() -> None:
+    body = "See [Md](./a.md) then [[Target#Section|label]] and [Img](./i.png) [[Other]].\n"
+    assert links_and_tasks(body)[0] == [
+        ("./a.md", False),
+        ("Target#Section", True),
+        ("./i.png", False),
+        ("Other", True),
+    ]
+
+
+async def test_navigation_output_is_stable_with_a_shared_parse(
+    library: tuple[Path, LibraryOptions, Settings],
+) -> None:
+    vault, options, _ = library
+    _note(vault, "state.md", "# State\n\nCurrent.\n", tags=["memory/fact", "kind/platform"])
+    _note(
+        vault, "person.md", "# Person\n\n- [ ] Call back\n", tags=["memory/fact", "memory/contact"]
+    )
+    _note(vault, "old.md", "# Old\n\nGone.\n", tags=["memory/fact", "memory/archive"])
+    _note(vault, "howto.md", "# Howto\n\n- [ ] Step\n\n- [ ] Other\n", tags=["memory/procedure"])
+    notes = await read_library(vault, options)
+    captured = "2026-09-15T00:00:00+00:00"
+
+    fresh = navigation(notes, options, captured)
+    shared = navigation(notes, options, captured, parsed_links=parse_links_and_tasks(notes))
+
+    assert shared == fresh
+    home = fresh[options.home]
+    assert "[person](person.md)" in home
+    assert "[howto (2)](howto.md)" in home
+    assert "[old](old.md)" in home
+    assert "[state](state.md)" in fresh["notes/navigation-notes.md"]
+
+
+def _library_cli(
+    library: tuple[Path, LibraryOptions, Settings], tmp_path: Path
+) -> tuple[Path, Path]:
+    vault, options, _ = library
+    _note(vault, "source.md", "# Source\n\n## First\n\nOne.\n\n## Second\n\nTwo.\n")
+    option_path = tmp_path / "options.json"
+    option_path.write_text(options.model_dump_json(), encoding="utf-8")
+    return vault, option_path
+
+
+def _invoke(*arguments: str, env: dict[str, str] | None = None) -> Result:
+    return CliRunner().invoke(app, ["library", *arguments], env=env)
+
+
+def test_cli_help_documents_every_option_and_the_exit_codes(
+    library: tuple[Path, LibraryOptions, Settings], tmp_path: Path
+) -> None:
+    for command in ("audit", "prepare", "check", "split"):
+        result = _invoke(command, "--help")
+        assert result.exit_code == 0, result.output
+        assert "DATACRON_VAULT_ROOT" in result.output
+        assert "Exit code 0" in result.output
+    prepare_help = _invoke("prepare", "--help").output
+    assert "review bundle" in prepare_help
+    assert "editorial recipe" in prepare_help
+    assert "library options" in prepare_help
+    assert "H2 section notes" in _invoke("split", "--help").output
+
+
+def test_cli_prepare_and_check_succeed_then_refuse_a_reused_output(
+    library: tuple[Path, LibraryOptions, Settings], tmp_path: Path
+) -> None:
+    vault, option_path = _library_cli(library, tmp_path)
+    output = tmp_path / "review"
+
+    prepared = _invoke(
+        "prepare", "--vault", str(vault), "--options", str(option_path), "--output", str(output)
+    )
+    assert prepared.exit_code == 0, prepared.output
+    assert json.loads(prepared.output)["vault_changed"] is False
+
+    checked = _invoke("check", "--vault", str(vault), "--output", str(output))
+    assert checked.exit_code == 0, checked.output
+    assert json.loads(checked.output)["valid"] is True
+
+    reused = _invoke(
+        "prepare", "--vault", str(vault), "--options", str(option_path), "--output", str(output)
+    )
+    assert reused.exit_code == 2
+    assert "must be a new directory" in reused.output
+
+    missing = _invoke("check", "--vault", str(vault), "--output", str(tmp_path / "nowhere"))
+    assert missing.exit_code == 2
+    assert missing.output.strip()
+
+
+def test_cli_split_prints_a_recipe_and_refuses_an_unknown_source(
+    library: tuple[Path, LibraryOptions, Settings], tmp_path: Path
+) -> None:
+    vault, option_path = _library_cli(library, tmp_path)
+
+    split = _invoke(
+        "split", "--vault", str(vault), "--options", str(option_path), "--source", "notes/source.md"
+    )
+    assert split.exit_code == 0, split.output
+    titles = [item["title"] for item in json.loads(split.output)["notes"]]
+    assert titles == ["source / First", "source / Second"]
+
+    unknown = _invoke(
+        "split", "--vault", str(vault), "--options", str(option_path), "--source", "notes/nope.md"
+    )
+    assert unknown.exit_code == 2
+    assert "not an admitted note" in unknown.output
+
+
+def test_cli_vault_falls_back_to_the_environment_and_refuses_without_it(
+    library: tuple[Path, LibraryOptions, Settings],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault, option_path = _library_cli(library, tmp_path)
+    monkeypatch.chdir(tmp_path)
+    # Settings are cached per process; each invocation must read the environment anew.
+    get_settings.cache_clear()
+
+    from_environment = _invoke(
+        "audit", "--options", str(option_path), env={"DATACRON_VAULT_ROOT": str(vault)}
+    )
+    assert from_environment.exit_code == 0, from_environment.output
+    assert json.loads(from_environment.output)["notes"] == 1
+
+    monkeypatch.delenv("DATACRON_VAULT_ROOT", raising=False)
+    get_settings.cache_clear()
+    without = _invoke("audit", "--options", str(option_path))
+    get_settings.cache_clear()
+    assert without.exit_code == 2
+    assert "No vault root provided" in without.output
+
+
+async def test_same_note_anchors_are_audited(
+    library: tuple[Path, LibraryOptions, Settings],
+) -> None:
+    vault, options, _ = library
+    _note(vault, "anchors.md", "# Anchors\n\n## Intro\n\nSee [[#Intro]] and [[#Nope]].\n")
+
+    report = audit_library(await read_library(vault, options), options)
+
+    unverified = [f for f in report.findings if f.code == "ANCHOR_UNVERIFIED"]
+    assert [(f.path, f.detail) for f in unverified] == [
+        ("notes/anchors.md", "notes/anchors.md#Nope")
+    ]
+    assert links_and_tasks("[[#Intro]] [[Note#Intro]] [[#Nope|label]]")[0] == [
+        ("#Intro", True),
+        ("Note#Intro", True),
+        ("#Nope", True),
+    ]
 
 
 async def test_editorial_archive_keeps_the_heading_title_of_an_untitled_note(

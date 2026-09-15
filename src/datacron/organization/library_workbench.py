@@ -27,11 +27,13 @@ from datacron.core.models import Note
 from datacron.core.scope import SingleTenantVaultScope, assert_path_chain_without_links
 from datacron.core.vault import H1_PATTERN
 from datacron.organization.library import (
+    ParsedLinks,
     audit_library,
     in_scope,
     links_and_tasks,
     markdown_link,
     navigation,
+    parse_links_and_tasks,
     read_library,
     vault_archive_tags,
 )
@@ -105,65 +107,91 @@ def _generated_page(
 
 
 def _editorial_changes(
-    notes: list[Note], recipe: EditorialRecipe | None, options: LibraryOptions, captured: str
+    notes: list[Note],
+    recipe: EditorialRecipe | None,
+    options: LibraryOptions,
+    captured: str,
+    parsed_links: ParsedLinks | None = None,
 ) -> dict[str, str]:
     if recipe is None:
         return {}
     lookup = {n.rel_path: n for n in notes}
+    parsed = parse_links_and_tasks(notes, parsed_links)
     changes: dict[str, str] = {}
     archive_targets: dict[str, list[str]] = {}
     targets = [normalize_vault_rel_path(item.target) for item in recipe.notes]
     if len(set(targets)) != len(targets):
         raise ValueError("Duplicate editorial target")
     for item in recipe.notes:
-        if links_and_tasks(item.body)[1]:
-            raise ValueError(
-                "Editorial notes must link to authoritative actions, not copy open checkboxes"
-            )
-        if not in_scope(item.target, options.scope) or item.target in lookup:
-            raise ValueError(
-                f"Editorial target must be new and inside the selected scope: {item.target}"
-            )
-        sources = {s.path: s.sha256 for s in item.sources}
-        if len(sources) != len(item.sources) or not set(item.archive_sources).issubset(sources):
-            raise ValueError("Archive sources must be unique exact source references")
-        for path, digest in sources.items():
-            if path not in lookup or lookup[path].content_hash != digest:
-                raise ValueError(f"Editorial source changed or is outside scope: {path}")
-            if lookup[path].frontmatter.get("id") != lookup[path].id:
-                raise ValueError(f"Adopt the stable source identity before consolidation: {path}")
+        sources = _validated_sources(item, lookup, options)
+        for path in sources:
             # Bind even retained source bytes into the eventual transaction's CAS.
             changes.setdefault(path, lookup[path].raw_content)
         for path in item.archive_sources:
-            if links_and_tasks(lookup[path].content)[1]:
+            if parsed[lookup[path].content_hash][1]:
                 raise ValueError(f"Resolve open checkboxes before archiving: {path}")
             archive_targets.setdefault(path, []).append(item.target)
-        meta: dict[str, Any] = {
-            "id": str(ULID()),
-            "title": item.title,
-            "tags": item.tags,
-            "created": captured,
-            "updated": captured,
-            "confidence": "low",
-            "library_sources": [s.model_dump() for s in item.sources],
-            "library_rationale": item.rationale,
-        }
-        refs = "\n".join(
-            "- " + markdown_link(item.target, s.path, lookup[s.path].title) for s in item.sources
-        )
-        body = item.body.rstrip() + f"\n\n## {TEXT[options.language]['sources']}\n\n" + refs + "\n"
-        changes[item.target] = serialize(meta, body)
+        changes[item.target] = _synthesis_note(item, lookup, options, captured)
     for path, destinations in archive_targets.items():
-        meta, body, bom = parse_preserving_bom_and_body_eols(lookup[path].raw_content)
-        meta.update(
-            archived=True,
-            updated=captured,
-            library_successors=[
-                f"[[{PurePosixPath(p).with_suffix('').as_posix()}]]" for p in destinations
-            ],
-        )
-        changes[path] = serialize_preserving_bom(meta, body, has_bom=bom)
+        changes[path] = _archived_note(lookup[path].raw_content, destinations, captured)
     return changes
+
+
+def _validated_sources(
+    item: EditorialNote, lookup: dict[str, Note], options: LibraryOptions
+) -> dict[str, str]:
+    """Refuse an editorial note whose target, body or sources cannot be trusted."""
+    if links_and_tasks(item.body)[1]:
+        raise ValueError(
+            "Editorial notes must link to authoritative actions, not copy open checkboxes"
+        )
+    if not in_scope(item.target, options.scope) or item.target in lookup:
+        raise ValueError(
+            f"Editorial target must be new and inside the selected scope: {item.target}"
+        )
+    sources = {s.path: s.sha256 for s in item.sources}
+    if len(sources) != len(item.sources) or not set(item.archive_sources).issubset(sources):
+        raise ValueError("Archive sources must be unique exact source references")
+    for path, digest in sources.items():
+        if path not in lookup or lookup[path].content_hash != digest:
+            raise ValueError(f"Editorial source changed or is outside scope: {path}")
+        if lookup[path].frontmatter.get("id") != lookup[path].id:
+            raise ValueError(f"Adopt the stable source identity before consolidation: {path}")
+    return sources
+
+
+def _synthesis_note(
+    item: EditorialNote, lookup: dict[str, Note], options: LibraryOptions, captured: str
+) -> str:
+    """Render the new consolidated note with its provenance and source links."""
+    meta: dict[str, Any] = {
+        "id": str(ULID()),
+        "title": item.title,
+        "tags": item.tags,
+        "created": captured,
+        "updated": captured,
+        "confidence": "low",
+        "library_sources": [s.model_dump() for s in item.sources],
+        "library_rationale": item.rationale,
+    }
+    refs = "\n".join(
+        "- " + markdown_link(item.target, s.path, lookup[s.path].title) for s in item.sources
+    )
+    body = item.body.rstrip() + f"\n\n## {TEXT[options.language]['sources']}\n\n" + refs + "\n"
+    return serialize(meta, body)
+
+
+def _archived_note(raw: str, destinations: list[str], captured: str) -> str:
+    """Mark a source note archived, pointing at its successors, byte-exact body kept."""
+    meta, body, bom = parse_preserving_bom_and_body_eols(raw)
+    meta.update(
+        archived=True,
+        updated=captured,
+        library_successors=[
+            f"[[{PurePosixPath(p).with_suffix('').as_posix()}]]" for p in destinations
+        ],
+    )
+    return serialize_preserving_bom(meta, body, has_bom=bom)
 
 
 def propose_split(source: Note, options: LibraryOptions) -> EditorialRecipe:
@@ -287,6 +315,7 @@ def _write_workbench(
     changes: dict[str, str],
     recipe: EditorialRecipe | None,
     settings: Settings,
+    parsed_links: ParsedLinks | None = None,
 ) -> dict[str, object]:
     lexical = output.expanduser().absolute()
     assert_path_chain_without_links(lexical, allow_missing=True)
@@ -298,7 +327,7 @@ def _write_workbench(
         raise FileExistsError(f"Review output must be a new directory: {output}")
     manifest = _manifest(changes, notes)
     # Compute everything before creating the output directory where practical.
-    audit = audit_library(notes, options)
+    audit = audit_library(notes, options, parsed_links=parsed_links)
     before = {n.rel_path: n.raw_content for n in notes}
     projected = before | changes
     total = sum(len(raw.encode("utf-8")) for raw in projected.values())
@@ -373,7 +402,10 @@ async def prepare_library(
     output = output.expanduser().absolute()
     notes = await read_library(vault, options)
     captured = datetime.now(tz=UTC)
-    changes = _editorial_changes(notes, recipe, options, captured.isoformat())
+    # Every body is parsed once here and shared by the editorial checks, the navigation
+    # and the audit of the same note set.
+    parsed_links = parse_links_and_tasks(notes)
+    changes = _editorial_changes(notes, recipe, options, captured.isoformat(), parsed_links)
     lookup = {n.rel_path: n for n in notes}
     projected = lookup | {p: _note_from_text(p, raw, vault, captured) for p, raw in changes.items()}
     pages = navigation(
@@ -381,20 +413,33 @@ async def prepare_library(
         options,
         captured.isoformat(),
         archive_tags=vault_archive_tags(vault),
+        parsed_links=parsed_links,
     )
     for path, body in pages.items():
         if path in changes:
             raise ValueError(f"Navigation collides with an editorial target: {path}")
         changes[path] = _generated_page(path, body, lookup.get(path), options, captured.isoformat())
     result = await asyncio.to_thread(
-        _write_workbench, vault, output, options, notes, changes, recipe, settings
+        _write_workbench, vault, output, options, notes, changes, recipe, settings, parsed_links
     )
-    await check_library(vault, output, settings)
+    # The notes just read are the exact source set the bundle was built from; the
+    # written files, paths and hashes are still checked from disk.
+    await check_library(vault, output, settings, notes=notes)
     return result
 
 
-async def check_library(vault: Path, output: Path, settings: Settings) -> dict[str, object]:
-    """Reject stale source sets, changed preview bytes or invalid manifest payloads."""
+async def check_library(
+    vault: Path,
+    output: Path,
+    settings: Settings,
+    *,
+    notes: list[Note] | None = None,
+) -> dict[str, object]:
+    """Reject stale source sets, changed preview bytes or invalid manifest payloads.
+
+    ``notes`` lets a caller that has just read the scope pass it in instead of
+    reading it again; every check on the written bundle still runs from disk.
+    """
     vault = vault.expanduser().absolute()
     output = output.expanduser().absolute()
     assert_path_chain_without_links(output / SNAPSHOT_NAME)
@@ -404,7 +449,8 @@ async def check_library(vault: Path, output: Path, settings: Settings) -> dict[s
     if snapshot["schema"] != LIBRARY_SCHEMA:
         raise ValueError("Unsupported library snapshot")
     options = LibraryOptions.model_validate(snapshot["options"])
-    notes = await read_library(vault, options)
+    if notes is None:
+        notes = await read_library(vault, options)
     current = {n.rel_path: n.content_hash for n in notes}
     if current != snapshot["sources"]:
         raise ValueError("Source set or bytes changed; prepare a fresh review bundle")

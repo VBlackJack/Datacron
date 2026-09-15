@@ -129,7 +129,6 @@ _TRANSPORT_PACKAGE = "datacron.mcp"
 # never add one to make a new import pass.
 _PRIVATE_IMPORT_DEBTS = frozenset(
     {
-        ("src/datacron/cli.py", "_scopes_for"),
         ("src/datacron/cli.py", "_validate_expected_hash"),
         ("src/datacron/eval/harness.py", "_search_text_impl"),
     }
@@ -179,7 +178,9 @@ def _imported_package(node: ast.ImportFrom, module_path: Path) -> str:
     parts = module.split(".")
     if len(parts) < 2 or parts[0] != "datacron":
         return ""
-    return parts[1]
+    # A top-level module (cli.py, cli_library.py, setup_wizard.py) belongs to the root
+    # package; only a directory under src/datacron is a package of its own.
+    return parts[1] if (_SOURCE_ROOT / parts[1]).is_dir() else ""
 
 
 def _boundary_violations() -> list[str]:

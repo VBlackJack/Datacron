@@ -10,6 +10,7 @@ import posixpath
 import re
 from collections import defaultdict
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
@@ -19,16 +20,22 @@ from mistletoe import block_token
 from datacron.core.config import DEFAULT_ARCHIVE_TAGS, load_vault_config
 from datacron.core.frontmatter import coerce_string_list, parse
 from datacron.core.markdown_headings import markdown_headings, token_text
-from datacron.core.models import Note
+from datacron.core.models import ChunkType, Note
 from datacron.core.paths import sidecar_vault_config
 from datacron.core.scope import assert_path_chain_without_links
 from datacron.core.vault import build_configured_reader
+from datacron.indexing.wikilinks import extract_wikilink_anchors
 from datacron.organization.library_models import Finding, LibraryAudit, LibraryOptions
 from datacron.organization.library_text import TEXT
 from datacron.organization.manifest import normalize_vault_rel_path
 
-_WIKI = re.compile(r"\[\[([^\[\]]+)\]\]")
 _TASK = re.compile(r"^\[ \]\s+(.+)", re.DOTALL)
+_ANCHOR_SEPARATOR = "#"
+_NOTE_SUFFIX = ".md"
+
+# One parsed (links, tasks) pair per note, keyed by content hash so an audit and the
+# navigation of the same note set parse each body once.
+ParsedLinks = dict[str, tuple[list[tuple[str, bool]], list[str]]]
 
 
 def in_scope(path: str, scope: str) -> bool:
@@ -75,7 +82,12 @@ def _walk(token: Any) -> list[Any]:
 
 
 def links_and_tasks(body: str) -> tuple[list[tuple[str, bool]], list[str]]:
-    """Extract parsed links and checkboxes outside fenced, indented and inline code."""
+    """Extract parsed links and checkboxes outside fenced, indented and inline code.
+
+    Wikilinks come from the one canonical parser in ``indexing.wikilinks``, applied
+    to each raw text run in document order; a header anchor stays attached to its
+    target so link resolution can verify it.
+    """
     links: list[tuple[str, bool]] = []
     tasks: list[str] = []
     for token in _walk(block_token.Document(body)):
@@ -84,7 +96,8 @@ def links_and_tasks(body: str) -> tuple[list[tuple[str, bool]], list[str]]:
             links.append((str(token.src if name == "Image" else token.target), False))
         elif name == "RawText":
             links.extend(
-                (match.group(1).split("|", 1)[0], True) for match in _WIKI.finditer(token.content)
+                (f"{target}{_ANCHOR_SEPARATOR}{header}" if header else target, True)
+                for target, header in extract_wikilink_anchors(token.content, ChunkType.NARRATIVE)
             )
         elif name == "ListItem":
             children = getattr(token, "children", None) or []
@@ -95,7 +108,83 @@ def links_and_tasks(body: str) -> tuple[list[tuple[str, bool]], list[str]]:
     return links, tasks
 
 
-def resolve_link(source: str, target: str, wiki: bool, notes: list[Note]) -> tuple[str, str]:
+def parse_links_and_tasks(notes: Iterable[Note], cache: ParsedLinks | None = None) -> ParsedLinks:
+    """Parse every note body once; a caller's cache is reused for bodies it already holds."""
+    parsed: ParsedLinks = dict(cache or {})
+    for note in notes:
+        if note.content_hash not in parsed:
+            parsed[note.content_hash] = links_and_tasks(note.content)
+    return parsed
+
+
+@dataclass(frozen=True)
+class LinkIndex:
+    """Casefolded lookup tables over one note set, built once and shared by every link.
+
+    Each table maps a casefolded key to the matching note paths in note order, so a
+    lookup keeps the same candidates, in the same order, as a scan of the notes.
+    """
+
+    paths: dict[str, list[str]]
+    titles: dict[str, list[str]]
+    stems: dict[str, list[str]]
+    aliases: dict[str, list[str]]
+    rel_paths: dict[str, list[str]]
+    notes: dict[str, Note]
+    _anchors: dict[str, set[str]] = field(default_factory=dict)
+
+    def anchors(self, rel_path: str) -> set[str]:
+        """Return the casefolded heading anchors of a note, computed on first use."""
+        cached = self._anchors.get(rel_path)
+        if cached is None:
+            cached = _heading_anchors(self.notes[rel_path])
+            self._anchors[rel_path] = cached
+        return cached
+
+
+def build_link_index(notes: list[Note]) -> LinkIndex:
+    """Index explicit paths, titles, stems and aliases of ``notes`` for link resolution."""
+    paths: dict[str, list[str]] = defaultdict(list)
+    titles: dict[str, list[str]] = defaultdict(list)
+    stems: dict[str, list[str]] = defaultdict(list)
+    aliases: dict[str, list[str]] = defaultdict(list)
+    rel_paths: dict[str, list[str]] = defaultdict(list)
+    for note in notes:
+        paths[note.rel_path.casefold().removesuffix(_NOTE_SUFFIX)].append(note.rel_path)
+        titles[note.title.casefold()].append(note.rel_path)
+        stems[PurePosixPath(note.rel_path).stem.casefold()].append(note.rel_path)
+        for alias in {alias.casefold() for alias in note.aliases}:
+            aliases[alias].append(note.rel_path)
+        rel_paths[note.rel_path.casefold()].append(note.rel_path)
+    return LinkIndex(
+        paths=dict(paths),
+        titles=dict(titles),
+        stems=dict(stems),
+        aliases=dict(aliases),
+        rel_paths=dict(rel_paths),
+        notes={note.rel_path: note for note in notes},
+    )
+
+
+def _heading_anchors(note: Note) -> set[str]:
+    headings = markdown_headings(note.content.splitlines(keepends=True))
+    anchors = {heading.text.casefold() for heading in headings}
+    anchors.update(
+        re.sub(r"[^\w\- ]", "", heading.text.casefold()).replace(" ", "-") for heading in headings
+    )
+    return anchors
+
+
+def _wiki_candidates(index: LinkIndex, key: str) -> list[str]:
+    """Prefer explicit paths, then title, stem and aliases, in separate tiers."""
+    for table in (index.paths, index.titles, index.stems, index.aliases):
+        candidates = table.get(key)
+        if candidates:
+            return candidates
+    return []
+
+
+def resolve_link(source: str, target: str, wiki: bool, index: LinkIndex) -> tuple[str, str]:
     """Resolve scoped note links; return external, missing or ambiguous explicitly."""
     parsed = urlsplit(target)
     if parsed.scheme or parsed.netloc:
@@ -104,33 +193,18 @@ def resolve_link(source: str, target: str, wiki: bool, notes: list[Note]) -> tup
     if not path:
         candidates = [source]
     elif wiki:
-        key = path.casefold().removesuffix(".md")
-        # Prefer explicit paths, then title, stem and aliases in separate tiers.
-        tiers = [
-            [n.rel_path for n in notes if n.rel_path.casefold().removesuffix(".md") == key],
-            [n.rel_path for n in notes if n.title.casefold() == key],
-            [n.rel_path for n in notes if PurePosixPath(n.rel_path).stem.casefold() == key],
-            [n.rel_path for n in notes if key in {a.casefold() for a in n.aliases}],
-        ]
-        candidates = next((tier for tier in tiers if tier), [])
+        candidates = _wiki_candidates(index, path.casefold().removesuffix(_NOTE_SUFFIX))
     else:
         resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source), path))
-        candidates = [n.rel_path for n in notes if n.rel_path.casefold() == resolved.casefold()]
+        candidates = index.rel_paths.get(resolved.casefold(), [])
         if not candidates:
             return "local_unresolved", resolved
     if len(candidates) != 1:
         return ("ambiguous" if candidates else "local_unresolved"), path
     selected = candidates[0]
-    if parsed.fragment:
-        note = next(n for n in notes if n.rel_path == selected)
-        headings = markdown_headings(note.content.splitlines(keepends=True))
-        fragment = unquote(parsed.fragment).casefold()
-        anchors = {h.text.casefold() for h in headings}
-        anchors.update(
-            re.sub(r"[^\w\- ]", "", h.text.casefold()).replace(" ", "-") for h in headings
-        )
-        if fragment not in anchors:
-            return "anchor_unverified", selected + "#" + unquote(parsed.fragment)
+    fragment = unquote(parsed.fragment)
+    if fragment and fragment.casefold() not in index.anchors(selected):
+        return "anchor_unverified", selected + _ANCHOR_SEPARATOR + fragment
     return "note", selected
 
 
@@ -165,8 +239,15 @@ def lifecycle(
     return "active"
 
 
-def audit_library(notes: list[Note], options: LibraryOptions) -> LibraryAudit:
+def audit_library(
+    notes: list[Note],
+    options: LibraryOptions,
+    *,
+    parsed_links: ParsedLinks | None = None,
+) -> LibraryAudit:
     """Measure size, navigation, duplicate candidates and unresolved references."""
+    parsed = parse_links_and_tasks(notes, parsed_links)
+    index = build_link_index(notes)
     findings: list[Finding] = []
     titles: dict[str, list[str]] = defaultdict(list)
     bodies: dict[str, list[str]] = defaultdict(list)
@@ -175,30 +256,54 @@ def audit_library(notes: list[Note], options: LibraryOptions) -> LibraryAudit:
         titles[note.title.casefold()].append(note.rel_path)
         bodies[hashlib.sha256(note.content.encode("utf-8")).hexdigest()].append(note.rel_path)
         folders[str(PurePosixPath(note.rel_path).parent)].append(note)
-        if len(note.content) > options.max_note_chars:
+        findings.extend(_size_findings(note, options))
+        findings.extend(_link_findings(note, parsed[note.content_hash][0], index))
+    findings.extend(_duplicate_findings(titles, bodies))
+    findings.extend(_folder_findings(folders, options))
+    return LibraryAudit(
+        scope=options.scope,
+        notes=len(notes),
+        source_hashes={n.rel_path: n.content_hash for n in notes},
+        findings=findings,
+    )
+
+
+def _size_findings(note: Note, options: LibraryOptions) -> list[Finding]:
+    findings: list[Finding] = []
+    if len(note.content) > options.max_note_chars:
+        findings.append(
+            Finding(code="LONG_NOTE", path=note.rel_path, detail=str(len(note.content)))
+        )
+    lines = note.content.splitlines(keepends=True)
+    headings = markdown_headings(lines)
+    for i, heading in enumerate(headings):
+        end = next((h.start for h in headings[i + 1 :] if h.level <= heading.level), len(lines))
+        size = len("".join(lines[heading.end : end]))
+        if heading.level > 1 and size > options.max_section_chars:
+            findings.append(Finding(code="LONG_SECTION", path=note.rel_path, detail=heading.text))
+    return findings
+
+
+def _link_findings(note: Note, links: list[tuple[str, bool]], index: LinkIndex) -> list[Finding]:
+    findings: list[Finding] = []
+    for target, wiki in links:
+        status, resolved = resolve_link(note.rel_path, target, wiki, index)
+        if status != "note":
             findings.append(
-                Finding(code="LONG_NOTE", path=note.rel_path, detail=str(len(note.content)))
+                Finding(
+                    code=status.upper(),
+                    path=note.rel_path,
+                    detail=resolved,
+                    link_style="wiki" if wiki else "markdown",
+                )
             )
-        headings = markdown_headings(note.content.splitlines(keepends=True))
-        lines = note.content.splitlines(keepends=True)
-        for i, heading in enumerate(headings):
-            end = next((h.start for h in headings[i + 1 :] if h.level <= heading.level), len(lines))
-            size = len("".join(lines[heading.end : end]))
-            if heading.level > 1 and size > options.max_section_chars:
-                findings.append(
-                    Finding(code="LONG_SECTION", path=note.rel_path, detail=heading.text)
-                )
-        for target, wiki in links_and_tasks(note.content)[0]:
-            status, resolved = resolve_link(note.rel_path, target, wiki, notes)
-            if status != "note":
-                findings.append(
-                    Finding(
-                        code=status.upper(),
-                        path=note.rel_path,
-                        detail=resolved,
-                        link_style="wiki" if wiki else "markdown",
-                    )
-                )
+    return findings
+
+
+def _duplicate_findings(
+    titles: dict[str, list[str]], bodies: dict[str, list[str]]
+) -> list[Finding]:
+    findings: list[Finding] = []
     for code, groups in (
         ("DUPLICATE_TITLE_CANDIDATE", titles),
         ("IDENTICAL_BODY_CANDIDATE", bodies),
@@ -206,17 +311,15 @@ def audit_library(notes: list[Note], options: LibraryOptions) -> LibraryAudit:
         for paths in groups.values():
             if len(paths) > 1:
                 findings.append(Finding(code=code, path=paths[0], detail="; ".join(paths[1:])))
-    for folder, members in folders.items():
-        if not any(set(options.state_tags).intersection(n.tags) for n in members):
-            findings.append(
-                Finding(code="NO_SUBJECT_STATE_CANDIDATE", path=folder, detail=str(len(members)))
-            )
-    return LibraryAudit(
-        scope=options.scope,
-        notes=len(notes),
-        source_hashes={n.rel_path: n.content_hash for n in notes},
-        findings=findings,
-    )
+    return findings
+
+
+def _folder_findings(folders: dict[str, list[Note]], options: LibraryOptions) -> list[Finding]:
+    return [
+        Finding(code="NO_SUBJECT_STATE_CANDIDATE", path=folder, detail=str(len(members)))
+        for folder, members in folders.items()
+        if not any(set(options.state_tags).intersection(n.tags) for n in members)
+    ]
 
 
 def markdown_link(source: str, target: str, label: str) -> str:
@@ -232,18 +335,17 @@ def navigation(
     captured: str,
     *,
     archive_tags: Iterable[str] = DEFAULT_ARCHIVE_TAGS,
+    parsed_links: ParsedLinks | None = None,
 ) -> dict[str, str]:
     """Render a home and folder maps as ordinary Markdown, with sourced task links."""
     text = TEXT[options.language]
-    parent = PurePosixPath(options.home).parent
+    parsed = parse_links_and_tasks(notes, parsed_links)
+    states = _lifecycle_of(notes, archive_tags)
     folders: dict[str, list[Note]] = defaultdict(list)
     for note in notes:
         if not note.frontmatter.get("library_generated"):
             folders[str(PurePosixPath(note.rel_path).parent)].append(note)
-    pages: dict[str, str] = {}
-    superseded = {i for n in notes for i in coerce_string_list(n.frontmatter.get("supersedes"))}
-    states = {n.rel_path: lifecycle(n, notes, superseded, archive_tags=archive_tags) for n in notes}
-    area_links: dict[str, list[str]] = defaultdict(list)
+    pages, area_links = _folder_pages(folders, options, states, text)
     home = [
         f"# {text['home']}",
         text["snapshot"].format(date=captured, scope=options.scope),
@@ -251,6 +353,32 @@ def navigation(
         text["offline"],
         f"## {text['subjects']}",
     ]
+    for area, entries in area_links.items():
+        if area:
+            home.append(f"### {area}")
+        home.extend(entries)
+    home.extend(_home_categories(notes, options, states, parsed, text))
+    pages[options.home] = "\n\n".join(home) + "\n"
+    return pages
+
+
+def _lifecycle_of(notes: list[Note], archive_tags: Iterable[str]) -> dict[str, str]:
+    """Return the lifecycle state of every note, keyed by path."""
+    superseded = {i for n in notes for i in coerce_string_list(n.frontmatter.get("supersedes"))}
+    archived = frozenset(tag.casefold() for tag in archive_tags)
+    return {n.rel_path: lifecycle(n, notes, superseded, archive_tags=archived) for n in notes}
+
+
+def _folder_pages(
+    folders: dict[str, list[Note]],
+    options: LibraryOptions,
+    states: dict[str, str],
+    text: dict[str, str],
+) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Render one navigation page per folder and the home links that point at them."""
+    parent = PurePosixPath(options.home).parent
+    pages: dict[str, str] = {}
+    area_links: dict[str, list[str]] = defaultdict(list)
     for folder, members in sorted(folders.items()):
         relative = posixpath.relpath(folder, options.scope)
         readable = PurePosixPath(folder).name if relative == "." else relative
@@ -269,42 +397,66 @@ def navigation(
             (name for name, prefix in options.areas.items() if in_scope(folder, prefix)), ""
         )
         area_links[area].append("- " + markdown_link(options.home, target, label))
-        body = [
-            f"# {text['folder_title'].format(subject=label)}",
-            markdown_link(target, options.home, text["home"]),
-            text["notice"],
-        ]
-        for state in ("active", "review", "historical"):
-            body.append(f"## {text[state]}")
-            items = [n for n in members if states[n.rel_path] == state]
-            body.extend(
-                ["- " + markdown_link(target, n.rel_path, n.title) for n in items]
-                or [text["empty"]]
-            )
-        pages[target] = "\n\n".join(body) + "\n"
-    for area, entries in area_links.items():
-        if area:
-            home.append(f"### {area}")
-        home.extend(entries)
+        pages[target] = _folder_page(target, label, members, options, states, text)
+    return pages, area_links
+
+
+def _folder_page(
+    target: str,
+    label: str,
+    members: list[Note],
+    options: LibraryOptions,
+    states: dict[str, str],
+    text: dict[str, str],
+) -> str:
+    body = [
+        f"# {text['folder_title'].format(subject=label)}",
+        markdown_link(target, options.home, text["home"]),
+        text["notice"],
+    ]
+    for state in ("active", "review", "historical"):
+        body.append(f"## {text[state]}")
+        items = [n for n in members if states[n.rel_path] == state]
+        body.extend(
+            ["- " + markdown_link(target, n.rel_path, n.title) for n in items] or [text["empty"]]
+        )
+    return "\n\n".join(body) + "\n"
+
+
+def _home_categories(
+    notes: list[Note],
+    options: LibraryOptions,
+    states: dict[str, str],
+    parsed: ParsedLinks,
+    text: dict[str, str],
+) -> list[str]:
+    """Render the people, procedures, tasks and historical sections of the home page."""
+    lines: list[str] = []
     for category in ("people", "procedures", "tasks", "historical"):
-        home.append(f"## {text[category]}")
+        lines.append(f"## {text[category]}")
         category_items: list[str] = []
         for note in notes:
             if note.frontmatter.get("library_generated"):
                 continue
-            tasks = links_and_tasks(note.content)[1]
-            matched = (
-                (category == "people" and bool(set(options.people_tags).intersection(note.tags)))
-                or (
-                    category == "procedures"
-                    and bool(set(options.procedure_tags).intersection(note.tags))
-                )
-                or (category == "historical" and states[note.rel_path] == "historical")
-                or (category == "tasks" and bool(tasks))
-            )
-            if matched:
+            tasks = parsed[note.content_hash][1]
+            if _in_category(category, note, options, states, tasks):
                 label = note.title + (f" ({len(tasks)})" if category == "tasks" else "")
                 category_items.append("- " + markdown_link(options.home, note.rel_path, label))
-        home.extend(category_items or [text["empty"]])
-    pages[options.home] = "\n\n".join(home) + "\n"
-    return pages
+        lines.extend(category_items or [text["empty"]])
+    return lines
+
+
+def _in_category(
+    category: str,
+    note: Note,
+    options: LibraryOptions,
+    states: dict[str, str],
+    tasks: list[str],
+) -> bool:
+    if category == "people":
+        return bool(set(options.people_tags).intersection(note.tags))
+    if category == "procedures":
+        return bool(set(options.procedure_tags).intersection(note.tags))
+    if category == "historical":
+        return states[note.rel_path] == "historical"
+    return bool(tasks)

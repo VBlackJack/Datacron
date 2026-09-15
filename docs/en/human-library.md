@@ -64,6 +64,11 @@ datacron library prepare --vault VAULT --options OPTIONS.json --output NEW_DIREC
 datacron library check --vault VAULT --output NEW_DIRECTORY
 ```
 
+`--vault` is optional: without it the commands use `DATACRON_VAULT_ROOT`, then the
+current directory when it holds `.datacron/VAULT.yaml`, like the other vault commands.
+Each command exits with 0 on success and 2 when the vault, the options, the recipe or
+the bundle cannot be read or is invalid; `--help` lists every option.
+
 `audit` prints JSON and does not write a log, ID sidecar or index. `prepare`
 requires a new directory outside the source vault. It produces:
 

@@ -44,33 +44,14 @@ class TraceEvent(BaseModel):
 
 def grade(case: ConversationCase, events: list[TraceEvent]) -> dict[str, Any]:
     """Check declared outcomes, successful source reads and post-write verification."""
-    failures = []
-    if len({event.session for event in events}) < case.minimum_sessions:
-        failures.append("insufficient_sessions")
     calls = Counter(e.tool for e in events if e.tool and "error" not in e.result)
-    for tool, minimum in case.required_tools.items():
-        if calls[tool] < minimum:
-            failures.append(f"missing_tool:{tool}")
     final = next((e.answer for e in reversed(events) if e.answer is not None), "") or ""
-    if not final.strip():
-        failures.append("missing_final_answer")
-    for text in case.required_final_text:
-        if text.casefold() not in final.casefold():
-            failures.append(f"missing_final_text:{text}")
-    for text in case.forbidden_final_text:
-        if text.casefold() in final.casefold():
-            failures.append(f"forbidden_final_text:{text}")
-    read_paths = {
-        str(e.result.get("rel_path"))
-        for e in events
-        if e.tool == "get_note"
-        and "error" not in e.result
-        and e.result.get("content_hash")
-        and e.result.get("content")
-    }
-    for path in case.cited_paths:
-        if path not in read_paths or path not in final:
-            failures.append(f"unverified_citation:{path}")
+    failures = [
+        *_session_failures(case, events),
+        *_tool_failures(case, calls),
+        *_final_text_failures(case, final),
+        *_citation_failures(case, events, final),
+    ]
     if case.verify_writes:
         failures.extend(_write_failures(events))
     return {
@@ -81,6 +62,54 @@ def grade(case: ConversationCase, events: list[TraceEvent]) -> dict[str, Any]:
         "tool_calls": sum(calls.values()),
         "evidence": "supplied_trace_and_literal_oracles_not_semantic_truth",
     }
+
+
+def _session_failures(case: ConversationCase, events: list[TraceEvent]) -> list[str]:
+    if len({event.session for event in events}) < case.minimum_sessions:
+        return ["insufficient_sessions"]
+    return []
+
+
+def _tool_failures(case: ConversationCase, calls: Counter[str]) -> list[str]:
+    return [
+        f"missing_tool:{tool}"
+        for tool, minimum in case.required_tools.items()
+        if calls[tool] < minimum
+    ]
+
+
+def _final_text_failures(case: ConversationCase, final: str) -> list[str]:
+    failures: list[str] = []
+    if not final.strip():
+        failures.append("missing_final_answer")
+    folded = final.casefold()
+    failures.extend(
+        f"missing_final_text:{text}"
+        for text in case.required_final_text
+        if text.casefold() not in folded
+    )
+    failures.extend(
+        f"forbidden_final_text:{text}"
+        for text in case.forbidden_final_text
+        if text.casefold() in folded
+    )
+    return failures
+
+
+def _citation_failures(case: ConversationCase, events: list[TraceEvent], final: str) -> list[str]:
+    read_paths = {
+        str(e.result.get("rel_path"))
+        for e in events
+        if e.tool == "get_note"
+        and "error" not in e.result
+        and e.result.get("content_hash")
+        and e.result.get("content")
+    }
+    return [
+        f"unverified_citation:{path}"
+        for path in case.cited_paths
+        if path not in read_paths or path not in final
+    ]
 
 
 def _write_failures(events: list[TraceEvent]) -> list[str]:

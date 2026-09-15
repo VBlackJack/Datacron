@@ -497,6 +497,19 @@ def _backlog_counter_key(value: str) -> tuple[int, str]:
 
 def _patch_frontmatter_fields(raw: str, metadata: dict[str, Any], fields: list[str]) -> str:
     """Replace selected YAML values while preserving unrelated header text and body."""
+    start, end, eol = _frontmatter_header_span(raw)
+    header = raw[start:end]
+    nodes = _frontmatter_mapping_nodes(header)
+    header, additions = _apply_field_edits(header, nodes, metadata, fields, eol)
+    result = raw[:start] + header + additions + raw[end:]
+    parsed, _ = parse(result)
+    if parsed != metadata:
+        raise ValueError("last_id metadata preservation validation failed")
+    return result
+
+
+def _frontmatter_header_span(raw: str) -> tuple[int, int, str]:
+    """Locate the YAML header between its boundaries; return its span and line ending."""
     offset = 1 if raw.startswith("\ufeff") else 0
     lines = raw[offset:].splitlines(keepends=True)
     opening = next((i for i, line in enumerate(lines) if line.strip()), None)
@@ -514,7 +527,12 @@ def _patch_frontmatter_fields(raw: str, metadata: dict[str, Any], fields: list[s
         raise ValueError("last_id requires closed YAML frontmatter")
     start = offset + sum(map(len, lines[: opening + 1]))
     end = offset + sum(map(len, lines[:closing]))
-    header = raw[start:end]
+    eol = "\r\n" if lines[opening].endswith("\r\n") else "\n"
+    return start, end, eol
+
+
+def _frontmatter_mapping_nodes(header: str) -> dict[str, yaml.Node]:
+    """Map each top-level key to its YAML node; refuse anything a span edit cannot trust."""
     node = yaml.compose(header, Loader=yaml.SafeLoader)
     if not isinstance(node, yaml.MappingNode) or node.flow_style:
         raise ValueError("last_id requires a block YAML mapping")
@@ -526,8 +544,18 @@ def _patch_frontmatter_fields(raw: str, metadata: dict[str, Any], fields: list[s
     # Anchors can alias another field's source span, so reject them fail-closed.
     if any(isinstance(token, (yaml.AliasToken, yaml.AnchorToken)) for token in yaml.scan(header)):
         raise ValueError("last_id refuses YAML anchors and aliases")
+    return nodes
+
+
+def _apply_field_edits(
+    header: str,
+    nodes: dict[str, yaml.Node],
+    metadata: dict[str, Any],
+    fields: list[str],
+    eol: str,
+) -> tuple[str, str]:
+    """Replace the selected values in place and render the fields to append."""
     edits: list[tuple[int, int, str]] = []
-    eol = "\r\n" if lines[opening].endswith("\r\n") else "\n"
     additions = ""
     for field in dict.fromkeys([*fields, "updated"]):
         if field not in metadata:
@@ -541,8 +569,4 @@ def _patch_frontmatter_fields(raw: str, metadata: dict[str, Any], fields: list[s
             edits.append((existing.start_mark.index, existing.end_mark.index, rendered))
     for begin, finish, replacement in sorted(edits, reverse=True):
         header = header[:begin] + replacement + header[finish:]
-    result = raw[:start] + header + additions + raw[end:]
-    parsed, _ = parse(result)
-    if parsed != metadata:
-        raise ValueError("last_id metadata preservation validation failed")
-    return result
+    return header, additions

@@ -27,7 +27,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -44,9 +43,11 @@ from datacron.core.config import (
     get_settings,
 )
 from datacron.core.frontmatter import FrontmatterError, extract_tags, parse
+from datacron.core.models import ChunkType
 from datacron.core.paths import PathConfinementError, assert_within_paths
 from datacron.core.scope import NoteAdmissionError, SingleTenantVaultScope
 from datacron.core.vault import SKIPPED_FOLDERS, NoteAdmissionPolicy
+from datacron.indexing.wikilinks import extract_wikilink_targets
 from datacron.organization.rules import matches_naming, resolve_rule
 from datacron.organization.tags import evaluate_tag_policy
 
@@ -83,9 +84,6 @@ _FENCE_MARKER: Final[str] = "```"
 # CommonMark admits up to three spaces of indentation before a code fence.
 _FENCE_MAX_INDENT: Final[int] = 3
 _FENCE_EXPECTED: Final[str] = "even number of fence lines"
-_WIKILINK_PATTERN: Final[re.Pattern[str]] = re.compile(r"\[\[([^\[\]]+)\]\]")
-_WIKILINK_LABEL_SEPARATOR: Final[str] = "|"
-_WIKILINK_ANCHOR_SEPARATOR: Final[str] = "#"
 _LAST_VERIFIED_KEY: Final[str] = "last_verified"
 _CRLF: Final[str] = "\r\n"
 _CR: Final[str] = "\r"
@@ -546,30 +544,19 @@ def _is_fence_line(line: str) -> bool:
 
 
 def _scan_body(body: str) -> tuple[int, tuple[str, ...]]:
-    """Count fence lines and collect wikilink targets outside fenced blocks.
+    """Count backtick fence lines and collect the wikilink targets of the body.
 
-    A target is the part before ``|`` with its ``#anchor`` removed, stripped
-    and casefolded; targets are deduplicated in first-seen order. A tilde
-    fence is not a fence for this rule.
+    The fence count serves the ``UNBALANCED_FENCE`` rule and only counts backtick
+    fences, as that rule states. The targets come from the one canonical wikilink
+    parser, which skips fenced blocks of either kind, inline code and escaped
+    brackets; each target is casefolded and deduplicated in first-seen order.
     """
-    fence_lines = 0
-    inside_fence = False
-    targets: list[str] = []
-    seen: set[str] = set()
-    for line in body.splitlines():
-        if _is_fence_line(line):
-            fence_lines += 1
-            inside_fence = not inside_fence
-            continue
-        if inside_fence:
-            continue
-        for match in _WIKILINK_PATTERN.finditer(line):
-            reference = match.group(1).split(_WIKILINK_LABEL_SEPARATOR, 1)[0]
-            target = reference.split(_WIKILINK_ANCHOR_SEPARATOR, 1)[0].strip().casefold()
-            if not target or target in seen:
-                continue
-            seen.add(target)
-            targets.append(target)
+    fence_lines = sum(1 for line in body.splitlines() if _is_fence_line(line))
+    targets = dict.fromkeys(
+        target.casefold()
+        for target in extract_wikilink_targets(body, ChunkType.NARRATIVE)
+        if target.casefold()
+    )
     return fence_lines, tuple(targets)
 
 

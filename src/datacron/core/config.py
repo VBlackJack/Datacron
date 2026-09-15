@@ -530,6 +530,17 @@ def _validate_tag_policy_against_rules(
     if not rules:
         raise ValueError("organization tags policy requires at least one rule")
     rule_tags = {rule.tag.casefold() for rule in rules}
+    placement_rule_tags = _placement_rule_tags(rules, tags)
+    if not placement_rule_tags:
+        raise ValueError("organization tags policy requires at least one placement rule")
+    _validate_policy_names(tags, rule_tags, placement_rule_tags)
+
+
+def _placement_rule_tags(
+    rules: tuple[OrganizationRule, ...],
+    tags: OrganizationTagPolicy,
+) -> set[str]:
+    """Return the placement rule tags; refuse a rule the policy could not classify."""
     prefix = tags.placement_namespace.casefold() + "/"
     # The evaluator and the rule resolver compare tags with ``lower()``; admitting a
     # subject rule under ``casefold()`` would accept a rule no compliant note can reach.
@@ -562,8 +573,15 @@ def _validate_tag_policy_against_rules(
                 f"{tags.placement_namespace!r} declared by the tags policy and is not a "
                 "declared subject"
             )
-    if not placement_rule_tags:
-        raise ValueError("organization tags policy requires at least one placement rule")
+    return placement_rule_tags
+
+
+def _validate_policy_names(
+    tags: OrganizationTagPolicy,
+    rule_tags: set[str],
+    placement_rule_tags: set[str],
+) -> None:
+    """Every alias, marker and exemption the policy names must match the rules."""
     aliases = [alias for subject in tags.subjects for alias in subject.aliases]
     for alias in aliases:
         if alias.casefold() in rule_tags:
