@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -407,3 +408,127 @@ async def test_obsidian_relative_attachment_is_available_in_preview(
     await prepare_library(vault, output, options, settings)
     assert (output / "preview/notes/diagram.png").read_bytes() == b"local-image"
     assert "Mes connaissances" in (output / "preview/notes/accueil.md").read_text(encoding="utf-8")
+
+
+async def test_editorial_archive_keeps_the_heading_title_of_an_untitled_note(
+    library: tuple[Path, LibraryOptions, Settings], tmp_path: Path
+) -> None:
+    vault, options, settings = library
+    (vault / "notes" / "old.md").write_text(
+        serialize({"id": str(ULID()), "tags": ["memory/fact"]}, "# Old note\n\nDecision.\n"),
+        encoding="utf-8",
+        newline="",
+    )
+    source = next(n for n in await read_library(vault, options) if n.rel_path == "notes/old.md")
+    assert source.title == "Old note"
+    recipe = EditorialRecipe(
+        notes=[
+            EditorialNote(
+                target="notes/summary.md",
+                title="Summary",
+                body="# Summary\n\nDecision.",
+                tags=options.tags,
+                sources=[SourceReference(path=source.rel_path, sha256=source.content_hash)],
+                rationale="Consolidate the decision",
+                archive_sources=[source.rel_path],
+            )
+        ]
+    )
+    output = tmp_path / "review"
+
+    await prepare_library(vault, output, options, settings, recipe)
+
+    meta, body = parse((output / "preview/notes/old.md").read_text(encoding="utf-8"))
+    assert meta["archived"] is True
+    assert "title" not in meta
+    assert body == source.content
+    archived = next(
+        n for n in await read_library(output / "preview", options) if n.rel_path == "notes/old.md"
+    )
+    assert archived.title == "Old note"
+
+
+def test_cli_prepare_reports_an_invalid_entry_without_a_traceback(
+    library: tuple[Path, LibraryOptions, Settings], tmp_path: Path
+) -> None:
+    vault, options, _ = library
+    (vault / "notes" / "orphan.md").write_text(
+        serialize({"tags": ["memory/fact"]}, "# Orphan\n\nBody.\n"), encoding="utf-8", newline=""
+    )
+    orphan = next(
+        n for n in asyncio.run(read_library(vault, options)) if n.rel_path == "notes/orphan.md"
+    )
+    recipe = EditorialRecipe(
+        notes=[
+            EditorialNote(
+                target="notes/summary.md",
+                title="Summary",
+                body="# Summary\n\nBody.",
+                tags=options.tags,
+                sources=[SourceReference(path=orphan.rel_path, sha256=orphan.content_hash)],
+                rationale="Consolidate the orphan",
+                archive_sources=[orphan.rel_path],
+            )
+        ]
+    )
+    option_path = tmp_path / "options.json"
+    option_path.write_text(options.model_dump_json(), encoding="utf-8")
+    recipe_path = tmp_path / "recipe.json"
+    recipe_path.write_text(recipe.model_dump_json(), encoding="utf-8")
+    before = _bytes(vault)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "library",
+            "prepare",
+            "--vault",
+            str(vault),
+            "--options",
+            str(option_path),
+            "--output",
+            str(tmp_path / "review"),
+            "--recipe",
+            str(recipe_path),
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert isinstance(result.exception, SystemExit)
+    assert "Adopt the stable source identity before consolidation" in result.output
+    assert "Traceback" not in result.output
+    assert before == _bytes(vault)
+
+
+def test_cli_prepare_reports_a_missing_note_field_without_a_traceback(
+    library: tuple[Path, LibraryOptions, Settings],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault, options, _ = library
+    _note(vault, "source.md", "# Source")
+    option_path = tmp_path / "options.json"
+    option_path.write_text(options.model_dump_json(), encoding="utf-8")
+
+    async def missing_field(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise KeyError("title")
+
+    monkeypatch.setattr("datacron.organization.library_cli.prepare_library", missing_field)
+    result = CliRunner().invoke(
+        app,
+        [
+            "library",
+            "prepare",
+            "--vault",
+            str(vault),
+            "--options",
+            str(option_path),
+            "--output",
+            str(tmp_path / "review"),
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert isinstance(result.exception, SystemExit)
+    assert "Missing required note field: title" in result.output
+    assert "Traceback" not in result.output

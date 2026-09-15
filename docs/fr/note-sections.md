@@ -115,4 +115,8 @@ Les erreurs d'écriture conservent le code `heading_not_found` et proposent un n
 borné de titres rendus exacts, avec leurs niveaux et occurrences. Les suggestions sont
 assainies et ne sélectionnent jamais une section automatiquement. Une suggestion
 tronquée ou expurgée est signalée comme impropre à une sélection directe ; relisez
-le plan avant de choisir la cible.
+le plan avant de choisir la cible. Les erreurs de `move_note_section` portent aussi
+`selector` : `source` quand le titre à déplacer n'a pas été sélectionné, `destination`
+quand le titre de destination est absent, ambigu ou sélectionné avec une occurrence
+invalide. Une sélection ambiguë retourne le code `heading_ambiguous` avec un `next_action` ;
+le message de destination nomme `destination_level` et `destination_occurrence`.

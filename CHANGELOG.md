@@ -17,6 +17,19 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - Operation journal appends are constant-time again: a mutating tool appends its chained
   record in place, fsyncs it and reads only the journal tail. Full hash chain verification
   stays with the readers (`audit_query`, `get_note_history`, `revert_note` and recovery).
+- `get_write_progress` refuses a reference that is not an admitted live note, or that
+  escapes the vault, with the typed `note_not_admitted` error instead of an internal error,
+  reports a target that vanished before it was read as `target_unavailable`, and accepts a
+  note ULID in `note` like `get_note_history` and `revert_note`.
+- `contradiction_scan` evidence and block previews pass through the vault content sandbox;
+  the confirmed `new_content` write payload stays byte-exact.
+- `datacron library prepare` resolves the title of an archived note without a frontmatter
+  `title` from its first heading or filename, like the vault reader, and reports a missing
+  note field with exit code 2 instead of a traceback.
+- `move_note_section` errors carry the failing `selector` (`source` or `destination`), and a
+  destination message names `destination_level` and `destination_occurrence`.
+- `get_follow_up` returns `follow_up_offset_invalid`, with a next action, for a negative
+  offset or one beyond `total`.
 
 ## [2026.0913.02] - 2026-09-13
 

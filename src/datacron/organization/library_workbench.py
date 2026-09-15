@@ -15,10 +15,11 @@ from typing import Any
 from ulid import ULID
 
 from datacron.core.config import Settings
-from datacron.core.frontmatter import parse, serialize
+from datacron.core.frontmatter import parse, resolve_note_title, serialize
 from datacron.core.markdown_headings import markdown_headings
 from datacron.core.models import Note
 from datacron.core.scope import SingleTenantVaultScope, assert_path_chain_without_links
+from datacron.core.vault import _H1_PATTERN
 from datacron.mcp.tools.write_validation import (
     _parse_preserving_bom_and_body_eols,
     _serialize_preserving_bom,
@@ -58,7 +59,10 @@ def _note_from_text(path: str, raw: str, vault: Path, captured: datetime) -> Not
         id=meta["id"],
         path=vault / path,
         rel_path=path,
-        title=meta["title"],
+        # The same rule as the vault reader: frontmatter title, first H1, then the stem.
+        title=resolve_note_title(
+            meta, body, Path(path), h1_pattern=_H1_PATTERN, empty_h1_falls_back=True
+        ),
         frontmatter=meta,
         content=body,
         raw_content=raw,

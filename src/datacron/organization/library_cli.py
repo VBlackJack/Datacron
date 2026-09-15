@@ -28,6 +28,12 @@ def _options(path: Path) -> LibraryOptions:
     return LibraryOptions.model_validate_json(path.read_text(encoding="utf-8"))
 
 
+def _failure_message(exc: Exception) -> str:
+    if isinstance(exc, KeyError):
+        return f"Missing required note field: {exc.args[0]}"
+    return str(exc)
+
+
 @app.command()
 def audit(vault: VaultArgument, options: OptionsArgument) -> None:
     """Print a scoped readability report as JSON without changing the vault."""
@@ -58,8 +64,8 @@ def prepare(
             prepare_library(vault, output, _options(options), get_settings(), editorial)
         )
         typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
-    except (OSError, ValueError, FrontmatterError) as exc:
-        typer.echo(str(exc), err=True)
+    except (OSError, ValueError, KeyError, FrontmatterError) as exc:
+        typer.echo(_failure_message(exc), err=True)
         raise typer.Exit(2) from exc
 
 
@@ -70,7 +76,7 @@ def check(vault: VaultArgument, output: OutputArgument) -> None:
         result = asyncio.run(check_library(vault, output, get_settings()))
         typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
     except (OSError, ValueError, KeyError, FrontmatterError) as exc:
-        typer.echo(str(exc), err=True)
+        typer.echo(_failure_message(exc), err=True)
         raise typer.Exit(2) from exc
 
 

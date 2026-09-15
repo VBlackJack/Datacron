@@ -39,7 +39,8 @@ tag policy remains unchanged; do not introduce undeclared tags to archive notes.
 
 ## Resume partial updates
 
-Retain the `request_id`, target path and arguments of every prepared write. Call:
+Retain the `request_id`, target and arguments of every prepared write. `note` accepts
+the vault-relative path or the note ULID, as `get_note_history` and `revert_note` do. Call:
 
 ```json
 {"requests":[
@@ -63,8 +64,10 @@ and does not claim an atomic snapshot across notes.
 
 An absent receipt returns `committed=null`, never proof that no pending operation
 exists. Committed hashes are historical; `current_hash` is a point-in-time read.
-All references are confined before journal evidence is returned. Oversized requests
-are refused; split them into smaller groups. No receipt permits a new write by itself.
+All references are confined before journal evidence is returned: a reference that is
+not an admitted live note, or that escapes the vault, is refused with the typed
+`note_not_admitted` error before any item is inspected. Oversized requests are refused;
+split them into smaller groups. No receipt permits a new write by itself.
 
 ## Understand diagnostics
 

@@ -29,6 +29,7 @@ from datacron.core import config as core_config
 from datacron.core.markdown_headings import markdown_headings
 from datacron.core.markdown_sections import find_section_span
 from datacron.core.models import Chunk, ChunkType, Note
+from datacron.mcp.sandbox import sanitize_metadata_value, wrap_vault_content
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -619,13 +620,17 @@ def _candidate_payload(
         "class": candidate.classification.value,
         "classification_options": _classification_options(candidate.classification),
         "rationale": candidate.rationale,
+        # Evidence is displayed vault text: redacted, then sandboxed like every other
+        # note excerpt returned by a tool. Write payloads stay byte-exact elsewhere.
         "evidence": {
-            "target": _redact(
+            "target": _display_text(
                 app,
+                candidate.target,
                 _excerpt(candidate.target.content, limit=_evidence_limit(app, detail)),
             ),
-            "source": _redact(
+            "source": _display_text(
                 app,
+                candidate.source,
                 _excerpt(candidate.source.content, limit=_evidence_limit(app, detail)),
             ),
         },
@@ -686,9 +691,16 @@ def _proposal_summary(
         "scope": proposal.scope.value,
         "tool": proposal.tool,
         "block": (
-            _redact(app, proposal.block) if include_block and proposal.block is not None else None
+            _display_text(app, proposal.candidate.source, proposal.block)
+            if include_block and proposal.block is not None
+            else None
         ),
     }
+
+
+def _display_text(app: DatacronApp, section: SectionAssertion, text: str) -> str:
+    """Redact then sandbox vault text that is shown, never written, by the scan."""
+    return wrap_vault_content(section.note_rel_path, _redact(app, text))
 
 
 def _write_call(target_note: Note, proposal: Proposal) -> dict[str, Any]:
@@ -989,7 +1001,8 @@ def _section_reference(app: DatacronApp, section: SectionAssertion) -> dict[str,
     return {
         "note_id": section.note_id,
         "note_rel_path": _redact(app, section.note_rel_path),
-        "header_path": _redact(app, section.header_path),
+        # A heading is vault-controlled metadata: redacted, then escaped like any other.
+        "header_path": sanitize_metadata_value(_redact(app, section.header_path)),
         "chunk_id": section.chunk_id,
         "line_start": section.line_start,
         "line_end": section.line_end,

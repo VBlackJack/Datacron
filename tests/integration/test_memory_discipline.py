@@ -614,3 +614,24 @@ async def test_follow_up_keeps_raw_write_text_and_source_provenance(
     current = result["records"][0]["record"]
     assert current["summary"].encode() == original["summary"].encode()
     assert current["source_excerpt"] == wrap_vault_content("source.md", original["source_excerpt"])
+
+
+@pytest.mark.parametrize("offset", [-1, 999], ids=["negative", "beyond-total"])
+async def test_follow_up_refuses_invalid_offsets_with_a_typed_error(
+    memory_app: DatacronApp, offset: int
+) -> None:
+    app = memory_app
+    first = await _call(app, "get_follow_up", note_paths=["person.md"])
+
+    result = await _call(
+        app,
+        "get_follow_up",
+        note_paths=["person.md"],
+        offset=offset,
+        expected_snapshot=first["snapshot_hash"],
+    )
+
+    assert result["error"]["code"] == "follow_up_offset_invalid"
+    assert str(offset) in result["error"]["message"]
+    assert "offset" in result["error"]["message"]
+    assert result["error"]["next_action"]

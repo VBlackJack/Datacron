@@ -85,7 +85,8 @@ Si `next_offset` n'est pas nul, poursuivre avec `offset=next_offset` et
 `total` compte les révisions courantes correspondantes ; `omitted` compte les éléments
 après cette page. Continuer jusqu'à `next_offset=null`. Un changement de note ou de filtre
 invalide le snapshot : sur `follow_up_snapshot_changed`, recommencer à zéro sans
-`expected_snapshot`. Si un seul élément dépasse le budget, `follow_up_record_too_large`
+`expected_snapshot`. Un offset négatif, ou supérieur à `total`, retourne
+`follow_up_offset_invalid`. Si un seul élément dépasse le budget, `follow_up_record_too_large`
 demande d'augmenter `DATACRON_MAX_RESULT_TOKENS` ou de lire la note par pages avec
 `get_note`, au lieu de retourner une page vide sans progression. Le texte restitué est
 protégé même pour les anciennes révisions, sans modifier leurs octets ni leur intégrité.

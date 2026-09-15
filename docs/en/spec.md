@@ -478,6 +478,7 @@ This spec and the reference [Datacron](../../README.md) implementation are publi
 Start at offset zero. Continue with `offset=next_offset` and
 `expected_snapshot=snapshot_hash`, keeping `note_paths` and `include_closed` unchanged.
 A changed requested note or filter returns `follow_up_snapshot_changed`; restart at zero.
+A negative offset or one beyond `total` returns `follow_up_offset_invalid`.
 A record that cannot fit returns `follow_up_record_too_large`: increase
 `DATACRON_MAX_RESULT_TOKENS` or read the source with `get_note`. The budget covers the
 complete serialized follow-up response. See [Memory discipline](memory-discipline.md).
