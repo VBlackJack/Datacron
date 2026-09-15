@@ -125,6 +125,13 @@ _CREATE_NOTE_FRONTMATTER_INDEX_SQL: Final[str] = """
 CREATE INDEX IF NOT EXISTS note_frontmatter_lookup
 ON note_frontmatter (key, value, note_id);
 """
+# Every upsert and delete removes a note's pairs by ``note_id``. Without this index
+# that delete scans the whole pair table, so each index write is linear in the number
+# of stored pairs and a full reindex is quadratic.
+_CREATE_NOTE_FRONTMATTER_NOTE_INDEX_SQL: Final[str] = """
+CREATE INDEX IF NOT EXISTS note_frontmatter_note
+ON note_frontmatter (note_id);
+"""
 _INSERT_NOTE_FRONTMATTER_SQL: Final[str] = (
     "INSERT INTO note_frontmatter (note_id, key, value) VALUES (?, ?, ?);"
 )
@@ -1061,6 +1068,7 @@ class SQLiteFTS5Store:
         await connection.execute(_CREATE_INDEX_META_SQL)
         await connection.execute(_CREATE_NOTE_FRONTMATTER_SQL)
         await connection.execute(_CREATE_NOTE_FRONTMATTER_INDEX_SQL)
+        await connection.execute(_CREATE_NOTE_FRONTMATTER_NOTE_INDEX_SQL)
         await connection.execute(
             "INSERT OR IGNORE INTO index_meta(key, value) VALUES ('generation', '0');"
         )
