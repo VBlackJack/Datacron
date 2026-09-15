@@ -73,6 +73,7 @@ from datacron.core.recovery import (
 )
 from datacron.core.scope import assert_path_chain_without_links
 from datacron.core.security import SecretRedactor
+from datacron.core.vault import ULID_SIDECAR_FILENAME
 from datacron.core.write_request import ACTIVE_WRITE_REQUEST, ReplayedWriteError
 from datacron.organization.manifest import ValidatedOrganizationBundle
 
@@ -1290,7 +1291,7 @@ class FilesystemVaultWriter:
             match = _FRONTMATTER_ID_PATTERN.search(frontmatter_block)
             if match is not None:
                 return match.group(1)
-        sidecar_path = sidecar_dir(self._vault_root) / "ulids.json"
+        sidecar_path = sidecar_dir(self._vault_root) / ULID_SIDECAR_FILENAME
         if not sidecar_path.is_file():
             return None
         try:
@@ -1376,7 +1377,7 @@ class FilesystemVaultWriter:
             authority_consulted = True
             if self._ulid_exists_in_index(note_id):
                 return True
-        sidecar_path = sidecar_dir(self._vault_root) / "ulids.json"
+        sidecar_path = sidecar_dir(self._vault_root) / ULID_SIDECAR_FILENAME
         if sidecar_path.is_file():
             authority_consulted = True
             if self._ulid_exists_in_sidecar(note_id):
@@ -1404,7 +1405,7 @@ class FilesystemVaultWriter:
         return row is not None
 
     def _ulid_exists_in_sidecar(self, note_id: str) -> bool:
-        sidecar_path = sidecar_dir(self._vault_root) / "ulids.json"
+        sidecar_path = sidecar_dir(self._vault_root) / ULID_SIDECAR_FILENAME
         if not sidecar_path.is_file():
             return False
         try:

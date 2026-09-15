@@ -34,7 +34,7 @@ from typing import Final, Literal, NoReturn, TypeAlias, final
 
 from ulid import ULID
 
-from datacron.core.config import VaultConfig
+from datacron.core.config import SIDECAR_DIR_NAME, VaultConfig
 from datacron.core.durability import (
     RecoveryRequiredError,
     atomic_durable_write,
@@ -58,7 +58,12 @@ from datacron.core.operation_log import (
 from datacron.core.paths import PathConfinementError, assert_within_paths
 from datacron.core.recovery import BlockedOperation
 from datacron.core.scope import assert_path_chain_without_links
-from datacron.core.vault import SKIPPED_FOLDERS, NoteAdmissionPolicy
+from datacron.core.vault import (
+    MIGRATED_ULID_SIDECAR_FILENAME,
+    SKIPPED_FOLDERS,
+    ULID_SIDECAR_FILENAME,
+    NoteAdmissionPolicy,
+)
 from datacron.organization.manifest import (
     MAX_MANIFEST_BYTES,
     MAX_OPERATION_COUNT,
@@ -115,8 +120,10 @@ _PENDING_DIR_NAME: Final[str] = "pending"
 _STAGE_DIR_NAME: Final[str] = "stage"
 _COMMITTED_DIR_NAME: Final[str] = "committed"
 _CONFIG_REL_PATH: Final[str] = ".datacron/VAULT.yaml"
-_IDENTITY_SIDECAR_REL_PATH: Final[str] = ".datacron/ulids.json"
-_MIGRATED_IDENTITY_SIDECAR_REL_PATH: Final[str] = ".datacron/ulids.json.migrated"
+_IDENTITY_SIDECAR_REL_PATH: Final[str] = f"{SIDECAR_DIR_NAME}/{ULID_SIDECAR_FILENAME}"
+_MIGRATED_IDENTITY_SIDECAR_REL_PATH: Final[str] = (
+    f"{SIDECAR_DIR_NAME}/{MIGRATED_ULID_SIDECAR_FILENAME}"
+)
 _HISTORY_REL_ROOT: Final[str] = ".datacron/history"
 _OPERATIONS_REL_PATH: Final[str] = ".datacron/oplog/operations.jsonl"
 _HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{64}$")
