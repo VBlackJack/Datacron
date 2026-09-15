@@ -20,6 +20,7 @@ import math
 import os
 import re
 import stat
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -412,39 +413,48 @@ class OperationJournal:
         return self._guard_pending_target(self._pending_dir / f"{operation_id}.json")
 
     def append_record(self, record: OperationRecord) -> bool:
+        """Durably append one chained record; return ``False`` if the tail already is it.
+
+        This is the hot path of every mutating tool, so it touches the journal tail
+        only: the previous hash comes from the tail loaded by ``_load_tail_state`` and
+        the line is appended in place. Full chain verification is the readers' job
+        (``read_records``, ``latest_record_for_path`` and recovery), never the append's.
+        """
         record.validate()
         self._load_tail_state()
-        operations_path = self._guard_operations_path()
-        try:
-            existing_bytes = operations_path.read_bytes() if operations_path.is_file() else b""
-        except OSError as exc:
-            raise OperationLogError("failed to read the operation log before append") from exc
-        existing_records = _parse_records(existing_bytes, verify_chain=True)
-        current_tail = existing_records[-1] if existing_records else None
-        if current_tail is not None and current_tail.operation_id == record.operation_id:
-            self._tail_record = current_tail
-            self._tail_hash = sha256_bytes(_record_line(current_tail))
-            self._tail_loaded = True
+        tail_record = self._tail_record
+        if tail_record is not None and tail_record.operation_id == record.operation_id:
             return False
-        current_tail_hash = (
-            sha256_bytes(_record_line(current_tail)) if current_tail is not None else None
-        )
         chained = replace(
             record,
-            prev_hash=current_tail_hash,
+            prev_hash=self._tail_hash,
             format_version=_FORMAT_VERSION,
         )
         chained.validate()
         line = _record_line(chained)
         oplog_dir = self._guard_oplog_root()
         oplog_dir.mkdir(parents=True, exist_ok=True)
-        self._guard_oplog_root()
+        oplog_dir = self._guard_oplog_root()
         operations_path = self._guard_operations_path()
+        created = not operations_path.exists()
         try:
-            _atomic_write(operations_path, existing_bytes + line)
+            with operations_path.open("ab") as stream:
+                previous_size = stream.seek(0, os.SEEK_END)
+                try:
+                    stream.write(line)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                except OSError:
+                    # Never leave a torn record behind: a tail that does not end at a
+                    # JSONL boundary would refuse every later append until repaired.
+                    with suppress(OSError):
+                        stream.truncate(previous_size)
+                    raise
         except OSError as exc:
             self._tail_loaded = False
             raise OperationLogError("failed to append the operation log") from exc
+        if created:
+            _durable_flush_directory(oplog_dir)
         self._tail_record = chained
         self._tail_hash = sha256_bytes(line)
         self._tail_loaded = True
