@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -540,33 +541,35 @@ def test_mcp_v2_docs_svg_and_source_descriptions_use_mcpserver() -> None:
         assert "FastMCP" not in content
 
 
-@pytest.mark.parametrize(
-    ("relative_path", "stale_adr", "current_footer"),
-    [
-        (
-            Path("docs/fr/architecture.md"),
-            "v1 = Claude Desktop + Code uniquement. Cowork via tunnel HTTPS en v1.x.",
-            "Mis à jour le 2026-09-13 pour l'implémentation source",
-        ),
-        (
-            Path("docs/en/architecture.md"),
-            "v1 = Claude Desktop + Code only. Cowork via HTTPS tunnel in v1.x.",
-            "Updated on 2026-09-13 for the source implementation",
-        ),
-    ],
-)
-def test_mcp_v2_docs_architecture_removes_superseded_v1_premise_and_dates_footer(
-    relative_path: Path,
-    stale_adr: str,
-    current_footer: str,
-) -> None:
-    """Remove the superseded tunnel premise and date the current synchronization."""
-    content = _collapse_whitespace(_read(relative_path))
+_ARCHITECTURE_FOOTERS = {
+    Path("docs/fr/architecture.md"): (
+        "v1 = Claude Desktop + Code uniquement. Cowork via tunnel HTTPS en v1.x.",
+        re.compile(r"\*Mis à jour le (\d{4}-\d{2}-\d{2}) pour l'implémentation source[^*]*\*"),
+    ),
+    Path("docs/en/architecture.md"): (
+        "v1 = Claude Desktop + Code only. Cowork via HTTPS tunnel in v1.x.",
+        re.compile(r"\*Updated on (\d{4}-\d{2}-\d{2}) for the source implementation[^*]*\*"),
+    ),
+}
 
-    assert stale_adr not in content
-    assert current_footer in content
-    assert "synced on 2026-07-12" not in content
-    assert "synchronisé le 2026-07-12" not in content
+
+def test_mcp_v2_docs_architecture_removes_superseded_v1_premise_and_dates_footer() -> None:
+    """Remove the superseded tunnel premise and date the current synchronization.
+
+    The footer date is asserted by shape and by EN/FR agreement, never by value, so a
+    documentation resync does not have to edit this test.
+    """
+    dates: set[str] = set()
+    for relative_path, (stale_adr, footer) in _ARCHITECTURE_FOOTERS.items():
+        content = _collapse_whitespace(_read(relative_path))
+
+        assert stale_adr not in content
+        assert "synced on 2026-07-12" not in content
+        assert "synchronisé le 2026-07-12" not in content
+        match = footer.search(content)
+        assert match is not None, f"{relative_path} has no dated source-implementation footer"
+        dates.add(date.fromisoformat(match.group(1)).isoformat())
+    assert len(dates) == 1, f"EN/FR architecture footers disagree on the date: {sorted(dates)}"
 
 
 @pytest.mark.parametrize(
