@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import gc
 import os
+import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
@@ -95,6 +97,38 @@ async def test_reports_note_progress(
     )
 
     assert updates == [(completed, total) for completed in range(total + 1)]
+
+
+async def test_progress_advances_during_the_pre_pass_for_unchanged_notes(
+    store: SQLiteFTS5Store,
+    reader: FilesystemVaultReader,
+    chunker: MarkdownChunker,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A full verification of an unchanged vault reports each note as it is read."""
+    total = len(await reader.stat_notes())
+    await reconcile(store, reader, chunker, mtime_gate=True)
+    updates: list[tuple[int, int]] = []
+    updates_before_each_read: list[int] = []
+    original = reader.read_note
+
+    async def observing(path: Path) -> Note:
+        updates_before_each_read.append(len(updates))
+        return await original(path)
+
+    monkeypatch.setattr(reader, "read_note", observing)
+
+    await reconcile(
+        store,
+        reader,
+        chunker,
+        mtime_gate=False,
+        progress=lambda completed, count: updates.append((completed, count)),
+    )
+
+    assert updates == [(completed, total) for completed in range(total + 1)]
+    # The first read sees only the initial report; the last one sees every earlier note.
+    assert updates_before_each_read == list(range(1, total + 1))
 
 
 async def test_generation_advances_only_for_changed_index(
@@ -260,3 +294,39 @@ async def test_id_change_same_path_deletes_old(
     after = await store.list_indexed_notes_with_mtime()
     assert after["welcome.md"][0] == new_id
     assert await store.list_chunks_for_note(old_id) == []
+
+
+async def test_pre_pass_keeps_a_bounded_number_of_notes_alive(
+    store: SQLiteFTS5Store,
+    chunker: MarkdownChunker,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A full pass over 500 notes never holds more than a couple of Note objects."""
+    vault = tmp_path / "synthetic"
+    vault.mkdir()
+    for index in range(500):
+        (vault / f"note-{index:03d}.md").write_text(
+            f"---\nid: 01J5N{index:05d}0000000000000001\n---\n# Note {index}\n\nBody {index}.\n",
+            encoding="utf-8",
+        )
+    reader = FilesystemVaultReader(vault, read_only=True)
+    # A Note holds a dict, so it is not hashable; track liveness by object identity.
+    alive: weakref.WeakValueDictionary[int, Note] = weakref.WeakValueDictionary()
+    peak = 0
+    original = reader.read_note
+
+    async def tracking(path: Path) -> Note:
+        nonlocal peak
+        note = await original(path)
+        alive[id(note)] = note
+        gc.collect()
+        peak = max(peak, len(alive))
+        return note
+
+    monkeypatch.setattr(reader, "read_note", tracking)
+
+    stats = await reconcile(store, reader, chunker, mtime_gate=False)
+
+    assert stats["reindexed_notes"] == 500
+    assert peak <= 2, f"{peak} Note objects were alive at once"
