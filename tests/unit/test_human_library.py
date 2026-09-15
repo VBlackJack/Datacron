@@ -470,10 +470,16 @@ def test_every_wikilink_parser_agrees_on_the_probe() -> None:
     from datacron.indexing.wikilinks import extract_wikilink_targets
     from datacron.organization.planner import snapshot_note
 
-    body = "`[[inline-code]]` \\[[escaped]] [[Real Target|label]]\n\n~~~\n[[in-tilde-fence]]\n~~~\n"
-    assert extract_wikilink_targets(body, ChunkType.NARRATIVE) == ["Real Target"]
-    assert snapshot_note("_memory/x.md", len(body), {}, body).wikilink_targets == ("real target",)
-    assert [target for target, wiki in links_and_tasks(body)[0] if wiki] == ["Real Target"]
+    body = (
+        "`[[inline-code]]` \\[[escaped]] [[Real Target|label]] [[ spaced ]]\n\n"
+        "~~~\n[[in-tilde-fence]]\n~~~\n"
+    )
+    expected = ["Real Target", "spaced"]
+    assert extract_wikilink_targets(body, ChunkType.NARRATIVE) == expected
+    snapshot = snapshot_note("_memory/x.md", len(body), {}, body)
+    assert snapshot.wikilink_targets == ("real target", "spaced")
+    # The inner whitespace is normalized by the canon; a naive regex kept " spaced ".
+    assert [target for target, wiki in links_and_tasks(body)[0] if wiki] == expected
 
 
 def test_links_keep_document_order_and_header_anchors() -> None:
