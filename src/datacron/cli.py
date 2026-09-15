@@ -67,7 +67,11 @@ from datacron.core.paths import (
     sidecar_vault_config,
 )
 from datacron.core.scope import SingleTenantVaultScope
-from datacron.core.vault import ULID_SIDECAR_FILENAME, build_configured_reader
+from datacron.core.vault import (
+    MIGRATED_ULID_SIDECAR_FILENAME,
+    ULID_SIDECAR_FILENAME,
+    build_configured_reader,
+)
 from datacron.core.vault_writer import (
     FilesystemVaultWriter,
     VaultLockBusyError,
@@ -797,7 +801,7 @@ def _assert_migrated_sidecar_agrees(vault_root: Path, rel_path: str, note_id: st
     is exactly why a disagreement between the two files must be settled by a human
     rather than guessed at here.
     """
-    migrated = sidecar_dir(vault_root) / "ulids.json.migrated"
+    migrated = sidecar_dir(vault_root) / MIGRATED_ULID_SIDECAR_FILENAME
     if not migrated.is_file():
         return
     try:
