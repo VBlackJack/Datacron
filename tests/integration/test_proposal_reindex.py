@@ -5,8 +5,10 @@
 # https://www.apache.org/licenses/LICENSE-2.0
 """Proposal confirmation across the actual offline index publication path."""
 
+from collections.abc import Iterable
 from datetime import date
 from pathlib import Path
+from typing import Protocol, TypeVar
 
 import pytest
 
@@ -19,9 +21,22 @@ from datacron.mcp.server import build_app
 from datacron.mcp.tools.advisory import _contradiction_scan_impl
 
 
-def _legacy_stack(headings: list[tuple[int, str]], level: int, title: str) -> list[tuple[int, str]]:
+class _Leveled(Protocol):
+    @property
+    def level(self) -> int: ...
+
+
+_HeadingT = TypeVar("_HeadingT", bound=_Leveled)
+
+
+def _legacy_ancestry(headings: Iterable[_HeadingT]) -> list[list[_HeadingT]]:
     """Reproduce the pre-D1 position-based ancestry when seeding the old index."""
-    return [*headings[: level - 1], (level, title.strip())]
+    stack: list[_HeadingT] = []
+    trails: list[list[_HeadingT]] = []
+    for heading in headings:
+        stack = [*stack[: heading.level - 1], heading]
+        trails.append(list(stack))
+    return trails
 
 
 @pytest.mark.parametrize("changed_chunk_ids", [True, False])
@@ -57,7 +72,7 @@ async def test_confirmation_after_offline_reindex(
     await app.store.open(database)
     try:
         with monkeypatch.context() as legacy:
-            legacy.setattr(chunker, "_updated_heading_stack", _legacy_stack)
+            legacy.setattr(chunker, "heading_ancestry", _legacy_ancestry)
             for note in await app.vault_reader.list_notes():
                 await app.store.upsert_note(note, app.chunker.chunk(note))
             scan = await _contradiction_scan_impl(app, today=date(2026, 7, 17))

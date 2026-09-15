@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import pytest
 
-from datacron.core.markdown_sections import find_section_span
+from datacron.core.markdown_headings import MarkdownHeading
+from datacron.core.markdown_sections import find_section_span, heading_ancestry
 
 
 def test_patch_note_preamble_replaces_and_normalizes_before_preserved_suffix() -> None:
@@ -167,3 +168,47 @@ def test_heading_occurrence_reports_out_of_range_when_no_heading_matches() -> No
         match=r"^heading_occurrence 1 is out of range for 0 matching headings$",
     ):
         find_section_span(["## Present\n", "Body.\n"], "Absent", 2, heading_occurrence=1)
+
+
+def _heading(level: int, text: str) -> MarkdownHeading:
+    return MarkdownHeading(start=0, end=1, level=level, text=text)
+
+
+def test_heading_ancestry_keeps_actual_ancestors_only() -> None:
+    """Levels that rise, fall, skip one, and repeat at the same depth."""
+    headings = [
+        _heading(1, "Root"),
+        _heading(2, "Child"),
+        _heading(3, "Grandchild"),
+        _heading(2, "Sibling"),
+        _heading(2, "Sibling again"),
+        _heading(4, "Skipped a level"),
+        _heading(1, "Second root"),
+    ]
+
+    trails = heading_ancestry(headings)
+
+    assert [[item.text for item in trail] for trail in trails] == [
+        ["Root"],
+        ["Root", "Child"],
+        ["Root", "Child", "Grandchild"],
+        ["Root", "Sibling"],
+        ["Root", "Sibling again"],
+        ["Root", "Sibling again", "Skipped a level"],
+        ["Second root"],
+    ]
+
+
+def test_heading_ancestry_without_a_root_and_with_independent_trails() -> None:
+    trails = heading_ancestry(
+        [_heading(3, "Deep first"), _heading(2, "Shallower"), _heading(2, "Peer")]
+    )
+
+    assert [[item.text for item in trail] for trail in trails] == [
+        ["Deep first"],
+        ["Shallower"],
+        ["Peer"],
+    ]
+    trails[0].append(_heading(4, "mutated"))
+    assert len(trails[1]) == 1
+    assert heading_ancestry([]) == []

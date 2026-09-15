@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any, Final, final
 
 from mistletoe import block_token
@@ -26,6 +27,7 @@ from datacron.core.config import DEFAULT_CHUNK_MAX_TOKENS, TOKEN_ESTIMATE_CHARS_
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.markdown_headings import token_text
+from datacron.core.markdown_sections import heading_ancestry
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.indexing.wikilinks import extract_wikilink_targets
 
@@ -93,7 +95,18 @@ class MarkdownChunker:
             ]
 
         chunks: list[Chunk] = []
-        headings: list[tuple[int, str]] = []
+        # Heading trails are computed once for the whole note; the frontmatter title
+        # is not a virtual H1, so a trail only holds actual ancestors.
+        trails = iter(
+            heading_ancestry(
+                [
+                    _HeadingToken(_heading_level(token), _token_text(token).strip())
+                    for token in blocks
+                    if _is_heading(token)
+                ]
+            )
+        )
+        chunk_headings: list[str] = []
         ordinal_counters: dict[str, int] = {}
 
         for index, token in enumerate(blocks):
@@ -103,13 +116,7 @@ class MarkdownChunker:
             lang = _code_language(token) if chunk_type is ChunkType.CODE else None
 
             if _is_heading(token):
-                headings = _updated_heading_stack(
-                    headings,
-                    _heading_level(token),
-                    _token_text(token),
-                )
-
-            chunk_headings = [title for _, title in headings]
+                chunk_headings = [item.title for item in next(trails)]
             for content, rel_start, rel_end in _segment_block_content(
                 raw_lines, chunk_type, self._max_chars
             ):
@@ -193,13 +200,12 @@ def _heading_level(token: Any) -> int:
     return int(getattr(token, "level", 1))
 
 
-def _updated_heading_stack(
-    headings: list[tuple[int, str]], level: int, title: str
-) -> list[tuple[int, str]]:
-    """Retain only actual ancestors; the frontmatter title is not a virtual H1."""
-    retained = [heading for heading in headings if heading[0] < level]
-    retained.append((level, title.strip()))
-    return retained
+@dataclass(frozen=True)
+class _HeadingToken:
+    """A heading block reduced to what a trail needs: its level and its text."""
+
+    level: int
+    title: str
 
 
 def _chunk_type_for_token(token: Any) -> ChunkType:

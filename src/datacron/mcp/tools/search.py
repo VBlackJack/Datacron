@@ -20,7 +20,7 @@ import time
 from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
-from datacron.core.models import SearchResult
+from datacron.core.models import Chunk, SearchResult
 from datacron.core.paths import PathConfinementError
 from datacron.core.temporal import rerank_temporal
 from datacron.core.vault import DuplicateNoteIdentityError
@@ -595,7 +595,7 @@ async def _find_backlink_sources(
     alias_cache: dict[str, str | None] = {target_alias_lower: target_note_id}
     admission_cache: dict[str, bool] = {}
     seen_chunk_ids: set[str] = set()
-    sources: list[dict[str, Any]] = []
+    matched: list[Chunk] = []
 
     for chunk in await app.store.list_chunks_with_wikilinks():
         admitted = admission_cache.get(chunk.note_rel_path)
@@ -611,8 +611,17 @@ async def _find_backlink_sources(
         if not await _chunk_links_to(app, chunk.wikilinks_out, target_note_id, alias_cache):
             continue
         seen_chunk_ids.add(chunk.chunk_id)
-        protected = await protect_results(app, [SearchResult(chunk=chunk, score=0, snippet="")])
-        safe_chunk = protected[0].chunk
+        matched.append(chunk)
+        if len(matched) >= limit:
+            break
+    # Protect every source in one pass: the parent note is read once per source note,
+    # not once per matching chunk.
+    protected = await protect_results(
+        app, [SearchResult(chunk=chunk, score=0, snippet="") for chunk in matched]
+    )
+    sources: list[dict[str, Any]] = []
+    for result in protected:
+        safe_chunk = result.chunk
         sources.append(
             {
                 "source_chunk_id": _redact_retrieval_text(app, safe_chunk.chunk_id),
@@ -624,8 +633,6 @@ async def _find_backlink_sources(
                 ),
             }
         )
-        if len(sources) >= limit:
-            return sources
     return sources
 
 

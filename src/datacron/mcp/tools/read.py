@@ -24,6 +24,7 @@ from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.frontmatter import matches_frontmatter_filter
 from datacron.core.hashing import FRESHNESS_CONTRACT_ID
 from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
+from datacron.core.markdown_sections import heading_ancestry
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.core.paths import PathConfinementError, read_ulid_mappings, sidecar_dir
 from datacron.core.scope import NoteAdmissionError
@@ -323,14 +324,11 @@ def _build_section_payload(
 ) -> dict[str, Any]:
     lines = note.content.splitlines(keepends=True)
     headings = markdown_headings(lines)
-    ancestors: list[MarkdownHeading] = []
-    matches: list[tuple[int, list[MarkdownHeading]]] = []
-    for index, heading in enumerate(headings):
-        while ancestors and ancestors[-1].level >= heading.level:
-            ancestors.pop()
-        ancestors.append(heading)
-        if [ancestor.text for ancestor in ancestors] == heading_path:
-            matches.append((index, ancestors.copy()))
+    matches: list[tuple[int, list[MarkdownHeading]]] = [
+        (index, ancestors)
+        for index, ancestors in enumerate(heading_ancestry(headings))
+        if [ancestor.text for ancestor in ancestors] == heading_path
+    ]
     if not matches:
         raise ValueError("heading_path does not match any heading ancestry")
     if len(matches) > 1 and heading_occurrence is None:
@@ -651,9 +649,10 @@ def _build_chunk_payload(
 
 
 def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
-    chunks = protect_chunk_metadata(app, note, app.chunker.chunk(note))
-    headings: list[dict[str, Any]] = []
+    # One heading parse serves the map, the chunk protection and the title protection.
     selected_headings = markdown_headings(note.content.splitlines(keepends=True))
+    chunks = protect_chunk_metadata(app, note, app.chunker.chunk(note), headings=selected_headings)
+    headings: list[dict[str, Any]] = []
     line_offset = content_line_offset(note)
     for chunk in chunks:
         if chunk.chunk_type is not ChunkType.HEADING:
@@ -678,7 +677,9 @@ def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
     return {
         "id": note.id,
         "rel_path": _redact_retrieval_text(app, note.rel_path),
-        "title": _sanitize_retrieval_metadata(app, protect_note_title(app, note)),
+        "title": _sanitize_retrieval_metadata(
+            app, protect_note_title(app, note, headings=selected_headings)
+        ),
         "content_hash": note.content_hash,
         "note_content_hash": note.content_hash,
         "content_hash_contract": FRESHNESS_CONTRACT_ID,

@@ -16,9 +16,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Final, Literal, TypedDict
+from typing import Final, Literal, Protocol, TypedDict, TypeVar
 
 from datacron.core.markdown_headings import MarkdownHeading, heading_before, markdown_headings
 
@@ -30,6 +31,7 @@ __all__ = [
     "SectionSelectorError",
     "append_entry_to_heading",
     "find_section_span",
+    "heading_ancestry",
     "move_note_section",
     "parse_heading_line",
     "patch_note_preamble",
@@ -38,6 +40,35 @@ __all__ = [
 ]
 
 HEADING_SUGGESTION_MAX_CHARS: Final[int] = 160
+
+
+class _Leveled(Protocol):
+    """Anything with a heading level: a parsed heading or a chunker token summary."""
+
+    @property
+    def level(self) -> int: ...
+
+
+_HeadingT = TypeVar("_HeadingT", bound=_Leveled)
+
+
+def heading_ancestry(headings: Iterable[_HeadingT]) -> list[list[_HeadingT]]:
+    """Return, for each heading in document order, its ancestors followed by itself.
+
+    An ancestor is the most recent earlier heading of a strictly shallower level, so a
+    skipped level (H1 then H3) keeps the H1, and two consecutive headings of the same
+    level are siblings. Each returned list is independent of the others.
+    """
+    stack: list[_HeadingT] = []
+    ancestries: list[list[_HeadingT]] = []
+    for heading in headings:
+        while stack and stack[-1].level >= heading.level:
+            stack.pop()
+        stack.append(heading)
+        ancestries.append(list(stack))
+    return ancestries
+
+
 _HEADING_SUGGESTION_LIMIT: Final[int] = 5
 _HEADING_SUGGESTION_MIN_SIMILARITY: Final[float] = 0.35
 _HEADING_SUGGESTION_PREFIX_SIMILARITY: Final[float] = 0.8
