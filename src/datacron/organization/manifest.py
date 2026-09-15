@@ -45,7 +45,13 @@ from datacron.core.frontmatter import (
     parse,
     resolve_note_title,
 )
-from datacron.core.paths import PathConfinementError, assert_within_paths
+from datacron.core.paths import (
+    PathConfinementError,
+    assert_within_paths,
+    read_ulid_sidecar_strict,
+    reject_duplicate_json_keys,
+    reject_nonfinite_json_constant,
+)
 from datacron.core.scope import (
     LinkedPathError,
     NoteAdmissionError,
@@ -651,21 +657,6 @@ def _decode_utf8(content: bytes, *, label: str) -> str:
         ) from exc
 
 
-def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    """Build one JSON object while refusing ambiguous duplicate keys."""
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate JSON object key: {key!r}")
-        result[key] = value
-    return result
-
-
-def _reject_nonfinite_json_constant(value: str) -> object:
-    """Reject Python's non-standard NaN and infinity JSON extensions."""
-    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
-
-
 def _assert_unique_yaml_mapping_keys(text: str) -> None:
     """Reject aliases, non-string keys, and duplicate keys in safe YAML."""
     root = yaml.compose(text, Loader=yaml.SafeLoader)
@@ -910,8 +901,8 @@ def _parse_manifest(manifest_bytes: bytes) -> OrganizationManifest:
     try:
         json.loads(
             manifest_text,
-            object_pairs_hook=_reject_duplicate_json_keys,
-            parse_constant=_reject_nonfinite_json_constant,
+            object_pairs_hook=reject_duplicate_json_keys,
+            parse_constant=reject_nonfinite_json_constant,
         )
         return OrganizationManifest.model_validate_json(manifest_text)
     except (json.JSONDecodeError, ValidationError, ValueError) as exc:
@@ -1282,32 +1273,11 @@ def _yaml_values_equal_exact(before: object, after: object) -> bool:
 
 
 def _read_vault_id_mapping(path: Path, *, vault_root: Path) -> tuple[bytes, dict[str, str]]:
+    """Read one sidecar through the shared strict reader; a missing file is an empty mapping."""
     if not path.exists() and not path.is_symlink():
         return b"", {}
     safe_path = assert_path_chain_without_links(path, anchor=vault_root)
-    if not safe_path.is_file():
-        raise ValueError(f"ULID sidecar is not a regular file: {path.name}")
-    raw_bytes = _read_bounded_bytes(
-        safe_path,
-        limit=MAX_PAYLOAD_BYTES,
-        label=f"ULID sidecar {path.name}",
-    )
-    if not raw_bytes:
-        raise ValueError(f"ULID sidecar must not be empty: {path.name}")
-    parsed = json.loads(
-        _decode_utf8(raw_bytes, label=f"ULID sidecar {path.name}"),
-        object_pairs_hook=_reject_duplicate_json_keys,
-        parse_constant=_reject_nonfinite_json_constant,
-    )
-    if not isinstance(parsed, dict) or any(
-        not isinstance(key, str) or not isinstance(value, str) for key, value in parsed.items()
-    ):
-        raise ValueError(f"ULID sidecar must contain only string pairs: {path.name}")
-    return raw_bytes, {
-        key: value
-        for key, value in parsed.items()
-        if isinstance(key, str) and isinstance(value, str)
-    }
+    return read_ulid_sidecar_strict(safe_path, max_bytes=MAX_PAYLOAD_BYTES)
 
 
 def _load_vault_id_state(

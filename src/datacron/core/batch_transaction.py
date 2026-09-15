@@ -779,11 +779,13 @@ class OrganizationBatchTransaction:
     ) -> str:
         sidecar_rel_path = self._relative_path(bundle.identity_sidecar_path)
         if sidecar_rel_path != _IDENTITY_SIDECAR_REL_PATH:
-            raise BatchConflictError("identity sidecar target must be .datacron/ulids.json")
+            raise BatchConflictError(
+                f"identity sidecar target must be {_IDENTITY_SIDECAR_REL_PATH}"
+            )
         migrated_rel_path = self._relative_path(bundle.migrated_identity_sidecar_path)
         if migrated_rel_path != _MIGRATED_IDENTITY_SIDECAR_REL_PATH:
             raise BatchConflictError(
-                "migrated identity sidecar target must be .datacron/ulids.json.migrated"
+                f"migrated identity sidecar target must be {_MIGRATED_IDENTITY_SIDECAR_REL_PATH}"
             )
         return sidecar_rel_path
 
