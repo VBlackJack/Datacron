@@ -96,7 +96,7 @@ def links_and_tasks(body: str) -> tuple[list[tuple[str, bool]], list[str]]:
             links.append((str(token.src if name == "Image" else token.target), False))
         elif name == "RawText":
             links.extend(
-                (_ANCHOR_SEPARATOR.join(part for part in (target, header) if part), True)
+                (f"{target}{_ANCHOR_SEPARATOR}{header}" if header else target, True)
                 for target, header in extract_wikilink_anchors(token.content, ChunkType.NARRATIVE)
             )
         elif name == "ListItem":

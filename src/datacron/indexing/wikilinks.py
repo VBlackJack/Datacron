@@ -32,6 +32,12 @@ _WIKILINK_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"\]\]",
     re.MULTILINE,
 )
+# A same-note anchor, ``[[#Heading]]``, has no target: the index ignores it (it never
+# resolves to another note) while the offline library must verify its heading.
+_ANCHOR_ONLY_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"(?<!\\)\[\[#(?P<header>[^\]|#^]+?)(?:\|(?P<display>[^\]]+?))?\]\]",
+    re.MULTILINE,
+)
 _WHITESPACE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\s+")
 _FENCE_OPEN_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})")
 _INLINE_CODE_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?P<ticks>`+)[^\n]*?(?P=ticks)")
@@ -67,10 +73,26 @@ def extract_wikilink_anchors(content: str, chunk_type: ChunkType) -> list[tuple[
     needs both parts as the same parser found them; ``extract_wikilink_targets``
     remains the target-only view of the same matches.
     """
-    return [
-        (_normalize_part(match.group("target")), _normalize_optional_part(match.group("header")))
-        for match in _iter_wikilink_matches(content, chunk_type)
-    ]
+    if chunk_type is ChunkType.CODE:
+        return []
+    excluded = _excluded_code_ranges(content)
+    references: list[tuple[int, str, str | None]] = []
+    for pattern in (_WIKILINK_PATTERN, _ANCHOR_ONLY_PATTERN):
+        for match in pattern.finditer(content):
+            if _inside(match.start(), excluded):
+                continue
+            if _looks_like_bash_condition(content, match.start(), match.end()):
+                continue
+            target = match.group("target") if "target" in match.groupdict() else ""
+            references.append(
+                (
+                    match.start(),
+                    _normalize_part(target),
+                    _normalize_optional_part(match.group("header")),
+                )
+            )
+    references.sort(key=lambda reference: reference[0])
+    return [(target, header) for _, target, header in references]
 
 
 def extract_wikilink_targets(content: str, chunk_type: ChunkType) -> list[str]:

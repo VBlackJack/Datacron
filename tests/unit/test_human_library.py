@@ -609,6 +609,25 @@ def test_cli_vault_falls_back_to_the_environment_and_refuses_without_it(
     assert "No vault root provided" in without.output
 
 
+async def test_same_note_anchors_are_audited(
+    library: tuple[Path, LibraryOptions, Settings],
+) -> None:
+    vault, options, _ = library
+    _note(vault, "anchors.md", "# Anchors\n\n## Intro\n\nSee [[#Intro]] and [[#Nope]].\n")
+
+    report = audit_library(await read_library(vault, options), options)
+
+    unverified = [f for f in report.findings if f.code == "ANCHOR_UNVERIFIED"]
+    assert [(f.path, f.detail) for f in unverified] == [
+        ("notes/anchors.md", "notes/anchors.md#Nope")
+    ]
+    assert links_and_tasks("[[#Intro]] [[Note#Intro]] [[#Nope|label]]")[0] == [
+        ("#Intro", True),
+        ("Note#Intro", True),
+        ("#Nope", True),
+    ]
+
+
 async def test_editorial_archive_keeps_the_heading_title_of_an_untitled_note(
     library: tuple[Path, LibraryOptions, Settings], tmp_path: Path
 ) -> None:
