@@ -85,3 +85,17 @@ def test_launcher_reports_truststore_injection_failure_without_crashing(
         capsys.readouterr().err
         == "[datacron] truststore injection failed: native store unavailable\n"
     )
+
+
+def test_pypi_build_job_refuses_a_tag_that_does_not_name_the_package_version() -> None:
+    """PyPI is immutable, so the guard runs in build-dist before any distribution exists."""
+    workflow = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+    build_job = workflow.split("  build-dist:\n", maxsplit=1)[1].split(
+        "\n  publish-pypi:", maxsplit=1
+    )[0]
+    guard = build_job.index("scripts/release_preflight.py tagged --tag")
+    build = build_job.index("run: uv build")
+
+    assert guard < build
+    assert "if: github.ref_type == 'tag'" in build_job[:guard]
+    assert "RELEASE_TAG: ${{ github.ref_name }}" in build_job[:guard]

@@ -15,12 +15,14 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -85,6 +87,7 @@ def _preflight(
     *,
     env: dict[str, str] | None = None,
     base_sha: str | None = None,
+    tag: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = [
         sys.executable,
@@ -95,6 +98,8 @@ def _preflight(
     ]
     if phase in {"clean", "committed"}:
         command.extend(("--version", _VERSION, "--base-sha", base_sha or repo.base_sha))
+    if tag is not None:
+        command.extend(("--tag", tag))
     return _run(command, cwd=repo.root, env=env, check=False)
 
 
@@ -470,3 +475,100 @@ def test_missing_project_release_identity_fails_closed(release_repo: _ReleaseRep
     result = _preflight(release_repo, "clean", base_sha=current)
     assert result.returncode == 1
     assert "project release identity configuration" in result.stderr
+
+
+def _preflight_module() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("release_preflight", _SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(_SCRIPT.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(_SCRIPT.parent))
+    return module
+
+
+@pytest.mark.parametrize(
+    ("tag", "version", "expected"),
+    [
+        ("v2026.0829.00", "2026.0829.00", True),
+        ("v2026.0829.01", "2026.0829.00", False),
+        ("2026.0829.00", "2026.0829.00", False),
+        ("v2026.829.0", "2026.0829.00", False),
+        ("V2026.0829.00", "2026.0829.00", False),
+        (" v2026.0829.00", "2026.0829.00", False),
+    ],
+)
+def test_tag_matches_version_requires_the_exact_prefixed_calver(
+    tag: str, version: str, expected: bool
+) -> None:
+    assert _preflight_module().tag_matches_version(tag, version) is expected
+
+
+@pytest.mark.parametrize("version", ["", "1.2.3", "2026.1332.00", "v2026.0829.00"])
+def test_tag_matches_version_refuses_a_malformed_package_version(version: str) -> None:
+    with pytest.raises(ValueError, match="CalVer"):
+        _preflight_module().tag_matches_version(f"v{version}", version)
+
+
+def test_tagged_phase_accepts_the_tag_of_the_committed_version(
+    release_repo: _ReleaseRepo,
+) -> None:
+    _commit_and_tag(release_repo)
+
+    result = _preflight(release_repo, "tagged", tag=f"v{_VERSION}")
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("tag", "fragment"),
+    [
+        ("v2026.0829.01", "does not match datacron.__version__"),
+        (_VERSION, "does not match datacron.__version__"),
+        ("v2026.829.0", "does not match datacron.__version__"),
+        (None, "release tag is required"),
+    ],
+)
+def test_tagged_phase_rejects_a_tag_that_is_not_v_plus_the_package_version(
+    release_repo: _ReleaseRepo, tag: str | None, fragment: str
+) -> None:
+    _commit_and_tag(release_repo)
+
+    result = _preflight(release_repo, "tagged", tag=tag)
+
+    assert result.returncode == 1
+    assert fragment in result.stderr
+
+
+def test_tagged_phase_fails_closed_on_an_unreadable_package_version(
+    release_repo: _ReleaseRepo,
+) -> None:
+    _commit_and_tag(release_repo)
+    (release_repo.root / "src" / "datacron" / "__init__.py").write_text(
+        "VERSION = None\n", encoding="utf-8", newline="\n"
+    )
+
+    result = _preflight(release_repo, "tagged", tag=f"v{_VERSION}")
+
+    assert result.returncode == 1
+    assert "package version could not be read" in result.stderr
+
+
+def test_committed_phase_rejects_a_tag_that_does_not_name_the_committed_version(
+    release_repo: _ReleaseRepo,
+) -> None:
+    _stage_version_changes(release_repo)
+    (release_repo.root / "src" / "datacron" / "__init__.py").write_text(
+        '__version__ = "2026.0829.01"\n', encoding="utf-8", newline="\n"
+    )
+    _git(release_repo.root, "add", *_VERSION_PATHS)
+    _git(release_repo.root, "commit", "-m", f"chore(version): {_VERSION}")
+    _git(release_repo.root, "tag", "-a", f"v{_VERSION}", "-m", f"Datacron {_VERSION}")
+
+    result = _preflight(release_repo, "committed")
+
+    assert result.returncode == 1
+    assert "does not match datacron.__version__" in result.stderr

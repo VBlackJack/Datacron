@@ -27,8 +27,14 @@ from re import compile as re_compile
 from shutil import which
 from typing import Final
 
+from bump_version import read_current_version
+
+from datacron.core.versioning import normalize_calver
+
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[1]
-_EXPECTED_PATHS: Final[frozenset[str]] = frozenset({"server.json", "src/datacron/__init__.py"})
+_VERSION_INIT_PATH: Final[str] = "src/datacron/__init__.py"
+_EXPECTED_PATHS: Final[frozenset[str]] = frozenset({"server.json", _VERSION_INIT_PATH})
+_TAG_PREFIX: Final[str] = "v"
 _VERSION_RE: Final[Pattern[str]] = re_compile(
     r"(?P<year>\d{4})\.(?P<month>\d{2})(?P<day>\d{2})\.(?P<counter>\d{2})"
 )
@@ -80,6 +86,23 @@ def _validated_version(value: str | None) -> str:
     except ValueError as exc:
         raise ReleasePreflightError("The release version is not a valid Datacron CalVer.") from exc
     return value
+
+
+def _validated_tag(value: str | None) -> str:
+    if value is None or not value.strip():
+        raise ReleasePreflightError("The release tag is required for this phase.")
+    return value.strip()
+
+
+def tag_matches_version(tag: str, version: str) -> bool:
+    """True when ``tag`` is the ``v`` prefix followed by exactly the CalVer ``version``.
+
+    The version is validated by the same normalizer as ``check_invariants.py``, so a
+    malformed source version raises ``ValueError`` instead of comparing equal to a
+    malformed tag.
+    """
+    normalize_calver(version)
+    return tag == f"{_TAG_PREFIX}{version}"
 
 
 def _validated_base_sha(value: str | None) -> str:
@@ -206,8 +229,25 @@ def _check_staged(repo_root: Path) -> None:
     _require_status(repo_root, expected, "staged")
 
 
+def _check_tagged(repo_root: Path, tag: str) -> None:
+    """Refuse a release tag that does not name the version committed in the package."""
+    try:
+        version = read_current_version(repo_root / _VERSION_INIT_PATH)
+    except (OSError, ValueError) as exc:
+        raise ReleasePreflightError("The package version could not be read.") from exc
+    try:
+        matches = tag_matches_version(tag, version)
+    except ValueError as exc:
+        raise ReleasePreflightError("The package version is not a valid Datacron CalVer.") from exc
+    if not matches:
+        raise ReleasePreflightError(
+            f"The release tag {tag!r} does not match datacron.__version__ {version!r}."
+        )
+
+
 def _check_committed(repo_root: Path, version: str, base_sha: str) -> None:
     _require_status(repo_root, frozenset(), "committed")
+    _check_tagged(repo_root, f"{_TAG_PREFIX}{version}")
     head_sha = _git_output(repo_root, ("rev-parse", "--verify", "HEAD")).casefold()
     parent_sha = _git_output(repo_root, ("rev-parse", "--verify", "HEAD^")).casefold()
     if parent_sha != base_sha:
@@ -258,6 +298,7 @@ def run_phase(
     repo_root: Path,
     version: str | None,
     base_sha: str | None,
+    tag: str | None = None,
 ) -> None:
     """Validate one release phase without changing the repository."""
     if phase == "clean":
@@ -270,6 +311,8 @@ def run_phase(
         _check_bumped(repo_root)
     elif phase == "staged":
         _check_staged(repo_root)
+    elif phase == "tagged":
+        _check_tagged(repo_root, _validated_tag(tag))
     elif phase == "committed":
         _check_committed(
             repo_root,
@@ -283,8 +326,9 @@ def run_phase(
 def main(argv: list[str] | None = None) -> int:
     """Run one fail-closed release preflight phase."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("clean", "bumped", "staged", "committed"))
+    parser.add_argument("phase", choices=("clean", "bumped", "staged", "tagged", "committed"))
     parser.add_argument("--version")
+    parser.add_argument("--tag")
     parser.add_argument("--base-sha")
     parser.add_argument("--repo-root", type=Path, default=_REPO_ROOT)
     args = parser.parse_args(argv)
@@ -294,6 +338,7 @@ def main(argv: list[str] | None = None) -> int:
             repo_root=args.repo_root.resolve(),
             version=args.version,
             base_sha=args.base_sha,
+            tag=args.tag,
         )
     except ReleasePreflightError as exc:
         sys.stderr.write(f"Release preflight failed: {exc}\n")
