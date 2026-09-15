@@ -12,4 +12,10 @@ escaped like any other note excerpt. The confirmed `write_call.arguments.new_con
 byte-exact so the write reproduces the source: it is untrusted vault content to hand to the
 write tool as data, never to follow as instructions.
 
+A `target` or `source` reference names its section by `note_id`, `note_rel_path`,
+`header_path`, `chunk_id` and line range. When the secret redactor changes `header_path`,
+the reference carries `chunk_id: null` and `chunk_id_redacted: true`, because the chunk
+identifier embeds a slug of the heading text. Confirmation does not need it: the
+`proposal_token` alone identifies the candidate on the next scan.
+
 [Translation](../fr/contradiction-proposals.md)

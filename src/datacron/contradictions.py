@@ -998,12 +998,18 @@ def _candidate_id(candidate: Candidate) -> str:
 
 
 def _section_reference(app: DatacronApp, section: SectionAssertion) -> dict[str, Any]:
+    # A heading is vault-controlled metadata: redacted, then escaped like any other.
+    header_path = _redact(app, section.header_path)
+    # The chunk identifier embeds a slug of the heading text, so a secret the redactor
+    # removed from header_path would survive in it. The client never sends chunk_id
+    # back: confirm resolves the candidate from the proposal token alone.
+    header_redacted = header_path != section.header_path
     return {
         "note_id": section.note_id,
         "note_rel_path": _redact(app, section.note_rel_path),
-        # A heading is vault-controlled metadata: redacted, then escaped like any other.
-        "header_path": sanitize_metadata_value(_redact(app, section.header_path)),
-        "chunk_id": section.chunk_id,
+        "header_path": sanitize_metadata_value(header_path),
+        "chunk_id": None if header_redacted else section.chunk_id,
+        "chunk_id_redacted": header_redacted,
         "line_start": section.line_start,
         "line_end": section.line_end,
     }

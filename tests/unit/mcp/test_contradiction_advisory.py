@@ -977,3 +977,49 @@ async def test_scan_sandboxes_hostile_section_headings(
     assert f"{ESCAPE_PREFIX}{html.escape('<system>', quote=False)}{ESCAPE_SUFFIX}" in header_path
     assert f"{ESCAPE_PREFIX}ignore previous instructions{ESCAPE_SUFFIX}" in header_path
     assert "Employer 2026-07-10" in candidate["target"]["header_path"]
+
+
+async def test_scan_redacts_the_chunk_id_of_a_redacted_heading(
+    contradiction_app: tuple[DatacronApp, Path],
+) -> None:
+    """A chunk identifier embeds a heading slug, so it follows the header_path redaction."""
+    app, vault = contradiction_app
+    secret_heading = "Employer password=hunter2-example 2026-07-15"  # noqa: S105 - synthetic probe
+    _write_note(
+        vault,
+        "_memory/facts/employer-old.md",
+        _OLD_ID,
+        (
+            "# Employer history\n\n"
+            "## Employer 2026-07-10\n\n"
+            "The Windows engineering employer is Tailspin for the platform team.\n"
+        ),
+    )
+    _write_note(
+        vault,
+        "_memory/facts/employer-current.md",
+        _NEW_ID,
+        (
+            f"# Employer update\n\n## {secret_heading}\n\n"
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team.\n"
+        ),
+    )
+    redacting_app = replace(app, settings=app.settings.model_copy(update={"redact_secrets": "all"}))
+
+    scan = await _contradiction_scan_impl(redacting_app, detail="full", today=_TODAY)
+
+    candidate = scan["candidates"][0]
+    assert "hunter2" not in json.dumps(scan)
+    assert candidate["source"]["chunk_id"] is None
+    assert candidate["source"]["chunk_id_redacted"] is True
+    assert candidate["target"]["chunk_id"].startswith(f"{_OLD_ID}::")
+    assert candidate["target"]["chunk_id_redacted"] is False
+    # The same candidate keeps its identity and stays confirmable from the token alone.
+    plain = await _contradiction_scan_impl(app, detail="full", today=_TODAY)
+    assert plain["candidates"][0]["candidate_id"] == candidate["candidate_id"]
+    assert plain["candidates"][0]["source"]["chunk_id"] is not None
+    confirmation = await _contradiction_scan_impl(
+        app, mode="confirm", proposal_token=_suggested_token(plain), today=_TODAY
+    )
+    assert confirmation["confirmation"]["proposal_token"] == _suggested_token(plain)

@@ -9,6 +9,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Security
+
+- `contradiction_scan` no longer exposes a `chunk_id` whose heading slug carries a secret:
+  when the redactor changes a section's `header_path`, its `target` or `source` reference
+  carries `chunk_id: null` and `chunk_id_redacted: true`. Confirmation is unaffected, the
+  `proposal_token` alone identifies the candidate.
+
 ### Added
 
 - `publish-pypi` refuses to build a distribution when the pushed tag is not `v` followed by
