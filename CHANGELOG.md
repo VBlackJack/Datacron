@@ -9,6 +9,15 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Fixed
+
+- The frontmatter pair table is indexed by `note_id`, so every index write removes a
+  note's pairs through an index lookup instead of a full table scan. A full reindex of a
+  large vault was quadratic in the number of stored pairs.
+- Operation journal appends are constant-time again: a mutating tool appends its chained
+  record in place, fsyncs it and reads only the journal tail. Full hash chain verification
+  stays with the readers (`audit_query`, `get_note_history`, `revert_note` and recovery).
+
 ## [2026.0913.02] - 2026-09-13
 
 ### Added

@@ -2589,13 +2589,12 @@ def test_operation_journal_interrupted_append_preserves_last_complete_log(
     operations_path = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
     committed_bytes = operations_path.read_bytes()
 
-    def fail_before_atomic_replace(_source: Path, _destination: Path) -> None:
-        raise OSError("simulated interruption before replace")
+    def fail_before_durable_flush(_fd: int) -> None:
+        raise OSError("simulated interruption before the appended record is flushed")
 
-    monkeypatch.setattr(
-        "datacron.core.durability._replace_with_windows_retry",
-        fail_before_atomic_replace,
-    )
+    # The record is appended in place, so the interruption lands after the bytes
+    # were written and before they were made durable.
+    monkeypatch.setattr("datacron.core.operation_log.os.fsync", fail_before_durable_flush)
 
     with pytest.raises(OperationLogError, match="failed to append"):
         journal.append_record(

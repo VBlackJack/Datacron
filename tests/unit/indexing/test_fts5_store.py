@@ -29,7 +29,11 @@ import pytest
 
 from datacron.core.models import Chunk, ChunkType, Note, SearchResult
 from datacron.core.temporal import TemporalMeta
-from datacron.indexing.fts5_store import SQLiteFTS5Store
+from datacron.indexing.fts5_store import (
+    _DELETE_NOTE_FRONTMATTER_SQL,
+    _DELETE_SUPERSEDED_FRONTMATTER_SQL,
+    SQLiteFTS5Store,
+)
 
 NoteFactory = Callable[..., Note]
 ChunkFactory = Callable[..., Chunk]
@@ -1757,3 +1761,28 @@ async def test_count_matches_by_note_ignores_the_result_limit(
         assert await store.count_matches_by_note("", [many.id]) == {}
     finally:
         await store.close()
+
+
+async def test_frontmatter_deletes_by_note_id_never_scan_the_pair_table(tmp_path: Path) -> None:
+    """Both ``note_id`` deletes must be answered by an index, not a table scan.
+
+    Every ``upsert_note`` and ``delete_note`` runs them, so a scan makes each
+    index write linear in the number of stored pairs and a full reindex quadratic.
+    """
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+    await store.close()
+
+    statements = {
+        "delete_note_frontmatter": (_DELETE_NOTE_FRONTMATTER_SQL, (_NOTE_ID,)),
+        "delete_superseded_frontmatter": (
+            _DELETE_SUPERSEDED_FRONTMATTER_SQL,
+            ("welcome.md", _NOTE_ID),
+        ),
+    }
+    async with aiosqlite.connect(_db_path(tmp_path)) as connection:
+        for name, (sql, parameters) in statements.items():
+            async with connection.execute(f"EXPLAIN QUERY PLAN {sql}", parameters) as cursor:
+                plan = [str(row[3]) for row in await cursor.fetchall()]
+            assert plan, name
+            assert not any("SCAN note_frontmatter" in step for step in plan), (name, plan)

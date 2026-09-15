@@ -32,6 +32,7 @@ from datacron.core.operation_log import (
     OperationJournal,
     OperationLogError,
     OperationRecord,
+    _record_line,
 )
 from datacron.core.vault_writer import FilesystemVaultWriter
 
@@ -363,3 +364,49 @@ def test_legacy_log_is_migrated_once_then_accepts_appends(
         2,
         2,
     )
+
+
+def test_append_reads_only_the_journal_tail(tmp_path: Path) -> None:
+    """An append must not reread the whole journal; its cost must not grow with history.
+
+    Full chain verification belongs to the readers (``read_records`` and the recovery
+    path), not to the append hot path of every mutating tool.
+    """
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    now = datetime(2026, 7, 10, tzinfo=UTC)
+    history_length = 50
+    for index in range(history_length):
+        assert journal.append_record(
+            _record(
+                f"operation-{index}",
+                now + timedelta(seconds=index),
+                sha256_bytes(f"before-{index}".encode()),
+                sha256_bytes(f"after-{index}".encode()),
+            )
+        )
+    operations_path = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+    original_read_bytes = Path.read_bytes
+
+    def _guarded_read_bytes(path: Path) -> bytes:
+        if path.name == operations_path.name:
+            raise AssertionError(f"full journal read on the append path: {path}")
+        return original_read_bytes(path)
+
+    tail = _record(
+        "operation-tail",
+        now + timedelta(seconds=history_length),
+        sha256_bytes(b"before-tail"),
+        sha256_bytes(b"after-tail"),
+    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "read_bytes", _guarded_read_bytes)
+        appended = journal.append_record(tail)
+        # Replaying the tail operation is idempotent and stays on the tail-only path too.
+        replayed = journal.append_record(tail)
+
+    assert appended is True
+    assert replayed is False
+    records = journal.read_records()
+    assert len(records) == history_length + 1
+    assert records[-1].operation_id == "operation-tail"
+    assert records[-1].prev_hash == sha256_bytes(_record_line(records[-2]))
