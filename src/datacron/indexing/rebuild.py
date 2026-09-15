@@ -112,7 +112,9 @@ async def rebuild_index_atomic(
     _assert_index_replaceable(db_path)
     previous_generation = await _read_generation(db_path)
     temp_path = db_path.with_name(f".{db_path.name}.{uuid4().hex}.rebuild")
-    temp_store = SQLiteFTS5Store(term_map=vault_config.query_expansion)
+    temp_store = SQLiteFTS5Store(
+        term_map=vault_config.query_expansion, archive_tags=vault_config.archive_tags
+    )
     reader = build_configured_reader(root, read_only=True)
     chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
     published = False

@@ -57,7 +57,12 @@ from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
 from datacron.core.paths import read_ulid_mappings, sidecar_vault_config
-from datacron.core.vault import SKIPPED_FOLDERS, NoteAdmissionPolicy
+from datacron.core.vault import (
+    MIGRATED_ULID_SIDECAR_FILENAME,
+    SKIPPED_FOLDERS,
+    ULID_SIDECAR_FILENAME,
+    NoteAdmissionPolicy,
+)
 from datacron.indexing.chunker import MarkdownChunker
 
 __all__ = [
@@ -351,7 +356,7 @@ def _iter_markdown(root: Path) -> list[Path]:
 
 def _load_sidecar_ids(root: Path) -> dict[str, str]:
     merged: dict[str, str] = {}
-    for filename in ("ulids.json.migrated", "ulids.json"):
+    for filename in (MIGRATED_ULID_SIDECAR_FILENAME, ULID_SIDECAR_FILENAME):
         path = root / ".datacron" / filename
         if not path.is_file():
             continue

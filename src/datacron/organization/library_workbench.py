@@ -15,15 +15,17 @@ from typing import Any
 from ulid import ULID
 
 from datacron.core.config import Settings
-from datacron.core.frontmatter import parse, resolve_note_title, serialize
+from datacron.core.frontmatter import (
+    parse,
+    parse_preserving_bom_and_body_eols,
+    resolve_note_title,
+    serialize,
+    serialize_preserving_bom,
+)
 from datacron.core.markdown_headings import markdown_headings
 from datacron.core.models import Note
 from datacron.core.scope import SingleTenantVaultScope, assert_path_chain_without_links
-from datacron.core.vault import _H1_PATTERN
-from datacron.mcp.tools.write_validation import (
-    _parse_preserving_bom_and_body_eols,
-    _serialize_preserving_bom,
-)
+from datacron.core.vault import H1_PATTERN
 from datacron.organization.library import (
     audit_library,
     in_scope,
@@ -31,13 +33,19 @@ from datacron.organization.library import (
     markdown_link,
     navigation,
     read_library,
+    vault_archive_tags,
 )
 from datacron.organization.library_models import (
+    AUDIT_NAME,
+    CHANGES_NAME,
     LIBRARY_SCHEMA,
     MANIFEST_NAME,
+    PAYLOADS_DIRECTORY,
     PREVIEW_DIRECTORY,
+    RECIPE_NAME,
     REPORT_NAME,
     SNAPSHOT_NAME,
+    SUBJECT_TEMPLATE_NAME,
     EditorialNote,
     EditorialRecipe,
     LibraryAudit,
@@ -61,7 +69,7 @@ def _note_from_text(path: str, raw: str, vault: Path, captured: datetime) -> Not
         rel_path=path,
         # The same rule as the vault reader: frontmatter title, first H1, then the stem.
         title=resolve_note_title(
-            meta, body, Path(path), h1_pattern=_H1_PATTERN, empty_h1_falls_back=True
+            meta, body, Path(path), h1_pattern=H1_PATTERN, empty_h1_falls_back=True
         ),
         frontmatter=meta,
         content=body,
@@ -146,7 +154,7 @@ def _editorial_changes(
         body = item.body.rstrip() + f"\n\n## {TEXT[options.language]['sources']}\n\n" + refs + "\n"
         changes[item.target] = serialize(meta, body)
     for path, destinations in archive_targets.items():
-        meta, body, bom = _parse_preserving_bom_and_body_eols(lookup[path].raw_content)
+        meta, body, bom = parse_preserving_bom_and_body_eols(lookup[path].raw_content)
         meta.update(
             archived=True,
             updated=captured,
@@ -154,7 +162,7 @@ def _editorial_changes(
                 f"[[{PurePosixPath(p).with_suffix('').as_posix()}]]" for p in destinations
             ],
         )
-        changes[path] = _serialize_preserving_bom(meta, body, has_bom=bom)
+        changes[path] = serialize_preserving_bom(meta, body, has_bom=bom)
     return changes
 
 
@@ -299,7 +307,7 @@ def _write_workbench(
     output.mkdir(parents=True, exist_ok=False)
     for raw in set(changes.values()):
         data = raw.encode("utf-8")
-        _write_new(output / "payloads" / (sha256_bytes(data) + ".md"), data)
+        _write_new(output / PAYLOADS_DIRECTORY / (sha256_bytes(data) + ".md"), data)
     _write_new(output / MANIFEST_NAME, _json_bytes(manifest))
     scope = SingleTenantVaultScope(vault, settings)
     load_and_validate_organization_bundle(output / MANIFEST_NAME, vault_root=vault, scope=scope)
@@ -318,8 +326,8 @@ def _write_workbench(
             tofile=path,
         )
     )
-    _write_new(output / "changes.diff", differences.encode("utf-8"))
-    _write_new(output / "audit.json", audit.model_dump_json(indent=2).encode("utf-8"))
+    _write_new(output / CHANGES_NAME, differences.encode("utf-8"))
+    _write_new(output / AUDIT_NAME, audit.model_dump_json(indent=2).encode("utf-8"))
     text = TEXT[options.language]
     report = [
         f"# {text['report']}",
@@ -329,10 +337,10 @@ def _write_workbench(
     ]
     report.extend(f"- {f.code}: {f.path}: {f.detail}" for f in audit.findings)
     if recipe:
-        _write_new(output / "recipe.json", recipe.model_dump_json(indent=2).encode("utf-8"))
+        _write_new(output / RECIPE_NAME, recipe.model_dump_json(indent=2).encode("utf-8"))
         report.extend(f"- {item.target}: {item.rationale}" for item in recipe.notes)
     _write_new(output / REPORT_NAME, ("\n\n".join(report) + "\n").encode("utf-8"))
-    _write_new(output / "subject-template.md", text["template_body"].encode("utf-8"))
+    _write_new(output / SUBJECT_TEMPLATE_NAME, text["template_body"].encode("utf-8"))
     snapshot = {
         "schema": LIBRARY_SCHEMA,
         "options": options.model_dump(),
@@ -368,7 +376,12 @@ async def prepare_library(
     changes = _editorial_changes(notes, recipe, options, captured.isoformat())
     lookup = {n.rel_path: n for n in notes}
     projected = lookup | {p: _note_from_text(p, raw, vault, captured) for p, raw in changes.items()}
-    pages = navigation(list(projected.values()), options, captured.isoformat())
+    pages = navigation(
+        list(projected.values()),
+        options,
+        captured.isoformat(),
+        archive_tags=vault_archive_tags(vault),
+    )
     for path, body in pages.items():
         if path in changes:
             raise ValueError(f"Navigation collides with an editorial target: {path}")

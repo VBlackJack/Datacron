@@ -22,9 +22,19 @@ from typing import Any, Final
 import yaml
 from ulid import ULID
 
-from datacron.core.frontmatter import parse, serialize
+from datacron.core.frontmatter import (
+    FRONTMATTER_BOUNDARY_PATTERN,
+    parse,
+    parse_preserving_bom_and_body_eols,
+    serialize_preserving_bom,
+)
 from datacron.core.hashing import HASH_HEX_LENGTH
 from datacron.core.paths import PathConfinementError
+
+# The exact-bytes helpers live in core.frontmatter; the write tools of this package
+# keep importing them under the names they have always used.
+_parse_preserving_bom_and_body_eols = parse_preserving_bom_and_body_eols
+_serialize_preserving_bom = serialize_preserving_bom
 
 _MEMORY_ORIGINS: Final[frozenset[str]] = frozenset({"ai", "human", "merged"})
 _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
@@ -33,8 +43,10 @@ _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
 _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
 _BACKLOG_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"BL-[0-9]{4,}")
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
-_FRONTMATTER_BOUNDARY_PATTERN: Final[re.Pattern[str]] = re.compile(r"-{3,}[ \t]*(?:\r\n|[\r\n])?")
 _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
+# Markdown ATX headings run from one to six hash marks; every heading selector shares it.
+MAX_HEADING_LEVEL: Final[int] = 6
+HEADING_LEVELS: Final[range] = range(1, MAX_HEADING_LEVEL + 1)
 _REJECTED_ENTRY_SEPARATOR: Final[str] = " -- "
 _MAX_REJECTED_ENTRIES: Final[int] = 16
 _MAX_REJECTED_ENTRY_CHARS: Final[int] = 300
@@ -281,7 +293,7 @@ def _validate_patch_note_section_request(
         raise ValueError("heading must not be empty")
     if not new_content.strip():
         raise ValueError("new_content must not be empty")
-    if heading_level is not None and heading_level not in range(1, 7):
+    if heading_level is not None and heading_level not in HEADING_LEVELS:
         raise ValueError("heading_level must be between 1 and 6")
     cleaned_heading_occurrence = _validate_heading_occurrence(
         heading_occurrence,
@@ -320,27 +332,6 @@ def _validate_patch_note_preamble_request(
     return cleaned_rel_path, normalized_content, cleaned_expected_hash
 
 
-def _parse_preserving_bom_and_body_eols(raw: str) -> tuple[dict[str, Any], str, bool]:
-    """Parse frontmatter while preserving the body's existing line endings."""
-    metadata, parsed_body, has_bom = _parse_preserving_bom(raw)
-    parseable = raw[1:] if has_bom else raw
-    lines = parseable.splitlines(keepends=True)
-    opening = next((index for index, line in enumerate(lines) if line.strip()), None)
-    if opening is None or _FRONTMATTER_BOUNDARY_PATTERN.fullmatch(lines[opening]) is None:
-        return metadata, parsed_body, has_bom
-    closing = next(
-        (
-            index
-            for index, line in enumerate(lines[opening + 1 :], start=opening + 1)
-            if _FRONTMATTER_BOUNDARY_PATTERN.fullmatch(line) is not None
-        ),
-        None,
-    )
-    if closing is None:
-        return metadata, parsed_body, has_bom
-    return metadata, "".join(lines[closing + 1 :]), has_bom
-
-
 def _validate_delete_note_section_request(
     *,
     rel_path: str,
@@ -357,7 +348,7 @@ def _validate_delete_note_section_request(
         raise ValueError("rel_path must end with .md")
     if not cleaned_heading:
         raise ValueError("heading must not be empty")
-    if heading_level is not None and heading_level not in range(1, 7):
+    if heading_level is not None and heading_level not in HEADING_LEVELS:
         raise ValueError("heading_level must be between 1 and 6")
     if heading_level == 1:
         raise ValueError(
@@ -401,7 +392,7 @@ def _validate_rename_note_section_request(
         raise ValueError("new_heading must be a single line")
     if cleaned_new_heading.startswith("#"):
         raise ValueError("new_heading must contain text only, without Markdown heading markers")
-    if heading_level is not None and heading_level not in range(1, 7):
+    if heading_level is not None and heading_level not in HEADING_LEVELS:
         raise ValueError("heading_level must be between 1 and 6")
     if heading_level == 1:
         raise ValueError(_RENAME_H1_REFUSAL_MESSAGE)
@@ -446,23 +437,6 @@ def _validate_expected_hash(expected_hash: str | None) -> str | None:
     if not _CONTENT_HASH_PATTERN.fullmatch(cleaned):
         raise ValueError(f"expected_hash must be a lowercase {HASH_HEX_LENGTH}-character SHA-256")
     return cleaned
-
-
-def _parse_preserving_bom(raw: str) -> tuple[dict[str, Any], str, bool]:
-    has_bom = raw.startswith("\ufeff")
-    parseable = raw[1:] if has_bom else raw
-    metadata, body = parse(parseable)
-    return metadata, body, has_bom
-
-
-def _serialize_preserving_bom(
-    metadata: dict[str, Any],
-    body: str,
-    *,
-    has_bom: bool,
-) -> str:
-    prefix = "\ufeff" if has_bom else ""
-    return f"{prefix}{serialize(metadata, body)}"
 
 
 def is_canonical_ulid(value: str) -> bool:
@@ -526,13 +500,13 @@ def _patch_frontmatter_fields(raw: str, metadata: dict[str, Any], fields: list[s
     offset = 1 if raw.startswith("\ufeff") else 0
     lines = raw[offset:].splitlines(keepends=True)
     opening = next((i for i, line in enumerate(lines) if line.strip()), None)
-    if opening is None or _FRONTMATTER_BOUNDARY_PATTERN.fullmatch(lines[opening]) is None:
+    if opening is None or FRONTMATTER_BOUNDARY_PATTERN.fullmatch(lines[opening]) is None:
         raise ValueError("last_id requires an explicit YAML frontmatter mapping")
     closing = next(
         (
             i
             for i in range(opening + 1, len(lines))
-            if _FRONTMATTER_BOUNDARY_PATTERN.fullmatch(lines[i]) is not None
+            if FRONTMATTER_BOUNDARY_PATTERN.fullmatch(lines[i]) is not None
         ),
         None,
     )

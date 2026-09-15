@@ -132,6 +132,7 @@ pas seulement dans un rapport.
 | `subjects` | non | Le registre fermé des tags de sujet, chacun avec des `aliases` optionnels : les graphies à signaler plutôt qu'à accepter en silence. Une chaîne seule est un sujet sans alias. |
 | `subject_exempt_tags` | non | Tags de placement dont les notes peuvent porter plusieurs sujets (une fiche personne se rattache à plusieurs projets). |
 | `allowed_namespaces` | non | Les autres espaces de noms admis à côté de ceux du placement et du sujet (`org`, `meta`). Tout autre tag contenant `/` est refusé. |
+| `archive_tags` | non | Tags qui marquent une note comme archivée pour le classement et pour la bibliothèque hors ligne. Défaut : `memory/archive`, `meta/archive`. Une liste vide ou `null` ne déclare aucun tag d'archive ; cela ne restaure pas le défaut. |
 
 La politique se lit ainsi. Une note porte **exactement un tag de placement** parmi les tags
 de règle, éventuellement accompagné d'un marqueur ; **au plus un tag de sujet** pris dans le

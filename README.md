@@ -199,7 +199,7 @@ Useful environment variables:
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | token budget for search results |
 | `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | minimum interval between repair-on-read sweeps; `0` = every read |
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | budget for `get_note(format="full")` |
-| `DATACRON_SESSION_CONTEXT_SECTIONS` | INIT template sections | JSON mapping of note paths to heading paths for bounded [orientation excerpts](docs/en/note-sections.md) |
+| `DATACRON_SESSION_CONTEXT_SECTIONS` | `{}` (no section selected) | JSON mapping of note paths to heading paths for bounded [orientation excerpts](docs/en/note-sections.md) |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | target maximum chunk size |
 | `DATACRON_RIPGREP_PATH` | `rg` | ripgrep binary |
 

@@ -128,6 +128,7 @@ that gap, and it is enforced where it matters: at write time, not only in a repo
 | `subjects` | no | The closed registry of subject tags, each with optional `aliases`: spellings that must be reported instead of silently accepted. A plain string is a subject without aliases. |
 | `subject_exempt_tags` | no | Placement tags whose notes may carry several subjects (a person record relates to many projects). |
 | `allowed_namespaces` | no | Other namespaces admitted next to the placement and subject namespaces (`org`, `meta`). Anything else with a `/` is refused. |
+| `archive_tags` | no | Tags that mark a note as archived for ranking and for the offline library. Default: `memory/archive`, `meta/archive`. An empty list or `null` declares no archive tag at all; it does not restore the default. |
 
 The policy reads as follows. A note carries **exactly one placement tag** among the rule
 tags, optionally plus one marker; **at most one subject tag** from the registry, unless its

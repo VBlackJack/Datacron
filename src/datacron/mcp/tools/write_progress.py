@@ -18,12 +18,12 @@ from __future__ import annotations
 import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
-from datacron.core.hashing import hash_text
+from datacron.core.hashing import HASH_HEX_LENGTH, hash_text
 from datacron.core.memory_protocol import FOLLOW_UP_MAX_RECORDS
 from datacron.core.paths import PathConfinementError
 from datacron.core.scope import NoteAdmissionError
@@ -35,6 +35,11 @@ if TYPE_CHECKING:
     from datacron.core.operation_log import OperationRecord
     from datacron.mcp.server import DatacronApp
 
+_NOTE_REFERENCE_MAX_CHARS: Final[int] = 1024
+_REQUEST_ID_MAX_CHARS: Final[int] = 128
+_REQUEST_ID_PATTERN: Final[str] = rf"^[A-Za-z0-9][A-Za-z0-9_.-]{{0,{_REQUEST_ID_MAX_CHARS - 1}}}$"
+_CONTENT_HASH_PATTERN: Final[str] = rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$"
+
 
 class WriteReference(BaseModel):
     """A retained request key and target, optionally with its original CAS hash."""
@@ -42,14 +47,14 @@ class WriteReference(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     note: str = Field(
         min_length=1,
-        max_length=1024,
+        max_length=_NOTE_REFERENCE_MAX_CHARS,
         description=(
             "Vault-relative path or note ULID of the write target, as accepted by "
             "get_note_history and revert_note."
         ),
     )
-    request_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
-    expected_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    request_id: str = Field(pattern=_REQUEST_ID_PATTERN)
+    expected_hash: str | None = Field(default=None, pattern=_CONTENT_HASH_PATTERN)
 
 
 @dataclass(frozen=True)

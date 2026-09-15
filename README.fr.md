@@ -199,7 +199,7 @@ Variables d'environnement utiles :
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | budget token des résultats de recherche |
 | `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | intervalle minimal entre les sweeps repair-on-read ; `0` = chaque lecture |
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | budget de `get_note(format="full")` |
-| `DATACRON_SESSION_CONTEXT_SECTIONS` | sections du modèle INIT | objet JSON associant les notes aux chemins de titres des [extraits d'orientation](docs/fr/note-sections.md) |
+| `DATACRON_SESSION_CONTEXT_SECTIONS` | `{}` (aucune section) | objet JSON associant les notes aux chemins de titres des [extraits d'orientation](docs/fr/note-sections.md) |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | taille cible max des chunks |
 | `DATACRON_RIPGREP_PATH` | `rg` | binaire ripgrep |
 

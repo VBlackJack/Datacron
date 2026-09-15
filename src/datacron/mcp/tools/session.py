@@ -265,7 +265,15 @@ def _full_source(app: DatacronApp, note: Note, limit: int | None = None) -> dict
 def _orientation_source(app: DatacronApp, note: Note) -> dict[str, Any]:
     preferences = app.settings.session_context_sections.get(note.rel_path, [])
     if not preferences:
-        return _full_source(app, note)
+        # Nothing configured for this note: say so instead of leaving the mode implicit.
+        item = _full_source(app, note)
+        item["section_selection"] = {
+            "mode": "full",
+            "reason": "no_sections_configured",
+            "unavailable_sections": [],
+            "omitted_sections": [],
+        }
+        return item
     note_allowance = min(
         app.settings.session_note_chars,
         app.settings.get_note_max_tokens * TOKEN_ESTIMATE_CHARS_PER_TOKEN,
@@ -284,9 +292,10 @@ def _orientation_source(app: DatacronApp, note: Note) -> dict[str, Any]:
             )
         except ValueError as exc:
             # No unique source span exists, so do not reflect the configured selector.
-            unavailable_selection = {"preference_index": index + 1, "reason": str(exc)}
-            unavailable.append(unavailable_selection)
-            fallback_selections.append(unavailable_selection)
+            # Each list gets its own entry: a later mutation of one report must never
+            # leak into the other through a shared dict.
+            unavailable.append({"preference_index": index + 1, "reason": str(exc)})
+            fallback_selections.append({"preference_index": index + 1, "reason": str(exc)})
             continue
         fallback_selections.append({"preference_index": index + 1, "section": selected["section"]})
         next_offset = selected["next_offset"] if quota else 0

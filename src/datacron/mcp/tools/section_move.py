@@ -33,6 +33,7 @@ from datacron.mcp.tools.read import _read_note_by_rel_path
 from datacron.mcp.tools.write import _execute_write_tool, _reconcile_committed_write
 from datacron.mcp.tools.write_requests import replayable_write
 from datacron.mcp.tools.write_validation import (
+    HEADING_LEVELS,
     _parse_preserving_bom_and_body_eols,
     _validate_expected_hash,
     _validate_heading_occurrence,
@@ -62,7 +63,7 @@ def _selector(
     try:
         if not heading.strip() or "\n" in heading or "\r" in heading:
             raise ValueError("heading must contain nonempty single-line text")
-        if level is not None and (type(level) is not int or level not in range(1, 7)):
+        if level is not None and (type(level) is not int or level not in HEADING_LEVELS):
             raise ValueError("heading level must be an integer between 1 and 6")
         _validate_heading_occurrence(occurrence, heading_level=level, expected_hash=expected_hash)
     except ValueError as exc:

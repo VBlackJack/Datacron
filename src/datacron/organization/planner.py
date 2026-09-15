@@ -36,6 +36,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Final, final
 
 from datacron.core.config import (
+    DEFAULT_STATE_NOTE_NAMESPACE,
     OrganizationConfig,
     OrganizationRule,
     Settings,
@@ -70,10 +71,11 @@ _NOTE_SUFFIX: Final[str] = ".md"
 _BYTES_PER_KB: Final[int] = 1024
 PLAN_SCHEMA_VERSION: Final[str] = "organization-plan-v2"
 # The namespace whose tags mark a folder's state note. A state note is
-# recognised by this tag, never by its stem.
-STATE_NOTE_NAMESPACE: Final[str] = "kind"
+# recognised by any tag of this namespace, never by its stem; the name itself is
+# declared once, in core.config, next to the other shared taxonomy defaults.
+STATE_NOTE_NAMESPACE: Final[str] = DEFAULT_STATE_NOTE_NAMESPACE
 _STATE_NOTE_PREFIX: Final[str] = STATE_NOTE_NAMESPACE + "/"
-_STATE_NOTE_EXPECTED: Final[str] = "one note tagged kind/platform, kind/development or kind/mission"
+_STATE_NOTE_EXPECTED: Final[str] = f"one note carrying any {_STATE_NOTE_PREFIX}* tag"
 # A split history note is named ``<subject>-history-<period>`` and never has
 # to link back to the state note it was split from.
 _HISTORY_STEM_MARKER: Final[str] = "-history-"

@@ -31,14 +31,18 @@ import frontmatter
 import yaml
 
 __all__ = [
+    "FRONTMATTER_BOUNDARY_PATTERN",
     "FrontmatterError",
     "build_tiered_alias_index",
     "coerce_string_list",
     "extract_tags",
     "matches_frontmatter_filter",
     "parse",
+    "parse_preserving_bom",
+    "parse_preserving_bom_and_body_eols",
     "resolve_note_title",
     "serialize",
+    "serialize_preserving_bom",
 ]
 
 _ItemT = TypeVar("_ItemT")
@@ -84,7 +88,7 @@ def parse(raw: str) -> tuple[dict[str, Any], str]:
     parser strips surrounding whitespace, so the blank line after the closing
     delimiter and the trailing newline are both dropped, and CRLF is normalized
     to LF. Callers that must round-trip a note without rewriting bytes they did
-    not intend to touch use ``_parse_preserving_bom_and_body_eols`` instead.
+    not intend to touch use ``parse_preserving_bom_and_body_eols`` instead.
 
     A leading UTF-8 BOM is tolerated. ``str.lstrip`` does not treat U+FEFF as
     whitespace and the YAML parser does not skip it either, so without this a
@@ -199,6 +203,55 @@ def matches_frontmatter_filter(
         ):
             return False
     return True
+
+
+# A frontmatter block opens and closes on a line of three or more hyphens.
+FRONTMATTER_BOUNDARY_PATTERN: Final[re.Pattern[str]] = re.compile(r"-{3,}[ \t]*(?:\r\n|[\r\n])?")
+
+
+def parse_preserving_bom(raw: str) -> tuple[dict[str, Any], str, bool]:
+    """Parse ``raw`` and report whether it started with a byte order mark."""
+    has_bom = raw.startswith("\ufeff")
+    parseable = raw[1:] if has_bom else raw
+    metadata, body = parse(parseable)
+    return metadata, body, has_bom
+
+
+def parse_preserving_bom_and_body_eols(raw: str) -> tuple[dict[str, Any], str, bool]:
+    """Parse frontmatter while keeping the body's exact bytes and line endings.
+
+    The plain parser normalizes line endings and strips surrounding whitespace, which
+    is fine for reading and wrong for an exact rewrite. When a frontmatter block is
+    present, the body returned here is the raw text after its closing boundary.
+    """
+    metadata, parsed_body, has_bom = parse_preserving_bom(raw)
+    parseable = raw[1:] if has_bom else raw
+    lines = parseable.splitlines(keepends=True)
+    opening = next((index for index, line in enumerate(lines) if line.strip()), None)
+    if opening is None or FRONTMATTER_BOUNDARY_PATTERN.fullmatch(lines[opening]) is None:
+        return metadata, parsed_body, has_bom
+    closing = next(
+        (
+            index
+            for index, line in enumerate(lines[opening + 1 :], start=opening + 1)
+            if FRONTMATTER_BOUNDARY_PATTERN.fullmatch(line) is not None
+        ),
+        None,
+    )
+    if closing is None:
+        return metadata, parsed_body, has_bom
+    return metadata, "".join(lines[closing + 1 :]), has_bom
+
+
+def serialize_preserving_bom(
+    metadata: dict[str, Any],
+    body: str,
+    *,
+    has_bom: bool,
+) -> str:
+    """Serialize ``metadata`` and ``body``, restoring the byte order mark if there was one."""
+    prefix = "\ufeff" if has_bom else ""
+    return f"{prefix}{serialize(metadata, body)}"
 
 
 def resolve_note_title(

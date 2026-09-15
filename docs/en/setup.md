@@ -249,7 +249,7 @@ datacron protocol uninstall --client all
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | Token budget for search results. |
 | `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | Minimum interval between repair-on-read sweeps; `0` = every read. |
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | Budget for `get_note(format="full")`. |
-| `DATACRON_SESSION_CONTEXT_SECTIONS` | INIT template sections | JSON mapping of note paths to heading paths for [orientation excerpts](note-sections.md); `{}` keeps opening-page reads. |
+| `DATACRON_SESSION_CONTEXT_SECTIONS` | `{}` (no section selected) | JSON mapping of note paths to heading paths for [orientation excerpts](note-sections.md); `{}` keeps opening-page reads. |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | Target maximum chunk size. |
 | `DATACRON_RIPGREP_PATH` | `rg` | ripgrep binary. An absolute path is the reliable form: an MCP client does not pass its own PATH to the server it starts. |
 | `DATACRON_REGEX_FALLBACK_TIMEOUT_SECONDS` | `10.0` | Budget for one complete indexed fallback scan, used only when ripgrep is absent. |

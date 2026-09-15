@@ -98,8 +98,19 @@ accepte un objet JSON associant chaque chemin de note à des listes de chemins d
 Ce réglage s'applique aux notes déjà chargées par `DATACRON_SESSION_CONTEXT_PATHS` ou une
 autre sélection. Un objet vide conserve la lecture de la première page pour toutes les notes.
 
-Les valeurs par défaut ciblent les sections de localisation et d'écriture du modèle INIT
-fourni. Chaque source sélectionnée expose un tableau `excerpts` contenant des extraits
+Aucune section n'est sélectionnée par défaut : une note d'orientation sans sections
+configurées renvoie son début et indique `section_selection.mode` à `full` avec la raison
+`no_sections_configured`. Le réglage est un objet JSON dont les clés sont des chemins de
+notes relatifs au vault et les valeurs des listes de chemins de titres ; un chemin de titres
+énumère les titres rendus depuis le titre de premier niveau jusqu'à la section choisie. Pour
+une note `_memory/INIT.md` avec un titre de premier niveau `INIT` et deux sections de niveau
+deux :
+
+```json
+{"_memory/INIT.md": [["INIT", "Où vivent les choses"], ["INIT", "Comment écrire"]]}
+```
+
+Chaque source sélectionnée expose un tableau `excerpts` contenant des extraits
 encadrés séparément, le hash original de la note et les requêtes `next_read` permettant
 de poursuivre les sections incomplètes. Le budget habituel par note est partagé entre
 les extraits et le plafond global de réponse sérialisée reste appliqué. Aucun décalage

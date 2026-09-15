@@ -5,15 +5,33 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from datacron.core.config import DEFAULT_STATE_NOTE_NAMESPACE
+from datacron.core.memory_protocol import SESSION_DOMAIN_TAGS
 
 LIBRARY_SCHEMA = "human-library-v1"
 MANIFEST_NAME = "manifest.json"
 SNAPSHOT_NAME = "snapshot.json"
 PREVIEW_DIRECTORY = "preview"
 REPORT_NAME = "review.md"
+# Every other file of a review bundle, named once so the writer and the checker agree.
+PAYLOADS_DIRECTORY: Final[str] = "payloads"
+CHANGES_NAME: Final[str] = "changes.diff"
+AUDIT_NAME: Final[str] = "audit.json"
+RECIPE_NAME: Final[str] = "recipe.json"
+SUBJECT_TEMPLATE_NAME: Final[str] = "subject-template.md"
+EDITORIAL_RECIPE_MAX_NOTES: Final[int] = 64
+# Working defaults for a vault that declares nothing: the state-note kinds hang off the
+# shared state-note namespace and the people tag is the session "people" domain tag.
+DEFAULT_STATE_NOTE_KINDS: Final[tuple[str, ...]] = ("platform", "development", "mission")
+DEFAULT_PROCEDURE_TAGS: Final[tuple[str, ...]] = (
+    "memory/procedure",
+    "memory/reference",
+    "memory/howto",
+)
 
 
 class LibraryOptions(BaseModel):
@@ -33,12 +51,12 @@ class LibraryOptions(BaseModel):
     max_attachment_bytes: int = Field(default=32 * 1024 * 1024, ge=1)
     max_export_bytes: int = Field(default=256 * 1024 * 1024, ge=1)
     state_tags: list[str] = Field(
-        default_factory=lambda: ["kind/platform", "kind/development", "kind/mission"]
+        default_factory=lambda: [
+            f"{DEFAULT_STATE_NOTE_NAMESPACE}/{kind}" for kind in DEFAULT_STATE_NOTE_KINDS
+        ]
     )
-    people_tags: list[str] = Field(default_factory=lambda: ["memory/contact"])
-    procedure_tags: list[str] = Field(
-        default_factory=lambda: ["memory/procedure", "memory/reference", "memory/howto"]
-    )
+    people_tags: list[str] = Field(default_factory=lambda: [SESSION_DOMAIN_TAGS["people"]])
+    procedure_tags: list[str] = Field(default_factory=lambda: list(DEFAULT_PROCEDURE_TAGS))
 
 
 class SourceReference(BaseModel):
@@ -66,7 +84,7 @@ class EditorialRecipe(BaseModel):
     """Explicit editorial input; preparation does not approve or apply it."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    notes: list[EditorialNote] = Field(min_length=1, max_length=64)
+    notes: list[EditorialNote] = Field(min_length=1, max_length=EDITORIAL_RECIPE_MAX_NOTES)
 
 
 class Finding(BaseModel):

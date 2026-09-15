@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.markdown_headings import markdown_headings
 from datacron.core.memory_protocol import (
     FOLLOW_UP_MARKER_PREFIX,
@@ -298,7 +299,7 @@ async def prepare_follow_up(app: DatacronApp, records: list[FollowUpRecord]) -> 
                 "receipt. Reprepare remaining plans after conflicts."
             ),
         }
-        if rendered_size(output) > app.settings.max_result_tokens * 4:
+        if rendered_size(output) > app.settings.max_result_tokens * TOKEN_ESTIMATE_CHARS_PER_TOKEN:
             raise FollowUpValidationError(
                 "follow-up plan exceeds output budget; submit fewer records"
             )

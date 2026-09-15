@@ -513,7 +513,7 @@ def test_cli_prepare_reports_a_missing_note_field_without_a_traceback(
     async def missing_field(*_args: object, **_kwargs: object) -> dict[str, object]:
         raise KeyError("title")
 
-    monkeypatch.setattr("datacron.organization.library_cli.prepare_library", missing_field)
+    monkeypatch.setattr("datacron.cli_library.prepare_library", missing_field)
     result = CliRunner().invoke(
         app,
         [

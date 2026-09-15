@@ -22,6 +22,7 @@ from hashlib import sha256
 from html import escape
 from typing import TYPE_CHECKING, Any
 
+from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.memory_protocol import FOLLOW_UP_MARKER_PREFIX, SESSION_MAX_NOTES
 from datacron.core.models import Note
 from datacron.core.paths import PathConfinementError
@@ -133,7 +134,13 @@ async def get_follow_up(
                 "follow_up_snapshot_changed",
                 "Restart pagination from offset 0; sources changed or snapshot missing",
             )
-        output = _page(records, legacy, offset, snapshot, app.settings.max_result_tokens * 4)
+        output = _page(
+            records,
+            legacy,
+            offset,
+            snapshot,
+            app.settings.max_result_tokens * TOKEN_ESTIMATE_CHARS_PER_TOKEN,
+        )
         _audit("get_follow_up", started, returned=output["returned"], truncated=output["truncated"])
         return output
     except FollowUpReadError as exc:

@@ -62,6 +62,11 @@ DEFAULT_CONTRADICTION_PROVENANCE_LABELS: Final[dict[str, str]] = {
 DEFAULT_CONTRADICTION_SOURCE_CONNECTOR: Final[str] = "Voir"
 TOKEN_ESTIMATE_CHARS_PER_TOKEN: Final[int] = 4
 TEMPORAL_OVERFETCH_FACTOR: Final[int] = 3
+# The one place that names the archive tags and the state-note namespace. A vault
+# overrides the archive tags in its organization tag policy; the index, the library
+# and the planner read them from here or from that policy, never from a local copy.
+DEFAULT_ARCHIVE_TAGS: Final[tuple[str, ...]] = ("meta/archive", "memory/archive")
+DEFAULT_STATE_NOTE_NAMESPACE: Final[str] = "kind"
 # BM25 column weights: the chunk body and its context (note title plus heading trail).
 SEARCH_CONTENT_WEIGHT: Final[float] = 1.0
 SEARCH_CONTEXT_WEIGHT: Final[float] = 3.0
@@ -315,6 +320,8 @@ class OrganizationTagPolicy(BaseModel):
     subjects: tuple[OrganizationSubject, ...] = ()
     subject_exempt_tags: tuple[str, ...] = ()
     allowed_namespaces: tuple[str, ...] = ()
+    # Tags that mark a note as archived for ranking and for the offline library.
+    archive_tags: tuple[str, ...] = DEFAULT_ARCHIVE_TAGS
 
     @field_validator("placement_namespace", mode="before")
     @classmethod
@@ -328,7 +335,7 @@ class OrganizationTagPolicy(BaseModel):
             return None
         return _normalize_namespace_value(value, what="organization tags subject_namespace")
 
-    @field_validator("markers", "subject_exempt_tags", mode="before")
+    @field_validator("markers", "subject_exempt_tags", "archive_tags", mode="before")
     @classmethod
     def _normalize_tag_lists(cls, value: object) -> tuple[str, ...]:
         if value is None:
@@ -609,6 +616,13 @@ class VaultConfig(BaseModel):
         if value is None or value == {}:
             return None
         return value
+
+    @property
+    def archive_tags(self) -> frozenset[str]:
+        """Casefolded tags that mark an archived note: the policy's, else the defaults."""
+        policy = self.organization.tags if self.organization is not None else None
+        declared = policy.archive_tags if policy is not None else DEFAULT_ARCHIVE_TAGS
+        return frozenset(tag.casefold() for tag in declared)
 
     @field_validator("line_endings", mode="before")
     @classmethod
