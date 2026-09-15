@@ -30,6 +30,11 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- One first-level heading pattern: `core.vault.H1_PATTERN` is the only definition, and
+  the batch transaction and the organization manifest import it. The manifest previously
+  kept its own pattern without the CommonMark indentation tolerance, so a title derived
+  from an H1 indented by one to three spaces now matches the reader, the planner and the
+  offline library instead of falling back to the filename.
 - The test suite strips every `Settings` variable from the environment before each test.
   The list is derived from the model fields and the `DATACRON_` prefix, and a guard test
   fails when a field has no isolated variable; the former manual list ignored eight fields,

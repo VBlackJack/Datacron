@@ -1262,3 +1262,35 @@ def test_adoption_refuses_a_non_textual_frontmatter_id(tmp_path: Path, raw_id: s
         _load_and_validate(case)
 
     assert error.value.code == "source_identity_invalid"
+
+
+@pytest.mark.parametrize(
+    ("indent", "expected_title"),
+    [
+        ("", "Indented title"),
+        (" ", "Indented title"),
+        ("   ", "Indented title"),
+        # Four spaces open an indented code block, not a heading: the filename stem wins.
+        ("    ", "indented"),
+    ],
+)
+def test_projected_identity_title_follows_the_shared_h1_pattern(
+    tmp_path: Path, indent: str, expected_title: str
+) -> None:
+    """The manifest resolves a title with core.vault.H1_PATTERN, like the reader.
+
+    The strict parser strips the start of the body, so the heading sits after a
+    paragraph where its indentation survives.
+    """
+    vault = tmp_path / "vault"
+    memory = vault / "memory"
+    memory.mkdir(parents=True)
+    note = memory / "indented.md"
+    note.write_bytes(
+        f"---\nid: {_MOVE_ID}\ntags:\n  - memory/fact\n---\n"
+        f"Intro paragraph.\n\n{indent}# Indented title\n\nBody.\n".encode()
+    )
+
+    identity = manifest_module._read_projected_identity(note, vault_root=vault, id_mappings={})
+
+    assert identity.title == expected_title

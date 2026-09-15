@@ -53,7 +53,11 @@ from datacron.core.scope import (
     VaultScope,
     assert_path_chain_without_links,
 )
-from datacron.core.vault import MIGRATED_ULID_SIDECAR_FILENAME, ULID_SIDECAR_FILENAME
+from datacron.core.vault import (
+    H1_PATTERN,
+    MIGRATED_ULID_SIDECAR_FILENAME,
+    ULID_SIDECAR_FILENAME,
+)
 from datacron.organization.planner import OrganizationNoteSnapshot, snapshot_note
 from datacron.organization.tags import (
     TAG_POLICY_ERROR_CODE,
@@ -124,7 +128,6 @@ _WINDOWS_RESERVED_NAMES: Final[frozenset[str]] = frozenset(
     }
 )
 _JSON_SEPARATORS: Final[tuple[str, str]] = (",", ":")
-_H1_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?m)^#\s+(.+?)\s*$")
 _ORGANIZATION_PATH_SENTINEL: Final[str] = "__datacron_organization_path__.md"
 _IDENTITY_CASE_CANONICALIZATION_SCHEMA: Final[str] = "identity-sidecar-case-canonicalizations-v1"
 
@@ -1440,7 +1443,7 @@ def _read_projected_identity(
             metadata,
             body,
             path,
-            h1_pattern=_H1_PATTERN,
+            h1_pattern=H1_PATTERN,
             empty_h1_falls_back=True,
         ),
         aliases=tuple(coerce_string_list(metadata.get("aliases"), keep_empty_scalar=True)),
@@ -1490,7 +1493,7 @@ def _identity_from_payload(
             metadata,
             body,
             Path(operation.target),
-            h1_pattern=_H1_PATTERN,
+            h1_pattern=H1_PATTERN,
             empty_h1_falls_back=True,
         ),
         aliases=operation.result.aliases,
