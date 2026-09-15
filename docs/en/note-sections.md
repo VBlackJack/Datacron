@@ -93,7 +93,17 @@ object mapping note paths to lists of heading paths. It applies to notes that th
 session already loads through `DATACRON_SESSION_CONTEXT_PATHS` or another selection.
 Use an empty object to keep opening-page behavior for every note.
 
-The defaults select the locations and writing sections of the supplied INIT template.
+No section is selected by default: an orientation note without configured sections
+returns its opening text and reports `section_selection.mode` as `full` with the reason
+`no_sections_configured`. The setting is a JSON object whose keys are vault-relative note
+paths and whose values are lists of heading paths; a heading path lists the rendered
+titles from the top-level heading down to the selected section. For an `_memory/INIT.md`
+note with a level-one heading `INIT` and two level-two sections:
+
+```json
+{"_memory/INIT.md": [["INIT", "Where things live"], ["INIT", "How to write"]]}
+```
+
 Each selected source exposes an `excerpts` array with individually wrapped content,
 the original note hash, and `next_read` pointers for incomplete sections. The existing
 per-note allowance is shared between excerpts, and the overall serialized response

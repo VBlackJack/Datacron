@@ -146,3 +146,23 @@ def test_every_public_page_links_to_its_translation() -> None:
     )
     findings.extend(f"docs/fr/{name} has no English counterpart" for name in orphans)
     assert not findings, "\n".join(findings)
+
+
+# The same substitutes are refused in the source tree: a curly quote or an em dash in
+# a Python string is a user-visible default or a message that will reach a console.
+_SOURCE_ROOT: Final[Path] = _REPO_ROOT / "src"
+
+
+def _source_files() -> Iterator[Path]:
+    yield from sorted(_SOURCE_ROOT.rglob("*.py"))
+
+
+def test_source_scan_reaches_the_package() -> None:
+    scanned = list(_source_files())
+    assert scanned, "no source file was scanned"
+    assert any(path.parent.name == "core" for path in scanned), "the scan never reached core"
+
+
+def test_source_code_uses_ascii_punctuation() -> None:
+    findings = [finding for path in _source_files() for finding in _violations(path)]
+    assert not findings, "\n".join(findings)

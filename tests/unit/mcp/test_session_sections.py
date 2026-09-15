@@ -129,7 +129,7 @@ async def test_ordinary_notes_and_overall_budget_remain_bounded(tmp_path: Path) 
     app = build_app(settings=_settings(tmp_path, sections=[]), vault_root=tmp_path)
     result = await session_context(app)
     assert "content" in result["sources"][0]
-    assert "section_selection" not in result["sources"][0]
+    assert result["sources"][0]["section_selection"]["mode"] == "full"
     bounded = await session_context(app, max_tokens=1400)
     if "error" in bounded:
         assert bounded["error"]["code"] == "context_budget_too_small"
@@ -155,12 +155,66 @@ def test_invalid_section_preferences(preferences: dict[str, list[list[str]]]) ->
         Settings(session_context_sections=preferences)
 
 
-def test_default_preferences_match_verified_init_ancestry() -> None:
-    preferences = Settings().session_context_sections
-    assert preferences["_memory/INIT.md"] == [
-        list(path) for path in SESSION_DEFAULT_SECTIONS["_memory/INIT.md"]
+def test_default_preferences_select_no_sections() -> None:
+    assert SESSION_DEFAULT_SECTIONS == {}
+    assert Settings().session_context_sections == {}
+
+
+async def test_unconfigured_orientation_note_reports_full_mode_explicitly(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "_memory").mkdir()
+    (tmp_path / "_memory" / "INIT.md").write_text("# INIT\n\n## Where things live\n\nHere.\n")
+    app = build_app(
+        settings=Settings(read_paths=[tmp_path], vault_root=tmp_path), vault_root=tmp_path
+    )
+    source = (await session_context(app))["sources"][0]
+    assert "content" in source
+    assert "excerpts" not in source
+    assert source["section_selection"] == {
+        "mode": "full",
+        "reason": "no_sections_configured",
+        "unavailable_sections": [],
+        "omitted_sections": [],
+    }
+
+
+async def test_configured_sections_are_selected_from_the_vault_headings(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "_memory").mkdir()
+    (tmp_path / "_memory" / "INIT.md").write_text(
+        "# INIT\n\n## Where things live\n\nHere.\n\n## How to write\n\nOne fact per note.\n"
+    )
+    settings = Settings(
+        read_paths=[tmp_path],
+        vault_root=tmp_path,
+        session_context_sections={
+            "_memory/INIT.md": [["INIT", "Where things live"], ["INIT", "How to write"]]
+        },
+    )
+    app = build_app(settings=settings, vault_root=tmp_path)
+    source = (await session_context(app))["sources"][0]
+    assert "content" not in source
+    assert source["section_selection"]["mode"] == "sections"
+    assert source["section_selection"]["unavailable_sections"] == []
+    assert [excerpt["section"]["heading_path"][-1] for excerpt in source["excerpts"]] == [
+        "Where things live",
+        "How to write",
     ]
-    assert len(preferences["_memory/INIT.md"]) == 2
+
+
+async def test_fallback_lists_never_share_an_entry(tmp_path: Path) -> None:
+    (tmp_path / "note.md").write_bytes(b"# Root\n## One\nfirst\n")
+    app = build_app(settings=_settings(tmp_path), vault_root=tmp_path)
+    selection = (await session_context(app))["sources"][0]["section_selection"]
+    assert selection["mode"] == "full_fallback"
+    shared = [
+        unavailable is omitted
+        for unavailable in selection["unavailable_sections"]
+        for omitted in selection["omitted_sections"]
+    ]
+    assert not any(shared)
 
 
 async def test_redacted_heading_has_no_false_continuation(tmp_path: Path) -> None:
