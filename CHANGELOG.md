@@ -11,6 +11,24 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Security
 
+- A vault-relative path is now refused while it is still a string, before it is joined to
+  the vault root or resolved. Path confinement resolved its argument first, and on Windows
+  that resolution is a `CreateFileW` call, so a UNC argument such as
+  `get_note(id_or_path="//host/share/x.md")` opened an SMB session against a
+  caller-named host, with the automatic NTLM response that implies, before the path was
+  refused. The same argument also stalled the stdio server for the network timeout, since
+  the check runs synchronously inside the async tool bodies. Reachable from `get_note`,
+  `list_notes`, `search_text`, `session_context`, `get_follow_up` and every write tool. A
+  drive letter, an absolute path and directory traversal are refused by the same screen,
+  which keeps raising `PathConfinementError`.
+- `contradiction_scan` no longer offers a candidate for automatic correction when the
+  source note carries a secret outside the cited section. The gate read the source only
+  through the indexed chunks of one header path, which exclude frontmatter, headings, code
+  fences and subsections, so a key one heading below left the candidate addressable. The
+  scan displayed the provenance block as `[REDACTED]` while `mode="confirm"` returned the
+  same text unredacted and proposed writing it into the target note, against a
+  `proposal_token` computed over content the operator was never shown. Both notes are now
+  checked in full.
 - `contradiction_scan` no longer exposes a `chunk_id` whose heading slug carries a secret:
   when the redactor changes a section's `header_path`, its `target` or `source` reference
   carries `chunk_id: null` and `chunk_id_redacted: true`. Confirmation is unaffected, the
@@ -91,6 +109,44 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- `append_journal`, `patch_note_section`, `rename_note_section`, `delete_note_section` and
+  `patch_note_preamble` no longer delete the content above a leading `---` block that is
+  not frontmatter. The exact body span was computed from the two delimiter lines alone,
+  while `python-frontmatter` reported no metadata, so a note opening with a thematic break
+  or with a leading block holding a YAML list or scalar had everything above the second
+  delimiter dropped on the next write, and the tool reported success. The parser now keeps
+  the whole document as the body when the block is not a mapping, and the five tools refuse
+  an ambiguous block outright. A block that parses to an empty mapping is still
+  frontmatter.
+- A heading inside an HTML comment is no longer treated as a live section. mistletoe parses
+  no HTML block, so `move_note_section` accepted a commented-out draft, carried the closing
+  `-->` away with it and buried the section that followed, while reporting that every byte
+  was preserved; `delete_note_section` orphaned the opener and swallowed the rest of the
+  note. Fenced code is respected, so a `<!--` inside a fence opens nothing.
+- One undecodable byte in the vault no longer breaks every index-backed tool. The reader
+  already skips an unreadable note and logs its path, but reconcile propagated the
+  `UnicodeDecodeError` out of the read repair and through `search_text`, `search_regex`,
+  `get_note`, `list_notes` and the advisory tools, with a message naming the byte offset
+  and not the file. `reindex` went through the same path, so the documented repair could
+  not run either. Reconcile now applies the reader's policy, names each skipped note and
+  reports the count; existing index rows for a note it could not read are kept.
+- `contradiction_scan` passes its own structured-output validation when redaction is
+  active. The tool declared `chunk_id` as a required non-nullable string while the
+  redaction branch emits `null`, and redaction is on by default, so a vault holding one
+  heading that trips a default pattern turned the whole tool into a transport-level
+  failure. `chunk_id_redacted` is now declared as well, having been emitted and then
+  stripped from `structured_content`.
+- A vault-relative path whose directory component ends in a dot or a space no longer wedges
+  every subsequent write. Win32 strips a trailing space from the final component only, so
+  `create_note_ai(rel_path="_memory/facts /note.md")` created a directory named `facts`,
+  wrote a pending journal record naming `facts `, then failed to open its temporary file.
+  The record survived, and recovery, which runs before every write, could no longer resolve
+  it: `create_note_ai`, `patch_note_section`, `append_journal`, `set_frontmatter`,
+  `revert_note`, `repair_recovery` and `datacron ops` all raised, and only deleting the
+  pending file by hand restored writes. Such a path is now refused up front; a note write
+  that fails synchronously discards the pending record it created, unless the target
+  already holds the prepared bytes; and recovery tolerates the extended-length form that
+  Windows returns for a partially existing path.
 - The frontmatter pair table is indexed by `note_id`, so every index write removes a
   note's pairs through an index lookup instead of a full table scan. A full reindex of a
   large vault was quadratic in the number of stored pairs.
