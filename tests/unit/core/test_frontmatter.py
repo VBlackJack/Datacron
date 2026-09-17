@@ -16,8 +16,10 @@ import pytest
 from datacron.core.frontmatter import (
     FrontmatterError,
     extract_tags,
+    has_ambiguous_leading_delimiter_block,
     matches_frontmatter_filter,
     parse,
+    parse_preserving_bom_and_body_eols,
     serialize,
 )
 
@@ -287,3 +289,78 @@ See #project/themeforge
 
     def test_no_tags(self) -> None:
         assert extract_tags({}, "nothing here") == []
+
+
+class TestLeadingDelimiterBlockThatIsNotFrontmatter:
+    """A leading --- block whose YAML is not a mapping must not cut off the body.
+
+    python-frontmatter reports empty metadata for such a block, while the exact
+    body span was computed from the delimiter lines alone. The two disagreed
+    about where the note started, and every mutation tool wrote back only the
+    tail, deleting everything above the second delimiter.
+    """
+
+    _THEMATIC_BREAK_NOTE = (
+        "---\n\n# Project notes\n\nImportant content.\n\n---\n\nRest of the note.\n"
+    )
+
+    def test_a_thematic_break_keeps_the_whole_document_as_body(self) -> None:
+        metadata, body, has_bom = parse_preserving_bom_and_body_eols(self._THEMATIC_BREAK_NOTE)
+
+        assert metadata == {}
+        assert not has_bom
+        assert body == self._THEMATIC_BREAK_NOTE
+        assert "# Project notes" in body
+        assert "Important content." in body
+
+    def test_a_yaml_sequence_block_keeps_the_whole_document_as_body(self) -> None:
+        raw = "---\n- alpha\n- beta\n---\n\n# Title\n\nbody\n"
+
+        metadata, body, _ = parse_preserving_bom_and_body_eols(raw)
+
+        assert metadata == {}
+        assert body == raw
+
+    def test_a_real_mapping_still_has_its_block_removed(self) -> None:
+        raw = "---\nid: 01J5S0C0000000000000000001\n---\n\n# Title\n\nbody\n"
+
+        metadata, body, _ = parse_preserving_bom_and_body_eols(raw)
+
+        assert metadata == {"id": "01J5S0C0000000000000000001"}
+        assert body == "\n# Title\n\nbody\n"
+
+    def test_an_empty_mapping_block_still_has_its_block_removed(self) -> None:
+        raw = "---\n---\n\n# Title\n"
+
+        metadata, body, _ = parse_preserving_bom_and_body_eols(raw)
+
+        assert metadata == {}
+        assert body == "\n# Title\n"
+
+
+class TestHasAmbiguousLeadingDelimiterBlock:
+    """Tell a real frontmatter block from a leading --- that only looks like one."""
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "---\n\n# Project notes\n\nImportant content.\n\n---\n\nRest of the note.\n",
+            "---\n- alpha\n- beta\n---\n\n# Title\n",
+            "---\njust a scalar\n---\n\n# Title\n",
+        ],
+    )
+    def test_reports_a_block_whose_yaml_is_not_a_mapping(self, raw: str) -> None:
+        assert has_ambiguous_leading_delimiter_block(raw) is True
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "---\nid: 01J5S0C0000000000000000001\n---\n\n# Title\n",
+            "---\n---\n\n# Title\n",
+            "# Title\n\nbody\n",
+            "",
+            "\ufeff---\nid: 01J5S0C0000000000000000001\n---\n\n# Title\n",
+        ],
+    )
+    def test_accepts_a_real_block_an_empty_block_and_no_block(self, raw: str) -> None:
+        assert has_ambiguous_leading_delimiter_block(raw) is False
