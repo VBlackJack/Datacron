@@ -547,7 +547,7 @@ async def _resolve_addressability(  # noqa: PLR0911 - guard clauses preserve ref
         or source_note.content_hash != source_indexed[1]
     ):
         return replace(candidate, manual_action="The index is stale; rerun scan before proposing.")
-    if _contains_redacted_material(app, candidate, target_note):
+    if _contains_redacted_material(app, candidate, target_note, source_note):
         return replace(
             candidate,
             manual_action="Sensitive content was redacted; review this candidate manually.",
@@ -1050,7 +1050,17 @@ def _contains_redacted_material(
     app: DatacronApp,
     candidate: Candidate,
     target_note: Note,
+    source_note: Note,
 ) -> bool:
+    """Report whether anything in either whole note would be redacted.
+
+    ``candidate.source.content`` covers only the indexed chunks of one header
+    path: frontmatter, headings, code fences and subsections are all excluded.
+    A secret one heading below the cited section therefore left the candidate
+    addressable, and confirm returned the live section span, code fences and
+    subsections included, with no redaction at all. Both notes are checked in
+    full so the gate cannot be narrower than what confirm hands back.
+    """
     if not app.secret_redactor.retrieval_enabled(app.settings):
         return False
     values = (
@@ -1059,6 +1069,7 @@ def _contains_redacted_material(
         candidate.target.content,
         candidate.source.content,
         target_note.content,
+        source_note.content,
     )
     return any(app.secret_redactor.redact_text(value) != value for value in values)
 

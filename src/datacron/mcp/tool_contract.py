@@ -214,12 +214,18 @@ class SearchTextOutput(TypedDict, total=False):
 
 
 class ContradictionSectionReferenceOutput(TypedDict):
-    """One section-level assertion reference."""
+    """One section-level assertion reference.
+
+    ``chunk_id`` is null when the heading it derives from was redacted, because
+    the id embeds that heading. ``chunk_id_redacted`` says which of the two
+    happened, so a caller never has to read the absence as an index fault.
+    """
 
     note_id: str
     note_rel_path: str
     header_path: str
-    chunk_id: str
+    chunk_id: str | None
+    chunk_id_redacted: bool
     line_start: int
     line_end: int
 
