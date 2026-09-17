@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from pathlib import Path
-from typing import Literal
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Final, Literal
 
 from datacron.core.config import (
     INDEX_DB_FILENAME,
@@ -37,6 +37,7 @@ from datacron.core.config import (
 
 __all__ = [
     "PathConfinementError",
+    "assert_vault_rel_path",
     "assert_within_paths",
     "assert_within_read_paths",
     "assert_within_write_paths",
@@ -49,6 +50,7 @@ __all__ = [
     "sidecar_index_db",
     "sidecar_index_dir",
     "sidecar_vault_config",
+    "strip_extended_length_prefix",
 ]
 
 AccessKind = Literal["read", "write"]
@@ -56,6 +58,77 @@ AccessKind = Literal["read", "write"]
 
 class PathConfinementError(PermissionError):
     """Raised when a path falls outside the configured allowed roots."""
+
+
+_EXTENDED_LENGTH_PREFIX: Final = "\\\\?\\"
+_EXTENDED_LENGTH_UNC_PREFIX: Final = "\\\\?\\UNC\\"
+
+
+def assert_vault_rel_path(rel_path: str) -> str:
+    """Refuse a vault-relative path while it is still only a string.
+
+    :func:`assert_within_paths` resolves its argument before comparing it to the
+    allowed roots. On Windows that resolution is a ``CreateFileW`` call, so a
+    caller-supplied UNC path reaches the network before confinement rejects it.
+    Callers screen the raw string here so the escape never becomes I/O.
+
+    The component rules also keep Win32 from silently rewriting a path: a
+    directory component ending in a space or a dot is created without it, which
+    leaves a journal record naming a path that can never be resolved again.
+
+    Args:
+        rel_path: Candidate vault-relative path. The empty string denotes the
+            vault root and is accepted.
+
+    Returns:
+        ``rel_path`` unchanged, so callers can wrap an argument in place.
+
+    Raises:
+        PathConfinementError: If the path names a drive, a UNC share or an absolute
+            location, traverses out of the vault, carries a control character,
+            or ends a component with a dot or a space.
+    """
+    if not rel_path:
+        return rel_path
+    if any(ord(character) < 32 for character in rel_path):
+        raise PathConfinementError("Vault-relative path must not contain control characters.")
+    normalized = rel_path.replace("\\", "/")
+    if normalized.startswith("//"):
+        raise PathConfinementError(f"Vault-relative path must not name a UNC share: {rel_path!r}")
+    windows_path = PureWindowsPath(normalized)
+    if windows_path.drive or windows_path.is_absolute():
+        raise PathConfinementError(
+            f"Vault-relative path must not be absolute or name a drive: {rel_path!r}"
+        )
+    posix_path = PurePosixPath(normalized)
+    if posix_path.is_absolute():
+        raise PathConfinementError(f"Vault-relative path must not be absolute: {rel_path!r}")
+    for part in posix_path.parts:
+        if part in {"", ".", ".."}:
+            raise PathConfinementError(
+                f"Vault-relative path must not traverse directories: {rel_path!r}"
+            )
+        if part.endswith((" ", ".")):
+            raise PathConfinementError(
+                f"Vault-relative path components must not end with a dot or a space: {rel_path!r}"
+            )
+    return rel_path
+
+
+def strip_extended_length_prefix(path: Path) -> Path:
+    """Return ``path`` without the Windows extended-length prefix.
+
+    ``Path.resolve`` returns the ``\\\\?\\`` form whenever an intermediate
+    component exists but the leaf does not. Comparing that form against a plain
+    vault root fails, so a single unresolvable journal record would otherwise
+    wedge recovery for the whole vault.
+    """
+    text = str(path)
+    if text.startswith(_EXTENDED_LENGTH_UNC_PREFIX):
+        return Path("\\\\" + text[len(_EXTENDED_LENGTH_UNC_PREFIX) :])
+    if text.startswith(_EXTENDED_LENGTH_PREFIX):
+        return Path(text[len(_EXTENDED_LENGTH_PREFIX) :])
+    return path
 
 
 def read_ulid_mappings(

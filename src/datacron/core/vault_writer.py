@@ -60,10 +60,12 @@ from datacron.core.operation_log import (
 )
 from datacron.core.paths import (
     PathConfinementError,
+    assert_vault_rel_path,
     assert_within_write_paths,
     read_ulid_mappings,
     sidecar_dir,
     sidecar_index_db,
+    strip_extended_length_prefix,
 )
 from datacron.core.protocols import VaultWriter
 from datacron.core.recovery import (
@@ -776,7 +778,11 @@ class FilesystemVaultWriter:
         _inject(self._operation_fault_injector, "after_history_write")
         self._operation_journal.write_pending(record)
         _inject(self._operation_fault_injector, "after_pending_write")
-        written_hash = atomic_durable_write(target, after_bytes)
+        try:
+            written_hash = atomic_durable_write(target, after_bytes)
+        except OSError:
+            self._discard_unstarted_pending(record, target, after_hash)
+            raise
         if written_hash != after_hash:
             raise OperationLogError("durable note hash differs from prepared after_hash")
         _inject(self._operation_fault_injector, "after_note_write")
@@ -1304,17 +1310,51 @@ class FilesystemVaultWriter:
             return None
         return payload.get(rel_path.as_posix())
 
+    def _discard_unstarted_pending(
+        self,
+        record: OperationRecord,
+        target: Path,
+        after_hash: str,
+    ) -> None:
+        """Drop a pending record whose note write never landed.
+
+        A synchronous failure leaves this process alive, so recovery has nothing
+        to finish. Keeping the record blocks every later write to the vault,
+        because recovery runs first and re-resolves the recorded path. The record
+        is kept when the target already carries the prepared bytes, since the
+        failure then happened after the replacement and the operation is still
+        recovery's to complete.
+        """
+        try:
+            if target.is_file() and sha256_bytes(target.read_bytes()) == after_hash:
+                return
+        except OSError:
+            _LOGGER.warning(
+                "Could not inspect %s after a failed note write; keeping pending record %s.",
+                target,
+                record.operation_id,
+            )
+            return
+        self._operation_journal.remove_pending(record.operation_id)
+        _LOGGER.warning(
+            "Discarded pending record %s: the note write to %s never landed.",
+            record.operation_id,
+            record.rel_path,
+        )
+
     def _resolve_target(self, rel_path: str) -> tuple[Path, Path]:
+        assert_vault_rel_path(rel_path)
         candidate = (self._vault_root / rel_path).expanduser().resolve()
         target = assert_within_write_paths(candidate, self._settings)
         return target, self._safe_relative_path(target)
 
     def _safe_relative_path(self, target: Path) -> Path:
+        plain_target = strip_extended_length_prefix(target)
         try:
-            return target.relative_to(self._vault_root)
+            return plain_target.relative_to(strip_extended_length_prefix(self._vault_root))
         except ValueError as exc:
             raise PathConfinementError(
-                f"Path {target} is outside the bound vault root {self._vault_root}."
+                f"Path {plain_target} is outside the bound vault root {self._vault_root}."
             ) from exc
 
     def _encode_with_eol_policy(self, content: str, current_bytes: bytes | None) -> bytes:

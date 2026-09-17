@@ -16,6 +16,7 @@ import pytest
 from datacron.core.config import Settings
 from datacron.core.paths import (
     PathConfinementError,
+    assert_vault_rel_path,
     assert_within_paths,
     assert_within_read_paths,
     assert_within_write_paths,
@@ -25,6 +26,7 @@ from datacron.core.paths import (
     sidecar_index_db,
     sidecar_index_dir,
     sidecar_vault_config,
+    strip_extended_length_prefix,
 )
 
 
@@ -145,3 +147,61 @@ class TestReadUlidSidecarStrict:
             read_ulid_sidecar_strict(tmp_path / "missing.json", max_bytes=1024)
         with pytest.raises(ValueError, match="not a regular file"):
             read_ulid_sidecar_strict(tmp_path, max_bytes=1024)
+
+
+class TestAssertVaultRelPath:
+    """The screen that must refuse an escape before it can become I/O."""
+
+    @pytest.mark.parametrize(
+        "rel_path",
+        [
+            "",
+            "note.md",
+            "folder/note.md",
+            "folder/sub/note.md",
+            "dotted.name.md",
+            "a folder with spaces/note.md",
+            "accents-eaeiou/note.md",
+        ],
+    )
+    def test_accepts_an_ordinary_vault_path(self, rel_path: str) -> None:
+        assert assert_vault_rel_path(rel_path) == rel_path
+
+    @pytest.mark.parametrize(
+        ("rel_path", "fragment"),
+        [
+            ("//evil.example.com/share/x.md", "UNC share"),
+            ("\\\\evil.example.com\\share\\x.md", "UNC share"),
+            ("C:/Windows/win.ini", "absolute or name a drive"),
+            ("C:note.md", "absolute or name a drive"),
+            ("/etc/passwd.md", "must not be absolute"),
+            ("../outside.md", "traverse directories"),
+            ("folder/../../outside.md", "traverse directories"),
+            ("folder/../outside.md", "traverse directories"),
+            ("facts /note.md", "end with a dot or a space"),
+            ("facts./note.md", "end with a dot or a space"),
+            ("folder/trailing /note.md", "end with a dot or a space"),
+            ("note\x00.md", "control characters"),
+            ("note\n.md", "control characters"),
+        ],
+    )
+    def test_refuses_an_escape_or_a_windows_rewritten_component(
+        self, rel_path: str, fragment: str
+    ) -> None:
+        with pytest.raises(PathConfinementError, match=fragment):
+            assert_vault_rel_path(rel_path)
+
+
+class TestStripExtendedLengthPrefix:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("\\\\?\\C:\\vault\\note.md", "C:\\vault\\note.md"),
+            ("\\\\?\\UNC\\server\\share\\note.md", "\\\\server\\share\\note.md"),
+        ],
+    )
+    def test_removes_the_prefix_windows_resolution_adds(self, raw: str, expected: str) -> None:
+        assert str(strip_extended_length_prefix(Path(raw))) == expected
+
+    def test_leaves_an_ordinary_path_untouched(self, tmp_path: Path) -> None:
+        assert strip_extended_length_prefix(tmp_path) == tmp_path
