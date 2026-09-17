@@ -16,6 +16,54 @@ from typing import Any
 from mistletoe import block_token
 
 _SETEXT = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
+_FENCE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})")
+_COMMENT_OPEN = "<!--"
+_COMMENT_CLOSE = "-->"
+
+
+def _html_comment_lines(lines: list[str]) -> frozenset[int]:
+    """Return the indices of the lines that sit inside an HTML comment.
+
+    mistletoe's default token set carries no HTML block, so ``<!--`` only opens
+    an ordinary paragraph and a following ``##`` line interrupts it as a real
+    ATX heading. Editing through such a heading relocates the comment markers:
+    a move takes the closing ``-->`` with the section and buries whatever
+    followed it, a delete orphans the opener and swallows the rest of the note.
+    The heading sequence is unchanged either way, so the move verifier accepts
+    it and the tool reports that every byte was preserved.
+    """
+    inside_comment = False
+    fence: str | None = None
+    masked: set[int] = set()
+    for index, raw_line in enumerate(lines):
+        line = raw_line.rstrip("\r\n")
+        if not inside_comment:
+            fence_match = _FENCE.match(line)
+            if fence_match is not None:
+                marker = fence_match.group("fence")
+                if fence is None:
+                    fence = marker
+                elif marker[0] == fence[0] and len(marker) >= len(fence):
+                    fence = None
+                continue
+            if fence is not None:
+                continue
+        position = 0
+        while True:
+            if inside_comment:
+                masked.add(index)
+                close_at = line.find(_COMMENT_CLOSE, position)
+                if close_at < 0:
+                    break
+                inside_comment = False
+                position = close_at + len(_COMMENT_CLOSE)
+                continue
+            open_at = line.find(_COMMENT_OPEN, position)
+            if open_at < 0:
+                break
+            inside_comment = True
+            position = open_at + len(_COMMENT_OPEN)
+    return frozenset(masked)
 
 
 @dataclass(frozen=True)
@@ -42,11 +90,14 @@ def markdown_headings(lines: list[str]) -> list[MarkdownHeading]:
     document = block_token.Document(
         [line.replace("\r\n", "\n").replace("\r", "\n") for line in lines]
     )
+    commented = _html_comment_lines(lines)
     result = []
     for token in document.children or []:
         if not isinstance(token, block_token.Heading | block_token.SetextHeading):
             continue
         start = int(getattr(token, "line_number", 1)) - 1
+        if start in commented:
+            continue
         end = start + 1
         if isinstance(token, block_token.SetextHeading):
             end = next(
