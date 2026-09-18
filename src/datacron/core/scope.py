@@ -17,9 +17,18 @@ from __future__ import annotations
 
 import os
 import stat
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Final, Literal, Protocol, cast, final, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Final,
+    Literal,
+    Protocol,
+    TypeVar,
+    cast,
+    final,
+    runtime_checkable,
+)
 
 from datacron.core.config import (
     SIDECAR_DIR_NAME,
@@ -70,6 +79,17 @@ AccessMode = Literal["read", "write"]
 NoteMutation = Callable[[str], str]
 NotePathLookup = Callable[[str], Awaitable[str | None]]
 _FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = 0x0400
+
+
+@runtime_checkable
+class _HasRelPath(Protocol):
+    """Anything the read scope filters by its vault-relative path."""
+
+    @property
+    def rel_path(self) -> str: ...
+
+
+_HasRelPathT = TypeVar("_HasRelPathT", bound=_HasRelPath)
 
 
 class LinkedPathError(PathConfinementError):
@@ -457,14 +477,35 @@ class ScopedVaultWriter:
         self._scope = scope
         self._write_policy = write_policy
 
+    def _readable_by_rel_path(self, items: Sequence[_HasRelPathT]) -> list[_HasRelPathT]:
+        """Keep the items this read scope admits, deciding each path once.
+
+        ``allows_rel_path`` resolves the candidate and every allowed root on
+        each call, which on Windows is a file-open syscall apiece. These
+        sequences come from the operation journal, which holds one record per
+        committed write and is never compacted, so the same ``rel_path``
+        repeats across every operation on a note: deciding it once turns a
+        per-record cost into a per-note one. After ten thousand writes the
+        difference is twenty thousand syscalls before the first record reaches
+        a caller that asked for one note.
+
+        ``search.py`` caches the same decision the same way for wikilink chunks.
+        """
+        admitted: dict[str, bool] = {}
+        kept: list[_HasRelPathT] = []
+        for item in items:
+            decision = admitted.get(item.rel_path)
+            if decision is None:
+                decision = self._scope.allows_rel_path(item.rel_path, "read")
+                admitted[item.rel_path] = decision
+            if decision:
+                kept.append(item)
+        return kept
+
     @property
     def recovery_blocked(self) -> tuple[BlockedOperation, ...]:
         """Return only blocked operations visible in this read scope."""
-        return tuple(
-            item
-            for item in self._delegate.recovery_blocked
-            if self._scope.allows_rel_path(item.rel_path, "read")
-        )
+        return tuple(self._readable_by_rel_path(self._delegate.recovery_blocked))
 
     async def write_note_atomic(
         self,
@@ -537,7 +578,7 @@ class ScopedVaultWriter:
 
     async def inspect_recovery(self) -> tuple[BlockedOperation, ...]:
         blocked = await self._delegate.inspect_recovery()
-        return tuple(item for item in blocked if self._scope.allows_rel_path(item.rel_path, "read"))
+        return tuple(self._readable_by_rel_path(blocked))
 
     async def repair_recovery(
         self,
@@ -566,9 +607,7 @@ class ScopedVaultWriter:
 
     async def list_operations(self) -> list[OperationRecord]:
         records = await self._delegate.list_operations()
-        return [
-            record for record in records if self._scope.allows_rel_path(record.rel_path, "read")
-        ]
+        return self._readable_by_rel_path(records)
 
     async def purge_history(self) -> list[str]:
         self._write_policy.ensure_writable()
