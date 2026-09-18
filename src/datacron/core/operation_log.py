@@ -20,11 +20,12 @@ import math
 import os
 import re
 import stat
-from contextlib import suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Final, NoReturn, TypeAlias
+from typing import BinaryIO, Final, NoReturn, TypeAlias
 
 from datacron.core.config import (
     DEFAULT_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS,
@@ -43,6 +44,12 @@ _HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{64}$")
 _OPERATIONS_FILENAME: Final[str] = "operations.jsonl"
 _FORMAT_VERSION: Final[int] = 2
 _MAX_PENDING_RECORD_BYTES: Final[int] = 64 * 1024
+_REVERSE_READ_CHUNK_BYTES: Final[int] = 64 * 1024
+"""Bytes read per step when the journal is scanned backwards.
+
+One step holds well over a hundred records, so the common baseline lookup,
+whose match is within the last few writes, reads the journal once.
+"""
 _PENDING_TEMP_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\..+\.json\.[0-9a-f]{32}\.tmp$")
 _FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = 0x0400
 _RECORD_KEYS_V2: Final[frozenset[str]] = frozenset(
@@ -470,6 +477,8 @@ class OperationJournal:
         tail_record = self._tail_record
         if tail_record is not None and tail_record.operation_id == record.operation_id:
             return False
+        if tail_record is not None:
+            _assert_timestamp_advances(record.timestamp, tail_record.timestamp)
         chained = replace(
             record,
             prev_hash=self._tail_hash,
@@ -522,22 +531,38 @@ class OperationJournal:
         return _parse_records(operations_path.read_bytes(), verify_chain=True)
 
     def latest_record_for_path(self, rel_path: str) -> OperationRecord | None:
-        """Return the latest committed record for one exact vault-relative path."""
+        """Return the latest committed record for one exact vault-relative path.
+
+        The scan runs backwards and stops at the first record naming the path. That
+        is the same record a forward parse kept as the last match, and it lets a
+        note that was written recently be answered from the journal's tail instead
+        of from its whole history. A path with no record at all is still answered
+        only by reading back to the first line, because nothing short of that
+        proves the absence.
+
+        The records the scan reads are chain-verified against each other, the match
+        is verified against the line before it, and the oldest line reached must
+        declare itself the chain root, so a torn tail, a rewritten recent record
+        and a journal cut off at the head all fail closed. Lines older than the
+        match are not read: damage there no longer refuses the write, and is
+        reported instead by ``read_records``, which is what ``audit_query`` reads
+        through and what section 7 of ``docs/en/spec.md`` contractualises.
+        """
         operations_path = self._guard_operations_path()
         if not operations_path.is_file():
             return None
         self._ensure_tail_state()
         operations_path = self._guard_operations_path()
-        records = _parse_records(operations_path.read_bytes(), verify_chain=True)
         path_identity = _relative_path_identity(rel_path)
-        return next(
-            (
-                record
-                for record in reversed(records)
-                if _relative_path_identity(record.rel_path) == path_identity
-            ),
-            None,
-        )
+        match: OperationRecord | None = None
+        for _offset, record in _iter_verified_records_reverse(operations_path):
+            if match is not None:
+                # Reaching the next record verified the match against the line it
+                # chains to, which is the only reason to have read one line further.
+                return match
+            if _relative_path_identity(record.rel_path) == path_identity:
+                match = record
+        return match
 
     def has_record(self, operation_id: str) -> bool:
         # Recovery queries are outside the append hot path, so a full verified scan
@@ -555,17 +580,21 @@ class OperationJournal:
             self._tail_hash = None
             self._tail_loaded = True
             return
-        tail_record, tail_line = tail[-1]
+        tail_record, _tail_line = tail[-1]
         if tail_record.format_version == 1:
             self._migrate_legacy_log()
             return
         if any(record.format_version != _FORMAT_VERSION for record, _line in tail):
             raise OperationLogError("operation log tail mixes legacy and chained records")
-        expected_prev_hash = sha256_bytes(tail[-2][1]) if len(tail) == 2 else None
+        # Chain over the canonical rendering, as every reader does and as section 7 of
+        # the specification defines. Hashing the bytes as they sit on the line instead
+        # would let a hand-repaired journal break the chain permanently: the next
+        # append would record a prev_hash no reader ever recomputes.
+        expected_prev_hash = sha256_bytes(_record_line(tail[-2][0])) if len(tail) == 2 else None
         if tail_record.prev_hash != expected_prev_hash:
             raise OperationLogError("operation log tail hash chain mismatch")
         self._tail_record = tail_record
-        self._tail_hash = sha256_bytes(tail_line)
+        self._tail_hash = sha256_bytes(_record_line(tail_record))
         self._tail_loaded = True
 
     def _migrate_legacy_log(self) -> None:
@@ -614,19 +643,97 @@ class OperationJournal:
             return []
         retained = set(preserve_hashes or ())
         if self.history_enabled:
-            cutoff = purge_at - timedelta(days=self._retention_days)
-            for record in self.read_records():
-                timestamp = datetime.fromisoformat(record.timestamp).astimezone(UTC)
-                if timestamp < cutoff:
-                    continue
-                if record.before_hash is not None:
-                    retained.add(record.before_hash)
-                retained.add(record.after_hash)
+            retained |= self._hashes_within_retention(purge_at)
         removed = self._purge_unretained_blobs(history_dir, retained)
         if removed:
             _durable_flush_directory(self._guard_history_root())
         self._last_purge_at = purge_at
         return removed
+
+    def _hashes_within_retention(self, purge_at: datetime) -> set[str]:
+        """Collect the history hashes that records inside the retention window name.
+
+        ``next_timestamp`` gives every appended record a timestamp strictly greater
+        than the tail's, so timestamps increase with position and the records inside
+        the window are a suffix of the journal. The scan therefore runs backwards and
+        stops at the first record older than the cutoff, which bounds a sweep that
+        runs after a committed write by the retention window instead of by the whole
+        recorded history.
+
+        That order is not assumed. ``append_record`` refuses a record that does not
+        advance past the tail, so no journal this code wrote can break it, and the
+        scan additionally checks it over every record it reads and falls back to the
+        full forward pass if it is ever contradicted. Stopping early on an out-of-order
+        journal would drop a blob that a record inside the window still names, and a
+        history blob is the only stored copy of a previous version of a note.
+
+        The scan verifies the chain across what it reads for the same reason: the one
+        outcome worth avoiding here is deleting on a reading that cannot be trusted.
+        Raising is safe because the sweep runs after the write is durable and its
+        caller treats a failure as "keep everything" rather than as a failed write.
+        """
+        cutoff = purge_at - timedelta(days=self._retention_days)
+        operations_path = self._guard_operations_path()
+        if not operations_path.is_file():
+            return set()
+        self._ensure_tail_state()
+        operations_path = self._guard_operations_path()
+        retained: set[str] = set()
+        successor_timestamp: datetime | None = None
+        for offset, record in _iter_verified_records_reverse(operations_path):
+            timestamp = datetime.fromisoformat(record.timestamp).astimezone(UTC)
+            if successor_timestamp is not None and timestamp > successor_timestamp:
+                _LOGGER.warning(
+                    "Operation log timestamps do not increase with position at byte offset %d; "
+                    "reading the whole journal to decide history retention",
+                    offset,
+                )
+                return self._hashes_within_retention_by_full_scan(cutoff)
+            successor_timestamp = timestamp
+            if timestamp < cutoff:
+                break
+            _add_record_hashes(record, retained)
+        return retained
+
+    def _hashes_within_retention_by_full_scan(self, cutoff: datetime) -> set[str]:
+        """Collect the same hashes by reading every record, for a journal out of order."""
+        retained: set[str] = set()
+        for record in self.read_records():
+            if datetime.fromisoformat(record.timestamp).astimezone(UTC) < cutoff:
+                continue
+            _add_record_hashes(record, retained)
+        return retained
+
+
+def _assert_timestamp_advances(timestamp: str, tail_timestamp: str) -> None:
+    """Refuse an append that would place a record before the one it follows.
+
+    ``next_timestamp`` returns a timestamp strictly past the tail's, so this only
+    fires on a caller that built one itself. It is enforced rather than assumed
+    because the retention sweep relies on it: that sweep stops at the first record
+    older than its cutoff, which is only the right answer while position and time
+    agree. A record out of order would put a live version of a note behind that
+    stopping point and let its only stored copy be deleted.
+
+    Equal timestamps are allowed, because that is all the sweep needs: when two
+    adjacent records share an instant, either both are inside the window or both
+    are outside it, so neither can hide behind the other. Demanding a strict
+    increase would reject a caller that legitimately stamps a pair of records with
+    one instant, without protecting anything more.
+    """
+    if datetime.fromisoformat(timestamp) >= datetime.fromisoformat(tail_timestamp):
+        return
+    raise OperationLogError(
+        "operation record timestamp precedes the journal tail: "
+        f"{timestamp!r} after {tail_timestamp!r}"
+    )
+
+
+def _add_record_hashes(record: OperationRecord, retained: set[str]) -> None:
+    """Add the history hashes one record names to ``retained``."""
+    if record.before_hash is not None:
+        retained.add(record.before_hash)
+    retained.add(record.after_hash)
 
 
 def _relative_path_identity(rel_path: str) -> str:
@@ -694,6 +801,135 @@ def _parse_records(data: bytes, *, verify_chain: bool) -> list[OperationRecord]:
         records.append(record)
         previous_hash = sha256_bytes(_record_line(record))
     return records
+
+
+def _check_scanned_record(record: OperationRecord, seen: set[str], offset: int) -> None:
+    """Apply to one record the per-record checks a full parse makes.
+
+    ``seen`` holds the operation ids met so far in the same scan, so a duplicate
+    is caught within the scanned region exactly as a forward parse catches it in
+    the whole file. ``offset`` names the record's first byte: a backwards scan
+    cannot count lines from the start, and an operator repairing the journal needs
+    a position to seek to.
+    """
+    if record.format_version != _FORMAT_VERSION:
+        raise OperationLogError(
+            f"legacy operation record remains in the operation log at byte offset {offset}"
+        )
+    if record.operation_id in seen:
+        raise OperationLogError(
+            f"duplicate operation_id at byte offset {offset}: {record.operation_id}"
+        )
+    seen.add(record.operation_id)
+
+
+def _iter_verified_records_reverse(path: Path) -> Iterator[tuple[int, OperationRecord]]:
+    """Yield records from the tail backwards, verifying the chain across what is read.
+
+    A record is yielded before the record it chains to has been read, so a caller
+    that wants one record verified must take one more from the iterator: reaching
+    the next record is what checks the previous one. Abandoning the iterator early
+    therefore leaves the last record it produced unverified, which is intentional,
+    and skips the chain-root check, which only a scan that reaches the first line
+    can make.
+    """
+    seen: set[str] = set()
+    successor_prev_hash: str | None = None
+    scanned = False
+    for offset, record in _iter_records_reverse(path):
+        _check_scanned_record(record, seen, offset)
+        # The forward parse chains over the canonical rendering of each record,
+        # which is what the specification defines, so this hashes the record and
+        # not the bytes that happened to be on the line.
+        if scanned and successor_prev_hash != sha256_bytes(_record_line(record)):
+            raise OperationLogError(f"operation hash chain mismatch at byte offset {offset}")
+        yield offset, record
+        successor_prev_hash = record.prev_hash
+        scanned = True
+    if scanned and successor_prev_hash is not None:
+        raise OperationLogError("operation log does not begin at the chain root")
+
+
+def _iter_records_reverse(path: Path) -> Iterator[tuple[int, OperationRecord]]:
+    """Yield every journal record from the last line to the first.
+
+    Each item pairs the offset of the record's first byte with the record. The
+    file is read in chunks from the end, so a caller that stops early has read
+    only the tail of the journal.
+    """
+    with _open_journal_for_reverse_read(path) as (stream, end):
+        for offset, line in _iter_lines_reverse(stream, end):
+            if line == b"\n":
+                continue
+            try:
+                payload = _strict_json_loads(line.decode("ascii", errors="strict"))
+            except (UnicodeDecodeError, json.JSONDecodeError, _StrictJsonError) as exc:
+                raise OperationLogError(
+                    f"invalid JSONL in the operation log at byte offset {offset}"
+                ) from exc
+            yield offset, OperationRecord.from_dict(payload)
+
+
+@contextmanager
+def _open_journal_for_reverse_read(path: Path) -> Iterator[tuple[BinaryIO, int]]:
+    """Open the journal for a backwards scan, refusing a tail that is not a line."""
+    try:
+        stream = path.open("rb")
+    except OSError as exc:
+        raise OperationLogError("failed to read the operation log") from exc
+    try:
+        end = stream.seek(0, os.SEEK_END)
+        if end:
+            # Seek to the absolute position rather than to the end again: another
+            # process may append or truncate between the two calls, and the scan
+            # must judge the same file it is about to read.
+            stream.seek(end - 1)
+            if stream.read(1) != b"\n":
+                raise OperationLogError("operation log does not end at a JSONL boundary")
+        yield stream, end
+    except OSError as exc:
+        raise OperationLogError("failed to read the operation log") from exc
+    finally:
+        stream.close()
+
+
+def _iter_lines_reverse(stream: BinaryIO, end: int) -> Iterator[tuple[int, bytes]]:
+    """Yield the lines of ``stream`` last first, each with its offset and newline.
+
+    The buffer always ends on a line boundary, so the newline it ends with belongs
+    to a line already yielded or to the line about to be. A newline can only close
+    a complete line when something precedes it in the buffer, which is why the
+    search excludes the last byte before ``limit``; what is left below ``limit``
+    once no newline remains is the start of a line that continues into the chunk
+    not yet read, and at offset zero it is the first line of the file.
+
+    ``limit`` marks how much of the buffer has still to be emitted. Trimming the
+    buffer itself on every line instead copied what was left once per line, which
+    is quadratic in the chunk and cost more than the whole-file forward parse it
+    was meant to replace: 5000 records took 330 ms this way against 240 ms for the
+    forward parse. The buffer is now copied once per chunk.
+    """
+    position = end
+    buffer = b""
+    while position > 0:
+        read_size = min(_REVERSE_READ_CHUNK_BYTES, position)
+        position -= read_size
+        stream.seek(position)
+        chunk = stream.read(read_size)
+        if len(chunk) != read_size:
+            # The file shrank under the open handle. Splicing what is left onto the
+            # buffer would fuse two half-lines into one plausible record, so refuse.
+            raise OperationLogError("operation log changed size while it was being read")
+        buffer = chunk + buffer
+        limit = len(buffer)
+        start = buffer.rfind(b"\n", 0, limit - 1)
+        while start != -1:
+            yield position + start + 1, buffer[start + 1 : limit]
+            limit = start + 1
+            start = buffer.rfind(b"\n", 0, limit - 1)
+        buffer = buffer[:limit]
+    if buffer:
+        yield 0, buffer
 
 
 def _read_tail_records(path: Path) -> list[tuple[OperationRecord, bytes]]:

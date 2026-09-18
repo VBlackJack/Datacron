@@ -19,14 +19,17 @@ import json
 import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from itertools import accumulate
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
+from datacron.core import operation_log
 from datacron.core.config import Settings, VaultConfig
 from datacron.core.hashing import sha256_bytes
 from datacron.core.operation_log import (
+    _REVERSE_READ_CHUNK_BYTES,
     HistoryUnavailableError,
     OperationContext,
     OperationJournal,
@@ -99,15 +102,15 @@ def test_purge_history_skips_scan_until_interval_elapses(
     journal.append_record(
         _record("recent-operation", now, content_hash, sha256_bytes(b"recent after"))
     )
-    read_records = Mock(wraps=journal.read_records)
-    monkeypatch.setattr(journal, "read_records", read_records)
+    scan = Mock(wraps=journal._hashes_within_retention)
+    monkeypatch.setattr(journal, "_hashes_within_retention", scan)
 
     assert journal.purge_history(now) == []
     assert journal.purge_history(now + timedelta(seconds=29)) == []
-    assert read_records.call_count == 1
+    assert scan.call_count == 1
 
     assert journal.purge_history(now + timedelta(seconds=30)) == []
-    assert read_records.call_count == 2
+    assert scan.call_count == 2
 
 
 async def test_close_writes_only_scan_history_once(
@@ -117,15 +120,15 @@ async def test_close_writes_only_scan_history_once(
     vault = tmp_path / "vault"
     vault.mkdir()
     (vault / "note.md").write_bytes(b"before\n")
-    original_read_records = OperationJournal.read_records
+    original_scan = OperationJournal._hashes_within_retention
     scan_count = 0
 
-    def counted_read_records(journal: OperationJournal) -> list[OperationRecord]:
+    def counted_scan(journal: OperationJournal, purge_at: datetime) -> set[str]:
         nonlocal scan_count
         scan_count += 1
-        return original_read_records(journal)
+        return original_scan(journal, purge_at)
 
-    monkeypatch.setattr(OperationJournal, "read_records", counted_read_records)
+    monkeypatch.setattr(OperationJournal, "_hashes_within_retention", counted_scan)
     writer = FilesystemVaultWriter(
         vault,
         Settings(
@@ -491,3 +494,534 @@ def test_retention_sweep_refuses_a_linked_history_entry(
         journal.purge_history(datetime(2026, 7, 10, tzinfo=UTC))
 
     assert blob.is_file()
+
+
+def _fill_journal(journal: OperationJournal, count: int, *, rel_path: str) -> None:
+    """Append ``count`` filler records, then one naming ``rel_path``."""
+    now = datetime(2026, 7, 10, tzinfo=UTC)
+    for index in range(count):
+        journal.append_record(
+            replace(
+                _record(
+                    f"filler-{index}",
+                    now + timedelta(seconds=index),
+                    sha256_bytes(f"before-{index}".encode()),
+                    sha256_bytes(f"after-{index}".encode()),
+                ),
+                rel_path=f"filler/note-{index}.md",
+            )
+        )
+    journal.append_record(
+        replace(
+            _record(
+                "target-operation",
+                now + timedelta(seconds=count),
+                sha256_bytes(b"before-target"),
+                sha256_bytes(b"after-target"),
+            ),
+            rel_path=rel_path,
+        )
+    )
+
+
+def _rewrite_line(operations_path: Path, index: int, **fields: str) -> None:
+    """Replace fields of one journal line in place, leaving its chain link stale."""
+    lines = operations_path.read_bytes().splitlines(keepends=True)
+    payload = json.loads(lines[index])
+    payload.update(fields)
+    rendered = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    lines[index] = f"{rendered}\n".encode("ascii")
+    operations_path.write_bytes(b"".join(lines))
+
+
+def _count_baseline_parses(journal: OperationJournal, rel_path: str) -> int:
+    """Return how many journal lines one baseline lookup turns into records."""
+    parsed = 0
+    original_from_dict = OperationRecord.from_dict
+
+    def _counting_from_dict(payload: object) -> OperationRecord:
+        nonlocal parsed
+        parsed += 1
+        return original_from_dict(payload)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(OperationRecord, "from_dict", _counting_from_dict)
+        found = journal.latest_record_for_path(rel_path)
+    assert found is not None
+    assert found.operation_id == "target-operation"
+    return parsed
+
+
+def test_baseline_lookup_cost_does_not_grow_with_the_journal(tmp_path: Path) -> None:
+    """The per-write baseline lookup must read the journal tail, not the whole file.
+
+    ``_check_committed_baseline`` runs on every logged write. A full verified parse
+    made each write cost the entire history, so a vault kept for years slowed every
+    write down forever. The assertion is that two journals of very different lengths
+    cost the same, which a full parse cannot satisfy at any threshold.
+    """
+    short_journal = OperationJournal(tmp_path / "short", retention_days=30, history_mode="full")
+    long_journal = OperationJournal(tmp_path / "long", retention_days=30, history_mode="full")
+    _fill_journal(short_journal, 20, rel_path="target.md")
+    _fill_journal(long_journal, 400, rel_path="target.md")
+
+    short_parses = _count_baseline_parses(short_journal, "target.md")
+    long_parses = _count_baseline_parses(long_journal, "target.md")
+
+    assert short_parses == long_parses
+    # The match, the line it chains to, and the tail state loaded once beforehand.
+    assert long_parses <= 4
+
+
+def test_baseline_lookup_never_reads_the_whole_journal(tmp_path: Path) -> None:
+    """A full read of operations.jsonl on the write path is the regression itself."""
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    _fill_journal(journal, 30, rel_path="target.md")
+    original_read_bytes = Path.read_bytes
+
+    def _guarded_read_bytes(path: Path) -> bytes:
+        if path.name == "operations.jsonl":
+            raise AssertionError(f"full journal read on the write path: {path}")
+        return original_read_bytes(path)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "read_bytes", _guarded_read_bytes)
+        baseline = journal.latest_record_for_path("target.md")
+
+    assert baseline is not None
+    assert baseline.operation_id == "target-operation"
+
+
+def test_baseline_lookup_reads_records_larger_than_one_chunk(tmp_path: Path) -> None:
+    """A record wider than the reverse-read chunk must still be reassembled exactly."""
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    now = datetime(2026, 7, 10, tzinfo=UTC)
+    wide_parameter = "w" * (_REVERSE_READ_CHUNK_BYTES * 2 + 17)
+    for index, rel_path in enumerate(("other.md", "target.md", "later.md")):
+        journal.append_record(
+            replace(
+                _record(
+                    f"wide-{index}",
+                    now + timedelta(seconds=index),
+                    sha256_bytes(f"before-{index}".encode()),
+                    sha256_bytes(f"after-{index}".encode()),
+                ),
+                rel_path=rel_path,
+                parameters={"note": wide_parameter},
+            )
+        )
+
+    baseline = journal.latest_record_for_path("target.md")
+
+    assert baseline is not None
+    assert baseline.operation_id == "wide-1"
+    assert baseline.parameters == {"note": wide_parameter}
+
+
+def test_baseline_lookup_rejects_corruption_between_the_match_and_the_tail(
+    tmp_path: Path,
+) -> None:
+    """A rewritten record at or after the match breaks the chain the scan verifies."""
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    _fill_journal(journal, 6, rel_path="target.md")
+    journal.append_record(
+        replace(
+            _record(
+                "after-target",
+                datetime(2026, 7, 10, tzinfo=UTC) + timedelta(seconds=100),
+                sha256_bytes(b"before-after"),
+                sha256_bytes(b"after-after"),
+            ),
+            rel_path="unrelated.md",
+        )
+    )
+    operations_path = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+    _rewrite_line(operations_path, -2, actor="tampered")
+
+    with pytest.raises(OperationLogError, match="hash chain mismatch"):
+        journal.latest_record_for_path("target.md")
+
+
+def test_baseline_lookup_rejects_a_first_line_match_that_is_not_the_chain_root(
+    tmp_path: Path,
+) -> None:
+    """A journal whose head was cut away chains to a line that is no longer there.
+
+    Every surviving link still verifies, so only the root check catches it: the
+    oldest line the scan reaches must declare a null ``prev_hash``. Cutting the
+    head is how a scan that stops at its match would otherwise be blinded, since
+    the damage sits exactly where it no longer reads.
+    """
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    now = datetime(2026, 7, 10, tzinfo=UTC)
+    for index, rel_path in enumerate(("cut.md", "cut.md", "target.md", "later.md")):
+        journal.append_record(
+            replace(
+                _record(
+                    f"root-{index}",
+                    now + timedelta(seconds=index),
+                    sha256_bytes(f"before-{index}".encode()),
+                    sha256_bytes(f"after-{index}".encode()),
+                ),
+                rel_path=rel_path,
+            )
+        )
+    operations_path = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+    surviving = operations_path.read_bytes().splitlines(keepends=True)[2:]
+    operations_path.write_bytes(b"".join(surviving))
+
+    with pytest.raises(OperationLogError, match="chain root"):
+        journal.latest_record_for_path("target.md")
+
+
+def test_baseline_lookup_rejects_a_journal_that_does_not_end_at_a_line(tmp_path: Path) -> None:
+    """A torn tail must fail closed on the write path, not be scanned past."""
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    _fill_journal(journal, 3, rel_path="target.md")
+    operations_path = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+    operations_path.write_bytes(operations_path.read_bytes()[:-1])
+
+    with pytest.raises(OperationLogError):
+        journal.latest_record_for_path("target.md")
+
+
+def test_baseline_lookup_ignores_corruption_older_than_the_match(tmp_path: Path) -> None:
+    """Deliberate: a write is not blocked by damage predating the last write to its path.
+
+    The scan verifies the chain from the tail down to the line the match chains to,
+    and reads nothing older. Corruption before that point is still reported by
+    ``read_records``, which is what ``audit_query`` and recovery use, so it stays
+    visible; it simply no longer makes every unrelated write fail. This test records
+    the trade so a later reader does not mistake it for an oversight.
+    """
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    _fill_journal(journal, 8, rel_path="target.md")
+    operations_path = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+    _rewrite_line(operations_path, 0, actor="damaged")
+
+    baseline = journal.latest_record_for_path("target.md")
+
+    assert baseline is not None
+    assert baseline.operation_id == "target-operation"
+    with pytest.raises(OperationLogError, match="hash chain mismatch"):
+        journal.read_records()
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        b"",
+        b"one\n",
+        b"\n",
+        b"one\ntwo\n",
+        b"\n\n\n",
+        b"one\n\ntwo\n",
+        b"one\ntwo\nthree\n",
+        b"x" * 40 + b"\n",
+    ],
+    ids=[
+        "empty",
+        "single-line",
+        "single-blank",
+        "two-lines",
+        "consecutive-blanks",
+        "blank-in-the-middle",
+        "three-lines",
+        "line-longer-than-the-chunk",
+    ],
+)
+@pytest.mark.parametrize("chunk_bytes", [1, 2, 3, 4, 8, 1024])
+def test_reverse_line_reader_matches_a_forward_split(
+    tmp_path: Path, shape: bytes, chunk_bytes: int
+) -> None:
+    """The backwards reader must reproduce ``splitlines`` exactly, at any chunk size.
+
+    Chunk sizes of one to eight bytes force a boundary inside a line, on a line
+    boundary, and at an exact multiple of the file size, which is where hand-written
+    buffer arithmetic fails. The production chunk is 64 KiB, so no realistic journal
+    would exercise those boundaries before a user did.
+    """
+    path = tmp_path / "operations.jsonl"
+    path.write_bytes(shape)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(operation_log, "_REVERSE_READ_CHUNK_BYTES", chunk_bytes)
+        with path.open("rb") as stream:
+            end = stream.seek(0, os.SEEK_END)
+            read = list(operation_log._iter_lines_reverse(stream, end))
+
+    expected_lines = shape.splitlines(keepends=True)
+    expected_offsets = list(accumulate((len(line) for line in expected_lines), initial=0))
+    assert [line for _offset, line in reversed(read)] == expected_lines
+    assert [offset for offset, _line in reversed(read)] == expected_offsets[: len(expected_lines)]
+
+
+def test_baseline_lookup_on_an_empty_journal_file(tmp_path: Path) -> None:
+    """A journal file that exists but holds nothing has no baseline for any path."""
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    operations_path = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+    operations_path.parent.mkdir(parents=True, exist_ok=True)
+    operations_path.write_bytes(b"")
+
+    assert journal.latest_record_for_path("target.md") is None
+
+
+def test_baseline_lookup_on_a_single_record_journal(tmp_path: Path) -> None:
+    """The match is the only line, so it is both the tail and the chain root."""
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    only = replace(
+        _record(
+            "only-operation",
+            datetime(2026, 7, 10, tzinfo=UTC),
+            sha256_bytes(b"before-only"),
+            sha256_bytes(b"after-only"),
+        ),
+        rel_path="target.md",
+    )
+    journal.append_record(only)
+
+    baseline = journal.latest_record_for_path("target.md")
+
+    assert baseline is not None
+    assert baseline.operation_id == "only-operation"
+    assert baseline.prev_hash is None
+
+
+def test_baseline_lookup_for_a_path_with_no_record_reads_back_to_the_root(
+    tmp_path: Path,
+) -> None:
+    """Proving a path was never written costs the whole journal, and must stay correct.
+
+    This is the shape of a first write to a new note, where ``expected_hash`` is
+    absent and no record names the path. The scan cannot stop early because nothing
+    short of the first line proves the absence, so the answer is ``None`` only after
+    the chain has been verified all the way to the root. The bounded case is the
+    repeat write, not this one.
+    """
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    _fill_journal(journal, 12, rel_path="target.md")
+
+    assert journal.latest_record_for_path("never-written.md") is None
+
+    operations_path = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+    _rewrite_line(operations_path, 0, actor="damaged")
+
+    with pytest.raises(OperationLogError, match="hash chain mismatch"):
+        journal.latest_record_for_path("never-written.md")
+
+
+def test_baseline_lookup_rejects_a_duplicate_operation_id_in_the_scanned_region(
+    tmp_path: Path,
+) -> None:
+    """A repeated operation id inside the scanned suffix is caught as a full parse does."""
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    _fill_journal(journal, 4, rel_path="target.md")
+    operations_path = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+    lines = operations_path.read_bytes().splitlines(keepends=True)
+    operations_path.write_bytes(b"".join([*lines, lines[-1]]))
+
+    with pytest.raises(OperationLogError, match="duplicate operation_id at byte offset"):
+        journal.latest_record_for_path("target.md")
+
+
+def test_baseline_lookup_chains_over_the_canonical_rendering(tmp_path: Path) -> None:
+    """The scan hashes the record, not the bytes, which is what the specification says.
+
+    A line re-spaced by hand keeps its meaning and its canonical hash, so the record
+    that chains to it still verifies. Hashing the raw bytes instead would make the
+    write path and ``audit_query`` disagree about the very same file.
+    """
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    _fill_journal(journal, 2, rel_path="target.md")
+    operations_path = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+    lines = operations_path.read_bytes().splitlines(keepends=True)
+    respaced = json.dumps(json.loads(lines[-2]), separators=(", ", ": "), sort_keys=True)
+    lines[-2] = f"{respaced}\n".encode("ascii")
+    operations_path.write_bytes(b"".join(lines))
+
+    baseline = journal.latest_record_for_path("target.md")
+
+    assert baseline is not None
+    assert baseline.operation_id == "target-operation"
+    assert journal.read_records()[-2].operation_id == "filler-1"
+
+
+def _seed_retention_journal(
+    vault: Path, *, count: int, span_days: int, now: datetime
+) -> OperationJournal:
+    """Append ``count`` records evenly spread over ``span_days`` ending at ``now``.
+
+    Each record stores its own history blob, so the sweep has something to keep or
+    delete for every record rather than a set of hashes naming nothing.
+    """
+    journal = OperationJournal(vault, retention_days=30, history_mode="full")
+    start = now - timedelta(days=span_days)
+    step = timedelta(days=span_days) / count
+    for index in range(count):
+        before_hash = journal.store_history(f"before-{index}".encode())
+        after_hash = journal.store_history(f"after-{index}".encode())
+        journal.append_record(
+            replace(
+                _record(f"retention-{index}", start + step * index, before_hash, after_hash),
+                rel_path=f"notes/note-{index}.md",
+            )
+        )
+    return journal
+
+
+def test_retention_sweep_keeps_exactly_what_a_full_scan_keeps(tmp_path: Path) -> None:
+    """The bounded sweep and the full forward pass must delete the same blobs.
+
+    Stopping early is only ever safe if it reaches the same answer, so this pins the
+    two against each other on a journal that straddles the cutoff in both directions.
+    """
+    now = datetime(2026, 9, 18, 12, tzinfo=UTC)
+    bounded_vault = tmp_path / "bounded"
+    full_vault = tmp_path / "full"
+    bounded = _seed_retention_journal(bounded_vault, count=40, span_days=90, now=now)
+    full = _seed_retention_journal(full_vault, count=40, span_days=90, now=now)
+
+    bounded_removed = bounded.purge_history(now)
+    cutoff = now - timedelta(days=30)
+    full_removed = full._purge_unretained_blobs(
+        full_vault / ".datacron" / "history",
+        full._hashes_within_retention_by_full_scan(cutoff),
+    )
+
+    assert bounded_removed
+    assert bounded_removed == full_removed
+    kept = sorted(path.name for path in (bounded_vault / ".datacron" / "history").iterdir())
+    assert kept == sorted(path.name for path in (full_vault / ".datacron" / "history").iterdir())
+
+
+def test_retention_sweep_cost_follows_the_window_not_the_history(tmp_path: Path) -> None:
+    """A vault kept for years must not make its retention sweep slower every year.
+
+    Both journals hold the same number of records inside the thirty-day window and
+    differ only in how much history sits behind it. Reading the whole journal makes
+    the longer one cost twice as much; reading back to the cutoff makes them equal.
+    That equality is the property, so there is no threshold here to drift.
+    """
+    now = datetime(2026, 9, 18, 12, tzinfo=UTC)
+    short = _seed_retention_journal(tmp_path / "short", count=30, span_days=90, now=now)
+    long = _seed_retention_journal(tmp_path / "long", count=60, span_days=180, now=now)
+
+    short_parses = _count_purge_parses(short, now)
+    long_parses = _count_purge_parses(long, now)
+
+    assert short_parses == long_parses
+    assert long_parses < 30
+
+
+def _count_purge_parses(journal: OperationJournal, now: datetime) -> int:
+    """Return how many journal lines one retention sweep turns into records."""
+    parsed = 0
+    original_from_dict = OperationRecord.from_dict
+
+    def _counting_from_dict(payload: object) -> OperationRecord:
+        nonlocal parsed
+        parsed += 1
+        return original_from_dict(payload)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(OperationRecord, "from_dict", _counting_from_dict)
+        journal.purge_history(now)
+    return parsed
+
+
+def test_append_refuses_a_record_that_does_not_advance_the_timestamp(tmp_path: Path) -> None:
+    """Position and time must agree in the journal, because the sweep trusts that.
+
+    The retention sweep stops at the first record older than its cutoff. A record
+    appended out of order would sit behind that stopping point while still being
+    inside the window, and its history blob, the only stored copy of that version of
+    the note, would be deleted. The order is therefore refused at the append rather
+    than hoped for at the read.
+    """
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    now = datetime(2026, 9, 18, 12, tzinfo=UTC)
+    journal.append_record(
+        _record("first-operation", now, sha256_bytes(b"before"), sha256_bytes(b"after"))
+    )
+
+    with pytest.raises(OperationLogError, match="precedes the journal tail"):
+        journal.append_record(
+            _record(
+                "backdated-operation",
+                now - timedelta(days=1),
+                sha256_bytes(b"before-backdated"),
+                sha256_bytes(b"after-backdated"),
+            )
+        )
+
+    # Sharing an instant with the tail is allowed: two records at the same time are
+    # either both inside the retention window or both outside it, so neither can
+    # hide behind the other when the sweep stops at the cutoff.
+    assert journal.append_record(
+        _record(
+            "same-instant-operation",
+            now,
+            sha256_bytes(b"before-same"),
+            sha256_bytes(b"after-same"),
+        )
+    )
+    assert [record.operation_id for record in journal.read_records()] == [
+        "first-operation",
+        "same-instant-operation",
+    ]
+
+
+def test_retention_sweep_keeps_everything_when_the_journal_is_damaged(tmp_path: Path) -> None:
+    """A sweep that cannot read the journal must delete nothing, and must say so.
+
+    Deleting on a partial or unverifiable reading is the one outcome that loses a
+    note version for good, so the failure direction is to keep the blobs.
+    """
+    now = datetime(2026, 9, 18, 12, tzinfo=UTC)
+    journal = _seed_retention_journal(tmp_path, count=6, span_days=90, now=now)
+    history_dir = tmp_path / ".datacron" / "history"
+    before = sorted(path.name for path in history_dir.iterdir())
+    operations_path = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+    _rewrite_line(operations_path, -2, actor="tampered")
+
+    with pytest.raises(OperationLogError, match="hash chain mismatch"):
+        journal.purge_history(now)
+
+    assert sorted(path.name for path in history_dir.iterdir()) == before
+
+
+async def test_a_failing_retention_sweep_does_not_fail_a_committed_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep runs after the note and the journal are durable, so it cannot veto.
+
+    Reporting a committed write as failed also left the sweep marked as never done,
+    so the next write repeated it and failed again, with no way out but repair.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "note.md").write_bytes(b"before\n")
+    writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
+    operation = OperationContext(
+        op="patch_section",
+        tool="patch_note_section",
+        actor="unit-test",
+        parameters={"new_content_chars": 6},
+    )
+
+    def _failing_purge(*_args: object, **_kwargs: object) -> list[str]:
+        raise OperationLogError("operation hash chain mismatch at byte offset 0")
+
+    monkeypatch.setattr(OperationJournal, "purge_history", _failing_purge)
+
+    first = await writer.mutate_note_atomic(
+        "note.md", lambda _current: "first\n", operation=operation
+    )
+    second = await writer.mutate_note_atomic(
+        "note.md", lambda _current: "second\n", operation=operation
+    )
+
+    assert first == sha256_bytes(b"first\n")
+    assert second == sha256_bytes(b"second\n")
+    assert (vault / "note.md").read_bytes() == b"second\n"
+    assert len(await writer.list_operations()) == 2

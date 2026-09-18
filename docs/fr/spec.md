@@ -200,6 +200,11 @@ Chaque écriture validée ajoute un objet JSON ASCII par ligne à
 SHA-256 de la ligne JSON canonique précédente, ou `null` pour la première ligne. La lecture par
 `audit_query` vérifie la chaîne complète. Un journal legacy est migré durablement vers le format
 2 avant son prochain append.
+Le chemin d'écriture ne vérifie que la partie de la chaîne qu'il lit : il établit la référence
+d'une note à partir du plus récent enregistrement la nommant, et vérifie la chaîne depuis la
+queue jusqu'à cet enregistrement. Une queue tronquée, un enregistrement récent réécrit et un
+journal amputé de sa tête refusent tous l'écriture ; un dommage plus ancien que cet
+enregistrement est signalé par `audit_query` et non par l'écriture.
 
 `operation_id` est un UUID v4 rendu sous forme de 32 caractères hexadécimaux. `note_id` reste un
 ULID. Un enregistrement contient également le timestamp UTC, l'opération, le tool, le chemin, les
