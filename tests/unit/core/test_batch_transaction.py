@@ -3037,27 +3037,59 @@ async def test_one_apply_walks_the_vault_once_per_validation_pass(tmp_path: Path
     assert max(per_pass) <= 1, f"a validation pass walked the vault {max(per_pass)} times"
 
 
-async def test_an_inventory_pass_refuses_to_nest(tmp_path: Path) -> None:
-    """Nesting would let one batch read an inventory taken for another.
+async def test_an_inventory_pass_admits_its_own_batch_and_refuses_another(
+    tmp_path: Path,
+) -> None:
+    """A pass belongs to one batch, and a joiner must not close it.
 
-    A pass is only sound while the vault and the pending batch it describes both
-    hold still. Widening one to span the classifier's loop over several pendings
-    looks free, but those iterations roll batches forward and move the vault.
+    Every inventory a pass holds is a function of the vault and of the pending
+    batch: the canonicalization inventory excludes the paths its batch affects,
+    so the same vault answers differently for a different batch. Widening a pass
+    to span the classifier's loop over several pendings looks free, but those
+    iterations roll batches forward and move the vault.
     """
     vault = tmp_path / "vault"
     vault.mkdir()
     writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault / "notes"]))
     transaction = _transaction(writer)
 
-    # The third context raises on entry, which is the behaviour under test.
-    with (
-        transaction._inventory_pass(),
-        pytest.raises(OperationLogError, match="already open"),
-        transaction._inventory_pass(),
-    ):
-        pass  # pragma: no cover - the nested pass never opens
+    with transaction._inventory_pass("batch-a"):
+        outer = transaction._open_inventories()
+        assert outer is not None
+        outer["probe"] = "outer"
+        with transaction._inventory_pass("batch-a"):
+            assert transaction._open_inventories() is outer
+        # Leaving the joined pass must not close the one it joined.
+        assert transaction._open_inventories() is outer
 
-    assert transaction._pass_inventory is None
+    assert transaction._open_inventories() is None
+
+    with (
+        transaction._inventory_pass("batch-a"),
+        pytest.raises(OperationLogError, match="different batch"),
+        transaction._inventory_pass("batch-b"),
+    ):
+        pass  # pragma: no cover - the second batch never opens
+
+
+async def test_an_exclusive_pass_refuses_to_join_one_it_does_not_own(tmp_path: Path) -> None:
+    """apply needs the cache gone by a point it chooses, so it must own the pass.
+
+    inspect_recovery takes no mutation lock and classifies the same batch from
+    another thread. A joiner does not close the pass, so joining one would leave
+    the inventories alive across apply's own writes. Arrival order would decide.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault / "notes"]))
+    transaction = _transaction(writer)
+
+    with (
+        transaction._inventory_pass("batch-a"),
+        pytest.raises(OperationLogError, match="already open"),
+        transaction._inventory_pass("batch-a", exclusive=True),
+    ):
+        pass  # pragma: no cover - the exclusive pass never opens
 
 
 async def test_a_failing_validator_leaves_no_inventory_behind(tmp_path: Path) -> None:
@@ -3066,7 +3098,120 @@ async def test_a_failing_validator_leaves_no_inventory_behind(tmp_path: Path) ->
     writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault / "notes"]))
     transaction = _transaction(writer)
 
-    with pytest.raises(RuntimeError, match="synthetic"), transaction._inventory_pass():
+    with pytest.raises(RuntimeError, match="synthetic"), transaction._inventory_pass("batch-a"):
         raise RuntimeError("synthetic validator failure")
 
-    assert transaction._pass_inventory is None
+    assert transaction._open_inventories() is None
+
+
+async def test_one_apply_hashes_the_organization_scope_once(tmp_path: Path) -> None:
+    """The scope sweep streams a SHA-256 of every note in scope, so it runs once.
+
+    An apply ran it twice, from _validate_before_states and again from the
+    classifier, against a vault that had not changed in between.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    bundle = _create_bundle(vault, _note(_FIRST_ID, "Exact"))
+    writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault / "notes"]))
+    transaction = _transaction(writer)
+    sweeps: list[int] = []
+    original = transaction._live_scope_note_paths
+
+    def counted() -> dict[str, tuple[str, Path]]:
+        sweeps.append(1)
+        return original()
+
+    transaction._live_scope_note_paths = counted  # type: ignore[method-assign]
+
+    await _apply(writer, bundle)
+
+    assert len(sweeps) == 1, f"the scope was walked and hashed {len(sweeps)} times"
+
+
+async def test_a_precondition_failure_never_reaches_the_rollback_branch(
+    tmp_path: Path,
+) -> None:
+    """A before-state mismatch means this call changed nothing, so it must not revert.
+
+    The batch id is the manifest hash, so re-applying the same manifest after a
+    crash that published the receipt finds the vault already at after_hash. If
+    that mismatch reached the handler, it would see a published receipt with no
+    records started and roll the batch back: disk returned to before_hash while
+    the oplog says after_hash, and the receipt recover() needed deleted.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    bundle = _create_bundle(vault, _note(_FIRST_ID, "Exact"))
+    writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault / "notes"]))
+    transaction = _transaction(writer)
+    cleanups: list[str] = []
+
+    # The dangerous precondition: a receipt from an earlier attempt is already
+    # published, so the handler's rollback branch is the one that would run.
+    def published(pending: batch_transaction._PendingBatch) -> bool:
+        return True
+
+    def record_rollback(pending: batch_transaction._PendingBatch) -> None:
+        cleanups.append("rollback")
+
+    def record_remove_stage(batch_id: str) -> None:
+        cleanups.append("remove_stage")
+
+    transaction._pending_is_published_exact = published  # type: ignore[method-assign]
+    transaction._rollback_exact = record_rollback  # type: ignore[method-assign]
+    transaction._remove_stage = record_remove_stage  # type: ignore[method-assign]
+
+    def fail_before_states(pending: batch_transaction._PendingBatch) -> None:
+        raise BatchConflictError("batch precondition changed for notes/new.md")
+
+    transaction._validate_before_states = fail_before_states  # type: ignore[method-assign]
+
+    with pytest.raises(BatchConflictError, match="precondition changed"):
+        await _apply(writer, bundle)
+
+    assert cleanups == [], f"a precondition failure ran {cleanups} on a batch it never started"
+    assert not (vault / "notes" / "new.md").exists()
+
+
+async def test_recovery_reclassifies_every_batch_it_rolls_forward(tmp_path: Path) -> None:
+    """Recovery must not reuse a classification, because its own loop moves the vault.
+
+    apply hands _roll_forward_bytes the classification it made over the same
+    unmutated window. recover cannot: each iteration rolls a batch forward, so
+    the next batch has to be judged against the vault those writes left behind.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    bundle = _create_bundle(vault, _note(_FIRST_ID, "Exact"))
+    writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault / "notes"]))
+    transaction = _transaction(writer)
+    await _leave_pending(writer, bundle)
+
+    handed: list[object] = []
+    original = transaction._roll_forward_bytes
+
+    def recording(
+        pending: object,
+        fault_injector: object,
+        *,
+        pre_mutation: object = None,
+        classified: object = None,
+    ) -> None:
+        handed.append(classified)
+        original(
+            pending,  # type: ignore[arg-type]
+            fault_injector,  # type: ignore[arg-type]
+            pre_mutation=pre_mutation,  # type: ignore[arg-type]
+            classified=classified,  # type: ignore[arg-type]
+        )
+
+    transaction._roll_forward_bytes = recording  # type: ignore[method-assign]
+
+    await writer.recover_operations()
+
+    assert handed, "recovery never rolled the pending batch forward"
+    assert all(item is None for item in handed), (
+        "recovery reused a classification instead of judging the vault as its own "
+        f"writes left it: {handed}"
+    )
