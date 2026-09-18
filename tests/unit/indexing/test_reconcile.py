@@ -302,10 +302,20 @@ async def test_pre_pass_keeps_a_bounded_number_of_notes_alive(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A full pass over 500 notes never holds more than a couple of Note objects."""
+    """A full pass over the vault holds a number of Note objects that does not grow with it.
+
+    The bound is deliberately not tight. What this test exists to catch is a
+    pre-pass that retains the notes it read instead of their identities, and
+    that regression shows ``note_count`` live objects, not three. A bound of two
+    instead measured the interpreter's transient references, so any unrelated
+    test that ran earlier and changed the heap could move it: it failed on
+    Python 3.13 on Linux when a test was added to another module, while the code
+    under test here never ran in that module at all.
+    """
+    note_count = 500
     vault = tmp_path / "synthetic"
     vault.mkdir()
-    for index in range(500):
+    for index in range(note_count):
         (vault / f"note-{index:03d}.md").write_text(
             f"---\nid: 01J5N{index:05d}0000000000000001\n---\n# Note {index}\n\nBody {index}.\n",
             encoding="utf-8",
@@ -328,5 +338,5 @@ async def test_pre_pass_keeps_a_bounded_number_of_notes_alive(
 
     stats = await reconcile(store, reader, chunker, mtime_gate=False)
 
-    assert stats["reindexed_notes"] == 500
-    assert peak <= 2, f"{peak} Note objects were alive at once"
+    assert stats["reindexed_notes"] == note_count
+    assert peak <= 8, f"{peak} of {note_count} Note objects were alive at once"
