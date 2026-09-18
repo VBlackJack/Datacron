@@ -9,6 +9,16 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Changed
+
+- The history retention sweep no longer revalidates every blob from the vault root. It ran
+  on every committed write, at most once every thirty seconds of sustained writing and
+  unconditionally on the first write after a server start, and it validated each entry with
+  a root-to-leaf walk that lstats every path component, twice for a blob it deleted.
+  Measured over 2000 blobs: 38020 stat syscalls and 3.14 seconds, now 20 syscalls and 0.41
+  seconds, most of it the unlinking. The cost was paid in full even when the sweep deleted
+  nothing. A link or reparse point inside the history directory still raises.
+
 ### Added
 
 - `apply_organization_manifest` reports the progress of its post-commit reindex as MCP
