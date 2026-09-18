@@ -101,21 +101,13 @@ async def reconcile(
 
     if progress is not None:
         progress(completed, total)
-    prepared, owners = await _prepare_live_identities(
+    prepared, owners, unreadable = await _prepare_live_identities(
         reader, live, indexed, gated=gated, on_settled=advance
     )
 
     reindexed = 0
-    deleted = 0
     skipped = 0
-
-    # Purge vanished paths before processing live notes. If a note was moved
-    # while keeping a stable frontmatter id, delete_note() clears the old row by
-    # note_id and the live loop below reinserts it at the new path.
-    for rel_path, (note_id, _content_hash, _fs_mtime) in indexed.items():
-        if rel_path not in live or (rel_path in prepared and prepared[rel_path][0] != note_id):
-            await store.delete_note(note_id)
-            deleted += 1
+    deleted = await _purge_vanished_notes(store, indexed, live, prepared)
 
     for rel_path, (path, st_mtime_ns) in live.items():
         entry = indexed.get(rel_path)
@@ -124,6 +116,12 @@ async def reconcile(
         if rel_path in gated:
             skipped += 1
             advance()
+            continue
+
+        if rel_path in unreadable:
+            # Already reported as settled by the pre-pass; its index rows, if any,
+            # are left as they were rather than dropped on a transient read error.
+            skipped += 1
             continue
 
         note_id, content_hash = prepared[rel_path]
@@ -138,13 +136,25 @@ async def reconcile(
 
         # New note, or content actually changed: read it again now. The pre-pass kept
         # only its identity and hash so the whole vault is never held in memory.
-        note = await reader.read_note(path)
+        try:
+            note = await reader.read_note(path)
+        except (OSError, ValueError) as exc:
+            _LOGGER.warning("Skipping unreadable note %s: %s", path, exc)
+            skipped += 1
+            advance()
+            continue
         if note.id != note_id and owners.get(note.id, rel_path) != rel_path:
             raise DuplicateNoteIdentityError(note.id, owners[note.id], rel_path)
         owners[note.id] = rel_path
         await store.upsert_note(note, chunker.chunk(note), fs_mtime_ns=st_mtime_ns)
         reindexed += 1
         advance()
+
+    if unreadable:
+        _LOGGER.warning(
+            "reconcile skipped %d unreadable note(s); each one was logged with its path above",
+            len(unreadable),
+        )
 
     if reindexed or deleted:
         await store.increment_generation()
@@ -167,6 +177,28 @@ async def reconcile(
     return stats
 
 
+async def _purge_vanished_notes(
+    store: FTS5Store,
+    indexed: dict[str, tuple[str, str, int | None]],
+    live: dict[str, tuple[Path, int]],
+    prepared: dict[str, tuple[str, str]],
+) -> int:
+    """Drop index rows for paths that are gone, before any live note is processed.
+
+    A note moved while keeping a stable frontmatter id has its old row cleared by
+    ``note_id`` here, and the live loop reinserts it at the new path. A note that
+    is still on disk but could not be read is absent from ``prepared`` and present
+    in ``live``, so its rows are deliberately left alone rather than dropped on a
+    read error.
+    """
+    deleted = 0
+    for rel_path, (note_id, _content_hash, _fs_mtime) in indexed.items():
+        if rel_path not in live or (rel_path in prepared and prepared[rel_path][0] != note_id):
+            await store.delete_note(note_id)
+            deleted += 1
+    return deleted
+
+
 def _gate_holds(
     entry: tuple[str, str, int | None] | None, st_mtime_ns: int, *, mtime_gate: bool
 ) -> bool:
@@ -181,7 +213,7 @@ async def _prepare_live_identities(
     *,
     gated: frozenset[str],
     on_settled: Callable[[], None],
-) -> tuple[dict[str, tuple[str, str]], dict[str, str]]:
+) -> tuple[dict[str, tuple[str, str]], dict[str, str], frozenset[str]]:
     """Validate projected identities before deleting or replacing any index rows.
 
     Gated notes keep the existing mtime fast path and are never read. Every other
@@ -193,11 +225,18 @@ async def _prepare_live_identities(
     """
     prepared: dict[str, tuple[str, str]] = {}
     owners: dict[str, str] = {}
+    unreadable: set[str] = set()
     for rel_path, (path, _mtime) in live.items():
         if rel_path in gated:
             note_id = indexed[rel_path][0]
         else:
-            note = await reader.read_note(path)
+            try:
+                note = await reader.read_note(path)
+            except (OSError, ValueError) as exc:
+                _LOGGER.warning("Skipping unreadable note %s: %s", path, exc)
+                unreadable.add(rel_path)
+                on_settled()
+                continue
             prepared[rel_path] = (note.id, note.content_hash)
             note_id = note.id
             entry = indexed.get(rel_path)
@@ -208,4 +247,4 @@ async def _prepare_live_identities(
         if note_id in owners:
             raise DuplicateNoteIdentityError(note_id, owners[note_id], rel_path)
         owners[note_id] = rel_path
-    return prepared, owners
+    return prepared, owners, frozenset(unreadable)

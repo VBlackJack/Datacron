@@ -36,6 +36,7 @@ __all__ = [
     "build_tiered_alias_index",
     "coerce_string_list",
     "extract_tags",
+    "has_ambiguous_leading_delimiter_block",
     "matches_frontmatter_filter",
     "parse",
     "parse_preserving_bom",
@@ -49,6 +50,8 @@ _ItemT = TypeVar("_ItemT")
 _IdentityT = TypeVar("_IdentityT")
 
 _BOM: Final[str] = "\ufeff"
+
+_AMBIGUOUS_BLOCK: Final[int] = -1
 
 _FENCED_CODE_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?ms)^[ \t]*(?P<fence>`{3,}|~{3,})[^\n]*\n.*?^[ \t]*(?P=fence)[ \t]*(?=\n|$)"
@@ -227,9 +230,36 @@ def parse_preserving_bom_and_body_eols(raw: str) -> tuple[dict[str, Any], str, b
     metadata, parsed_body, has_bom = parse_preserving_bom(raw)
     parseable = raw[1:] if has_bom else raw
     lines = parseable.splitlines(keepends=True)
+    closing = _frontmatter_block_end(lines)
+    if closing is None:
+        return metadata, parsed_body, has_bom
+    if closing < 0:
+        return metadata, parseable, has_bom
+    return metadata, "".join(lines[closing + 1 :]), has_bom
+
+
+def has_ambiguous_leading_delimiter_block(raw: str) -> bool:
+    """Return whether ``raw`` opens with a ``---`` block that is not a mapping.
+
+    ``python-frontmatter`` reports empty metadata both for a block it parsed to a
+    mapping and for one whose YAML is a list, a scalar, or a stray thematic
+    break. Only the first may have its block cut off the body; for the second
+    there is no way to tell a note's frontmatter from its content, so a mutation
+    tool has to refuse rather than guess and write back the wrong span.
+    """
+    parseable = raw[1:] if raw.startswith(_BOM) else raw
+    return _frontmatter_block_end(parseable.splitlines(keepends=True)) == _AMBIGUOUS_BLOCK
+
+
+def _frontmatter_block_end(lines: Sequence[str]) -> int | None:
+    """Return the index of the closing delimiter of a leading frontmatter block.
+
+    ``None`` means the text carries no delimited leading block at all, and
+    :data:`_AMBIGUOUS_BLOCK` means it carries one whose YAML is not a mapping.
+    """
     opening = next((index for index, line in enumerate(lines) if line.strip()), None)
     if opening is None or FRONTMATTER_BOUNDARY_PATTERN.fullmatch(lines[opening]) is None:
-        return metadata, parsed_body, has_bom
+        return None
     closing = next(
         (
             index
@@ -239,8 +269,14 @@ def parse_preserving_bom_and_body_eols(raw: str) -> tuple[dict[str, Any], str, b
         None,
     )
     if closing is None:
-        return metadata, parsed_body, has_bom
-    return metadata, "".join(lines[closing + 1 :]), has_bom
+        return None
+    try:
+        loaded = yaml.safe_load("".join(lines[opening + 1 : closing]))
+    except yaml.YAMLError:
+        return _AMBIGUOUS_BLOCK
+    if loaded is None or isinstance(loaded, dict):
+        return closing
+    return _AMBIGUOUS_BLOCK
 
 
 def serialize_preserving_bom(

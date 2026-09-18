@@ -443,3 +443,40 @@ async def test_filesystem_reader_uses_shared_case_insensitive_policy(tmp_path: P
 
     assert reader.admission_policy is policy
     assert [note.rel_path for note in notes] == ["visible.md"]
+
+
+def test_a_unc_argument_is_refused_before_any_filesystem_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resolving a UNC path is an outbound SMB connection, so it must never happen.
+
+    The confinement check resolves its argument before comparing it to the
+    allowed roots, which on Windows authenticates against the caller's host. The
+    lexical screen has to reject the string first, so this test fails the moment
+    any resolution is attempted.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    scope = _scope(vault)
+
+    def _forbidden(path: Path) -> Path:
+        message = f"path {path} was resolved before confinement refused it"
+        raise AssertionError(message)
+
+    monkeypatch.setattr("datacron.core.paths._resolve", _forbidden)
+
+    with pytest.raises(PathConfinementError, match="UNC share"):
+        scope.authorize_rel_path("//evil.example.com/share", "read")
+    with pytest.raises(NoteAdmissionError):
+        scope.authorize_note_rel_path("//evil.example.com/share/x.md")
+    assert not scope.allows_rel_path("//evil.example.com/share", "read")
+    assert not scope.allows_note_rel_path("//evil.example.com/share/x.md")
+
+
+def test_an_absolute_or_traversing_argument_is_refused_lexically(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    scope = _scope(vault)
+
+    for rel_path in ("C:/Windows/win.ini", "/etc/passwd", "../outside"):
+        assert not scope.allows_rel_path(rel_path, "read")

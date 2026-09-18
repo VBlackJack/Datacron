@@ -28,7 +28,12 @@ from datacron.core.durability import (
     ReadOnlyModeError,
     RecoveryRequiredError,
 )
-from datacron.core.frontmatter import FrontmatterError, extract_tags, serialize
+from datacron.core.frontmatter import (
+    FrontmatterError,
+    extract_tags,
+    has_ambiguous_leading_delimiter_block,
+    serialize,
+)
 from datacron.core.markdown_headings import heading_before, markdown_headings
 from datacron.core.markdown_sections import (
     HEADING_SUGGESTION_MAX_CHARS,
@@ -86,6 +91,11 @@ if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
 _ULID_CREATE_ATTEMPTS: Final[int] = 5
+_NO_FRONTMATTER_MESSAGE: Final[str] = "note has no frontmatter"
+_AMBIGUOUS_LEADING_BLOCK_MESSAGE: Final[str] = (
+    "note opens with a --- block that is not frontmatter; "
+    "its content cannot be told from its metadata"
+)
 
 
 class CommittedIndexError(RuntimeError):
@@ -364,6 +374,8 @@ async def _append_journal_impl(
 
         def mutation(raw: str) -> str:
             metadata, current_body, has_bom = _parse_preserving_bom_and_body_eols(raw)
+            if has_ambiguous_leading_delimiter_block(raw):
+                raise ValueError(_AMBIGUOUS_LEADING_BLOCK_MESSAGE)
             new_body = append_entry_to_heading(
                 current_body,
                 cleaned_heading,
@@ -483,7 +495,7 @@ async def _set_frontmatter_impl(
         def mutation(raw: str) -> str:
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             if not metadata:
-                raise ValueError("note has no frontmatter")
+                raise ValueError(_NO_FRONTMATTER_MESSAGE)
             _set_backlog_last_id(metadata, changed_fields, cleaned_last_id)
             _set_archived_flag(metadata, changed_fields, archived)
             if cleaned_confidence is not None:
@@ -668,6 +680,8 @@ async def _patch_note_preamble_impl(
 
         def mutation(raw: str) -> str:
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
+            if has_ambiguous_leading_delimiter_block(raw):
+                raise ValueError(_AMBIGUOUS_LEADING_BLOCK_MESSAGE)
             new_body = patch_note_preamble(body, cleaned_new_content)
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
             return _serialize_preserving_bom(metadata, new_body, has_bom=has_bom)
@@ -754,6 +768,8 @@ async def _patch_note_section_impl(
         def mutation(raw: str) -> str:
             nonlocal matched_level, matched_text
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
+            if has_ambiguous_leading_delimiter_block(raw):
+                raise ValueError(_AMBIGUOUS_LEADING_BLOCK_MESSAGE)
             lines = body.splitlines(keepends=True)
             content_start, content_end = find_section_span(
                 lines,
@@ -890,6 +906,8 @@ async def _rename_note_section_impl(
         def mutation(raw: str) -> str:
             nonlocal matched_level, matched_text
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
+            if has_ambiguous_leading_delimiter_block(raw):
+                raise ValueError(_AMBIGUOUS_LEADING_BLOCK_MESSAGE)
             lines = body.splitlines(keepends=True)
             try:
                 content_start, _content_end = find_section_span(
@@ -1026,6 +1044,8 @@ async def _delete_note_section_impl(
         def mutation(raw: str) -> str:
             nonlocal matched_level, matched_text
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
+            if has_ambiguous_leading_delimiter_block(raw):
+                raise ValueError(_AMBIGUOUS_LEADING_BLOCK_MESSAGE)
             lines = body.splitlines(keepends=True)
             content_start, content_end = find_section_span(
                 lines,

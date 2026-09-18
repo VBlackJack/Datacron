@@ -31,7 +31,11 @@ from datacron.core.config import (
 from datacron.core.durability import RecoveryRequiredError, WritePolicy
 from datacron.core.models import Note
 from datacron.core.operation_log import OperationContext, OperationRecord
-from datacron.core.paths import PathConfinementError, assert_within_paths
+from datacron.core.paths import (
+    PathConfinementError,
+    assert_vault_rel_path,
+    assert_within_paths,
+)
 from datacron.core.protocols import VaultReader, VaultWriter
 from datacron.core.recovery import (
     BlockedOperation,
@@ -247,6 +251,7 @@ class SingleTenantVaultScope:
         return resolved
 
     def authorize_rel_path(self, rel_path: str, access: AccessMode) -> Path:
+        assert_vault_rel_path(rel_path)
         return self.authorize_path(self._vault_root / rel_path, access)
 
     def allows_rel_path(self, rel_path: str, access: AccessMode) -> bool:

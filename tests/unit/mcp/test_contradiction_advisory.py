@@ -26,6 +26,7 @@ from types import SimpleNamespace
 from typing import Any, Final, cast
 
 import pytest
+from pydantic import TypeAdapter
 
 from datacron.core.config import Settings
 from datacron.core.durability import DurabilityStatus
@@ -39,6 +40,7 @@ from datacron.mcp.sandbox import (
     VAULT_CONTENT_NOTICE,
 )
 from datacron.mcp.server import DatacronApp, build_app
+from datacron.mcp.tool_contract import ContradictionScanOutput
 from datacron.mcp.tools.advisory import _contradiction_scan_impl
 from datacron.mcp.tools.search import _search_text_impl
 from datacron.mcp.tools.write import _patch_note_section_impl
@@ -1023,3 +1025,95 @@ async def test_scan_redacts_the_chunk_id_of_a_redacted_heading(
         app, mode="confirm", proposal_token=_suggested_token(plain), today=_TODAY
     )
     assert confirmation["confirmation"]["proposal_token"] == _suggested_token(plain)
+
+
+async def test_a_secret_in_a_source_subsection_makes_the_candidate_non_addressable(
+    contradiction_app: tuple[DatacronApp, Path],
+) -> None:
+    """The addressability gate must see the whole source note, not one header path.
+
+    The gate used to check the source only through its indexed chunks for the
+    cited header path, which exclude frontmatter, headings, code fences and
+    subsections. A secret one heading below therefore left the candidate
+    addressable, while confirm returns the live section span with subsections
+    included and no redaction, handing back the very text the scan displayed as
+    [REDACTED].
+    """
+    app, vault = contradiction_app
+    _write_note(
+        vault,
+        "_memory/facts/employer-old.md",
+        _OLD_ID,
+        (
+            "# Employer history\n\n"
+            "## Employer 2026-07-10\n\n"
+            "The Windows engineering employer is Tailspin for the platform team.\n"
+        ),
+    )
+    _write_note(
+        vault,
+        "_memory/facts/employer-current.md",
+        _NEW_ID,
+        (
+            "# Employer update\n\n"
+            "## Employer 2026-07-15\n\n"
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team.\n\n"
+            "### Deployment credentials\n\n"
+            "api_key: sk-abcdefghijklmnop\n"
+        ),
+    )
+    redacting_app = replace(app, settings=app.settings.model_copy(update={"redact_secrets": "all"}))
+
+    scan = await _contradiction_scan_impl(redacting_app, detail="full", today=_TODAY)
+
+    assert "sk-abcdefghijklmnop" not in json.dumps(scan)
+    candidate = scan["candidates"][0]
+    assert candidate["addressable"] is False
+    assert candidate["manual_action"] == (
+        "Sensitive content was redacted; review this candidate manually."
+    )
+    assert candidate.get("proposal_token") is None
+
+
+async def test_a_redacted_scan_still_passes_structured_output_validation(
+    contradiction_app: tuple[DatacronApp, Path],
+) -> None:
+    """The declared return type must accept the redacted branch it produces.
+
+    The tool is registered with ContradictionScanOutput, so the MCP layer runs
+    the payload through that model before it reaches the client. A non-nullable
+    chunk_id turned the redaction feature into a transport-level tool failure on
+    exactly the vaults it was written for.
+    """
+    app, vault = contradiction_app
+    secret_heading = "Employer password=hunter2-example 2026-07-15"  # noqa: S105 - synthetic probe
+    _write_note(
+        vault,
+        "_memory/facts/employer-old.md",
+        _OLD_ID,
+        (
+            "# Employer history\n\n"
+            "## Employer 2026-07-10\n\n"
+            "The Windows engineering employer is Tailspin for the platform team.\n"
+        ),
+    )
+    _write_note(
+        vault,
+        "_memory/facts/employer-current.md",
+        _NEW_ID,
+        (
+            f"# Employer update\n\n## {secret_heading}\n\n"
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team.\n"
+        ),
+    )
+    redacting_app = replace(app, settings=app.settings.model_copy(update={"redact_secrets": "all"}))
+
+    scan = await _contradiction_scan_impl(redacting_app, detail="full", today=_TODAY)
+    validated = TypeAdapter(ContradictionScanOutput).validate_python(scan)
+
+    candidates = validated["candidates"]
+    assert candidates is not None
+    assert candidates[0]["source"]["chunk_id"] is None
+    assert candidates[0]["source"]["chunk_id_redacted"] is True

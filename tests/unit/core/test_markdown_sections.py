@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from datacron.core.markdown_headings import MarkdownHeading
+from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
 from datacron.core.markdown_sections import find_section_span, heading_ancestry
 
 
@@ -212,3 +212,41 @@ def test_heading_ancestry_without_a_root_and_with_independent_trails() -> None:
     trails[0].append(_heading(4, "mutated"))
     assert len(trails[1]) == 1
     assert heading_ancestry([]) == []
+
+
+class TestHeadingsInsideHtmlComments:
+    """A heading inside <!-- --> is not a heading, and editing must not move it.
+
+    mistletoe carries no HTML block token, so a commented-out draft section used
+    to be reported as live. A move then carried the closing marker away with the
+    section and buried everything that followed it, while the move verifier saw
+    an unchanged heading sequence and reported that all bytes were preserved.
+    """
+
+    def test_a_commented_out_section_is_not_reported(self) -> None:
+        body = "## Kept\n\ntext\n\n<!--\n## Draft\n\nnot ready\n-->\n\n## Next\n"
+
+        headings = markdown_headings(body.splitlines(keepends=True))
+
+        assert [item.text for item in headings] == ["Kept", "Next"]
+
+    def test_a_single_line_comment_hides_its_heading(self) -> None:
+        body = "## A\n\n<!-- ## Hidden -->\n\n## B\n"
+
+        headings = markdown_headings(body.splitlines(keepends=True))
+
+        assert [item.text for item in headings] == ["A", "B"]
+
+    def test_an_unterminated_comment_hides_everything_after_it(self) -> None:
+        body = "## A\n\n<!--\n## Hidden\n"
+
+        headings = markdown_headings(body.splitlines(keepends=True))
+
+        assert [item.text for item in headings] == ["A"]
+
+    def test_a_comment_marker_inside_a_fence_does_not_open_a_comment(self) -> None:
+        body = "## A\n\n```\n<!--\n```\n\n## B\n"
+
+        headings = markdown_headings(body.splitlines(keepends=True))
+
+        assert [item.text for item in headings] == ["A", "B"]
