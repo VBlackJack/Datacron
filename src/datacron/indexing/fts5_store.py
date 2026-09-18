@@ -55,6 +55,27 @@ __all__ = ["SQLiteFTS5Store"]
 
 _LOGGER = get_logger(__name__)
 
+_INDEX_WRITER_VERSION: Final[int] = 1
+"""Which release's derived data a ``notes`` row carries.
+
+Stamped on every row this release writes. A release that predates the column omits
+it from its INSERT, so its rows keep the column default and are visible as stale,
+which is what lets the derived-data repairs be conditional without a one-shot
+marker that an older writer could not clear. Bump this whenever a repair below has
+to run again over rows an earlier release wrote.
+"""
+
+_PROBE_STALE_WRITER_SQL: Final[str] = "SELECT 1 FROM notes WHERE writer_version < ? LIMIT 1;"
+_PROBE_DERIVED_DATA_ABSENT_SQL: Final[str] = """
+SELECT 1
+WHERE EXISTS (SELECT 1 FROM notes)
+  AND NOT EXISTS (SELECT 1 FROM note_frontmatter);
+"""
+_STAMP_WRITER_VERSION_SQL: Final[str] = "UPDATE notes SET writer_version = ?;"
+_CREATE_NOTES_WRITER_VERSION_INDEX_SQL: Final[str] = (
+    "CREATE INDEX IF NOT EXISTS notes_writer_version ON notes (writer_version);"
+)
+
 _FTS5_TERM_PATTERN: Final[re.Pattern[str]] = re.compile(r"\w+", flags=re.UNICODE)
 
 _CREATE_NOTES_SQL: Final[str] = """
@@ -69,7 +90,8 @@ CREATE TABLE IF NOT EXISTS notes (
     indexed_at TEXT NOT NULL,
     fs_mtime INTEGER,
     tags_json TEXT,
-    sort_key TEXT
+    sort_key TEXT,
+    writer_version INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -159,8 +181,9 @@ INSERT INTO notes (
     indexed_at,
     fs_mtime,
     tags_json,
-    sort_key
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    sort_key,
+    writer_version
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(note_id) DO UPDATE SET
     rel_path = excluded.rel_path,
     title = excluded.title,
@@ -171,7 +194,8 @@ ON CONFLICT(note_id) DO UPDATE SET
     indexed_at = excluded.indexed_at,
     fs_mtime = excluded.fs_mtime,
     tags_json = excluded.tags_json,
-    sort_key = excluded.sort_key;
+    sort_key = excluded.sort_key,
+    writer_version = excluded.writer_version;
 """
 
 _INSERT_CHUNK_SQL: Final[str] = """
@@ -400,9 +424,17 @@ SET context = CASE
 WHERE context IS NULL OR context = '';
 """
 
-_COUNT_MISSING_CONTEXT_SQL: Final[str] = (
-    "SELECT COUNT(*) FROM chunks_fts WHERE context IS NULL OR context = '';"
+_PROBE_MISSING_CONTEXT_SQL: Final[str] = (
+    "SELECT 1 FROM chunks_fts WHERE context IS NULL OR context = '' LIMIT 1;"
 )
+"""Report whether any chunk still lacks its context, without counting them all.
+
+``chunks_fts`` is a contentful FTS5 table, so a predicate on ``context`` with no
+``MATCH`` scans the shadow content table and deserializes the body of every chunk.
+Counting read the whole index on every writable open to learn a number only used in
+a log line, and the answer is zero on every open but the one after a downgrade. The
+probe stops at the first offending row; the repair reports how many it touched.
+"""
 
 _LIST_NOTE_FRONTMATTER_SQL: Final[str] = """
 SELECT note_id, frontmatter_json
@@ -511,6 +543,29 @@ WHERE tags_json IS NOT NULL
 """
 
 _COUNT_NOTE_PATHS_SQL: Final[str] = f"SELECT COUNT(*) {_NOTE_PATH_FILTER_SQL};"
+
+
+def _count_note_paths_sql(pair_count: int) -> str:
+    """Count the filtered notes, narrowing by the frontmatter pair index."""
+    return f"SELECT COUNT(*) {_NOTE_PATH_FILTER_SQL}{_SEARCH_FRONTMATTER_PAIR_SQL * pair_count};"
+
+
+def _list_note_paths_sql(pair_count: int) -> str:
+    """Page the filtered notes in SQL, narrowing by the frontmatter pair index.
+
+    The schema comment on ``note_frontmatter`` says the table exists so a frontmatter
+    filter is an index lookup instead of a scan of every note. ``search`` honoured
+    that and ``list_notes`` did not: it read every matching row with no LIMIT, decoded
+    each note's frontmatter JSON in Python, and only then sliced the page, so the same
+    filter cost wildly different amounts through the two tools.
+    """
+    return f"""
+SELECT rel_path
+{_NOTE_PATH_FILTER_SQL}{_SEARCH_FRONTMATTER_PAIR_SQL * pair_count}
+ORDER BY sort_key COLLATE BINARY
+LIMIT ? OFFSET ?;
+"""
+
 
 _LIST_NOTE_PATHS_SQL: Final[str] = f"""
 SELECT rel_path
@@ -932,7 +987,27 @@ class SQLiteFTS5Store:
             normalized_folder,
             json.dumps(required_tags, ensure_ascii=False),
         )
+        if frontmatter and await self._is_frontmatter_indexed(connection):
+            pairs = tuple(
+                item
+                for key, value in frontmatter.items()
+                for item in (key.casefold(), value.casefold())
+            )
+            pair_count = len(frontmatter)
+            async with connection.execute(
+                _count_note_paths_sql(pair_count), (*parameters, *pairs)
+            ) as cursor:
+                count_row = await cursor.fetchone()
+            total = 0 if count_row is None else int(count_row[0])
+            async with connection.execute(
+                _list_note_paths_sql(pair_count), (*parameters, *pairs, limit, offset)
+            ) as cursor:
+                page = [str(row["rel_path"]) for row in await cursor.fetchall()]
+            return page, total
+
         if frontmatter:
+            # Legacy fallback: an index that predates the pair table has to be filtered
+            # in Python, which is what the whole branch above exists to avoid.
             async with connection.execute(
                 _LIST_FILTERABLE_NOTE_PATHS_SQL,
                 parameters,
@@ -1087,8 +1162,13 @@ class SQLiteFTS5Store:
         )
         await self._migrate_notes_columns(connection)
         await self._migrate_chunk_context(connection)
-        await self._rebuild_frontmatter_pairs(connection)
-        await self._repair_missing_context(connection)
+        # Both repairs below exist for rows an earlier release wrote, and both cost a
+        # pass over the whole index. One probe decides for both, and the stamp is
+        # written once afterwards so the second repair still sees what the first saw.
+        if await self._has_rows_from_an_earlier_release(connection):
+            await self._rebuild_frontmatter_pairs(connection)
+            await self._repair_missing_context(connection)
+            await connection.execute(_STAMP_WRITER_VERSION_SQL, (_INDEX_WRITER_VERSION,))
         await connection.commit()
         self._context_indexed = True
         self._frontmatter_indexed = True
@@ -1177,14 +1257,38 @@ class SQLiteFTS5Store:
                 )
         return self._frontmatter_indexed
 
+    async def _has_rows_from_an_earlier_release(self, connection: aiosqlite.Connection) -> bool:
+        """Report whether any indexed note was written before the current release.
+
+        The two repairs this gates are derived-data rebuilds over the whole index, and
+        they exist only for rows an earlier release wrote. They deliberately carried no
+        one-shot marker, because a release predating the derived data cannot clear one,
+        and the next upgrade would then skip the repair forever and leave the same
+        documented filter answered differently by ``search_text`` and ``list_notes``.
+
+        The stamp on each row is not that kind of marker. An earlier release does not
+        name ``writer_version`` in its INSERT, so the rows it writes take the column
+        default and this probe sees them, which is the evidence the repairs needed and
+        never had. The index on the column turns the probe into a seek.
+
+        A pair table that is empty while notes exist also counts, and is checked
+        separately: the table can be gone while every row is current, because
+        ``_ensure_schema`` recreates it empty before this runs. A vault whose notes all
+        carry frontmatter that yields no pair is then rebuilt on every open, which
+        costs a scan of ``notes`` and no insert, rather than being answered wrongly.
+        """
+        async with connection.execute(_PROBE_STALE_WRITER_SQL, (_INDEX_WRITER_VERSION,)) as cursor:
+            if await cursor.fetchone() is not None:
+                return True
+        async with connection.execute(_PROBE_DERIVED_DATA_ABSENT_SQL) as cursor:
+            return await cursor.fetchone() is not None
+
     async def _rebuild_frontmatter_pairs(self, connection: aiosqlite.Connection) -> None:
         """Rebuild ``note_frontmatter`` from the indexed metadata of every note.
 
-        This deliberately carries no one-shot marker. A release that predates the table
-        writes notes without pairs, and a marker would make the next upgrade skip the
-        repair forever, leaving ``search_text`` and ``list_notes`` answering the same
-        documented filter differently on the same vault. The table is derived data over
-        the ``notes`` rows already in memory, so rebuilding it is cheap and always right.
+        Runs only behind :meth:`_has_rows_from_an_earlier_release`. ``upsert_note``
+        maintains the pairs of every note it writes, so the only rows this can repair
+        are those an earlier release left without them.
         """
         started = time.perf_counter()
         await connection.execute("DELETE FROM note_frontmatter;")
@@ -1210,16 +1314,16 @@ class SQLiteFTS5Store:
         that writes notes through the older release would otherwise leave those chunks
         permanently unweighted with no signal anywhere.
         """
-        async with connection.execute(_COUNT_MISSING_CONTEXT_SQL) as cursor:
-            row = await cursor.fetchone()
-        missing = 0 if row is None else int(row[0])
-        if not missing:
-            return
+        async with connection.execute(_PROBE_MISSING_CONTEXT_SQL) as cursor:
+            if await cursor.fetchone() is None:
+                return
         started = time.perf_counter()
-        await connection.execute(_REPAIR_CHUNK_CONTEXT_SQL, {"sep": CHUNK_CONTEXT_SEPARATOR})
+        cursor = await connection.execute(
+            _REPAIR_CHUNK_CONTEXT_SQL, {"sep": CHUNK_CONTEXT_SEPARATOR}
+        )
         _LOGGER.info(
             "Repaired the context of %d chunks in %.0f ms",
-            missing,
+            cursor.rowcount,
             (time.perf_counter() - started) * 1000.0,
         )
 
@@ -1246,6 +1350,11 @@ class SQLiteFTS5Store:
             await connection.execute("ALTER TABLE notes ADD COLUMN tags_json TEXT;")
         if "sort_key" not in columns:
             await connection.execute("ALTER TABLE notes ADD COLUMN sort_key TEXT;")
+        if "writer_version" not in columns:
+            await connection.execute(
+                "ALTER TABLE notes ADD COLUMN writer_version INTEGER NOT NULL DEFAULT 0;"
+            )
+        await connection.execute(_CREATE_NOTES_WRITER_VERSION_INDEX_SQL)
 
         async with connection.execute(
             "SELECT note_id, rel_path, frontmatter_json, tags_json FROM notes "
@@ -1437,7 +1546,7 @@ def _validate_chunks_belong_to_note(note: Note, chunks: list[Chunk]) -> None:
 
 def _note_row(
     note: Note, indexed_at: str, fs_mtime_ns: int | None
-) -> tuple[str, str, str, str, str, str, str, str, int | None, str, str]:
+) -> tuple[str, str, str, str, str, str, str, str, int | None, str, str, int]:
     return (
         note.id,
         note.rel_path,
@@ -1450,6 +1559,7 @@ def _note_row(
         fs_mtime_ns,
         json.dumps(note.tags, ensure_ascii=False),
         _vault_order_key(note.rel_path),
+        _INDEX_WRITER_VERSION,
     )
 
 

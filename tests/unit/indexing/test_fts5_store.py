@@ -20,7 +20,7 @@ import hashlib
 import json
 import multiprocessing
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -1786,3 +1786,170 @@ async def test_frontmatter_deletes_by_note_id_never_scan_the_pair_table(tmp_path
                 plan = [str(row[3]) for row in await cursor.fetchall()]
             assert plan, name
             assert not any("SCAN note_frontmatter" in step for step in plan), (name, plan)
+
+
+async def test_writable_open_skips_the_derived_repairs_on_a_current_index(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reopening an index this release wrote must not rebuild its derived data.
+
+    Both repairs pass over the whole index: one deletes and reinserts every
+    frontmatter pair, the other scans a contentful FTS table, which deserializes the
+    body of every chunk. They ran on every writable open, so every server start and
+    every writable CLI command paid for the whole index before answering anything,
+    and the answer was that there was nothing to repair.
+    """
+    db_path = _db_path(tmp_path)
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    for index in range(5):
+        note = note_factory(
+            id=f"01J{index:023d}",
+            rel_path=f"items/note-{index}.md",
+            frontmatter={"confidence": "high", "status": "active"},
+        )
+        await store.upsert_note(note, [chunk_factory(note=note, content=f"body {index}")])
+    await store.close()
+
+    def _refuse(name: str) -> Callable[..., Awaitable[None]]:
+        async def _fail(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError(f"{name} ran on an index the current release wrote")
+
+        return _fail
+
+    monkeypatch.setattr(
+        SQLiteFTS5Store, "_rebuild_frontmatter_pairs", _refuse("_rebuild_frontmatter_pairs")
+    )
+    monkeypatch.setattr(
+        SQLiteFTS5Store, "_repair_missing_context", _refuse("_repair_missing_context")
+    )
+
+    reopened = SQLiteFTS5Store()
+    await reopened.open(db_path)
+    try:
+        assert _paths(await reopened.search("body", frontmatter={"status": "active"})) == [
+            f"items/note-{index}.md" for index in range(5)
+        ]
+    finally:
+        await reopened.close()
+
+
+async def test_writable_open_still_repairs_rows_an_earlier_release_wrote(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+) -> None:
+    """A row without the current stamp is the evidence that makes the repair run.
+
+    An earlier release does not name ``writer_version`` in its INSERT, so its rows
+    keep the column default. This reproduces that state directly, together with the
+    missing pairs such a release leaves behind, and requires the filter to work again
+    afterwards. Without this the gate would be a one-shot marker, which is exactly
+    what the unconditional rebuild existed to avoid.
+    """
+    db_path = _db_path(tmp_path)
+    note = note_factory(id=_NOTE_ID, rel_path="items/one.md", frontmatter={"confidence": "High"})
+    store = SQLiteFTS5Store()
+    await store.open(db_path)
+    await store.upsert_note(note, [chunk_factory(note=note, content="staleanchor")])
+    await store.close()
+
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("DELETE FROM note_frontmatter;")
+        connection.execute("UPDATE notes SET writer_version = 0;")
+        connection.execute(
+            "INSERT INTO note_frontmatter (note_id, key, value) VALUES (?,?,?);",
+            ("01JOTHERNOTEIDOTHERNOTE00", "confidence", "high"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    reopened = SQLiteFTS5Store()
+    await reopened.open(db_path)
+    try:
+        assert _paths(await reopened.search("staleanchor", frontmatter={"confidence": "high"})) == [
+            "items/one.md"
+        ]
+    finally:
+        await reopened.close()
+
+    connection = sqlite3.connect(db_path)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM note_frontmatter;").fetchone()[0] == 1
+        assert connection.execute("SELECT MIN(writer_version) FROM notes;").fetchone()[0] == 1
+    finally:
+        connection.close()
+
+
+async def test_filtered_listing_agrees_with_the_legacy_scan_it_replaces(
+    tmp_path: Path,
+    note_factory: NoteFactory,
+    chunk_factory: ChunkFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pair index and the Python scan must answer a frontmatter filter identically.
+
+    ``list_notes`` used to decode every note's frontmatter in Python and slice the page
+    afterwards, so its cost was the whole vault whatever the filter selected. The
+    indexed branch narrows in SQL instead, which is only legitimate if it agrees with
+    the scan it replaces, including on paging, casing and list-valued keys.
+    """
+    store = SQLiteFTS5Store()
+    await store.open(_db_path(tmp_path))
+    try:
+        for index in range(12):
+            note = note_factory(
+                id=f"01J{index:023d}",
+                rel_path=f"items/note-{index:02d}.md",
+                frontmatter={
+                    "status": "Active" if index % 3 else "archived",
+                    "owner": f"person-{index % 4}",
+                    "labels": [f"label-{index % 5}", "shared"],
+                },
+            )
+            await store.upsert_note(note, [chunk_factory(note=note, content=f"body {index}")])
+
+        cases: list[dict[str, str]] = [
+            {"status": "active"},
+            {"status": "ACTIVE"},
+            {"owner": "person-2"},
+            {"labels": "shared"},
+            {"labels": "label-3"},
+            {"status": "active", "owner": "person-1"},
+            {"status": "nothing-matches-this"},
+        ]
+        pages = [(10, 0), (3, 0), (3, 2), (5, 10), (5, 100)]
+
+        indexed: list[tuple[list[str], int]] = []
+        for filters in cases:
+            for limit, offset in pages:
+                indexed.append(
+                    await store.list_note_paths(
+                        folder=None, tags=[], frontmatter=filters, limit=limit, offset=offset
+                    )
+                )
+
+        # Force the legacy branch the same way an index predating the pair table does.
+        async def _unindexed(*_args: object, **_kwargs: object) -> bool:
+            return False
+
+        monkeypatch.setattr(SQLiteFTS5Store, "_is_frontmatter_indexed", _unindexed)
+        scanned: list[tuple[list[str], int]] = []
+        for filters in cases:
+            for limit, offset in pages:
+                scanned.append(
+                    await store.list_note_paths(
+                        folder=None, tags=[], frontmatter=filters, limit=limit, offset=offset
+                    )
+                )
+
+        assert indexed == scanned
+        # Guard the guard: a comparison of nothing against nothing would also pass.
+        assert any(page for page, _total in indexed)
+    finally:
+        await store.close()
