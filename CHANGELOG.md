@@ -20,6 +20,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- `get_note_history` and `audit_query` decide read admission once per note instead of once
+  per journal record. The scope filter resolved the candidate path and every allowed root
+  on each record, on the event loop, so a caller asking about one note blocked the server
+  for every record in the vault's history first. Measured over 10000 records spanning 50
+  notes: 20000 path resolutions and 5.09 seconds, now 100 and 0.03 seconds. The same
+  per-record pattern applied to the recovery inspection paths. The admission decision is
+  unchanged; the cache lives for one call.
 - One organization apply walks the vault seven times instead of thirteen, and computes the
   case-canonicalization inventory once per validation pass instead of twice. The five stage
   validators run back to back against a vault none of them touches, so each whole-vault

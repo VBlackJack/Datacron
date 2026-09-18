@@ -18,11 +18,13 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from datacron.core.config import Settings
 from datacron.core.models import Note
+from datacron.core.operation_log import OperationRecord
 from datacron.core.paths import PathConfinementError
 from datacron.core.scope import (
     AccessMode,
@@ -30,6 +32,7 @@ from datacron.core.scope import (
     NoteAdmissionError,
     NoteAdmissionPolicy,
     ScopedVaultReader,
+    ScopedVaultWriter,
     SingleTenantVaultScope,
 )
 from datacron.core.vault import SKIPPED_FOLDERS, FilesystemVaultReader
@@ -480,3 +483,59 @@ def test_an_absolute_or_traversing_argument_is_refused_lexically(tmp_path: Path)
 
     for rel_path in ("C:/Windows/win.ini", "/etc/passwd", "../outside"):
         assert not scope.allows_rel_path(rel_path, "read")
+
+
+async def test_scoped_list_operations_decides_each_path_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The journal holds many operations per note, so admission is per note.
+
+    allows_rel_path resolves the candidate and every allowed root on each call,
+    and this filter runs on the event loop after the journal read returns from
+    its worker thread. At ten thousand records that was twenty thousand
+    blocking path resolutions before the first record reached a caller who had
+    asked about one note.
+    """
+    vault = tmp_path / "vault"
+    (vault / "notes").mkdir(parents=True)
+    scope = _scope(vault)
+
+    records = [
+        OperationRecord(
+            operation_id=f"{index:032x}",
+            timestamp="2026-09-18T00:00:00+00:00",
+            op="patch",
+            tool="patch_note_section",
+            note_id=None,
+            rel_path=f"notes/note{index % 5}.md",
+            before_hash=None,
+            after_hash="a" * 64,
+            actor="test",
+            parameters={},
+            history_stored=False,
+        )
+        for index in range(200)
+    ]
+
+    class _Delegate:
+        async def list_operations(self) -> list[OperationRecord]:
+            return records
+
+    writer = ScopedVaultWriter.__new__(ScopedVaultWriter)
+    writer._delegate = cast("Any", _Delegate())
+    writer._scope = scope
+    resolutions = 0
+    real_resolve = Path.resolve
+
+    def counting_resolve(self: Path, *args: object, **kwargs: object) -> Path:
+        nonlocal resolutions
+        resolutions += 1
+        return real_resolve(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "resolve", counting_resolve)
+
+    kept = await writer.list_operations()
+
+    assert len(kept) == 200
+    # Five distinct notes, two resolutions apiece: the candidate and the root.
+    assert resolutions <= 20, f"{resolutions} resolutions for 5 distinct notes"
