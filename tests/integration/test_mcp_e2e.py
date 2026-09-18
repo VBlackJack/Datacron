@@ -38,7 +38,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
 _DEMO_VAULT = Path(__file__).parents[1] / "fixtures" / "demo-vault"
-_GET_NOTE_OUTPUT_SCHEMA_SHA256 = "dd235cf4bbb29547d0f6a294334f065422422e3d3aac10e44d7454a0544279d3"
+_GET_NOTE_OUTPUT_SCHEMA_SHA256 = "e29e6f3f8452caf414b50dcfd7ea5e511f7316e52cd47862ce2ed1918c9fbf9b"
 
 
 @pytest.fixture
@@ -816,3 +816,22 @@ def _ensure_python_runtime_compatible() -> None:
 
 
 _ensure_python_runtime_compatible()
+
+
+async def test_get_note_section_stdio_contract(vault: Path, tmp_path: Path) -> None:
+    raw = b"# Root\n## Target\nselected\n## Sibling\nexcluded\n"
+    (vault / "section.md").write_bytes(raw)
+    session, streams = await _open_session(vault, tmp_path)
+    try:
+        result = await session.call_tool(
+            "get_note", {"id_or_path": "section.md", "heading_path": ["Root", "Target"]}
+        )
+        assert not result.is_error
+        payload = result.structured_content
+        assert payload is not None
+        assert payload["section"]["heading_path"] == ["Root", "Target"]
+        assert "selected" in payload["content"]
+        assert "excluded" not in payload["content"]
+        assert payload["note_content_hash"] == hashlib.sha256(raw).hexdigest()
+    finally:
+        await _close_session(session, streams)

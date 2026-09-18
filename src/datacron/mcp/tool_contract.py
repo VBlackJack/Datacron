@@ -126,6 +126,16 @@ class HeadingOutput(TypedDict):
     chunk_id: str
 
 
+class NoteSectionOutput(TypedDict):
+    """Selected heading subtree; physical line bounds are inclusive and 1-based."""
+
+    heading_path: list[str]
+    heading_occurrence: int
+    matching_headings: int
+    line_start: int
+    line_end: int
+
+
 class GetNoteOutput(TypedDict, total=False):
     """Successful ``get_note`` payload across full, map, and chunk formats."""
 
@@ -152,6 +162,7 @@ class GetNoteOutput(TypedDict, total=False):
     returned_chars: int | None
     next_offset: int | None
     truncated: bool | None
+    section: NoteSectionOutput | None
     headings: list[HeadingOutput] | None
     chunk_count: int | None
     chunk_id: str | None

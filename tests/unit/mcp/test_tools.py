@@ -1169,22 +1169,26 @@ class TestGetNoteFull:
         )
 
     @pytest.mark.asyncio
-    async def test_missing_chunk_with_valid_ulid_falls_back_to_full_note(
-        self, app_with_open_store: DatacronApp, tmp_vault: Path
+    async def test_missing_chunk_with_valid_ulid_returns_explicit_error(
+        self, app_with_open_store: DatacronApp, tmp_vault: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from datacron.mcp.tools import _get_note_impl
 
         note = await app_with_open_store.vault_reader.read_note(tmp_vault / "welcome.md")
 
+        async def refuse_parent_read(*args: Any, **kwargs: Any) -> None:
+            raise AssertionError("A missing chunk must not read the parent note")
+
+        monkeypatch.setattr("datacron.mcp.tools.read._resolve_note", refuse_parent_read)
         result = await _get_note_impl(
             app_with_open_store,
             id_or_path=f"{note.id}::missing/chunk::9999",
             fmt="full",
         )
 
-        assert result["format"] == "full"
-        assert result["id"] == note.id
-        assert result["rel_path"] == "welcome.md"
+        assert result["error"]["type"] == "ValueError"
+        assert "chunk_id does not exist" in result["error"]["message"]
+        assert "content" not in result
 
     @pytest.mark.asyncio
     async def test_malformed_chunk_id_returns_existing_structured_error(
@@ -1198,10 +1202,8 @@ class TestGetNoteFull:
             fmt="full",
         )
 
-        assert result["error"]["type"] == "FileNotFoundError"
-        assert result["error"]["message"] == (
-            "No note found for 'not-a-valid-ulid::missing/chunk::9999'"
-        )
+        assert result["error"]["type"] == "ValueError"
+        assert "chunk_id does not exist" in result["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_chunk_sanitizes_note_title_and_header_path(

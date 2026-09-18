@@ -20,6 +20,7 @@ from typing import Any, Final, cast
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
+from pydantic import StrictInt
 
 from datacron.core.scope import SingleTenantVaultScope
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
@@ -243,7 +244,10 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
             "reads ignore offset/limit. For note inputs, format='full' returns the "
             "sandbox-wrapped body and offset/limit page large notes by character range; "
             "format='map' returns the heading outline only (cheap to scan before "
-            "requesting full content)."
+            "requesting full content). heading_path selects exact rendered heading ancestry "
+            "including its subtree; repeated paths require a 1-based heading_occurrence. "
+            "Section reads require full format and a note input, include source line spans "
+            "and the original note hash, and paginate relative to the redacted section."
         ),
         annotations=_READ_ANNOTATIONS,
     )
@@ -252,6 +256,8 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         format: GetNoteFormat = "full",
         offset: int = 0,
         limit: int | None = None,
+        heading_path: list[str] | None = None,
+        heading_occurrence: StrictInt | None = None,
     ) -> GetNoteOutput:
         return cast(
             "GetNoteOutput",
@@ -261,6 +267,8 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 fmt=format,
                 offset=offset,
                 limit=limit,
+                heading_path=heading_path,
+                heading_occurrence=heading_occurrence,
             ),
         )
 
