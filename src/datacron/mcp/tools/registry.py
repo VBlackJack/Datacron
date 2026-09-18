@@ -804,6 +804,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 mode=mode,
                 confirmation_token=confirmation_token,
                 actor=app.identity_provider.identify(ctx).actor,
+                ctx=ctx,
             ),
         )
 
