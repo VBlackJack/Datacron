@@ -9,6 +9,15 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Changed
+
+- One organization apply hashes the organization scope once instead of twice. That sweep
+  streams a SHA-256 of every note in scope and is the most expensive step of the preflight;
+  it ran from the before-state validation and again from the classifier, against a vault
+  that had not changed in between. Measured on one clean apply: two scope walks to one, and
+  three full vault walks to two. Recovery still re-classifies every batch it rolls forward,
+  because its own loop moves the vault underneath the next one.
+
 ### Added
 
 - `apply_organization_manifest` reports the progress of its post-commit reindex as MCP
