@@ -81,6 +81,19 @@ class _StrictJsonError(ValueError):
     """Raised when JSON uses an ambiguous or non-standard construct."""
 
 
+def _is_reparse_point(entry: os.DirEntry[str]) -> bool:
+    """Report a Windows reparse point from the entry the directory scan returned.
+
+    A junction is not a symlink to :func:`os.DirEntry.is_symlink`, and the scan
+    already carries the attributes, so this costs no extra syscall.
+    """
+    try:
+        attributes = getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
+    except OSError:
+        return False
+    return bool(attributes & _FILE_ATTRIBUTE_REPARSE_POINT)
+
+
 def _assert_unlinked_operation_path(
     path: Path,
     *,
@@ -299,6 +312,38 @@ class OperationJournal:
     def _guard_operations_path(self) -> Path:
         self._guard_oplog_root()
         return self._guard_path(self._operations_path)
+
+    def _purge_unretained_blobs(self, history_dir: Path, retained: set[str]) -> list[str]:
+        """Delete the history blobs no retained record names.
+
+        ``history_dir`` is already guarded, and :func:`os.scandir` cannot yield a
+        child of any other directory, so the per-entry check is a name test and a
+        link test rather than a fresh root-to-leaf walk. The old loop called
+        ``_guard_history_target`` per entry, and a second time before each
+        unlink, which was nine ``lstat`` calls apiece: on a vault holding a few
+        thousand blobs inside the retention window that was tens of thousands of
+        syscalls added to a committed write, every thirty seconds of sustained
+        writing, whether or not the sweep deleted anything.
+
+        A link or reparse point still raises rather than being skipped, which is
+        what the per-entry guard did: it is evidence of tampering inside the
+        journal's own directory, not a blob to step over.
+        """
+        removed: list[str] = []
+        with os.scandir(history_dir) as scan:
+            entries = sorted(scan, key=lambda entry: entry.name)
+        for entry in entries:
+            if entry.is_symlink() or _is_reparse_point(entry):
+                raise OperationLogError(
+                    f"linked or reparse operation journal path is forbidden: {entry.path}"
+                )
+            if not entry.is_file(follow_symlinks=False):
+                continue
+            if not _HASH_PATTERN.fullmatch(entry.name) or entry.name in retained:
+                continue
+            Path(entry.path).unlink()
+            removed.append(entry.name)
+        return removed
 
     def _guard_history_target(self, path: Path) -> Path:
         history_dir = self._guard_history_root()
@@ -577,16 +622,7 @@ class OperationJournal:
                 if record.before_hash is not None:
                     retained.add(record.before_hash)
                 retained.add(record.after_hash)
-        removed: list[str] = []
-        for candidate in sorted(history_dir.iterdir()):
-            path = self._guard_history_target(candidate)
-            if not path.is_file() or not _HASH_PATTERN.fullmatch(path.name):
-                continue
-            if path.name in retained:
-                continue
-            path = self._guard_history_target(path)
-            path.unlink()
-            removed.append(path.name)
+        removed = self._purge_unretained_blobs(history_dir, retained)
         if removed:
             _durable_flush_directory(self._guard_history_root())
         self._last_purge_at = purge_at

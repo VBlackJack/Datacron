@@ -410,3 +410,84 @@ def test_append_reads_only_the_journal_tail(tmp_path: Path) -> None:
     assert len(records) == history_length + 1
     assert records[-1].operation_id == "operation-tail"
     assert records[-1].prev_hash == sha256_bytes(_record_line(records[-2]))
+
+
+def test_retention_sweep_cost_does_not_grow_with_the_blob_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep runs on every committed write, so it must not stat per blob.
+
+    Each entry used to be validated from the vault root down, twice for a blob
+    it deleted: about nineteen lstat calls apiece. A vault holding a few
+    thousand blobs inside the retention window added tens of thousands of
+    syscalls to a committed write, every thirty seconds of sustained writing,
+    whether or not the sweep deleted anything.
+    """
+    history = tmp_path / ".datacron" / "history"
+    history.mkdir(parents=True)
+    for index in range(200):
+        (history / f"{index:064x}").write_bytes(b"x")
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    calls = 0
+    real_lstat = os.lstat
+
+    def counting_lstat(*args: object, **kwargs: object) -> os.stat_result:
+        nonlocal calls
+        calls += 1
+        return real_lstat(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "lstat", counting_lstat)
+
+    removed = journal.purge_history(datetime(2026, 7, 10, tzinfo=UTC))
+
+    assert len(removed) == 200
+    # A handful for the guarded directory roots, and nothing per blob.
+    assert calls < 50, f"the sweep made {calls} lstat calls for 200 blobs"
+
+
+def test_retention_sweep_refuses_a_linked_history_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A link inside the journal's own directory is tampering, not a blob to skip.
+
+    The per-entry guard used to raise on one. This covers the same refusal
+    without needing the symlink privilege, which most Windows hosts withhold.
+    """
+    history = tmp_path / ".datacron" / "history"
+    history.mkdir(parents=True)
+    blob = history / ("a" * 64)
+    blob.write_bytes(b"x")
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    real_scandir = os.scandir
+
+    class _LinkedEntry:
+        name = "a" * 64
+        path = str(blob)
+
+        def is_symlink(self) -> bool:
+            return True
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            return True
+
+        def stat(self, *, follow_symlinks: bool = True) -> os.stat_result:
+            return os.stat(blob)
+
+    class _Scan:
+        def __enter__(self) -> list[_LinkedEntry]:
+            return [_LinkedEntry()]
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+    def fake_scandir(path: str | os.PathLike[str]) -> object:
+        if Path(os.fspath(path)) == history:
+            return _Scan()
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", fake_scandir)
+
+    with pytest.raises(OperationLogError, match="linked or reparse"):
+        journal.purge_history(datetime(2026, 7, 10, tzinfo=UTC))
+
+    assert blob.is_file()
