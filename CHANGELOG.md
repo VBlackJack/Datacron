@@ -20,6 +20,32 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- Opening the index for writing no longer rebuilds its derived data every time. Two repairs
+  ran unconditionally on every writable open, which is every MCP server start and every
+  writable CLI command: one deleted and reinserted every row of `note_frontmatter`, the other
+  counted the chunks missing their search context, which on a contentful FTS5 table
+  deserializes the body of every chunk. Both exist for rows an earlier release wrote, and on
+  every open but the one after an upgrade there was nothing to repair. Measured on 2000 notes
+  and 12000 chunks, a 55 MiB index: a writable open took 198 ms against 1 ms read-only, and
+  now takes 5 ms.
+- A `notes` row records which release wrote it, and the two repairs above run only when a row
+  predates the current one. They deliberately carried no one-shot marker, because a release
+  that predates the derived data cannot clear one and the next upgrade would skip the repair
+  forever, leaving `search_text` and `list_notes` answering the same documented filter
+  differently on the same vault. A per-row stamp is not that kind of marker: an earlier
+  release does not name the column in its INSERT, so its rows take the column default and are
+  visible as stale. A pair table that is empty while notes exist also triggers the repair, so
+  a table lost independently of the rows is still rebuilt.
+- `list_notes` answers a frontmatter filter through the `note_frontmatter` index instead of
+  decoding every note's frontmatter in Python. The schema comment says the table exists so a
+  frontmatter filter is an index lookup rather than a scan of every note; `search_text`
+  honoured that and `list_notes` did not, so the same filter cost wildly different amounts
+  through the two tools. Measured on 4000 notes, in the shape the MCP tool actually calls it,
+  which asks for the total and then for every matching path because the scope admission filter
+  runs in Python afterwards: 48 ms whatever the filter selected, now 29 ms for a filter
+  matching 2666 notes and 20 ms for one matching 80. The cost now follows the answer rather
+  than the vault. An index predating the pair table keeps the Python scan, and both branches
+  are held to returning the same pages.
 - The committed-write baseline is established from the tail of the operation journal when the
   note already has a record there, instead of parsing and hash-verifying the whole file.
   `_check_committed_baseline` calls `latest_record_for_path` on every write that carries no
