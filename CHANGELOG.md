@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0918.00] - 2026-09-18
+
 ### Security
 
 - A vault-relative path is now refused while it is still a string, before it is joined to
