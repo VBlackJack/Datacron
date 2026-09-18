@@ -9,16 +9,6 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
-### Changed
-
-- The history retention sweep no longer revalidates every blob from the vault root. It ran
-  on every committed write, at most once every thirty seconds of sustained writing and
-  unconditionally on the first write after a server start, and it validated each entry with
-  a root-to-leaf walk that lstats every path component, twice for a blob it deleted.
-  Measured over 2000 blobs: 38020 stat syscalls and 3.14 seconds, now 20 syscalls and 0.41
-  seconds, most of it the unlinking. The cost was paid in full even when the sweep deleted
-  nothing. A link or reparse point inside the history directory still raises.
-
 ### Added
 
 - `apply_organization_manifest` reports the progress of its post-commit reindex as MCP
@@ -39,6 +29,21 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   the classifier's loop over several pending batches rolls them forward and moves the vault
   underneath a cached inventory. What remains is `_stage_error` running three times per
   apply and the separate scope walk that streams a SHA-256 of every note in scope.
+
+- One organization apply hashes the organization scope once instead of twice. That sweep
+  streams a SHA-256 of every note in scope and is the most expensive step of the preflight;
+  it ran from the before-state validation and again from the classifier, against a vault
+  that had not changed in between. Measured on one clean apply: two scope walks to one, and
+  three full vault walks to two. Recovery still re-classifies every batch it rolls forward,
+  because its own loop moves the vault underneath the next one.
+
+- The history retention sweep no longer revalidates every blob from the vault root. It ran
+  on every committed write, at most once every thirty seconds of sustained writing and
+  unconditionally on the first write after a server start, and it validated each entry with
+  a root-to-leaf walk that lstats every path component, twice for a blob it deleted.
+  Measured over 2000 blobs: 38020 stat syscalls and 3.14 seconds, now 20 syscalls and 0.41
+  seconds, most of it the unlinking. The cost was paid in full even when the sweep deleted
+  nothing. A link or reparse point inside the history directory still raises.
 
 ## [2026.0918.00] - 2026-09-18
 

@@ -27,7 +27,7 @@ import json
 import os
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path, PurePosixPath
@@ -118,6 +118,7 @@ BATCH_FAULT_POINTS: Final[tuple[str, ...]] = (
 _BATCH_SCHEMA: Final[str] = "organization-batch-pending-v1"
 _RESULT_SCHEMA: Final[str] = "organization-batch-result-v1"
 _LIVE_ADMITTED_KEY: Final[str] = "live_admitted_note_paths"
+_SCOPE_HASHES_KEY: Final[str] = "live_scope_note_hashes"
 _CANONICALIZATION_KEY: Final[str] = "case_canonicalization_inventory"
 _BATCHES_DIR_NAME: Final[str] = "batches"
 _PENDING_DIR_NAME: Final[str] = "pending"
@@ -406,7 +407,9 @@ class OrganizationBatchTransaction:
         self._vault_root = vault_root.expanduser().resolve()
         self._journal = journal
         self._write_paths = tuple(path.expanduser().resolve() for path in write_paths)
-        self._pass_inventory: dict[object, Any] | None = None
+        # The open pass, as (batch_id, inventories). One field, so the
+        # batch a cache belongs to cannot drift from the cache itself.
+        self._open_pass: tuple[str, dict[object, Any]] | None = None
         self._batches_root = self._vault_root / ".datacron" / "oplog" / _BATCHES_DIR_NAME
         self._pending_root = self._batches_root / _PENDING_DIR_NAME
         self._stage_root = self._batches_root / _STAGE_DIR_NAME
@@ -546,40 +549,59 @@ class OrganizationBatchTransaction:
         if policy_error is not None:
             raise BatchConflictError(policy_error)
         self._assert_journal_roots()
-        self._validate_before_states(pending)
-        records_started = False
-        try:
-            self._stage_payloads(pending, payloads, fault_injector)
-            self._store_before_history(pending, fault_injector)
-            self._write_pending(pending)
-            _inject(fault_injector, "after_pending_write")
-            self._roll_forward_bytes(pending, fault_injector)
-            records_started = True
-            self._append_records(pending, fault_injector)
-            result = pending.to_result(already_committed=False)
-            self._write_result(result)
-            _inject(fault_injector, "after_commit_marker")
-            self._remove_pending(pending.batch_id)
-            _inject(fault_injector, "after_pending_cleanup")
-            self._remove_stage(pending.batch_id)
-            _inject(fault_injector, "after_stage_cleanup")
-            _LOGGER.info(
-                "organization batch committed batch_id=%s manifest_sha256=%s members=%d",
-                pending.batch_id,
-                pending.manifest_sha256,
-                len(pending.members),
-            )
-            return result
-        except Exception as exc:
+        # One pass spans validation and classification, which read the same
+        # unmutated vault. It is entered before the try, because
+        # _validate_before_states must keep failing without reaching the
+        # handler below: a precondition failure means this call changed
+        # nothing, and the handler's rollback branch would then revert a batch
+        # that a published receipt still says to roll forward.
+        #
+        # Nothing written inside the pass is visible to an inventory walk. The
+        # stage entries, the pending receipt and the history blobs all live
+        # under .datacron, and none of them is named *.md, which both walks
+        # require. The scope walk is the reason to say it that way: it starts
+        # at the configured scope root, which is pushed without the dot-segment
+        # filter that its children get, so an organization scope of .datacron
+        # would put it inside the sidecar.
+        with ExitStack() as inventory:
+            inventory.enter_context(self._inventory_pass(pending.batch_id, exclusive=True))
+            self._validate_before_states(pending)
+            records_started = False
             try:
-                published = self._pending_is_published_exact(pending)
-            except RecoveryRequiredError as recovery_exc:
-                raise recovery_exc from exc
-            if published and not records_started:
-                self._rollback_exact(pending)
-            elif not published:
+                self._stage_payloads(pending, payloads, fault_injector)
+                self._store_before_history(pending, fault_injector)
+                self._write_pending(pending)
+                _inject(fault_injector, "after_pending_write")
+                classified = self._classify_blocked(pending)
+                # Every inventory the pass holds is about to go stale.
+                inventory.close()
+                self._roll_forward_bytes(pending, fault_injector, classified=classified)
+                records_started = True
+                self._append_records(pending, fault_injector)
+                result = pending.to_result(already_committed=False)
+                self._write_result(result)
+                _inject(fault_injector, "after_commit_marker")
+                self._remove_pending(pending.batch_id)
+                _inject(fault_injector, "after_pending_cleanup")
                 self._remove_stage(pending.batch_id)
-            raise
+                _inject(fault_injector, "after_stage_cleanup")
+                _LOGGER.info(
+                    "organization batch committed batch_id=%s manifest_sha256=%s members=%d",
+                    pending.batch_id,
+                    pending.manifest_sha256,
+                    len(pending.members),
+                )
+                return result
+            except Exception as exc:
+                try:
+                    published = self._pending_is_published_exact(pending)
+                except RecoveryRequiredError as recovery_exc:
+                    raise recovery_exc from exc
+                if published and not records_started:
+                    self._rollback_exact(pending)
+                elif not published:
+                    self._remove_stage(pending.batch_id)
+                raise
 
     def recover(self) -> BatchRecoveryOutcome:
         """Roll every safe pending batch forward, or return exact-hash blockers."""
@@ -964,8 +986,17 @@ class OrganizationBatchTransaction:
         fault_injector: BatchFaultInjector | None,
         *,
         pre_mutation: Callable[[], None] | None = None,
+        classified: tuple[BlockedOperation, ...] | None = None,
     ) -> None:
-        blocked = self._classify_blocked(pending)
+        """Write the staged bytes, refusing unless the batch classifies clean.
+
+        ``classified`` carries a classification the caller already made over the
+        same unmutated window, so an apply does not pay the preflight twice.
+        :meth:`recover` deliberately passes nothing: its loop rolls earlier
+        batches forward, so each one has to be re-classified against the vault
+        as those writes left it.
+        """
+        blocked = self._classify_blocked(pending) if classified is None else classified
         if blocked:
             raise _recovery_required(blocked)
         for member in pending.members:
@@ -1348,10 +1379,23 @@ class OrganizationBatchTransaction:
         return None
 
     def _live_scope_note_hashes(self) -> dict[str, tuple[str, str]]:
-        return {
+        """Hash every note in the organization scope, once per pass.
+
+        This walks the scope and streams a SHA-256 of each note, which makes it
+        the most expensive single step of the preflight. An apply ran it twice,
+        from _validate_before_states and again from the classifier inside
+        _roll_forward_bytes, against a vault that had not changed in between.
+        """
+        cached = self._open_inventories()
+        if cached is not None and _SCOPE_HASHES_KEY in cached:
+            return dict(cached[_SCOPE_HASHES_KEY])
+        hashes = {
             identity: (rel_path, _stream_sha256(path))
             for identity, (rel_path, path) in self._live_scope_note_paths().items()
         }
+        if cached is not None:
+            cached[_SCOPE_HASHES_KEY] = dict(hashes)
+        return hashes
 
     def _live_scope_note_paths(self) -> dict[str, tuple[str, Path]]:
         scope, policy = self._live_organization_policy()
@@ -1359,7 +1403,7 @@ class OrganizationBatchTransaction:
         return self._collect_live_admitted_note_paths(scope_root, policy)
 
     def _live_admitted_note_paths(self) -> dict[str, tuple[str, Path]]:
-        cached = self._pass_inventory
+        cached = self._open_inventories()
         if cached is not None and _LIVE_ADMITTED_KEY in cached:
             return dict(cached[_LIVE_ADMITTED_KEY])
         _scope, policy = self._live_organization_policy()
@@ -1429,15 +1473,19 @@ class OrganizationBatchTransaction:
             self._config_stage_error,
             self._identity_sidecar_stage_error,
         )
-        with self._inventory_pass():
+        with self._inventory_pass(pending.batch_id):
             for validator in validators:
                 validation_error = validator(pending, payloads)
                 if validation_error is not None:
                     return validation_error
         return None
 
+    def _open_inventories(self) -> dict[object, Any] | None:
+        """Return the open pass's inventories, or None when no pass is open."""
+        return None if self._open_pass is None else self._open_pass[1]
+
     @contextmanager
-    def _inventory_pass(self) -> Iterator[None]:
+    def _inventory_pass(self, batch_id: str, *, exclusive: bool = False) -> Iterator[None]:
         """Compute each whole-vault inventory once for one validation pass.
 
         The validators in :meth:`_stage_error` run back to back against a vault
@@ -1448,30 +1496,53 @@ class OrganizationBatchTransaction:
         Two invariants make the cache sound, and both are enforced rather than
         assumed:
 
-        * **One pass never nests.** A pass is only correct while the vault and
-          the pending batch it describes both hold still. Widening one to span
-          several batches looks free, because the classifier loops over pendings
-          in :meth:`recover`, but those iterations roll batches forward and so
-          move the vault underneath a cached inventory. Nesting therefore raises
-          instead of silently reusing a stale pass.
-        * **A pass runs under the mutation lock.** ``_pass_inventory`` is state
-          on an instance built once per writer, not once per apply, so two
-          threads inside one pass would share it and the first to leave would
-          clear it under the second. Every caller of :meth:`_stage_error` today
-          holds the ``mutation`` advisory lock, except ``inspect_recovery``,
-          which is CLI-only and single-shot. Exposing inspection as an MCP tool
-          would make that race live and must take the lock first.
+        * **A pass covers exactly one batch.** Every inventory it holds is a
+          function of the vault and of the pending batch: the canonicalization
+          inventory excludes the paths its batch affects, so the same vault
+          yields a different answer for a different batch. Widening a pass to
+          span several looks free, because the classifier loops over pendings in
+          :meth:`recover`, but those iterations roll batches forward and move the
+          vault underneath a cached inventory. Re-entering with the same
+          ``batch_id`` joins the open pass; a different one raises.
+        * **Only the owner of a window opens it.** A joiner does not close the
+          pass, so a caller that needs the cache gone by a known point asks for
+          ``exclusive`` and gets a loud failure instead of silently joining a
+          pass that someone else will close later. :meth:`apply` does, because
+          ``inspect_recovery`` takes no lock and can classify the same batch
+          from another thread; without it, arrival order would decide who owns
+          the window and the cache could outlive the writes.
+        * **A pass runs under the mutation lock, over a window that mutates no
+          admitted note.** ``_pass_inventory`` is state on an instance built once
+          per writer, not once per apply, so two threads inside one pass would
+          share it and the first to leave would clear it under the second. Every
+          caller holds the ``mutation`` advisory lock today, except
+          ``inspect_recovery``, which is CLI-only and single-shot; exposing
+          inspection as an MCP tool would make that race live and must take the
+          lock first. :meth:`apply` opens its pass over the window that ends
+          before :meth:`_roll_forward_bytes` writes: staging, history and the
+          pending receipt all land under ``.datacron``, which every inventory
+          walk skips.
 
         The cache is dropped in a ``finally``, so a failing validator cannot
         leave one behind.
         """
-        if self._pass_inventory is not None:
-            raise OperationLogError("organization inventory pass is already open")
-        self._pass_inventory = {}
+        open_pass = self._open_pass
+        if open_pass is not None:
+            open_batch_id, _inventories = open_pass
+            if exclusive:
+                # This caller needs to own the window, not join someone else's.
+                # A joiner does not close the pass, so joining would leave the
+                # cache alive across this caller's own writes.
+                raise OperationLogError("organization inventory pass is already open")
+            if open_batch_id != batch_id:
+                raise OperationLogError("organization inventory pass is open for a different batch")
+            yield
+            return
+        self._open_pass = (batch_id, {})
         try:
             yield
         finally:
-            self._pass_inventory = None
+            self._open_pass = None
 
     def _stage_entries_error(
         self,
@@ -1822,7 +1893,7 @@ class OrganizationBatchTransaction:
         self,
         pending: _PendingBatch,
     ) -> tuple[dict[str, str | None], dict[str, tuple[str, ...]]]:
-        cached = self._pass_inventory
+        cached = self._open_inventories()
         # Keyed on the batch: the inventory excludes the paths this pending
         # batch affects and adds its historical identities, so the same vault
         # yields a different answer for a different batch. A pass covers one
