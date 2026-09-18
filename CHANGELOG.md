@@ -46,6 +46,47 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   matching 2666 notes and 20 ms for one matching 80. The cost now follows the answer rather
   than the vault. An index predating the pair table keeps the Python scan, and both branches
   are held to returning the same pages.
+- The committed-write baseline is established from the tail of the operation journal when the
+  note already has a record there, instead of parsing and hash-verifying the whole file.
+  `_check_committed_baseline` calls `latest_record_for_path` on every write that carries no
+  `expected_hash`, and that call read and SHA-256-hashed every line of `operations.jsonl`.
+  Measured on a 5000 record, 2.2 MiB journal, for a note whose last record is near the tail:
+  180 ms, now 1.8 ms, and no longer a function of the journal's length. Proving that a path has
+  no record at all still reads back to the first line, because nothing short of that proves an
+  absence, so a first write to a new note is unchanged at about 165 ms. The write path also
+  still carries a full parse in `_check_request_replay`, which is a separate finding and is not
+  addressed here.
+- The history retention sweep reads back to its cutoff instead of reading the whole journal.
+  It runs after every committed write, at most once every thirty seconds of sustained writing,
+  and it needs the hashes named by records inside the window only. Since records are appended
+  in time order, those records are a suffix of the journal, so the scan stops at the first
+  record older than the cutoff. Measured with the window holding about 410 records while the
+  journal grows behind it: 92 ms at 2500 records, 220 ms at 5000, 340 ms at 10000, now 11, 14
+  and 12 ms. The cost follows the retention window and no longer the accumulated history,
+  which is the whole point: a vault kept for years stops paying for its own age on every write.
+  A journal that fits entirely inside the window still reads in full, at parity with before.
+- `append_record` refuses a record whose timestamp precedes the journal tail. The retention
+  sweep stops at the first record older than its cutoff, which is only the right answer while
+  position and time agree; a record out of order would sit behind that stopping point while
+  still being inside the window, and its history blob, the only stored copy of that version of
+  the note, would be deleted. Equal timestamps stay legal, because two records sharing an
+  instant are either both inside the window or both outside it. The sweep additionally checks
+  the order over the records it reads and falls back to reading the whole journal if it is ever
+  contradicted, and it verifies the hash chain over what it reads, so a journal it cannot trust
+  makes it keep everything rather than delete anything.
+- A failing history retention sweep no longer fails the write that triggered it. By the time it
+  runs, the note, the journal record and the pending cleanup are all durable. Raising there
+  reported a committed write as failed, and because the journal records the sweep as done only
+  once it finishes, the next write repeated it and failed again, with no way out but repair.
+- The write path refuses two corrupt journals it used to accept. A journal whose last line has
+  no trailing newline was parsed happily whenever the tail state was already cached, and the
+  next append then concatenated two records onto one line. A journal whose head has been cut
+  away now fails the oldest line the scan reaches, which must declare itself the chain root.
+- The operation journal chains over the canonical rendering of each record everywhere, as
+  section 7 of the specification defines and as `read_records` already did. Loading the tail
+  state hashed the bytes as they sat on the line instead, so a journal repaired by hand kept a
+  meaning every reader agreed on while the next append recorded a `prev_hash` no reader would
+  ever recompute, breaking the chain permanently from that point on.
 - `get_note_history` and `audit_query` decide read admission once per note instead of once
   per journal record. The scope filter resolved the candidate path and every allowed root
   on each record, on the event loop, so a caller asking about one note blocked the server
