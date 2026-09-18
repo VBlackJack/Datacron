@@ -2997,3 +2997,76 @@ async def test_replace_without_frontmatter_id_is_refused_when_the_sidecar_disagr
         await _apply(writer, bundle)
 
     assert (vault / "notes" / "adopt.md").read_bytes() == _note_without_id("Adopt")
+
+
+async def test_one_apply_walks_the_vault_once_per_validation_pass(tmp_path: Path) -> None:
+    """The five stage validators share one whole-vault inventory.
+
+    Each of them used to walk and re-read the vault on its own. On a vault of a
+    few thousand notes that fixed cost is what pushed an apply of about twenty
+    moves past the MCP client timeout, which then left the index reconcile
+    unfinished.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    bundle = _create_bundle(vault, _note(_FIRST_ID, "Exact"))
+    writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault / "notes"]))
+    transaction = _transaction(writer)
+    walks: list[int] = []
+    collect = transaction._collect_live_admitted_note_paths
+
+    def counted_collect(root: Path, policy: object) -> dict[str, tuple[str, Path]]:
+        walks.append(1)
+        return collect(root, policy)  # type: ignore[arg-type]
+
+    original_stage_error = transaction._stage_error
+
+    def stage_error_with_tally(pending: object) -> str | None:
+        before = len(walks)
+        error = original_stage_error(pending)  # type: ignore[arg-type]
+        per_pass.append(len(walks) - before)
+        return error
+
+    per_pass: list[int] = []
+    transaction._collect_live_admitted_note_paths = counted_collect  # type: ignore[method-assign]
+    transaction._stage_error = stage_error_with_tally  # type: ignore[method-assign]
+
+    await _apply(writer, bundle)
+
+    assert per_pass, "the apply never reached stage validation"
+    assert max(per_pass) <= 1, f"a validation pass walked the vault {max(per_pass)} times"
+
+
+async def test_an_inventory_pass_refuses_to_nest(tmp_path: Path) -> None:
+    """Nesting would let one batch read an inventory taken for another.
+
+    A pass is only sound while the vault and the pending batch it describes both
+    hold still. Widening one to span the classifier's loop over several pendings
+    looks free, but those iterations roll batches forward and move the vault.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault / "notes"]))
+    transaction = _transaction(writer)
+
+    # The third context raises on entry, which is the behaviour under test.
+    with (
+        transaction._inventory_pass(),
+        pytest.raises(OperationLogError, match="already open"),
+        transaction._inventory_pass(),
+    ):
+        pass  # pragma: no cover - the nested pass never opens
+
+    assert transaction._pass_inventory is None
+
+
+async def test_a_failing_validator_leaves_no_inventory_behind(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault / "notes"]))
+    transaction = _transaction(writer)
+
+    with pytest.raises(RuntimeError, match="synthetic"), transaction._inventory_pass():
+        raise RuntimeError("synthetic validator failure")
+
+    assert transaction._pass_inventory is None

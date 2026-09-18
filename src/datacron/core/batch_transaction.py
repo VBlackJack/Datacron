@@ -26,11 +26,12 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path, PurePosixPath
-from typing import Final, Literal, NoReturn, TypeAlias, final
+from typing import Any, Final, Literal, NoReturn, TypeAlias, final
 
 from ulid import ULID
 
@@ -116,6 +117,8 @@ BATCH_FAULT_POINTS: Final[tuple[str, ...]] = (
 )
 _BATCH_SCHEMA: Final[str] = "organization-batch-pending-v1"
 _RESULT_SCHEMA: Final[str] = "organization-batch-result-v1"
+_LIVE_ADMITTED_KEY: Final[str] = "live_admitted_note_paths"
+_CANONICALIZATION_KEY: Final[str] = "case_canonicalization_inventory"
 _BATCHES_DIR_NAME: Final[str] = "batches"
 _PENDING_DIR_NAME: Final[str] = "pending"
 _STAGE_DIR_NAME: Final[str] = "stage"
@@ -403,6 +406,7 @@ class OrganizationBatchTransaction:
         self._vault_root = vault_root.expanduser().resolve()
         self._journal = journal
         self._write_paths = tuple(path.expanduser().resolve() for path in write_paths)
+        self._pass_inventory: dict[object, Any] | None = None
         self._batches_root = self._vault_root / ".datacron" / "oplog" / _BATCHES_DIR_NAME
         self._pending_root = self._batches_root / _PENDING_DIR_NAME
         self._stage_root = self._batches_root / _STAGE_DIR_NAME
@@ -1355,8 +1359,14 @@ class OrganizationBatchTransaction:
         return self._collect_live_admitted_note_paths(scope_root, policy)
 
     def _live_admitted_note_paths(self) -> dict[str, tuple[str, Path]]:
+        cached = self._pass_inventory
+        if cached is not None and _LIVE_ADMITTED_KEY in cached:
+            return dict(cached[_LIVE_ADMITTED_KEY])
         _scope, policy = self._live_organization_policy()
-        return self._collect_live_admitted_note_paths(self._vault_root, policy)
+        notes = self._collect_live_admitted_note_paths(self._vault_root, policy)
+        if cached is not None:
+            cached[_LIVE_ADMITTED_KEY] = dict(notes)
+        return notes
 
     def _collect_live_admitted_note_paths(
         self,
@@ -1419,11 +1429,49 @@ class OrganizationBatchTransaction:
             self._config_stage_error,
             self._identity_sidecar_stage_error,
         )
-        for validator in validators:
-            validation_error = validator(pending, payloads)
-            if validation_error is not None:
-                return validation_error
+        with self._inventory_pass():
+            for validator in validators:
+                validation_error = validator(pending, payloads)
+                if validation_error is not None:
+                    return validation_error
         return None
+
+    @contextmanager
+    def _inventory_pass(self) -> Iterator[None]:
+        """Compute each whole-vault inventory once for one validation pass.
+
+        The validators in :meth:`_stage_error` run back to back against a vault
+        that none of them touches, yet each used to walk and re-read it: on a
+        vault of a few thousand notes that fixed cost is what pushes an apply
+        past the client timeout.
+
+        Two invariants make the cache sound, and both are enforced rather than
+        assumed:
+
+        * **One pass never nests.** A pass is only correct while the vault and
+          the pending batch it describes both hold still. Widening one to span
+          several batches looks free, because the classifier loops over pendings
+          in :meth:`recover`, but those iterations roll batches forward and so
+          move the vault underneath a cached inventory. Nesting therefore raises
+          instead of silently reusing a stale pass.
+        * **A pass runs under the mutation lock.** ``_pass_inventory`` is state
+          on an instance built once per writer, not once per apply, so two
+          threads inside one pass would share it and the first to leave would
+          clear it under the second. Every caller of :meth:`_stage_error` today
+          holds the ``mutation`` advisory lock, except ``inspect_recovery``,
+          which is CLI-only and single-shot. Exposing inspection as an MCP tool
+          would make that race live and must take the lock first.
+
+        The cache is dropped in a ``finally``, so a failing validator cannot
+        leave one behind.
+        """
+        if self._pass_inventory is not None:
+            raise OperationLogError("organization inventory pass is already open")
+        self._pass_inventory = {}
+        try:
+            yield
+        finally:
+            self._pass_inventory = None
 
     def _stage_entries_error(
         self,
@@ -1771,6 +1819,25 @@ class OrganizationBatchTransaction:
         return canonical
 
     def _recovery_case_canonicalization_inventory(
+        self,
+        pending: _PendingBatch,
+    ) -> tuple[dict[str, str | None], dict[str, tuple[str, ...]]]:
+        cached = self._pass_inventory
+        # Keyed on the batch: the inventory excludes the paths this pending
+        # batch affects and adds its historical identities, so the same vault
+        # yields a different answer for a different batch. A pass covers one
+        # batch today, and this key keeps that from being a silent assumption.
+        key = (_CANONICALIZATION_KEY, pending.batch_id)
+        if cached is not None and key in cached:
+            frontmatter_ids, aliases = cached[key]
+            return dict(frontmatter_ids), dict(aliases)
+        inventory = self._collect_case_canonicalization_inventory(pending)
+        if cached is not None:
+            frontmatter_ids, aliases = inventory
+            cached[key] = (dict(frontmatter_ids), dict(aliases))
+        return inventory
+
+    def _collect_case_canonicalization_inventory(
         self,
         pending: _PendingBatch,
     ) -> tuple[dict[str, str | None], dict[str, tuple[str, ...]]]:
