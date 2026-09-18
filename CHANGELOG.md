@@ -20,6 +20,27 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- Indexing a vault commits in batches instead of once per note. `upsert_note` and
+  `delete_note` each opened and committed their own transaction, which is the right
+  boundary for a single tool call and the wrong one for a pass over the vault, so a cold
+  index of N notes paid N durable commits and they dominated its wall clock. The store now
+  offers a bulk scope that commits every 500 notes, and `reconcile` opens one per pass.
+  Nothing weaker is promised than before: the index is derived from the vault, and a crash
+  mid-pass leaves it missing the notes of the uncommitted batch, which the next pass indexes
+  because their stored mtime is absent. The scope does hold the SQLite write lock for a batch
+  rather than for a note, so a concurrent datacron process waits longer, which is why the
+  batch is bounded rather than the whole pass.
+- One pass writes the ULID sidecar once instead of once per note. Resolving the identity of a
+  note with no frontmatter `id` reserialized the whole mapping and replaced the file, so a
+  cold index wrote it once per resolved identity and its total bytes grew with the square of
+  the vault. Deferring loses nothing: that identity is a pure function of the note's
+  vault-relative path, so a pass that dies before the flush recomputes exactly the same
+  identities next time. The flush also runs when the pass raises, because leaving a cache
+  closer to the truth costs nothing.
+- Measured on a cold index of 800 id-less notes: 25.5 s, now 11.1 s. The sidecar went from
+  800 rewrites and 17.1 MiB written to one rewrite, and that part of the cost was growing
+  quadratically, so it dominates at vault sizes the measurement did not reach. What remains
+  is the note reads and the chunk inserts themselves.
 - Opening the index for writing no longer rebuilds its derived data every time. Two repairs
   ran unconditionally on every writable open, which is every MCP server start and every
   writable CLI command: one deleted and reinserted every row of `note_frontmatter`, the other

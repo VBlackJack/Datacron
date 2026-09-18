@@ -21,6 +21,7 @@ import re
 import sqlite3
 import time
 from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -54,6 +55,14 @@ from datacron.core.vault import (
 __all__ = ["SQLiteFTS5Store"]
 
 _LOGGER = get_logger(__name__)
+
+_BULK_COMMIT_NOTES: Final[int] = 500
+"""Notes written per durable commit while a bulk scope is open.
+
+Large enough that the commit stops dominating a cold index, small enough that the
+write lock is released often enough for another datacron process to make progress
+and that a crash loses only a bounded amount of work the next pass redoes anyway.
+"""
 
 _INDEX_WRITER_VERSION: Final[int] = 1
 """Which release's derived data a ``notes`` row carries.
@@ -668,6 +677,10 @@ class SQLiteFTS5Store:
         # and the frontmatter pair table.
         self._context_indexed: bool | None = None
         self._frontmatter_indexed: bool | None = None
+        # ``None`` outside a bulk scope, where each write commits on its own.
+        self._bulk_commit_every: int | None = None
+        self._bulk_transaction_open = False
+        self._bulk_units = 0
 
     async def open(
         self,
@@ -739,7 +752,7 @@ class SQLiteFTS5Store:
         indexed_at = datetime.now(tz=UTC).isoformat()
         # Reserve the writer before reading identity ownership. Deferred transactions
         # can deadlock when independent clients both promote a shared read lock.
-        await connection.execute("BEGIN IMMEDIATE")
+        await self._begin_write_unit(connection)
         try:
             async with connection.execute(
                 "SELECT rel_path FROM notes WHERE note_id = ?", (note.id,)
@@ -780,9 +793,80 @@ class SQLiteFTS5Store:
                 ],
             )
         except Exception:
-            await connection.rollback()
+            await self._abandon_write_unit(connection)
             raise
-        await connection.commit()
+        await self._end_write_unit(connection)
+
+    @asynccontextmanager
+    async def bulk_writes(self, *, commit_every: int = _BULK_COMMIT_NOTES) -> AsyncIterator[None]:
+        """Group the per-note writes of one indexing pass into batched commits.
+
+        ``upsert_note`` and ``delete_note`` each opened and committed their own
+        transaction, so a pass over the vault paid one durable commit per note. A
+        cold index of a vault is exactly that pass, and the commits dominated it.
+
+        Inside this scope the writes share a transaction that commits every
+        ``commit_every`` notes and once more on exit. Nothing weaker is promised: the
+        index is derived from the vault, and a crash mid-pass leaves it missing the
+        notes of the uncommitted batch, which the next pass indexes because their
+        stored mtime is absent. What the scope does hold is the SQLite write lock,
+        for a batch rather than for a note, so a concurrent datacron process waits
+        longer; that is why the batch is bounded rather than the whole pass.
+        """
+        if self._bulk_commit_every is not None:
+            raise RuntimeError("a bulk write scope is already open")
+        if commit_every <= 0:
+            raise ValueError("commit_every must be positive")
+        connection = self._require_connection()
+        self._require_writable()
+        self._bulk_commit_every = commit_every
+        self._bulk_transaction_open = False
+        self._bulk_units = 0
+        try:
+            yield
+        except BaseException:
+            if self._bulk_transaction_open:
+                await connection.rollback()
+            raise
+        else:
+            if self._bulk_transaction_open:
+                await connection.commit()
+        finally:
+            self._bulk_commit_every = None
+            self._bulk_transaction_open = False
+            self._bulk_units = 0
+
+    async def _begin_write_unit(self, connection: aiosqlite.Connection) -> None:
+        """Open the transaction one write needs, or join the batch already open."""
+        if self._bulk_commit_every is None:
+            # ``IMMEDIATE`` reserves the writer up front: a deferred transaction that
+            # promotes a shared read lock deadlocks against another client doing the same.
+            await connection.execute("BEGIN IMMEDIATE")
+            return
+        if not self._bulk_transaction_open:
+            await connection.execute("BEGIN IMMEDIATE")
+            self._bulk_transaction_open = True
+
+    async def _end_write_unit(self, connection: aiosqlite.Connection) -> None:
+        """Commit one write, or count it against the open batch."""
+        if self._bulk_commit_every is None:
+            await connection.commit()
+            return
+        self._bulk_units += 1
+        if self._bulk_units >= self._bulk_commit_every:
+            await connection.commit()
+            self._bulk_transaction_open = False
+            self._bulk_units = 0
+
+    async def _abandon_write_unit(self, connection: aiosqlite.Connection) -> None:
+        """Roll back after a failed write, discarding the rest of the batch with it.
+
+        A batch is one transaction, so the writes already in it cannot be kept. They
+        are redone by the next pass, which is why the scope promises no more than that.
+        """
+        await connection.rollback()
+        self._bulk_transaction_open = False
+        self._bulk_units = 0
 
     async def record_mtime(self, note_id: str, fs_mtime_ns: int) -> None:
         """Update the stored filesystem mtime for ``note_id`` without re-chunking.
@@ -802,16 +886,16 @@ class SQLiteFTS5Store:
         connection = self._require_connection()
         self._require_writable()
 
-        await connection.execute("BEGIN")
+        await self._begin_write_unit(connection)
         try:
             await connection.execute("DELETE FROM chunks_fts WHERE note_id = ?", (note_id,))
             await connection.execute("DELETE FROM notes WHERE note_id = ?", (note_id,))
             await connection.execute(_DELETE_NOTE_FRONTMATTER_SQL, (note_id,))
             await connection.execute("DELETE FROM ulid_paths WHERE note_id = ?", (note_id,))
         except Exception:
-            await connection.rollback()
+            await self._abandon_write_unit(connection)
             raise
-        await connection.commit()
+        await self._end_write_unit(connection)
 
     async def search(
         self,
