@@ -690,6 +690,8 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
     }
     assert "rejected" in create_properties
     assert "rejected" in set_frontmatter_properties
+    assert "last_id" in set_frontmatter_properties
+    assert set_frontmatter_properties["last_id"]["default"] is None
     contradiction_properties = tools["contradiction_scan"].input_schema["properties"]
     assert contradiction_properties["mode"]["enum"] == ["scan", "confirm"]
     assert contradiction_properties["detail"]["enum"] == ["summary", "full"]

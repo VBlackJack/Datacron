@@ -57,11 +57,14 @@ from datacron.mcp.tools.search import (
 from datacron.mcp.tools.write_requests import replayable_write
 from datacron.mcp.tools.write_validation import (
     _RENAME_H1_REFUSAL_MESSAGE,
+    _backlog_counter_key,
     _clean_string_list,
     _map_write_path_error,
     _parse_preserving_bom_and_body_eols,
+    _patch_frontmatter_fields,
     _serialize_preserving_bom,
     _validate_append_journal_request,
+    _validate_backlog_last_id,
     _validate_delete_note_section_request,
     _validate_expected_hash,
     _validate_memory_frontmatter,
@@ -396,6 +399,7 @@ async def _set_frontmatter_impl(
     valid_from: str | None = None,
     invalid_at: str | None = None,
     invalidated_by: str | None = None,
+    last_id: str | None = None,
     expected_hash: str | None = None,
     actor: str = "direct-call",
     request_id: str | None = None,
@@ -425,8 +429,12 @@ async def _set_frontmatter_impl(
             valid_from=valid_from,
             invalid_at=invalid_at,
             invalidated_by=invalidated_by,
+            last_id=last_id,
         )
         cleaned_expected_hash = _validate_expected_hash(expected_hash)
+        cleaned_last_id = _validate_backlog_last_id(last_id) if last_id is not None else None
+        if cleaned_last_id is not None and cleaned_expected_hash is None:
+            raise ValueError("expected_hash is required when setting last_id")
         changed_fields: list[str] = []
         operation_parameters: dict[str, Any] = {"fields": ""}
 
@@ -434,6 +442,7 @@ async def _set_frontmatter_impl(
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             if not metadata:
                 raise ValueError("note has no frontmatter")
+            _set_backlog_last_id(metadata, changed_fields, cleaned_last_id)
             if cleaned_confidence is not None:
                 _set_changed_frontmatter_field(
                     metadata,
@@ -496,6 +505,8 @@ async def _set_frontmatter_impl(
                 )
             operation_parameters["fields"] = ",".join(changed_fields)
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
+            if cleaned_last_id is not None:
+                return _patch_frontmatter_fields(raw, metadata, changed_fields)
             return _serialize_preserving_bom(metadata, body, has_bom=has_bom)
 
         content_hash = await app.vault_writer.mutate_note_atomic(
@@ -541,6 +552,18 @@ async def _set_frontmatter_impl(
             ValueError,
         ),
     )
+
+
+def _set_backlog_last_id(
+    metadata: dict[str, Any], changed_fields: list[str], last_id: str | None
+) -> None:
+    if last_id is None:
+        return
+    if "last_id" in metadata:
+        previous = _validate_backlog_last_id(metadata["last_id"])
+        if _backlog_counter_key(last_id) < _backlog_counter_key(previous):
+            raise ValueError("last_id must not decrease")
+    _set_changed_frontmatter_field(metadata, changed_fields, "last_id", last_id)
 
 
 def _set_changed_frontmatter_field(

@@ -19,6 +19,7 @@ import re
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final
 
+import yaml
 from ulid import ULID
 
 from datacron.core.frontmatter import parse, serialize
@@ -30,6 +31,7 @@ _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
     {"high", "medium", "low", "needs_verification"}
 )
 _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
+_BACKLOG_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"BL-[0-9]{4,}")
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _FRONTMATTER_BOUNDARY_PATTERN: Final[re.Pattern[str]] = re.compile(r"-{3,}[ \t]*(?:\r\n|[\r\n])?")
 _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
@@ -128,6 +130,7 @@ def _validate_set_frontmatter_request(
     valid_from: str | None,
     invalid_at: str | None,
     invalidated_by: str | None,
+    last_id: str | None = None,
 ) -> tuple[
     str,
     str | None,
@@ -151,6 +154,7 @@ def _validate_set_frontmatter_request(
             valid_from,
             invalid_at,
             invalidated_by,
+            last_id,
         )
     ):
         raise ValueError("nothing to update")
@@ -500,3 +504,69 @@ def _clean_string_list(values: list[str]) -> list[str]:
         cleaned.append(value)
         seen.add(value)
     return cleaned
+
+
+def _validate_backlog_last_id(value: object) -> str:
+    """Require a canonical backlog identifier without coercing scalar types."""
+    if not isinstance(value, str) or _BACKLOG_ID_PATTERN.fullmatch(value) is None:
+        raise ValueError("last_id must be BL- followed by at least four ASCII decimal digits")
+    return value
+
+
+def _backlog_counter_key(value: str) -> tuple[int, str]:
+    """Compare arbitrary-width decimal counters without integer conversion limits."""
+    digits = value.removeprefix("BL-").lstrip("0") or "0"
+    return len(digits), digits
+
+
+def _patch_frontmatter_fields(raw: str, metadata: dict[str, Any], fields: list[str]) -> str:
+    """Replace selected YAML values while preserving unrelated header text and body."""
+    offset = 1 if raw.startswith("\ufeff") else 0
+    lines = raw[offset:].splitlines(keepends=True)
+    opening = next((i for i, line in enumerate(lines) if line.strip()), None)
+    if opening is None or _FRONTMATTER_BOUNDARY_PATTERN.fullmatch(lines[opening]) is None:
+        raise ValueError("last_id requires an explicit YAML frontmatter mapping")
+    closing = next(
+        (
+            i
+            for i in range(opening + 1, len(lines))
+            if _FRONTMATTER_BOUNDARY_PATTERN.fullmatch(lines[i]) is not None
+        ),
+        None,
+    )
+    if closing is None:
+        raise ValueError("last_id requires closed YAML frontmatter")
+    start = offset + sum(map(len, lines[: opening + 1]))
+    end = offset + sum(map(len, lines[:closing]))
+    header = raw[start:end]
+    node = yaml.compose(header, Loader=yaml.SafeLoader)
+    if not isinstance(node, yaml.MappingNode) or node.flow_style:
+        raise ValueError("last_id requires a block YAML mapping")
+    nodes: dict[str, yaml.Node] = {}
+    for key, value in node.value:
+        if not isinstance(key, yaml.ScalarNode) or key.value in nodes or key.value == "<<":
+            raise ValueError("last_id refuses duplicate, complex, or merged YAML keys")
+        nodes[key.value] = value
+    # Anchors can alias another field's source span, so reject them fail-closed.
+    if any(isinstance(token, (yaml.AliasToken, yaml.AnchorToken)) for token in yaml.scan(header)):
+        raise ValueError("last_id refuses YAML anchors and aliases")
+    edits: list[tuple[int, int, str]] = []
+    eol = "\r\n" if lines[opening].endswith("\r\n") else "\n"
+    additions = ""
+    for field in dict.fromkeys([*fields, "updated"]):
+        if field not in metadata:
+            raise ValueError("last_id cannot be combined with field removal")
+        rendered = yaml.safe_dump(metadata[field], default_flow_style=True, allow_unicode=True)
+        rendered = rendered.removesuffix("...\n").rstrip("\n")
+        existing = nodes.get(field)
+        if existing is None:
+            additions += f"{field}: {rendered}{eol}"
+        else:
+            edits.append((existing.start_mark.index, existing.end_mark.index, rendered))
+    for begin, finish, replacement in sorted(edits, reverse=True):
+        header = header[:begin] + replacement + header[finish:]
+    result = raw[:start] + header + additions + raw[end:]
+    parsed, _ = parse(result)
+    if parsed != metadata:
+        raise ValueError("last_id metadata preservation validation failed")
+    return result

@@ -473,7 +473,9 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
             "discarded options so a future agent does not propose them again. Update "
             "frontmatter fields on an existing memory note. This write operation only "
             "changes origin, confidence, last_verified, supersedes, rejected, valid_from, "
-            "invalid_at, invalidated_by, and the automatic updated timestamp; the Markdown "
+            "invalid_at, invalidated_by, last_id, and the automatic updated timestamp. "
+            "last_id requires expected_hash, accepts BL- plus at least four ASCII digits, "
+            "and cannot decrease an existing valid counter. The Markdown "
             "body is preserved."
         ),
         annotations=_DESTRUCTIVE_WRITE_ANNOTATIONS,
@@ -489,6 +491,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         valid_from: str | None = None,
         invalid_at: str | None = None,
         invalidated_by: str | None = None,
+        last_id: str | None = None,
         expected_hash: str | None = None,
         request_id: str | None = None,
     ) -> SetFrontmatterOutput:
@@ -505,6 +508,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 valid_from=valid_from,
                 invalid_at=invalid_at,
                 invalidated_by=invalidated_by,
+                last_id=last_id,
                 expected_hash=expected_hash,
                 actor=app.identity_provider.identify(ctx).actor,
                 request_id=request_id,

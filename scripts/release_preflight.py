@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import tomllib
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
@@ -33,6 +34,9 @@ _VERSION_RE: Final[Pattern[str]] = re_compile(
 )
 _SHA_RE: Final[Pattern[str]] = re_compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 _IDENTITY_RE: Final[Pattern[str]] = re_compile(r" <(?P<email>[^<>]*)> \d+ [+-]\d{4}\s*$")
+_NOREPLY_EMAIL_RE: Final[Pattern[str]] = re_compile(
+    r"[0-9]+\+[A-Za-z0-9][A-Za-z0-9-]*@users\.noreply\.github\.com"
+)
 _GIT_EXECUTABLE: Final[str | None] = which("git")
 
 
@@ -107,14 +111,32 @@ def _require_status(repo_root: Path, expected: frozenset[str], phase: str) -> No
         raise ReleasePreflightError(f"The Git status is not valid for the {phase} phase.")
 
 
-def _require_empty_identity_text(identity: str, role: str) -> None:
+def _expected_email(repo_root: Path) -> str:
+    try:
+        with (repo_root / "pyproject.toml").open("rb") as stream:
+            config = tomllib.load(stream)
+        email = config["tool"]["datacron"]["release"]["expected_email"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ReleasePreflightError(
+            "The project release identity configuration is unavailable."
+        ) from exc
+    if not isinstance(email, str) or _NOREPLY_EMAIL_RE.fullmatch(email) is None:
+        raise ReleasePreflightError("The project release identity must be a GitHub noreply email.")
+    return email
+
+
+def _require_identity_text(identity: str, role: str, expected_email: str) -> None:
     match = _IDENTITY_RE.search(identity)
-    if match is None or match["email"]:
-        raise ReleasePreflightError(f"The Git {role} email must be empty.")
+    if match is None or match["email"] != expected_email:
+        raise ReleasePreflightError(
+            f"The Git {role} email must match the project release identity."
+        )
 
 
-def _require_empty_identity(repo_root: Path, variable: str, role: str) -> None:
-    _require_empty_identity_text(_git_output(repo_root, ("var", variable)), f"effective {role}")
+def _require_identity(repo_root: Path, variable: str, role: str, expected_email: str) -> None:
+    _require_identity_text(
+        _git_output(repo_root, ("var", variable)), f"effective {role}", expected_email
+    )
 
 
 def _remote_main_sha(repo_root: Path) -> str:
@@ -168,8 +190,9 @@ def _check_clean(repo_root: Path, version: str, base_sha: str) -> None:
     head_sha = _git_output(repo_root, ("rev-parse", "--verify", "HEAD")).casefold()
     if head_sha != base_sha or _remote_main_sha(repo_root) != base_sha:
         raise ReleasePreflightError("Local HEAD and origin main are not synchronized.")
-    _require_empty_identity(repo_root, "GIT_AUTHOR_IDENT", "author")
-    _require_empty_identity(repo_root, "GIT_COMMITTER_IDENT", "committer")
+    expected_email = _expected_email(repo_root)
+    _require_identity(repo_root, "GIT_AUTHOR_IDENT", "author", expected_email)
+    _require_identity(repo_root, "GIT_COMMITTER_IDENT", "committer", expected_email)
     _require_tag_absent(repo_root, version)
 
 
@@ -206,8 +229,12 @@ def _check_committed(repo_root: Path, version: str, base_sha: str) -> None:
         .stdout.rstrip("\r\n")
         .split("\0")
     )
-    if commit_emails != ["", ""]:
-        raise ReleasePreflightError("The release commit author and committer emails must be empty.")
+    expected_email = _expected_email(repo_root)
+    if commit_emails != [expected_email, expected_email]:
+        raise ReleasePreflightError(
+            "The release commit author and committer emails must match "
+            "the project release identity."
+        )
     tag_ref = f"refs/tags/v{version}"
     if _git_output(repo_root, ("cat-file", "-t", tag_ref)) != "tag":
         raise ReleasePreflightError("The release tag is not annotated.")
@@ -215,14 +242,14 @@ def _check_committed(repo_root: Path, version: str, base_sha: str) -> None:
     tagger_lines = [line for line in tag_object.splitlines() if line.startswith("tagger ")]
     if len(tagger_lines) != 1:
         raise ReleasePreflightError("The release tag does not contain one tagger identity.")
-    _require_empty_identity_text(tagger_lines[0], "release tagger")
+    _require_identity_text(tagger_lines[0], "release tagger", expected_email)
     tag_target = _git_output(
         repo_root, ("rev-parse", "--verify", f"{tag_ref}^{{commit}}")
     ).casefold()
     if tag_target != head_sha:
         raise ReleasePreflightError("The release tag does not target the release commit.")
-    _require_empty_identity(repo_root, "GIT_AUTHOR_IDENT", "author")
-    _require_empty_identity(repo_root, "GIT_COMMITTER_IDENT", "committer")
+    _require_identity(repo_root, "GIT_AUTHOR_IDENT", "author", expected_email)
+    _require_identity(repo_root, "GIT_COMMITTER_IDENT", "committer", expected_email)
 
 
 def run_phase(
