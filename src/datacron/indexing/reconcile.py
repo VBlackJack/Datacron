@@ -31,7 +31,8 @@ delegate here so the two paths cannot drift.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import inspect
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TypedDict
 
@@ -43,7 +44,14 @@ __all__ = ["IndexProgress", "ReconcileStats", "reconcile"]
 
 _LOGGER = get_logger(__name__)
 
-IndexProgress = Callable[[int, int], None]
+IndexProgress = Callable[[int, int], "Awaitable[None] | None"]
+"""Completed and total note counts.
+
+A callback may be a coroutine function: the CLI reports progress by printing,
+while the MCP apply reports it as a protocol notification, which has to be
+awaited. Returning an awaitable is awaited before the sweep continues, so a
+notification cannot pile up behind the work it describes.
+"""
 
 
 class ReconcileStats(TypedDict):
@@ -93,14 +101,12 @@ async def reconcile(
     total = len(live)
     completed = 0
 
-    def advance() -> None:
+    async def advance() -> None:
         nonlocal completed
         completed += 1
-        if progress is not None:
-            progress(completed, total)
+        await _report(progress, completed, total)
 
-    if progress is not None:
-        progress(completed, total)
+    await _report(progress, completed, total)
     prepared, owners, unreadable = await _prepare_live_identities(
         reader, live, indexed, gated=gated, on_settled=advance
     )
@@ -115,7 +121,7 @@ async def reconcile(
         # Cheap path: mtime unchanged -> trust the index, do not read or hash.
         if rel_path in gated:
             skipped += 1
-            advance()
+            await advance()
             continue
 
         if rel_path in unreadable:
@@ -141,14 +147,14 @@ async def reconcile(
         except (OSError, ValueError) as exc:
             _LOGGER.warning("Skipping unreadable note %s: %s", path, exc)
             skipped += 1
-            advance()
+            await advance()
             continue
         if note.id != note_id and owners.get(note.id, rel_path) != rel_path:
             raise DuplicateNoteIdentityError(note.id, owners[note.id], rel_path)
         owners[note.id] = rel_path
         await store.upsert_note(note, chunker.chunk(note), fs_mtime_ns=st_mtime_ns)
         reindexed += 1
-        advance()
+        await advance()
 
     if unreadable:
         _LOGGER.warning(
@@ -175,6 +181,15 @@ async def reconcile(
         mtime_gate,
     )
     return stats
+
+
+async def _report(progress: IndexProgress | None, completed: int, total: int) -> None:
+    """Deliver one progress report, awaiting it when the callback is a coroutine."""
+    if progress is None:
+        return
+    outcome = progress(completed, total)
+    if inspect.isawaitable(outcome):
+        await outcome
 
 
 async def _purge_vanished_notes(
@@ -212,7 +227,7 @@ async def _prepare_live_identities(
     indexed: dict[str, tuple[str, str, int | None]],
     *,
     gated: frozenset[str],
-    on_settled: Callable[[], None],
+    on_settled: Callable[[], Awaitable[None]],
 ) -> tuple[dict[str, tuple[str, str]], dict[str, str], frozenset[str]]:
     """Validate projected identities before deleting or replacing any index rows.
 
@@ -235,7 +250,7 @@ async def _prepare_live_identities(
             except (OSError, ValueError) as exc:
                 _LOGGER.warning("Skipping unreadable note %s: %s", path, exc)
                 unreadable.add(rel_path)
-                on_settled()
+                await on_settled()
                 continue
             prepared[rel_path] = (note.id, note.content_hash)
             note_id = note.id
@@ -243,7 +258,7 @@ async def _prepare_live_identities(
             settled = entry is not None and entry[:2] == (note.id, note.content_hash)
             del note
             if settled:
-                on_settled()
+                await on_settled()
         if note_id in owners:
             raise DuplicateNoteIdentityError(note_id, owners[note_id], rel_path)
         owners[note_id] = rel_path

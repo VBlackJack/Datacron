@@ -495,6 +495,7 @@ async def test_committed_batch_reports_reconcile_failure_as_committed(
         _app: Any,
         *,
         removed_identity_ids: tuple[str, ...],
+        progress: Any = None,
     ) -> ReconcileStats:
         assert removed_identity_ids == ()
         raise RuntimeError("synthetic reconcile failure")
@@ -549,6 +550,7 @@ async def test_committed_batch_reports_final_planner_mismatch_as_committed(
         _app: Any,
         *,
         removed_identity_ids: tuple[str, ...],
+        progress: Any = None,
     ) -> ReconcileStats:
         assert removed_identity_ids == ()
         return reconcile_stats

@@ -9,6 +9,27 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- `apply_organization_manifest` reports the progress of its post-commit reindex as MCP
+  progress notifications, at most one every half second. That reindex runs ungated over
+  every note in the vault, and without progress a client cannot tell a slow apply from a
+  hung one: an apply of about twenty moves outlasted the tool timeout and was reported as a
+  failure even when it had committed, leaving the reconcile unfinished. A notification that
+  cannot be delivered is logged and dropped rather than failing a committed write.
+
+### Changed
+
+- One organization apply walks the vault seven times instead of thirteen, and computes the
+  case-canonicalization inventory once per validation pass instead of twice. The five stage
+  validators run back to back against a vault none of them touches, so each whole-vault
+  inventory is now computed once and shared for the duration of that pass. The cache is
+  scoped to the pass rather than held on the transaction, which is built once per writer and
+  would otherwise answer the next apply from a stale vault; nesting a pass raises, because
+  the classifier's loop over several pending batches rolls them forward and moves the vault
+  underneath a cached inventory. What remains is `_stage_error` running three times per
+  apply and the separate scope walk that streams a SHA-256 of every note in scope.
+
 ## [2026.0918.00] - 2026-09-18
 
 ### Security

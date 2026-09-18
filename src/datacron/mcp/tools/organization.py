@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, TypeAlias, cast
 
+from mcp.server.mcpserver import Context
+
 from datacron.core.batch_transaction import BatchApplyResult, BatchConflictError
 from datacron.core.config import VaultConfig
 from datacron.core.durability import (
@@ -30,6 +32,7 @@ from datacron.core.durability import (
     ReadOnlyModeError,
     RecoveryRequiredError,
 )
+from datacron.core.logger import get_logger
 from datacron.core.operation_log import OperationContext
 from datacron.core.paths import PathConfinementError, sidecar_vault_config
 from datacron.core.scope import (
@@ -39,7 +42,7 @@ from datacron.core.scope import (
     assert_path_chain_without_links,
 )
 from datacron.core.vault_writer import VaultLockBusyError
-from datacron.indexing.reconcile import ReconcileStats, reconcile
+from datacron.indexing.reconcile import IndexProgress, ReconcileStats, reconcile
 from datacron.mcp.tools.payloads import _audit, _error_response, _internal_error_response
 from datacron.organization.manifest import (
     MAX_PAYLOAD_BYTES,
@@ -67,6 +70,9 @@ OrganizationCommittedStatus: TypeAlias = Literal[
 ]
 
 _HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{64}$")
+_LOGGER = get_logger(__name__)
+_PROGRESS_MIN_INTERVAL_SECONDS: Final[float] = 0.5
+_PROGRESS_MESSAGE: Final[str] = "Reindexing the vault after the organization apply"
 _TOKEN_COMPONENT_COUNT: Final[int] = 5
 
 
@@ -288,10 +294,42 @@ def _current_report_hash(app: DatacronApp) -> str:
     return hash_organization_plan(report)
 
 
+def _reconcile_progress_reporter(ctx: Context[Any, Any] | None) -> IndexProgress | None:
+    """Turn reconcile's counters into rate-bounded MCP progress notifications.
+
+    The post-commit reconcile runs ungated, so it re-reads and re-hashes every
+    note in the vault. On a vault of a few thousand notes that fixed cost is
+    what makes an apply outlast a client's tool timeout, and without progress a
+    client cannot tell a slow apply from a hung one. The rate is bounded so a
+    large vault does not turn one apply into thousands of notifications; the
+    final report is always sent.
+    """
+    if ctx is None:
+        return None
+    last_sent = 0.0
+
+    async def report(completed: int, total: int) -> None:
+        nonlocal last_sent
+        now = time.monotonic()
+        if completed < total and now - last_sent < _PROGRESS_MIN_INTERVAL_SECONDS:
+            return
+        last_sent = now
+        try:
+            await ctx.report_progress(completed, total, _PROGRESS_MESSAGE)
+        except Exception as exc:
+            # A client that sent no progress token, or a transport that dropped,
+            # must not turn a committed apply into a failed one. The reconcile
+            # outcome is reported through the tool payload either way.
+            _LOGGER.debug("progress notification failed: %s", exc)
+
+    return report
+
+
 async def _reconcile_batch_locked(
     app: DatacronApp,
     *,
     removed_identity_ids: tuple[str, ...],
+    progress: IndexProgress | None = None,
 ) -> ReconcileStats:
     """Perform one full reconcile while the caller holds ``reconcile_lock``."""
     await app.vault_reader.invalidate_alias_cache()
@@ -302,6 +340,7 @@ async def _reconcile_batch_locked(
         app.vault_reader,
         app.chunker,
         mtime_gate=False,
+        progress=progress,
     )
     app.repair_state.last_sweep_completed_at = time.monotonic()
     return stats
@@ -432,6 +471,7 @@ async def _finalize_committed_batch(
     *,
     started: float,
     mode: OrganizationManifestMode,
+    ctx: Context[Any, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, ReconcileStats | None, str | None]:
     try:
         batch_writer = cast("OrganizationBatchWriter", app.vault_writer)
@@ -439,6 +479,7 @@ async def _finalize_committed_batch(
         index_stats = await _reconcile_batch_locked(
             app,
             removed_identity_ids=removed_identity_ids,
+            progress=_reconcile_progress_reporter(ctx),
         )
     except Exception:
         payload = _apply_payload(
@@ -513,6 +554,7 @@ async def _apply_organization_manifest_impl(
     mode: OrganizationManifestMode,
     confirmation_token: str | None = None,
     actor: str = "direct-call",
+    ctx: Context[Any, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate or crash-consistently apply one external organization manifest bundle."""
     started = time.perf_counter()
@@ -607,6 +649,7 @@ async def _apply_organization_manifest_impl(
                 preview,
                 started=started,
                 mode=cleaned_mode,
+                ctx=ctx,
             )
         if incomplete is not None:
             return incomplete
