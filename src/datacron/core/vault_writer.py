@@ -792,7 +792,7 @@ class FilesystemVaultWriter:
         if request is not None:
             request.record = record
         _inject(self._operation_fault_injector, "after_pending_cleanup")
-        removed = self._operation_journal.purge_history()
+        removed = self._purge_history_after_commit()
         _LOGGER.info(
             "operation committed id=%s op=%s tool=%s note_id=%s rel_path=%s "
             "before_hash=%s after_hash=%s actor=%s history_purged=%d",
@@ -807,6 +807,22 @@ class FilesystemVaultWriter:
             len(removed),
         )
         return after_hash
+
+    def _purge_history_after_commit(self) -> list[str]:
+        """Sweep expired history, without letting the sweep fail a committed write.
+
+        By this point the note, the journal record and the pending cleanup are all
+        durable, and the caller is about to be told the write succeeded. Retention is
+        housekeeping: a failure here means blobs were kept that could have gone, which
+        is the safe direction. Raising instead reported a committed write as failed,
+        and because the journal only records the sweep as done once it finishes, the
+        next write repeated it and failed again, indefinitely.
+        """
+        try:
+            return self._operation_journal.purge_history()
+        except (OperationLogError, OSError) as exc:
+            _LOGGER.warning("History retention sweep failed after a committed write: %s", exc)
+            return []
 
     def _recover_operations_sync(
         self,

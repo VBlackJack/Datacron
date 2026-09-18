@@ -192,6 +192,11 @@ Each committed write appends one ASCII JSON object per line to
 `.datacron/oplog/operations.jsonl`. Format 2 records contain `prev_hash`, the SHA-256 of the
 previous canonical JSON line, or `null` for the first line. Reads through `audit_query` verify
 the full chain. A legacy journal is durably migrated to format 2 before its next append.
+The write path verifies only the part of the chain it reads: it establishes the baseline for a
+note from the newest record naming that note, and chain-verifies every line from the tail down
+to that record. A torn tail, a rewritten recent record and a journal cut off at its head all
+refuse the write; damage older than that record is reported by `audit_query` rather than by the
+write.
 
 `operation_id` is a UUID v4 rendered as 32 hexadecimal characters. `note_id` remains a ULID. A
 record also contains the UTC timestamp, operation, tool, path, before and after hashes, actor,
