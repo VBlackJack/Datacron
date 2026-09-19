@@ -186,28 +186,39 @@ def _page(
             "follow_up_offset_invalid",
             f"offset {offset} exceeds total {len(records)}; restart at offset 0",
         )
-    page = records[offset:]
-    output: dict[str, Any] = {
-        "records": page,
-        "returned": len(page),
-        "total": len(records),
-        "offset": offset,
-        "next_offset": None,
-        "snapshot_hash": snapshot,
-        "legacy_notes": legacy,
-        "coverage": "explicit_notes_structured_entries_only",
-        "truncated": offset > 0,
-        "omitted": 0,
-    }
-    while rendered_size(output) > maximum and page:
-        page.pop()
-        output.update(
-            returned=len(page),
-            truncated=True,
-            omitted=len(records) - offset - len(page),
-            next_offset=offset + len(page),
-        )
-    if rendered_size(output) > maximum or (not page and offset < len(records)):
+    available = records[offset:]
+
+    def rendered(kept: int) -> dict[str, Any]:
+        complete = kept == len(available)
+        return {
+            "records": available[:kept],
+            "returned": kept,
+            "total": len(records),
+            "offset": offset,
+            "next_offset": None if complete else offset + kept,
+            "snapshot_hash": snapshot,
+            "legacy_notes": legacy,
+            "coverage": "explicit_notes_structured_entries_only",
+            "truncated": offset > 0 or not complete,
+            "omitted": 0 if complete else len(records) - offset - kept,
+        }
+
+    # Find the longest prefix that fits, by halving rather than by dropping one
+    # record at a time. Each step re-serialises the page it is measuring, so
+    # dropping one at a time cost one serialisation of the whole remaining page per
+    # record dropped: quadratic in the records a note holds, which nothing bounds.
+    # A note that accumulated a few hundred commitments turned a read into seconds,
+    # once per page, on the synchronous path. The size grows with the records kept,
+    # so the boundary this finds is the same one the loop walked to.
+    low, high = 0, len(available)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if rendered_size(rendered(middle)) <= maximum:
+            low = middle
+        else:
+            high = middle - 1
+    output = rendered(low)
+    if rendered_size(output) > maximum or (not output["records"] and offset < len(records)):
         raise FollowUpReadError(
             "follow_up_record_too_large",
             "A follow-up record cannot fit; increase DATACRON_MAX_RESULT_TOKENS or use get_note",
