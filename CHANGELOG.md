@@ -20,6 +20,27 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- The atomic rebuild validates without holding the vault in memory. Before publishing, it
+  compares the temp index against the live notes, and it built that comparison by listing
+  every note: each one carries its body and the whole file, all alive at once, to produce a
+  mapping of two short strings per note. `reconcile` goes out of its way to avoid exactly
+  that, keeping identities rather than notes and saying so in its docstring, and the
+  validation undid it three statements later; on a large vault it was the rebuild's peak, and
+  being killed there wastes the expensive part after it has already succeeded. Measured on
+  1200 notes: peak allocation 12.1 MiB, now 1.4 MiB, and flat when the same notes carry
+  twenty times the text.
+- That costs time. The streaming form enumerates through `stat_notes`, which walks the vault
+  and stats each file, where listing walked without statting: 1822 ms, now 2454 ms on those
+  1200 notes, and the 632 ms of difference is exactly the stat sweep measured on its own.
+  The trade is taken deliberately, because the failure it removes is a rebuild killed for
+  memory on the one command an operator runs precisely because the index is already in
+  trouble. Removing the extra sweep as well needs an enumeration that does not stat, which is
+  a new method on the reader contract rather than a local change.
+- The identities are still read from the vault rather than taken from the pass that built the
+  index, although that would remove the third read entirely. The check exists to compare the
+  index against the vault independently of what produced it, and a note edited while the
+  rebuild ran is the one case where publishing would publish something already wrong. A test
+  pins that independence.
 - `search_regex` resolves a note once per search instead of once per line that matched in
   it, and applies the glob and the scope admission before resolving at all. `chunks_fts`
   declares `note_id` UNINDEXED, so listing a note's chunks scans the table and builds a model
