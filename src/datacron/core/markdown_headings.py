@@ -31,10 +31,18 @@ def _html_comment_lines(lines: list[str]) -> frozenset[int]:
     followed it, a delete orphans the opener and swallows the rest of the note.
     The heading sequence is unchanged either way, so the move verifier accepts
     it and the tool reports that every byte was preserved.
+
+    A comment that is never closed masks nothing. An opener with no ``-->`` after
+    it is a typo, not an instruction to comment out the rest of the note, and
+    treating it as one hid every heading below it: the section above then reached
+    the end of the file, and patching that section replaced everything under it.
+    Lines are therefore held back until the closing marker is actually found, and
+    a span still open at the end of the file is discarded.
     """
     inside_comment = False
     fence: str | None = None
     masked: set[int] = set()
+    pending: set[int] = set()
     for index, raw_line in enumerate(lines):
         line = raw_line.rstrip("\r\n")
         if not inside_comment:
@@ -51,11 +59,13 @@ def _html_comment_lines(lines: list[str]) -> frozenset[int]:
         position = 0
         while True:
             if inside_comment:
-                masked.add(index)
+                pending.add(index)
                 close_at = line.find(_COMMENT_CLOSE, position)
                 if close_at < 0:
                     break
                 inside_comment = False
+                masked |= pending
+                pending.clear()
                 position = close_at + len(_COMMENT_CLOSE)
                 continue
             open_at = line.find(_COMMENT_OPEN, position)

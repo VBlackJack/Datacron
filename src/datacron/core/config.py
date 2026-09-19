@@ -97,7 +97,12 @@ DEFAULT_CHUNK_MAX_TOKENS: Final[int] = 1024
 # generous, so a single get_note returns most notes whole while pagination
 # (offset/limit/next_offset) remains the safety valve for pathologically large notes.
 DEFAULT_GET_NOTE_MAX_TOKENS: Final[int] = 25000
-DEFAULT_HISTORY_RETENTION_DAYS: Final[int] = 30
+# Forty-two months. Retention decides when the only stored copy of a previous
+# version of a note is deleted, and a project can sit untouched for months and then
+# resume, so a window measured in weeks silently discarded the history of everything
+# paused. The sweep that applies it costs nothing extra for a long window: it reads
+# nothing at all until the journal actually holds a record older than the cutoff.
+DEFAULT_HISTORY_RETENTION_DAYS: Final[int] = 1278
 DEFAULT_HISTORY_MODE: Final[str] = "full"
 # Canonical text encoding and line-ending convention for the sidecar and the
 # ``VAULT.yaml`` ``encoding``/``line_endings`` fields. Single source of truth so
