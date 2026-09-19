@@ -471,6 +471,16 @@ class FilesystemVaultReader:
                 _LOGGER.warning("Skipping unreadable note %s: %s", path, exc)
         return notes
 
+    async def note_paths(self) -> dict[str, Path]:
+        """Return ``rel_path -> absolute_path`` for every live note, without stat()."""
+        return await asyncio.to_thread(self._walk_markdown_paths)
+
+    def _walk_markdown_paths(self) -> dict[str, Path]:
+        return {
+            _walked_rel_path(path, self._vault_root): path
+            for path in self._collect_markdown_paths(self._vault_root)
+        }
+
     async def stat_notes(self) -> dict[str, tuple[Path, int]]:
         """Return ``rel_path -> (absolute_path, st_mtime_ns)`` for every live note.
 

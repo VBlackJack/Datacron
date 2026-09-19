@@ -64,6 +64,9 @@ class _CountingReader:
         self.list_notes_calls += 1
         return []
 
+    async def note_paths(self) -> dict[str, Path]:
+        return {}
+
     async def stat_notes(self) -> dict[str, tuple[Path, int]]:
         return {}
 
@@ -135,6 +138,9 @@ class _RedirectingReader:
         limit: int | None = None,
     ) -> list[Note]:
         return await self._delegate.list_notes(folder=folder, limit=limit)
+
+    async def note_paths(self) -> dict[str, Path]:
+        return await self._delegate.note_paths()
 
     async def stat_notes(self) -> dict[str, tuple[Path, int]]:
         return await self._delegate.stat_notes()

@@ -27,15 +27,15 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   that, keeping identities rather than notes and saying so in its docstring, and the
   validation undid it three statements later; on a large vault it was the rebuild's peak, and
   being killed there wastes the expensive part after it has already succeeded. Measured on
-  1200 notes: peak allocation 12.1 MiB, now 1.4 MiB, and flat when the same notes carry
-  twenty times the text.
-- That costs time. The streaming form enumerates through `stat_notes`, which walks the vault
-  and stats each file, where listing walked without statting: 1822 ms, now 2454 ms on those
-  1200 notes, and the 632 ms of difference is exactly the stat sweep measured on its own.
-  The trade is taken deliberately, because the failure it removes is a rebuild killed for
-  memory on the one command an operator runs precisely because the index is already in
-  trouble. Removing the extra sweep as well needs an enumeration that does not stat, which is
-  a new method on the reader contract rather than a local change.
+  1200 notes, each form in its own process: peak allocation 6.1 MiB, now 1.0 MiB, and flat
+  when the same notes carry twenty times the text. Time is unchanged, 2088 ms against
+  2081 ms as warm minima, because the pass is dominated by reading and parsing every note
+  either way.
+- The vault reader gained `note_paths`, the enumeration `stat_notes` performs without the
+  `stat()` per file. The validation needs to know which notes exist and opens each one
+  anyway, so the mtimes were collected and discarded: measured alone on those 1200 notes,
+  88 ms against 18 ms. It walks the same tree with the same exclusions as `list_notes` and
+  `stat_notes`, so all three agree on which notes exist.
 - The identities are still read from the vault rather than taken from the pass that built the
   index, although that would remove the third read entirely. The check exists to compare the
   index against the vault independently of what produced it, and a note edited while the

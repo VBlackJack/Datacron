@@ -96,11 +96,15 @@ async def _live_note_identities(reader: VaultReader) -> dict[str, tuple[str, str
     remove the third read of the vault. The check exists to compare the index against
     the vault independently of the pass that built it, and a note edited while the
     rebuild ran is precisely what it has to catch; comparing the index against the
-    data that produced it would stop catching it. The enumeration is the one
-    ``reconcile`` used, so the two agree on which notes exist.
+    data that produced it would stop catching it.
+
+    The enumeration walks the vault without stat()ing each file. It is the same walk,
+    with the same exclusions, that ``reconcile`` and ``stat_notes`` use, so the three
+    agree on which notes exist; the mtimes ``stat_notes`` collects are what this pass
+    does not need, and paying for them cost a second sweep of the whole vault.
     """
     identities: dict[str, tuple[str, str]] = {}
-    for rel_path, (path, _fs_mtime_ns) in (await reader.stat_notes()).items():
+    for rel_path, path in (await reader.note_paths()).items():
         note = await reader.read_note(path)
         identities[rel_path] = (note.id, note.content_hash)
         del note
