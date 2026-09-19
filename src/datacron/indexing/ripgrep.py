@@ -33,6 +33,7 @@ import re
 import shutil
 from asyncio.subprocess import PIPE, Process
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, final
@@ -254,26 +255,106 @@ async def _collect_results(
     glob: str | None = None,
 ) -> tuple[list[SearchResult], bool]:
     results: list[SearchResult] = []
+    # One note's chunks are resolved once per search, not once per line that matched
+    # in it. ``chunks_fts`` declares ``note_id`` UNINDEXED, so each of those lookups
+    # scans the table, and a pattern matching twenty lines of one reference note used
+    # to scan it twenty times. The caches live for this call only.
+    resolver = _ChunkResolver(store)
     async for raw_line in _read_frames(stdout, max_frame_bytes):
         parsed = _parse_json_line(raw_line)
         if parsed is None or parsed.get("type") != "match":
             continue
+        match = _match_fields(parsed, vault_root=vault_root)
+        if match is None:
+            continue
+        # Filter on the path before resolving: the glob and the admission check need
+        # nothing the index provides, and a match they reject costs a table scan.
+        if glob is not None and not matches_vault_glob(match.rel_path, glob):
+            continue
+        if admit is not None and not admit(match.rel_path):
+            continue
 
-        result = await _result_from_match(
-            parsed,
-            vault_root=vault_root,
-            store=store,
-            rank_index=len(results),
-        )
-        if (
-            result is not None
-            and (glob is None or matches_vault_glob(result.chunk.note_rel_path, glob))
-            and (admit is None or admit(result.chunk.note_rel_path))
-        ):
-            results.append(result)
+        chunk = await resolver.covering(match.rel_path, match.line_number)
+        if chunk is not None:
+            results.append(
+                SearchResult(
+                    chunk=chunk,
+                    score=1.0 / (1.0 + len(results)),
+                    snippet=_highlight_submatches(match.line, match.submatches),
+                    redaction_source=match.line,
+                )
+            )
         if len(results) >= limit:
             return results, True
     return results, False
+
+
+@dataclass(frozen=True)
+class _MatchFields:
+    """The parts of one ripgrep match frame the search reads."""
+
+    rel_path: str
+    line_number: int
+    line: str
+    submatches: list[object]
+
+
+def _match_fields(event: dict[str, Any], *, vault_root: Path) -> _MatchFields | None:
+    """Read one match frame, or report why it cannot be used."""
+    data = event.get("data")
+    if not isinstance(data, dict):
+        _LOGGER.info("Skipping ripgrep match with invalid data payload")
+        return None
+    rel_path = _relative_path_from_match(data.get("path"), vault_root)
+    line_number = data.get("line_number")
+    line = _text_from_data(data.get("lines"))
+    submatches = data.get("submatches")
+    if rel_path is None or not isinstance(line_number, int) or line is None:
+        _LOGGER.info("Skipping ripgrep match with missing path, line number, or line text")
+        return None
+    if not isinstance(submatches, list):
+        _LOGGER.info("Skipping ripgrep match with invalid submatches")
+        return None
+    return _MatchFields(
+        rel_path=rel_path, line_number=line_number, line=line, submatches=submatches
+    )
+
+
+class _ChunkResolver:
+    """Map a note path and line number to its chunk, remembering what it looked up.
+
+    Both lookups behind this are table scans: ``chunks_fts`` declares ``note_id``
+    UNINDEXED, and the note path lookup goes to the index as well. Repeating them per
+    matching line made the cost of a search the number of matches times the size of
+    the notes they fell in, rather than the number of distinct notes.
+    """
+
+    def __init__(self, store: FTS5Store) -> None:
+        self._store = store
+        self._note_ids: dict[str, str | None] = {}
+        self._chunks: dict[str, list[Chunk]] = {}
+
+    async def covering(self, rel_path: str, line_number: int) -> Chunk | None:
+        """Return the chunk whose line span covers ``line_number``, if any."""
+        note_id = await self._note_id(rel_path)
+        if note_id is None:
+            _LOGGER.info("ripgrep match dropped: no note_id mapping for %s", rel_path)
+            return None
+        for chunk in await self._chunks_for(note_id):
+            if chunk.line_start <= line_number <= chunk.line_end:
+                return chunk
+        _LOGGER.info("ripgrep match dropped: no chunk covers %s:%s", rel_path, line_number)
+        return None
+
+    async def _note_id(self, rel_path: str) -> str | None:
+        if rel_path not in self._note_ids:
+            self._note_ids[rel_path] = await self._store.get_note_id(rel_path)
+        return self._note_ids[rel_path]
+
+    async def _chunks_for(self, note_id: str) -> list[Chunk]:
+        if note_id not in self._chunks:
+            self._chunks[note_id] = await self._store.list_chunks_for_note(note_id)
+        return self._chunks[note_id]
 
 
 async def _read_frames(stdout: asyncio.StreamReader, maximum: int) -> AsyncIterator[bytes]:
@@ -490,63 +571,6 @@ def _parse_json_line(raw_line: bytes) -> dict[str, Any] | None:
         _LOGGER.info("Skipping non-object ripgrep JSON line")
         return None
     return parsed
-
-
-async def _result_from_match(
-    event: dict[str, Any],
-    *,
-    vault_root: Path,
-    store: FTS5Store,
-    rank_index: int,
-) -> SearchResult | None:
-    data = event.get("data")
-    if not isinstance(data, dict):
-        _LOGGER.info("Skipping ripgrep match with invalid data payload")
-        return None
-
-    rel_path = _relative_path_from_match(data.get("path"), vault_root)
-    line_number = data.get("line_number")
-    line = _text_from_data(data.get("lines"))
-    submatches = data.get("submatches")
-    if rel_path is None or not isinstance(line_number, int) or line is None:
-        _LOGGER.info("Skipping ripgrep match with missing path, line number, or line text")
-        return None
-    if not isinstance(submatches, list):
-        _LOGGER.info("Skipping ripgrep match with invalid submatches")
-        return None
-
-    chunk = await _resolve_chunk(store, rel_path, line_number)
-    if chunk is None:
-        return None
-
-    return SearchResult(
-        chunk=chunk,
-        score=1.0 / (1.0 + rank_index),
-        snippet=_highlight_submatches(line, submatches),
-        redaction_source=line,
-    )
-
-
-async def _resolve_chunk(store: FTS5Store, rel_path: str, line_number: int) -> Chunk | None:
-    note_id = await _note_id_for_rel_path(store, rel_path)
-    if note_id is None:
-        _LOGGER.info("ripgrep match dropped: no note_id mapping for %s", rel_path)
-        return None
-
-    chunks = await store.list_chunks_for_note(note_id)
-    for chunk in chunks:
-        if chunk.line_start <= line_number <= chunk.line_end:
-            return chunk
-    _LOGGER.info(
-        "ripgrep match dropped: no chunk covers %s:%s",
-        rel_path,
-        line_number,
-    )
-    return None
-
-
-async def _note_id_for_rel_path(store: FTS5Store, rel_path: str) -> str | None:
-    return await store.get_note_id(rel_path)
 
 
 def _relative_path_from_match(path_payload: object, vault_root: Path) -> str | None:
