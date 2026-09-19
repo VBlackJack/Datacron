@@ -22,7 +22,7 @@ configured roots is rejected before it reaches the filesystem.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Final, Literal
 
@@ -40,6 +40,7 @@ __all__ = [
     "assert_vault_rel_path",
     "assert_within_paths",
     "assert_within_read_paths",
+    "assert_within_resolved_roots",
     "assert_within_write_paths",
     "is_within",
     "read_ulid_mappings",
@@ -227,6 +228,43 @@ def is_within(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def assert_within_resolved_roots(
+    path: Path,
+    resolved_roots: Sequence[Path],
+    *,
+    kind: AccessKind = "read",
+) -> Path:
+    """Resolve ``path`` and confirm it lies within one of the already-resolved roots.
+
+    :func:`assert_within_paths` resolves its roots on every call. A scope whose root
+    was resolved when it was built then paid a second realpath per authorized path,
+    for an answer it already had: resolving an absolute resolved path returns it
+    unchanged. That doubled the cost of every path this product authorizes, and a
+    sweep over an indexed vault pays it once per note.
+
+    Callers must pass roots they have already resolved. Passing an unresolved root
+    here would compare a resolved path against an unresolved one and refuse
+    legitimate paths, so the roots that reach this are the ones a constructor
+    resolved, never a raw setting.
+    """
+    resolved = _resolve(path)
+    if not resolved_roots:
+        raise PathConfinementError(
+            f"No {kind} paths are configured; access to {resolved} is denied."
+        )
+    for root in resolved_roots:
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        else:
+            return resolved
+    pretty_roots = ", ".join(str(root) for root in resolved_roots)
+    raise PathConfinementError(
+        f"Path {resolved} is outside the allowed {kind} roots [{pretty_roots}]."
+    )
 
 
 def assert_within_paths(
