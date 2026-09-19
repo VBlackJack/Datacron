@@ -472,7 +472,13 @@ dans [freshness-contract-v1.md](freshness-contract-v1.md).
   avec gate `mtime` et autorité `content_hash`. Les sweeps sont espacés de 30 secondes par
   défaut. Une politique qui interdit les mutations d'index n'effectue pas cette réparation.
 - Entre deux sweeps, une lecture peut servir l'index courant; `get_health` fournit l'état exact
-  pour diagnostiquer un écart après une modification hors Datacron.
+  pour diagnostiquer un écart après une modification hors Datacron. Le parcours du sweep
+  tranche l'admission de chaque chemin qu'il renvoie, et `list_notes` le réutilise pour
+  compter les notes admises sans trancher l'admission une seconde fois par chemin indexé. Il
+  ne sert qu'à confirmer une admission: un chemin que le parcours ne porte pas est quand
+  même vérifié, donc une note indexée par une écriture ciblée depuis le sweep est comptée.
+  Une note supprimée hors Datacron entre deux sweeps reste dans `total` jusqu'au suivant,
+  la même fenêtre pendant laquelle une recherche renvoie encore des résultats pour elle.
 - Un `chunk_id` conservé par un client devient périmé si l'identité ou le `content_hash` de sa
   note parent ne correspond plus à l'index. `get_note(chunk_id)` renvoie alors une erreur
   explicite demandant de réindexer et de réessayer; il ne sert jamais silencieusement un chunk

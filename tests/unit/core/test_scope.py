@@ -613,10 +613,12 @@ async def test_listing_notes_does_not_block_the_event_loop_while_it_admits(
 ) -> None:
     """The admission sweep must not stop everything else the server is serving.
 
-    It resolves and stats every indexed path, which is about 410 microseconds each,
-    so on a vault of twenty thousand notes it held the loop for eight seconds and no
-    other tool call could progress. It is not cheaper now, it is off the loop; this
-    pins that, because moving it back would be invisible otherwise.
+    It resolves and stats every indexed path, which is about 340 microseconds each,
+    so on a vault of twenty thousand notes it held the loop for seven seconds and no
+    other tool call could progress. A page now reuses the sweep's walk and decides
+    almost nothing, but the branch that decides is still reached: by the first call
+    after a restart, and for any path indexed since the last sweep. This pins that
+    it stays off the loop, because moving it back would be invisible otherwise.
     """
     vault = tmp_path / "vault"
     (vault / "notes").mkdir(parents=True)
@@ -627,7 +629,9 @@ async def test_listing_notes_does_not_block_the_event_loop_while_it_admits(
         rel_paths.append(rel_path)
 
     scope = SingleTenantVaultScope(vault, Settings(write_paths=[vault]))
-    app = SimpleNamespace(scope=scope)
+    # No sweep has published its walk, so this exercises the branch that decides
+    # admission itself, which is the one that must not be moved back onto the loop.
+    app = SimpleNamespace(scope=scope, repair_state=SimpleNamespace(live_note_paths=None))
     ticks = 0
     running = True
 

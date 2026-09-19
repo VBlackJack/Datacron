@@ -71,6 +71,7 @@ async def reconcile(
     *,
     mtime_gate: bool,
     progress: IndexProgress | None = None,
+    live: dict[str, tuple[Path, int]] | None = None,
 ) -> ReconcileStats:
     """Reconcile the FTS index in ``store`` with the live vault behind ``reader``.
 
@@ -84,13 +85,17 @@ async def reconcile(
         progress: Optional callback receiving completed and total note counts. A note
             counts once its index state is settled, which for an unchanged note
             happens during the identity pre-pass.
+        live: The walk this pass reconciles against, when the caller has already
+            performed it. ``None`` walks here. The read repair passes its own, so
+            one sweep never walks the vault twice.
 
     Returns:
         Per-pass counts. ``skipped_notes`` covers both mtime-gated skips and
         hash-matched no-ops.
     """
     indexed = await store.list_indexed_notes_with_mtime()
-    live = await reader.stat_notes()
+    if live is None:
+        live = await reader.stat_notes()
     gated = frozenset(
         rel_path
         for rel_path, (_path, st_mtime_ns) in live.items()

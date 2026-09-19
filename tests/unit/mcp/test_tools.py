@@ -670,6 +670,126 @@ class TestListNotes:
         assert [note["rel_path"] for note in result["notes"]] == ["b.md"]
 
     @pytest.mark.asyncio
+    async def test_a_page_admits_the_index_without_restatting_every_note(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A page must cost the page, not the whole index.
+
+        Deciding admission resolves a path and stats it, about 340 microseconds
+        measured, and it ran over every indexed path so that ``total`` could count
+        the admitted ones. That is close to seven seconds on a vault of twenty
+        thousand, spent on paths the caller never asked for, and it never had to be
+        spent: the read repair walks the whole vault immediately before, and the
+        walk it returns holds only the paths that passed this exact admission.
+        """
+        from datacron.mcp.tools import _list_notes_impl
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        for index in range(8):
+            _write_memory_note(
+                vault,
+                f"note-{index}.md",
+                f"# Note {index}" + chr(10),
+                metadata_overrides={
+                    "id": f"01J00000000000000000000{index:03d}"[:26],
+                    "title": f"note-{index}",
+                },
+            )
+        settings = Settings(
+            read_paths=[vault], vault_root=vault, max_result_count=20, max_result_tokens=8000
+        )
+        store = SQLiteFTS5Store()
+        await store.open(vault / ".datacron" / "index" / "datacron.db")
+        app = build_app(settings=settings, vault_root=vault, chunker=MarkdownChunker(), store=store)
+        try:
+            await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+            first = await _list_notes_impl(app, folder=None, tags=None, limit=3, offset=0)
+            assert first["total"] == 8
+            assert app.repair_state.live_note_paths is not None
+            assert len(app.repair_state.live_note_paths) == 8
+
+            authorized: list[str] = []
+            original = app.scope.authorize_note_rel_path
+
+            def recording(rel_path: str) -> Path:
+                authorized.append(rel_path)
+                return original(rel_path)
+
+            monkeypatch.setattr(app.scope, "authorize_note_rel_path", recording)
+            page = await _list_notes_impl(app, folder=None, tags=None, limit=3, offset=3)
+        finally:
+            await store.close()
+
+        assert page["total"] == 8
+        assert page["returned"] == 3
+        # Only the three notes on the page are resolved; the other five are not.
+        assert sorted(set(authorized)) == sorted(note["rel_path"] for note in page["notes"])
+
+    @pytest.mark.asyncio
+    async def test_a_note_indexed_after_the_sweep_is_still_counted(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The cache may only say yes, so a row it predates must still be checked.
+
+        A targeted write indexes its note without running the sweep, so the set is
+        legitimately behind between sweeps. If absence from it were taken as a
+        refusal, that note would drop out of ``total`` and off the last page: a
+        note the caller just wrote, invisible to the tool that lists notes.
+        """
+        from datacron.mcp.tools import _list_notes_impl
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        for index in range(3):
+            _write_memory_note(
+                vault,
+                f"early-{index}.md",
+                f"# Early {index}" + chr(10),
+                metadata_overrides={
+                    "id": f"01J00000000000000000000E{index:02d}"[:26],
+                    "title": f"early-{index}",
+                },
+            )
+        settings = Settings(
+            read_paths=[vault],
+            vault_root=vault,
+            max_result_count=20,
+            max_result_tokens=8000,
+            repair_min_interval_seconds=3600.0,
+        )
+        store = SQLiteFTS5Store()
+        await store.open(vault / ".datacron" / "index" / "datacron.db")
+        app = build_app(settings=settings, vault_root=vault, chunker=MarkdownChunker(), store=store)
+        try:
+            await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+            await _list_notes_impl(app, folder=None, tags=None, limit=10, offset=0)
+            snapshot = app.repair_state.live_note_paths
+            assert snapshot is not None
+            assert "late.md" not in snapshot
+
+            _write_memory_note(
+                vault,
+                "late.md",
+                "# Late" + chr(10),
+                metadata_overrides={"id": "01J0000000000000000000LATE", "title": "late"},
+            )
+            note = await app.vault_reader.read_note(vault / "late.md")
+            await app.store.upsert_note(note, app.chunker.chunk(note))
+
+            result = await _list_notes_impl(app, folder=None, tags=None, limit=10, offset=0)
+        finally:
+            await store.close()
+
+        # The sweep is still throttled, so the set is stale, and the note survives.
+        assert app.repair_state.live_note_paths is snapshot
+        assert result["total"] == 4
+        assert "late.md" in [note["rel_path"] for note in result["notes"]]
+
+    @pytest.mark.asyncio
     async def test_index_payload_matches_filesystem_fallback(
         self,
         tmp_vault: Path,

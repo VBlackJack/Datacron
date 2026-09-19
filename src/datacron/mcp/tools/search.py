@@ -497,9 +497,13 @@ async def _repair_index_on_read(app: DatacronApp) -> ReconcileStats:
         if interval > 0.0 and last_sweep is not None and now - last_sweep < interval:
             return _throttled_repair_stats()
 
+        # One walk per sweep. Its keys are the paths this scope admits as live
+        # notes, which is the answer list_notes used to buy a second time, once
+        # per indexed note, right after this returns.
+        live = await app.vault_reader.stat_notes()
+        app.repair_state.live_note_paths = frozenset(live)
         if not app.write_policy.writes_allowed:
             indexed = await app.store.list_indexed_notes_with_mtime()
-            live = await app.vault_reader.stat_notes()
             stats: ReconcileStats = {
                 "checked_notes": len(live),
                 "indexed_notes_before": len(indexed),
@@ -508,7 +512,9 @@ async def _repair_index_on_read(app: DatacronApp) -> ReconcileStats:
                 "skipped_notes": len(live),
             }
         else:
-            stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+            stats = await reconcile(
+                app.store, app.vault_reader, app.chunker, mtime_gate=True, live=live
+            )
         app.repair_state.last_sweep_completed_at = _repair_clock()
 
     await _invalidate_alias_cache_if_index_changed(app, stats)

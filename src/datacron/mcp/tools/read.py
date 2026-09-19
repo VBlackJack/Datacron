@@ -70,19 +70,36 @@ class StaleChunkError(ValueError):
 def _admitted_note_paths(app: DatacronApp, rel_paths: Sequence[str]) -> list[str]:
     """Keep the indexed paths this scope admits as live notes.
 
-    Admission resolves each path and stats it, which is two blocking filesystem
-    calls per note, and this runs over every indexed path because the page has to
-    be taken from the admitted ones. On the event loop that stopped the whole
-    server: nothing else it was serving could progress while the sweep ran, and the
-    sweep costs the same whether the caller asked for the first twenty notes or all
-    of them. Measured at about 410 microseconds per note, which is eight seconds of
-    dead server on a vault of twenty thousand.
+    The sweep that stood here resolved and stat-ed every indexed path, about 340
+    microseconds each measured, so a vault of twenty thousand notes spent close to
+    seven seconds re-deciding admission for paths the caller never asked for. It
+    never had to. The read repair runs immediately before this and walks the whole
+    vault, and ``ScopedVaultReader.stat_notes`` returns only the paths that passed
+    this exact admission, so the sweep was buying an answer already in hand.
 
-    Moving it to a thread does not make it cheaper, only survivable. Making it
-    cheaper means paging admission alongside the SQL page, which changes what
-    ``total`` counts, so it is not done here.
+    The published set is a positive cache: membership proves admission at the
+    sweep, absence proves nothing, so a path it does not hold is still checked
+    here. A note a targeted write indexed after the sweep is therefore still
+    counted, an organization batch that moved notes pays a check per moved note,
+    and a set some future caller forgets to refresh costs checks rather than
+    notes. The set is rebound as a whole, never mutated, so a concurrent sweep can
+    only swap one valid cache for another under this thread's read.
+
+    What it gets wrong, for at most ``repair_min_interval_seconds``: a note deleted
+    outside Datacron while the sweep is throttled, whose index row falls outside
+    the requested page, is still counted in ``total``. The page itself is not
+    affected, because every note on it goes through full admission when it is read
+    and a stale one falls back to the filesystem listing. That window is the same
+    one in which ``search_text`` still returns hits for the deleted note.
     """
-    return [rel_path for rel_path in rel_paths if app.scope.allows_note_rel_path(rel_path)]
+    live = app.repair_state.live_note_paths
+    if live is None:
+        return [rel_path for rel_path in rel_paths if app.scope.allows_note_rel_path(rel_path)]
+    return [
+        rel_path
+        for rel_path in rel_paths
+        if rel_path in live or app.scope.allows_note_rel_path(rel_path)
+    ]
 
 
 async def _list_notes_impl(
