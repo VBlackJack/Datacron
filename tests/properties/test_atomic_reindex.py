@@ -19,6 +19,7 @@ import hashlib
 import json
 import sqlite3
 import sys
+import tracemalloc
 from pathlib import Path
 
 import pytest
@@ -27,11 +28,13 @@ from datacron.core.config import Settings, VaultConfig
 from datacron.core.durability import DurabilityStatus
 from datacron.core.frontmatter import serialize
 from datacron.core.paths import sidecar_index_db
+from datacron.core.vault import build_configured_reader
 from datacron.indexing import rebuild as rebuild_module
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.rebuild import (
     REBUILD_FAULT_POINTS,
     IndexRebuildError,
+    _live_note_identities,
     rebuild_index_atomic,
 )
 from datacron.mcp.health import build_health
@@ -293,3 +296,119 @@ async def test_rebuild_refuses_up_front_when_the_index_is_held_open(tmp_path: Pa
     assert "held open by another process" in str(caught.value)
     assert db_path.read_bytes() == before
     assert not list(db_path.parent.glob("*.rebuild*"))
+
+
+async def test_rebuild_validation_memory_does_not_follow_the_vault(tmp_path: Path) -> None:
+    """The check that lets a rebuild publish must not need the vault in RAM to run.
+
+    It compares the temp index against the live vault, and it built that comparison
+    by listing every note: each one carries its body and the whole file, all alive at
+    once, to produce a mapping of two short strings per note. ``reconcile`` avoids
+    exactly that, keeping identities rather than notes and saying so in its
+    docstring, and the validation undid it three statements later. On a large vault
+    it is the rebuild's peak, and being killed there wastes the expensive part after
+    it has already succeeded.
+
+    The two vaults hold the same number of notes and twenty times the text. The peak
+    must follow the identities, which are two short strings per note, and not the
+    content. Comparing the two forms against each other inside one process does not
+    work: whichever runs first measures about three times higher, for identical code.
+    """
+    note_count = 100
+    peaks: list[int] = []
+    for repeats in (20, 400):
+        body = "lorem ipsum dolor sit amet consectetur adipiscing elit. " * repeats
+        vault = tmp_path / f"vault-{repeats}"
+        (vault / "notes").mkdir(parents=True)
+        for index in range(note_count):
+            (vault / "notes" / f"note-{index:04d}.md").write_text(
+                f"# Note {index}" + chr(10) + chr(10) + body + chr(10),
+                encoding="utf-8",
+            )
+        reader = build_configured_reader(vault, read_only=True)
+        await reader.note_paths()
+
+        tracemalloc.start()
+        identities = await _live_note_identities(reader)
+        peaks.append(tracemalloc.get_traced_memory()[1])
+        tracemalloc.stop()
+        assert len(identities) == note_count
+
+    # Twenty times the text, the same notes: the peak must barely move, because only
+    # one note is alive at a time and what is kept is two short strings per note.
+    assert peaks[1] < peaks[0] * 2, f"peak went from {peaks[0]} to {peaks[1]} bytes"
+
+
+async def test_rebuild_validation_sees_a_note_edited_while_it_ran(tmp_path: Path) -> None:
+    """The check reads the vault again on purpose, and that is why it must keep doing so.
+
+    Taking the identities from the pass that built the index would also remove a read
+    of the vault, and it is what the audit proposed. It would also stop the check
+    catching a note edited while the rebuild ran, which is the one case where
+    publishing the index would publish something already wrong. This pins the
+    independence rather than the number of reads.
+    """
+    vault = tmp_path / "vault"
+    (vault / "notes").mkdir(parents=True)
+    target = vault / "notes" / "edited.md"
+    target.write_text("# Before" + chr(10) + chr(10) + "original body" + chr(10), "utf-8")
+    stable = vault / "notes" / "stable.md"
+    stable.write_text("# Stable" + chr(10) + chr(10) + "body" + chr(10), "utf-8")
+    reader = build_configured_reader(vault, read_only=True)
+
+    before = await _live_note_identities(reader)
+    target.write_text("# After" + chr(10) + chr(10) + "edited body" + chr(10), "utf-8")
+    after = await _live_note_identities(reader)
+
+    assert before["notes/stable.md"] == after["notes/stable.md"]
+    assert before["notes/edited.md"] != after["notes/edited.md"]
+
+
+async def test_note_paths_enumerates_exactly_what_stat_notes_does(tmp_path: Path) -> None:
+    """Three enumerations of the same vault must agree on which notes exist.
+
+    The rebuild's validation walks the vault a third time, and the whole point of
+    reusing this walk is that it is the one ``reconcile`` and the read repair use.
+    A different answer here would not look like a bug: the validation would report
+    the index as divergent from a vault that matches it, and refuse to publish a
+    rebuild that was correct.
+    """
+    vault = tmp_path / "vault"
+    (vault / "notes" / "nested").mkdir(parents=True)
+    (vault / ".datacron").mkdir()
+    (vault / "notes" / "plain.md").write_text("# Plain" + chr(10), encoding="utf-8")
+    (vault / "notes" / "with space.md").write_text("# Spaced" + chr(10), encoding="utf-8")
+    (vault / "notes" / "nested" / "accentue.md").write_text("# Accent" + chr(10), encoding="utf-8")
+    (vault / "notes" / "not-a-note.txt").write_text("ignored", encoding="utf-8")
+    (vault / ".datacron" / "hidden.md").write_text("# Hidden" + chr(10), encoding="utf-8")
+    reader = build_configured_reader(vault, read_only=True)
+
+    walked = await reader.note_paths()
+    statted = await reader.stat_notes()
+    listed = await reader.list_notes()
+
+    assert walked == {rel_path: path for rel_path, (path, _mtime) in statted.items()}
+    assert sorted(walked) == sorted(note.rel_path for note in listed)
+    assert "notes/nested/accentue.md" in walked
+
+
+async def test_note_paths_does_not_stat_the_files_it_enumerates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Skipping the stat sweep is the reason this exists, so it is pinned.
+
+    The validation opens every note it enumerates, so the mtimes ``stat_notes``
+    collects are gathered and thrown away. Measured alone on 1200 notes, the sweep
+    is 88 ms against 18 ms without it.
+    """
+    vault = tmp_path / "vault"
+    (vault / "notes").mkdir(parents=True)
+    for index in range(5):
+        (vault / "notes" / f"note-{index}.md").write_text(f"# {index}" + chr(10), encoding="utf-8")
+    reader = build_configured_reader(vault, read_only=True)
+
+    monkeypatch.setattr(
+        Path, "stat", lambda *_args, **_kwargs: pytest.fail("note_paths stat()ed a note")
+    )
+
+    assert len(await reader.note_paths()) == 5

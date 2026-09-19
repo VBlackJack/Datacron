@@ -427,6 +427,15 @@ class ScopedVaultReader:
         allowed = [note for note in notes if self._matches_note_admission(note)]
         return allowed if limit is None else allowed[:limit]
 
+    async def note_paths(self) -> dict[str, Path]:
+        self._scope.authorize_rel_path("", "read")
+        notes = await self._delegate.note_paths()
+        return {
+            rel_path: path
+            for rel_path, path in notes.items()
+            if self._matches_stat_admission(rel_path, path)
+        }
+
     async def stat_notes(self) -> dict[str, tuple[Path, int]]:
         self._scope.authorize_rel_path("", "read")
         notes = await self._delegate.stat_notes()
