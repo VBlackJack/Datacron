@@ -296,6 +296,13 @@ When a mutation targets an existing note, it stores the prior bytes by SHA-256 i
 `history_mode=full`. Every committed mutation writes a pending manifest, atomically replaces or
 creates the note, appends the chained journal, then removes the manifest. `redacted` mode retains
 hashes and the journal but not prior bytes, so `revert_note` cannot read a historical version.
+Switching a vault from `full` to `redacted` stops new bytes being stored and leaves the ones
+already on disk alone: the retention sweep does nothing while history is disabled. Removing
+those versions is a deliberate act, not a side effect of the next write.
+`get_note_history` marks each operation with `restore_available`, saying whether the prior
+bytes its `before_hash` names are still on disk. `history_stored` only records what was
+stored when the write committed, so on its own it would offer restore points retention has
+since deleted.
 Retention defaults to 1278 days, forty-two months, and is configurable through
 `history_retention_days`. The default is long because retention decides when the only
 stored copy of a previous version is deleted, and a subject can be left untouched for
@@ -528,7 +535,10 @@ Without `request_id`, a retry with the original expected hash is rejected by CAS
 the hash can duplicate an append. Failures before a confirmed commit retain their existing
 error contracts. Without `request_id`, cancellation or a lost transport response requires
 checking the note/history before deciding what to do. With a stable `request_id`, retry the
-exact same arguments to recover the historical receipt without repeating a committed edit.
+exact same arguments to recover the receipt without repeating a committed edit. The receipt
+only suppresses a write the note still holds: once the note has moved away from what the
+receipt recorded, the call proceeds under CAS if it carries `expected_hash`, and is refused
+otherwise. That is what lets a reverted write be made again under its original request id.
 
 
 See [Reliability improvements](improvements.md) for request replay, targeted indexing, shared Markdown selection and quality gates.

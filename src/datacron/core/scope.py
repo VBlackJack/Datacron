@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 import stat
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path, PurePosixPath
 from typing import (
@@ -626,6 +626,11 @@ class ScopedVaultWriter:
     async def list_operations(self) -> list[OperationRecord]:
         records = await self._delegate.list_operations()
         return self._readable_by_rel_path(records)
+
+    async def present_history_hashes(self, hashes: Iterable[str | None]) -> set[str]:
+        # Presence of a history blob is keyed by content hash, not by path, and the
+        # caller only learns about a hash from a record this scope already returned.
+        return await self._delegate.present_history_hashes(hashes)
 
     async def purge_history(self) -> list[str]:
         self._write_policy.ensure_writable()

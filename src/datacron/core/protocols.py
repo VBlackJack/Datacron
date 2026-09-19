@@ -30,7 +30,7 @@ Silent drift between this module and the contract breaks consumers.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -443,6 +443,10 @@ class VaultWriter(Protocol):
 
     async def list_operations(self) -> list[OperationRecord]:
         """Return committed operation records without mutating journal state."""
+        ...
+
+    async def present_history_hashes(self, hashes: Iterable[str | None]) -> set[str]:
+        """Return which of these restore points still have their bytes on disk."""
         ...
 
     async def purge_history(self) -> list[str]:

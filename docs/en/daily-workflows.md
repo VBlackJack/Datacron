@@ -57,6 +57,7 @@ and does not claim an atomic snapshot across notes.
 |---|---|
 | `committed_current` | Receipt matches current bytes and index. Reread the note. |
 | `committed_changed` | The operation committed, then current bytes diverged. Read current state; do not repeat it. |
+| `committed_reverted` | The operation committed and was then undone: current bytes are the ones it replaced. Replay the identical arguments with `expected_hash`. |
 | `committed_index_incomplete` | Bytes match the commit but the index does not. Repair indexing without a new mutation. |
 | `conflict` | No receipt found and the original CAS hash differs. Inspect the original request before preparing remaining work. |
 | `not_recorded` | No committed receipt found. Inspect recovery or replay identical arguments with the same key. |

@@ -27,9 +27,24 @@ une transaction déjà écrite et récupérée renvoie son reçu sans répéter 
 Le premier succès contient `operation_id`, `committed=true`, `replayed=false`, `rel_path`,
 `content_hash`, `indexed=true` et le résultat habituel de l'outil. Le rejeu contient le reçu commun,
 `replayed=true` et `indexed=false`. Il ne reconstruit pas le résultat propre à chaque outil.
-Son hash décrit **l'écriture passée**, même si la note a été modifiée ou supprimée depuis.
-Relire la note pour obtenir un hash utilisable dans une nouvelle opération CAS. Les contrôles
-actuels de périmètre et d'autorisation d'écriture restent applicables.
+Les contrôles actuels de périmètre et d'autorisation d'écriture restent applicables.
+
+Un reçu ne rejoue qu'une écriture que la note porte encore. La clé est comparée aux octets
+courants de la note, et un reçu dont le résultat n'est plus sur le disque n'est pas traité
+comme une reprise :
+
+- la note porte encore ce que le reçu a enregistré : l'appel est rejoué, inchangé.
+- la note a bougé et l'appel porte `expected_hash` : l'écriture se poursuit et le CAS tranche.
+  Une note revenue à l'état que l'appel attend est réécrite ; une reprise périmée obtient
+  `WriteConflictError`.
+- la note a bougé et l'appel ne porte pas `expected_hash` : `WriteConflictError`, en demandant
+  de relire et de reprendre avec un hash exact. Plus rien ne distingue là une reprise d'une
+  écriture nouvelle.
+
+Le deuxième cas est ce qui rend une écriture annulée récupérable. Un plan que
+`prepare_follow_up` dérive de son contenu garde le même `request_id` d'une préparation à
+l'autre : avant cela, le reçu du premier apply supprimait tous les suivants et annonçait
+`committed: true` sans rien écrire.
 
 Pour retrouver le reçu sans écrire :
 `get_note_history(note="_memory/exemple.md", request_id="jalon-20260905-001")`.

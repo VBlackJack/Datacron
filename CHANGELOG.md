@@ -20,6 +20,51 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- Finding a write request's receipt costs the journal's tail instead of its whole history.
+  The lookup parsed and chain-verified every record ever written, on every keyed write. It
+  now scans backwards and stops at the match, and a key the journal has never carried is
+  answered from an in-memory set of the keys it holds, without a scan at all. Measured on a
+  journal of 20000 operations, 13.5 MiB: a retry of the last write 836 ms to 1.3 ms, a first
+  use of a key 656 ms to 1.7 ms, plus 90 ms once per process to build the set. The set is
+  rebuilt from the journal and never written to disk, because a second durable structure is a
+  second thing that can disagree with it; it advances by reading only the bytes appended since
+  it was last brought up to date, from whichever process appended them, and it is only ever
+  trusted to say that a key is absent.
+- `apply_organization_manifest` validates the bundle once instead of twice. Before committing,
+  it rebuilt the whole preview a second time and compared projected report hashes, which walks
+  and hashes every note in the organization scope and reprojects the report. That second pass
+  costs 608 ms on a 200-note scope, 1423 ms on 400 and 2275 ms on 800: it grows with the vault
+  while the batch it protects stays the same size, which is the shape of cost this product
+  exists to avoid. It also answered a question the transaction already answers, under the same
+  mutation lock: `_validate_before_states` compares the scope inventory the preview captured
+  against a live one, in both directions and by exact hash, then checks the before state of
+  every path the batch touches, `VAULT.yaml` and the projected report included. What the second
+  pass covered on its own was the manifest file changing on disk between the two, so the
+  pre-commit step still reloads and re-authenticates the bundle; that read is bounded by the
+  batch, not by the vault. A test drives a scope note being edited inside that exact window and
+  pins the refusal.
+- Refreshing the index after a committed organization batch costs the notes the batch moved
+  or rewrote, instead of every note in the vault. That pass ran ungated, reading and hashing
+  the whole vault on every apply, and it is the tail that pushed an apply of about twenty
+  moves past the client timeout and left the index half refreshed, which is the failure the
+  pass exists to prevent. Gating loses nothing a batch can do: a moved note arrives at a path
+  the index has no row for, so the gate cannot hold and it is read, while its old path is
+  gone from the enumeration and its row is dropped by identity; a note rewritten in place
+  went through an atomic replace and carries a new mtime; a removed identity is deleted
+  before the pass runs. What the gate does not see is a note edited outside Datacron whose
+  mtime did not move, which is the exposure every other pass already accepts, including the
+  read repair. The ungated pass was stricter here than anywhere else in the product and
+  nothing recorded why; arbitrated by Julien on 2026-09-19.
+- `contradiction_scan(mode='confirm')` refuses a confirmation larger than the caller's result
+  budget instead of returning it. The confirmation carries the write call the caller is meant
+  to execute, and that call carries the section's new content: the whole live section plus
+  the block to append, byte for byte, with no excerpt limit. A long running journal section
+  is measured in hundreds of kilobytes, and the transport serialises a result twice, once as
+  text and once as structured content, so one confirmation could take the caller's whole
+  context. Every other tool that returns vault bytes measures itself against
+  `max_result_tokens`; this one did not. It refuses rather than truncating, because the
+  payload is an exact write call and a truncated one would corrupt the note it is applied to,
+  and the refusal says to target a lower-level heading.
 - The atomic rebuild validates without holding the vault in memory. Before publishing, it
   compares the temp index against the live notes, and it built that comparison by listing
   every note: each one carries its body and the whole file, all alive at once, to produce a
@@ -261,6 +306,35 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- A write request's receipt no longer suppresses a write the note no longer holds. Any journal
+  record carrying the request key made the call a replay, and the caller got the old receipt
+  with `committed: true` while nothing was written. Revert a note and reissue the same call,
+  which is what `prepare_follow_up` does by design because it derives the request id from the
+  plan, and the entry was dropped with no trace: a write the caller was told had landed and
+  which is nowhere. The receipt is now read against the note as it is. The note still holds
+  what the record produced, so it is the ordinary retry after a timeout, a crash or a
+  concurrent duplicate, and it replays. The note has moved and the call carries
+  `expected_hash`, so the write proceeds and CAS judges it: a reverted note is written again,
+  a stale retry raises a conflict. The note has moved and no `expected_hash` was supplied, so
+  it refuses and says to re-read and retry with an exact hash, rather than fabricating a
+  receipt for bytes that are no longer anywhere or appending the entry twice. This covers all
+  nine ordinary write tools, not only follow-up plans.
+- `get_note_history` says whether each operation is still a restore point. It returned
+  `history_stored`, which records what was stored when the write committed and says nothing
+  about now: retention deletes a version once it falls out of the window, so the tool offered
+  reverts that could only fail. Each operation now also carries `restore_available`, the
+  presence of the bytes its `before_hash` names. A listing checks presence rather than reading
+  and rehashing every blob, because a page holds up to `max_result_count` records and
+  verifying each would read that many whole note versions to render metadata; `revert_note`
+  still verifies the bytes it restores.
+- Switching a vault's `history_mode` from `full` to `redacted` no longer destroys the versions
+  the `full` period stored. `redacted` means this vault stores no new prior bytes; it never
+  meant deleting the ones already on disk. The retention sweep is skipped while history is
+  disabled, so the retained set was empty and every blob counted as unreferenced: editing one
+  key in `.datacron/VAULT.yaml` and making one unrelated write deleted every earlier version of
+  every note, silently, with no confirmation and no way back. The sweep now does nothing at all
+  while history is disabled. Removing those bytes is a deliberate act, not a side effect of the
+  next write.
 - An unterminated `<!--` no longer hides every heading below it, which made a patch on the
   section above replace the rest of the note. Headings inside a closed HTML comment are still
   skipped, which is what that rule exists for; a comment that is never closed now masks
