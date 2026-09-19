@@ -10,6 +10,7 @@ import json
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner, Result
@@ -38,6 +39,7 @@ from datacron.organization.library_models import (
     SourceReference,
 )
 from datacron.organization.library_workbench import check_library, prepare_library
+from datacron.organization.manifest import OrganizationBundle
 
 
 @pytest.fixture
@@ -315,6 +317,80 @@ async def test_split_preserves_setext_and_duplicate_heading_sections(
     assert (output / "preview/notes/long.md").read_bytes() == (vault / "notes/long.md").read_bytes()
 
 
+async def test_a_scope_note_changed_after_validation_refuses_the_apply(
+    library: tuple[Path, LibraryOptions, Settings],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vault that moves between the apply's own preview and its lock must not commit.
+
+    The apply used to rebuild the whole preview a second time under the mutation
+    lock and compare projected report hashes, which walked and hashed every note in
+    the scope again for an answer the transaction already reaches: the batch
+    compares the scope inventory the preview captured against a live one, in both
+    directions and by exact hash, under that same lock. The interesting drift is not
+    the one between validate and apply, which the confirmation token already refuses
+    before any of this runs, but the one inside the apply itself. The write here
+    lands in exactly that window, so the test pins the refusal rather than the
+    mechanism that produced it.
+    """
+    from datacron.core.paths import sidecar_index_db
+    from datacron.mcp.server import build_app
+    from datacron.mcp.tools import organization as organization_tools
+    from datacron.mcp.tools.organization import _apply_organization_manifest_impl
+
+    vault, options, settings = library
+    bystander = _note(vault, "bystander.md", "# Bystander\n\n## State\n\nUntouched.")
+    output = tmp_path / "review"
+    result = await prepare_library(vault, output, options, settings)
+    application = build_app(settings=settings, vault_root=vault)
+    await application.store.open(sidecar_index_db(vault))
+    try:
+        preview = await _apply_organization_manifest_impl(
+            application,
+            manifest_path=str(output / "manifest.json"),
+            expected_manifest_sha256=str(result["manifest_sha256"]),
+            mode="validate",
+        )
+        assert "error" not in preview, preview
+
+        # The apply reloads the bundle once on entry and once under the mutation
+        # lock, just before the transaction reads live state. Editing on the second
+        # call puts the drift after the apply's own preview and after the token has
+        # been accepted, which is the only window the removed rebuild covered.
+        loader = organization_tools._load_expected_bundle
+        loads = 0
+
+        def edit_then_load(*args: Any, **kwargs: Any) -> OrganizationBundle:
+            nonlocal loads
+            loads += 1
+            if loads == 2:
+                bystander.write_text(
+                    bystander.read_text(encoding="utf-8") + "\nEdited mid-apply.\n",
+                    encoding="utf-8",
+                    newline="",
+                )
+            return loader(*args, **kwargs)
+
+        monkeypatch.setattr(organization_tools, "_load_expected_bundle", edit_then_load)
+
+        applied = await _apply_organization_manifest_impl(
+            application,
+            manifest_path=str(output / "manifest.json"),
+            expected_manifest_sha256=str(result["manifest_sha256"]),
+            mode="apply",
+            confirmation_token=preview["confirmation_token"],
+        )
+
+        assert loads == 2
+        assert applied["error"]["type"] == "BatchConflictError", applied
+        assert "notes/bystander.md" in applied["error"]["message"]
+        assert not (vault / options.home).exists()
+        assert "Edited mid-apply." in bystander.read_text(encoding="utf-8")
+    finally:
+        await application.store.close()
+
+
 async def test_bundle_applies_replays_and_refreshes_navigation(
     library: tuple[Path, LibraryOptions, Settings],
     tmp_path: Path,
@@ -384,7 +460,6 @@ async def test_confined_export_ignores_remote_and_excluded_attachments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import socket
-    from typing import Any
 
     def no_network(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("Network is forbidden in an offline library operation")

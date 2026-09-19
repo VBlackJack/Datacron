@@ -641,12 +641,26 @@ async def _apply_organization_manifest_impl(
                 _assert_preview_token(preview, token)
 
                 def precommit_validator() -> None:
+                    """Re-authenticate the manifest bytes under the mutation lock.
+
+                    This used to rebuild the whole preview here and compare projected
+                    report hashes, which walked and hashed every note in the scope a
+                    second time, on the lock, for an answer the transaction already
+                    reaches: _validate_before_states runs under the same lock and
+                    compares the scope inventory captured by the preview against a live
+                    one, in both directions and by exact hash, then checks the before
+                    state of every path the batch touches, VAULT.yaml and the projected
+                    report included. Vault drift between the preview and the commit
+                    cannot get past that. What it does not cover is the manifest file
+                    itself changing on disk, so that is what stays: the reload costs the
+                    bundle, which is bounded by the batch, not by the vault.
+                    """
                     locked_bundle = _load_expected_bundle(path, expected, app)
-                    locked_preview = _build_preview(app, locked_bundle)
-                    _assert_preview_token(locked_preview, token)
-                    if locked_preview.projected_report_sha256 != preview.projected_report_sha256:
+                    if not hmac.compare_digest(
+                        locked_bundle.manifest_sha256, preview.validated.manifest_sha256
+                    ):
                         raise OrganizationConfirmationError(
-                            "projected organization report changed before commit"
+                            "organization manifest changed between validate and apply"
                         )
 
                 result = await batch_writer.apply_organization_manifest(

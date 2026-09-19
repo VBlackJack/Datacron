@@ -20,6 +20,19 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- `apply_organization_manifest` validates the bundle once instead of twice. Before committing,
+  it rebuilt the whole preview a second time and compared projected report hashes, which walks
+  and hashes every note in the organization scope and reprojects the report. That second pass
+  costs 608 ms on a 200-note scope, 1423 ms on 400 and 2275 ms on 800: it grows with the vault
+  while the batch it protects stays the same size, which is the shape of cost this product
+  exists to avoid. It also answered a question the transaction already answers, under the same
+  mutation lock: `_validate_before_states` compares the scope inventory the preview captured
+  against a live one, in both directions and by exact hash, then checks the before state of
+  every path the batch touches, `VAULT.yaml` and the projected report included. What the second
+  pass covered on its own was the manifest file changing on disk between the two, so the
+  pre-commit step still reloads and re-authenticates the bundle; that read is bounded by the
+  batch, not by the vault. A test drives a scope note being edited inside that exact window and
+  pins the refusal.
 - Refreshing the index after a committed organization batch costs the notes the batch moved
   or rewrote, instead of every note in the vault. That pass ran ungated, reading and hashing
   the whole vault on every apply, and it is the tail that pushed an apply of about twenty
