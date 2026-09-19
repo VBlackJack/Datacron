@@ -1117,3 +1117,77 @@ async def test_a_redacted_scan_still_passes_structured_output_validation(
     assert candidates is not None
     assert candidates[0]["source"]["chunk_id"] is None
     assert candidates[0]["source"]["chunk_id_redacted"] is True
+
+
+async def test_a_confirmation_that_would_not_fit_the_budget_is_refused(
+    contradiction_app: tuple[DatacronApp, Path],
+) -> None:
+    """A confirmation carries the section it rewrites, so its size follows the note.
+
+    The write call it returns holds the whole live section plus the block to append,
+    byte for byte, with no excerpt limit. A long running journal section is measured
+    in hundreds of kilobytes, and the transport serialises a result twice, once as
+    text and once as structured content, so one confirmation could take the caller's
+    whole context. Every other tool returning vault bytes measures itself against the
+    same budget; this one did not.
+
+    It refuses rather than truncating. The payload is an exact write call, and a
+    truncated one would corrupt the note it is applied to.
+    """
+    app, vault = contradiction_app
+    running_journal = chr(10).join(
+        f"- entry {index}: the platform team recorded an observation here." for index in range(900)
+    )
+    _write_note(
+        vault,
+        "_memory/facts/employer-old.md",
+        _OLD_ID,
+        "# Employer history"
+        + chr(10) * 2
+        + "## Employer 2026-07-10"
+        + chr(10) * 2
+        + "The Windows engineering employer is Tailspin for the platform team."
+        + chr(10) * 2
+        + running_journal
+        + chr(10),
+    )
+    _write_note(
+        vault,
+        "_memory/facts/employer-current.md",
+        _NEW_ID,
+        "# Employer update"
+        + chr(10) * 2
+        + "## Employer 2026-07-15"
+        + chr(10) * 2
+        + "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+        + "the old Tailspin statement for the platform team."
+        + chr(10),
+    )
+    scan = await _contradiction_scan_impl(app, today=_TODAY)
+    token = _suggested_token(scan)
+
+    confirmed = await _contradiction_scan_impl(app, mode="confirm", proposal_token=token)
+
+    assert confirmed["error"]["type"] == "ContradictionBudgetError"
+    assert "lower-level heading" in confirmed["error"]["message"]
+
+
+async def test_a_confirmation_that_fits_is_still_returned(
+    contradiction_app: tuple[DatacronApp, Path],
+) -> None:
+    """Guard the guard: the budget must not refuse an ordinary confirmation."""
+    app, vault = contradiction_app
+    _write_candidate_pair(
+        vault,
+        source_content=(
+            "CORRECTION: The Windows engineering employer is Woodgrove and replaces "
+            "the old Tailspin statement for the platform team."
+        ),
+    )
+    scan = await _contradiction_scan_impl(app, today=_TODAY)
+    token = _suggested_token(scan)
+
+    confirmed = await _contradiction_scan_impl(app, mode="confirm", proposal_token=token)
+
+    assert "error" not in confirmed
+    assert confirmed["confirmation"]["write_call"]["tool"] == "patch_note_section"

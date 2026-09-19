@@ -20,6 +20,16 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- `contradiction_scan(mode='confirm')` refuses a confirmation larger than the caller's result
+  budget instead of returning it. The confirmation carries the write call the caller is meant
+  to execute, and that call carries the section's new content: the whole live section plus
+  the block to append, byte for byte, with no excerpt limit. A long running journal section
+  is measured in hundreds of kilobytes, and the transport serialises a result twice, once as
+  text and once as structured content, so one confirmation could take the caller's whole
+  context. Every other tool that returns vault bytes measures itself against
+  `max_result_tokens`; this one did not. It refuses rather than truncating, because the
+  payload is an exact write call and a truncated one would corrupt the note it is applied to,
+  and the refusal says to target a lower-level heading.
 - `datacron status` counts notes without reading them, and without writing to the vault. It
   listed every note, which reads the bytes, decodes them, parses the YAML, extracts tags and
   aliases and hashes the file, then discarded all of it but the length. Its reader was also

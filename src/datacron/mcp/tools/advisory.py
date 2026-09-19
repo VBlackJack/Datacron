@@ -30,8 +30,10 @@ from datacron.contradictions import (
     build_scan_report,
     confirm_proposal,
 )
+from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.mcp.tools.payloads import _audit, _error_response, _internal_error_response
 from datacron.mcp.tools.search import _repair_index_on_read
+from datacron.mcp.tools.session import rendered_size
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -66,7 +68,7 @@ async def _contradiction_scan_impl(
         if mode == "confirm":
             if proposal_token is None or not proposal_token.strip():
                 raise ValueError("proposal_token is required in confirm mode")
-            payload = await confirm_proposal(app, proposal_token.strip())
+            payload = _within_budget(app, await confirm_proposal(app, proposal_token.strip()))
             _audit(
                 "contradiction_scan",
                 started,
@@ -104,7 +106,7 @@ async def _contradiction_scan_impl(
                     writes="none",
                 )
                 if elicited.get("mode") == "confirm":
-                    return elicited
+                    return _within_budget(app, elicited)
                 payload["elicitation_action"] = elicited["elicitation_action"]
 
         _audit(
@@ -161,6 +163,36 @@ async def _elicit_first_candidate(
         today=proposal_date,
     )
     return await confirm_proposal(app, proposal.token)
+
+
+class ContradictionBudgetError(ValueError):
+    """Raised when a confirmation would not fit the caller's result budget."""
+
+
+def _within_budget(app: DatacronApp, payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the confirmation, or refuse it for being larger than the budget allows.
+
+    A confirmation carries the write call the caller is meant to execute, and that
+    call carries the section's new content: the whole live section plus the block to
+    append, byte for byte, with no excerpt limit. A long running journal section is
+    measured in hundreds of kilobytes, and the transport serialises a result twice,
+    once as text and once as structured content, so one confirmation could take the
+    caller's whole context.
+
+    Every other tool that returns vault bytes measures itself against the same
+    budget; this one did not. Refusing is the right answer rather than truncating,
+    because the payload is an exact write call and a truncated one would corrupt the
+    note it is applied to.
+    """
+    budget = app.settings.max_result_tokens * TOKEN_ESTIMATE_CHARS_PER_TOKEN
+    size = rendered_size(payload)
+    if size <= budget:
+        return payload
+    raise ContradictionBudgetError(
+        f"the confirmation renders to {size} characters against a budget of {budget}; "
+        "target a lower-level heading so the section it rewrites is smaller, or raise "
+        "DATACRON_MAX_RESULT_TOKENS"
+    )
 
 
 def _client_supports_form_elicitation(ctx: Context[Any, Any] | None) -> bool:
