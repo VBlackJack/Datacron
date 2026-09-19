@@ -20,6 +20,21 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- A page of `list_notes` costs the page, not the whole index. Deciding admission resolves a
+  path and stats it, about 340 microseconds each measured, and it ran over every indexed path
+  so that `total` could count the admitted ones: close to seven seconds on a vault of twenty
+  thousand, spent on paths the caller never asked for. It never had to be. The read repair
+  walks the whole vault immediately before, and `ScopedVaultReader.stat_notes` returns only
+  the paths that passed this exact admission, so the sweep was buying an answer already in
+  hand. That walk is now published and reused as a positive cache: membership proves
+  admission, absence proves nothing and is still checked, so a note a targeted write indexed
+  after the sweep is still counted. Measured on 4000 notes, one page of twenty: 1537 ms to
+  65 ms, with the same `total`. The same walk is also handed to `reconcile` instead of being
+  performed twice per sweep. What this gets wrong, for at most `repair_min_interval_seconds`:
+  a note deleted outside Datacron while the sweep is throttled, whose index row falls outside
+  the requested page, is still counted in `total`. The page itself is unaffected, because
+  every note on it goes through full admission when it is read; that window is the same one
+  in which `search_text` still returns hits for the deleted note.
 - Finding a write request's receipt costs the journal's tail instead of its whole history.
   The lookup parsed and chain-verified every record ever written, on every keyed write. It
   now scans backwards and stops at the match, and a key the journal has never carried is

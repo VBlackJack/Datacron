@@ -454,7 +454,12 @@ defined in [freshness-contract-v1.md](freshness-contract-v1.md).
   gate and `content_hash` authority. Sweeps are spaced 30 seconds apart by default. A policy
   that forbids index mutations performs no such repair.
 - Between sweeps, a read can serve the current index; `get_health` provides exact state to
-  diagnose drift after an out-of-band change.
+  diagnose drift after an out-of-band change. The sweep's walk decides note admission for
+  every path it returns, and `list_notes` reuses it to count admitted notes without deciding
+  admission a second time per indexed path. It is used only to confirm admission: a path the
+  walk does not hold is still checked, so a note indexed by a targeted write since the sweep
+  is counted. A note deleted outside Datacron between sweeps stays in `total` until the next
+  one, which is the same window in which a search still returns hits for it.
 - A client-held `chunk_id` becomes stale if its parent note identity or `content_hash` no longer
   matches the index. `get_note(chunk_id)` then returns an explicit error requesting reindex and
   retry; it never silently serves a stale chunk.

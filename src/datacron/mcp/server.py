@@ -116,6 +116,18 @@ class RepairState:
     """Mutable monotonic state for repair-on-read throttling."""
 
     last_sweep_completed_at: float | None = None
+    live_note_paths: frozenset[str] | None = None
+    """Vault-relative paths the last sweep's walk admitted as live notes.
+
+    ``ScopedVaultReader.stat_notes`` decides full note admission for every path it
+    returns, so its keys already answer the question ``list_notes`` used to re-ask
+    the filesystem once per indexed note, right after the sweep that computed them.
+
+    It is a positive cache and nothing else: a path in it was admitted at the
+    sweep, a path absent from it is still checked. Nothing that changes index
+    membership has to keep it up to date, because leaving it stale can only cost a
+    check, never a note.
+    """
 
 
 @final
