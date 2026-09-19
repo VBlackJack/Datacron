@@ -346,6 +346,16 @@ class VaultReader(Protocol):
         """Return notes from the bound vault, optionally scoped/limited."""
         ...
 
+    async def note_paths(self) -> dict[str, Path]:
+        """Return ``rel_path -> absolute_path`` for every live note.
+
+        The same enumeration as :meth:`stat_notes` with the same exclusions, and
+        without the ``stat()`` per file. A caller that only needs to know which
+        notes exist, and will open each one anyway, pays for the walk and not for
+        a sweep of metadata it discards.
+        """
+        ...
+
     async def stat_notes(self) -> dict[str, tuple[Path, int]]:
         """Return ``rel_path -> (absolute_path, st_mtime_ns)`` for every live note.
 

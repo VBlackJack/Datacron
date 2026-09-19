@@ -32,6 +32,7 @@ from datacron.core.config import Settings, VaultConfig
 from datacron.core.durability import WritePolicy, probe_directory_durability
 from datacron.core.logger import get_logger
 from datacron.core.paths import sidecar_index_db
+from datacron.core.protocols import VaultReader
 from datacron.core.vault import build_configured_reader
 from datacron.core.vault_writer import durable_flush_directory
 from datacron.indexing.chunker import MarkdownChunker
@@ -79,6 +80,35 @@ class RebuildStats(TypedDict):
     chunk_count: int
     generation: int
     db_path: str
+
+
+async def _live_note_identities(reader: VaultReader) -> dict[str, tuple[str, str]]:
+    """Read the vault once more, keeping only the two fields the check compares.
+
+    The validation proves the temp index matches the vault as it is right now, which
+    is what makes publishing it safe. Getting there through ``list_notes`` held every
+    note of the vault in memory at once, each carrying both its body and the whole
+    file, to build a mapping of two short strings per note. ``reconcile`` goes out of
+    its way to avoid exactly that, keeping identities instead of notes and saying so
+    in its docstring, and this undid it three statements later.
+
+    The identities are not taken from ``reconcile`` instead, although that would also
+    remove the third read of the vault. The check exists to compare the index against
+    the vault independently of the pass that built it, and a note edited while the
+    rebuild ran is precisely what it has to catch; comparing the index against the
+    data that produced it would stop catching it.
+
+    The enumeration walks the vault without stat()ing each file. It is the same walk,
+    with the same exclusions, that ``reconcile`` and ``stat_notes`` use, so the three
+    agree on which notes exist; the mtimes ``stat_notes`` collects are what this pass
+    does not need, and paying for them cost a second sweep of the whole vault.
+    """
+    identities: dict[str, tuple[str, str]] = {}
+    for rel_path, path in (await reader.note_paths()).items():
+        note = await reader.read_note(path)
+        identities[rel_path] = (note.id, note.content_hash)
+        del note
+    return identities
 
 
 async def _advance_empty_rebuild_generation(
@@ -137,8 +167,7 @@ async def rebuild_index_atomic(
         )
         stats = await temp_store.stats()
         indexed = await temp_store.list_indexed_notes()
-        live_notes = await reader.list_notes()
-        live = {note.rel_path: (note.id, note.content_hash) for note in live_notes}
+        live = await _live_note_identities(reader)
         if indexed != live:
             divergent = sorted(
                 rel_path

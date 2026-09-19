@@ -65,6 +65,27 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   `max_result_tokens`; this one did not. It refuses rather than truncating, because the
   payload is an exact write call and a truncated one would corrupt the note it is applied to,
   and the refusal says to target a lower-level heading.
+- The atomic rebuild validates without holding the vault in memory. Before publishing, it
+  compares the temp index against the live notes, and it built that comparison by listing
+  every note: each one carries its body and the whole file, all alive at once, to produce a
+  mapping of two short strings per note. `reconcile` goes out of its way to avoid exactly
+  that, keeping identities rather than notes and saying so in its docstring, and the
+  validation undid it three statements later; on a large vault it was the rebuild's peak, and
+  being killed there wastes the expensive part after it has already succeeded. Measured on
+  1200 notes, each form in its own process: peak allocation 6.1 MiB, now 1.0 MiB, and flat
+  when the same notes carry twenty times the text. Time is unchanged, 2088 ms against
+  2081 ms as warm minima, because the pass is dominated by reading and parsing every note
+  either way.
+- The vault reader gained `note_paths`, the enumeration `stat_notes` performs without the
+  `stat()` per file. The validation needs to know which notes exist and opens each one
+  anyway, so the mtimes were collected and discarded: measured alone on those 1200 notes,
+  88 ms against 18 ms. It walks the same tree with the same exclusions as `list_notes` and
+  `stat_notes`, so all three agree on which notes exist.
+- The identities are still read from the vault rather than taken from the pass that built the
+  index, although that would remove the third read entirely. The check exists to compare the
+  index against the vault independently of what produced it, and a note edited while the
+  rebuild ran is the one case where publishing would publish something already wrong. A test
+  pins that independence.
 - `datacron status` counts notes without reading them, and without writing to the vault. It
   listed every note, which reads the bytes, decodes them, parses the YAML, extracts tags and
   aliases and hashes the file, then discarded all of it but the length. Its reader was also
