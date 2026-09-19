@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ import pytest
 
 from datacron.core.config import DEFAULT_RIPGREP_PATH, REGEX_FALLBACK_SCAN_BATCH_CHUNKS
 from datacron.core.models import Chunk, Note, SearchResult
+from datacron.indexing import ripgrep as ripgrep_module
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.ripgrep import (
     RegexFallbackError,
@@ -933,3 +935,32 @@ async def test_fallback_ranks_continuously_across_a_batch_boundary(
 
     assert len(results) == limit
     assert [result.score for result in results] == [1.0 / (1.0 + rank) for rank in range(limit)]
+
+
+async def test_stopping_a_child_early_does_not_hang_on_its_unread_output() -> None:
+    """Reaching the result limit must not leave the search waiting on a dead child.
+
+    ``Process.wait`` returns once the child has exited *and* every pipe transport it
+    owns has closed. The search stops reading the moment it has enough results, so a
+    pattern whose remaining matches exceed the pipe buffer left ``search_regex``
+    waiting forever on output nobody would ever read. That is the ordinary path for
+    any pattern with many matches, not an error path, and on a vault of a few hundred
+    notes it hung the tool outright rather than making it slow.
+
+    The child here writes eight mebibytes, two orders of magnitude past any pipe
+    buffer, and the test reads a sliver of it, which is the shape that hangs. The
+    timeout is what fails: without the drain, ``_terminate_ripgrep`` never returns.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        "import sys\nsys.stdout.write('x' * 8 * 1024 * 1024)\n",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert proc.stdout is not None
+    assert await proc.stdout.read(1024)
+
+    await asyncio.wait_for(ripgrep_module._terminate_ripgrep(proc), timeout=30)
+
+    assert proc.returncode is not None

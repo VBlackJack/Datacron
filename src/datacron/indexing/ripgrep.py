@@ -31,7 +31,7 @@ import json
 import os
 import re
 import shutil
-from asyncio.subprocess import PIPE
+from asyncio.subprocess import PIPE, Process
 from collections.abc import AsyncIterator, Callable
 from functools import cache
 from pathlib import Path, PurePosixPath
@@ -200,13 +200,13 @@ class RipgrepWrapper:
                 glob=glob,
             )
             if killed_for_limit and proc.returncode is None:
-                proc.kill()
-            await proc.wait()
+                await _terminate_ripgrep(proc)
+            else:
+                await proc.wait()
             stderr = await _read_stderr(stderr_task)
         finally:
             if proc.returncode is None:
-                proc.kill()
-                await proc.wait()
+                await _terminate_ripgrep(proc)
             if not stderr_task.done():
                 stderr_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -221,6 +221,26 @@ class RipgrepWrapper:
             )
             raise RipgrepError(proc.returncode, stderr)
         return results
+
+
+async def _terminate_ripgrep(proc: Process) -> None:
+    """Stop the child and let its pipes close, which is what ``wait`` waits for.
+
+    :meth:`asyncio.subprocess.Process.wait` returns once the child has exited *and*
+    every pipe transport it owns has closed. Killing a child whose stdout still holds
+    output nobody has read leaves that transport open, and the wait never returns.
+
+    That is the ordinary path here, not an error path: the search stops reading the
+    moment it has enough results, so any pattern matching more than a pipe buffer of
+    output beyond the limit left the tool hung. Reading the rest is bounded, because
+    the child is already dead and cannot produce more.
+    """
+    if proc.returncode is None:
+        proc.kill()
+    if proc.stdout is not None:
+        with contextlib.suppress(Exception):
+            await proc.stdout.read()
+    await proc.wait()
 
 
 async def _collect_results(
