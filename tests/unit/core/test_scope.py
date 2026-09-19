@@ -15,10 +15,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
+import time
 from contextlib import AbstractAsyncContextManager, nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -26,7 +29,7 @@ import pytest
 from datacron.core.config import Settings
 from datacron.core.models import Note
 from datacron.core.operation_log import OperationRecord
-from datacron.core.paths import PathConfinementError
+from datacron.core.paths import PathConfinementError, assert_within_paths
 from datacron.core.scope import (
     AccessMode,
     ConjunctiveVaultScope,
@@ -38,6 +41,7 @@ from datacron.core.scope import (
 )
 from datacron.core.vault import SKIPPED_FOLDERS, FilesystemVaultReader
 from datacron.mcp.server import build_app
+from datacron.mcp.tools.read import _admitted_note_paths
 
 _NOTE_ID = "01J00000000000000000000091"
 
@@ -546,3 +550,103 @@ async def test_scoped_list_operations_decides_each_path_once(
     assert len(kept) == 200
     # Five distinct notes, two resolutions apiece: the candidate and the root.
     assert resolutions <= 20, f"{resolutions} resolutions for 5 distinct notes"
+
+
+def test_a_preresolved_root_admits_exactly_what_resolving_it_again_admitted(
+    tmp_path: Path,
+) -> None:
+    """Resolving the vault root per call bought nothing, and must have cost nothing.
+
+    The root is resolved when the scope is built, so resolving it again on every
+    authorization was a second realpath for an answer already held. Dropping it is
+    only legitimate if the decision is identical, including for the paths that must
+    be refused, so the two are compared here over every shape that matters.
+    """
+    vault = tmp_path / "vault"
+    (vault / "notes").mkdir(parents=True)
+    (vault / "notes" / "live.md").write_text("# Live\n", encoding="utf-8")
+    (vault / "notes" / "not-markdown.txt").write_text("x\n", encoding="utf-8")
+    (vault / ".hidden").mkdir()
+    (vault / ".hidden" / "secret.md").write_text("# Secret\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "elsewhere.md").write_text("# Elsewhere\n", encoding="utf-8")
+
+    scope = SingleTenantVaultScope(vault, Settings(write_paths=[vault]))
+
+    def _resolving_each_time(_self: SingleTenantVaultScope, path: Path, access: AccessMode) -> Path:
+        resolved = assert_within_paths(path, [vault.resolve()], kind=access)
+        if access == "write":
+            return assert_within_paths(resolved, [vault.resolve()], kind="write")
+        return resolved
+
+    candidates = [
+        "notes/live.md",
+        "notes/missing.md",
+        "notes/not-markdown.txt",
+        ".hidden/secret.md",
+        "notes/../notes/live.md",
+        "../outside/elsewhere.md",
+        "notes/",
+        "",
+    ]
+
+    now = [scope.allows_note_rel_path(candidate) for candidate in candidates]
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(SingleTenantVaultScope, "authorize_path", _resolving_each_time)
+        before = [scope.allows_note_rel_path(candidate) for candidate in candidates]
+
+    assert now == before
+    # Guard the guard: a comparison of all-False against all-False would also pass.
+    assert now[0] is True
+    assert now.count(False) == len(candidates) - 1
+
+
+async def test_listing_notes_does_not_block_the_event_loop_while_it_admits(
+    tmp_path: Path,
+) -> None:
+    """The admission sweep must not stop everything else the server is serving.
+
+    It resolves and stats every indexed path, which is about 410 microseconds each,
+    so on a vault of twenty thousand notes it held the loop for eight seconds and no
+    other tool call could progress. It is not cheaper now, it is off the loop; this
+    pins that, because moving it back would be invisible otherwise.
+    """
+    vault = tmp_path / "vault"
+    (vault / "notes").mkdir(parents=True)
+    rel_paths = []
+    for index in range(40):
+        rel_path = f"notes/note-{index:03d}.md"
+        (vault / rel_path).write_text(f"# Note {index}\n", encoding="utf-8")
+        rel_paths.append(rel_path)
+
+    scope = SingleTenantVaultScope(vault, Settings(write_paths=[vault]))
+    app = SimpleNamespace(scope=scope)
+    ticks = 0
+    running = True
+
+    async def _heartbeat() -> None:
+        nonlocal ticks
+        while running:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    slow_paths = list(rel_paths)
+    original_allows = SingleTenantVaultScope.allows_note_rel_path
+
+    def _slow_allows(self: SingleTenantVaultScope, rel_path: str) -> bool:
+        time.sleep(0.002)
+        return original_allows(self, rel_path)
+
+    beat = asyncio.create_task(_heartbeat())
+    await asyncio.sleep(0)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(SingleTenantVaultScope, "allows_note_rel_path", _slow_allows)
+        admitted = await asyncio.to_thread(_admitted_note_paths, cast("Any", app), slow_paths)
+    running = False
+    await beat
+
+    assert admitted == slow_paths
+    # The sweep slept for about eighty milliseconds. A loop that was free to run
+    # during it ticks thousands of times; a blocked one cannot tick at all.
+    assert ticks > 100, f"the event loop only advanced {ticks} times during the sweep"

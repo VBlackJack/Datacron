@@ -20,6 +20,19 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- Authorizing a path no longer resolves the vault root a second time. A scope resolves its
+  root when it is built, and every authorization resolved it again before comparing, which is
+  a realpath per call for an answer already held. This is on every path the product
+  authorizes, not only on listings. Measured interleaved in one process over 2000 indexed
+  paths: 1167 ms, now 825 ms. A test compares the two forms over live, missing, non-Markdown,
+  hidden, traversing, escaping and empty paths and requires the same decision for each.
+- `list_notes` admits its candidate paths off the event loop. Admission resolves and stats
+  every indexed path, because the page has to be taken from the admitted ones, and it ran on
+  the loop: about 410 microseconds per note, so nothing else the server was serving could
+  progress for eight seconds on a vault of twenty thousand notes. It is not cheaper now, it
+  is survivable, and a test pins that by requiring the loop to keep ticking through a sweep
+  that would otherwise freeze it. Making it cheaper means paging admission alongside the SQL
+  page, which changes what `total` counts, so it is not done here.
 - Rebuilding the alias index costs the notes that moved instead of the whole vault. The
   index is dropped after every write, so in the ordinary loop of writing a note and then
   asking for its backlinks it was rebuilt once per write, and rebuilding it read, hashed and
