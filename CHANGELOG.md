@@ -20,6 +20,18 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- `get_backlinks` reads four fields per candidate instead of whole chunks, and stops when it
+  has a page. It listed every chunk in the vault carrying a wikilink, with its body, and
+  turned each one into a validated model before examining the first candidate, so the scan's
+  own break saved nothing and a call with `limit=10` still paid for the whole vault. The scan
+  now streams identity, note and outgoing links, and the page it keeps is fetched whole in
+  one statement afterwards, because the protection pass compares each returned chunk against
+  the note as it is on disk right now. Measured on 4800 linking chunks: 202 ms and 17.8 MiB
+  of peak allocation, now 2 ms and no measurable allocation when the page fills early. The
+  worst case, a target with no backlinks, reads every candidate and measured between 46 and
+  116 ms across runs against 202 ms. A chunk that disappears between the scan and the fetch
+  is dropped from the page rather than failing the call, which is what the protection pass
+  would do with it anyway.
 - Rebuilding the alias index costs the notes that moved instead of the whole vault. The
   index is dropped after every write, so in the ordinary loop of writing a note and then
   asking for its backlinks it was rebuilt once per write, and rebuilding it read, hashed and

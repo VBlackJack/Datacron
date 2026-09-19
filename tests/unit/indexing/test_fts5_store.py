@@ -1953,3 +1953,134 @@ async def test_filtered_listing_agrees_with_the_legacy_scan_it_replaces(
         assert any(page for page, _total in indexed)
     finally:
         await store.close()
+
+
+class TestWikilinkSourceStreaming:
+    """The backlink scan reads four fields per candidate and keeps at most a page."""
+
+    @staticmethod
+    async def _fill(
+        store: SQLiteFTS5Store,
+        note_factory: NoteFactory,
+        chunk_factory: ChunkFactory,
+        count: int,
+    ) -> None:
+        for index in range(count):
+            note = note_factory(id=f"01J{index:023d}", rel_path=f"notes/note-{index:04d}.md")
+            await store.upsert_note(
+                note,
+                [
+                    chunk_factory(
+                        note=note,
+                        ordinal=position,
+                        content=f"body {index} {position}",
+                        wikilinks_out=["shared-target"],
+                    )
+                    for position in range(3)
+                ],
+            )
+
+    async def test_the_stream_yields_exactly_what_the_whole_list_carried(
+        self,
+        tmp_path: Path,
+        note_factory: NoteFactory,
+        chunk_factory: ChunkFactory,
+    ) -> None:
+        """The cheap scan must see the same candidates, in the same order.
+
+        Only the fields differ: a source carries the identity, the note and the links
+        the scan reads, and leaves behind the body it does not.
+        """
+        store = SQLiteFTS5Store()
+        await store.open(_db_path(tmp_path))
+        try:
+            await self._fill(store, note_factory, chunk_factory, 5)
+
+            whole = await store.list_chunks_with_wikilinks()
+            streamed = [source async for source in store.iter_wikilink_sources()]
+
+            assert [source.chunk_id for source in streamed] == [c.chunk_id for c in whole]
+            assert [source.note_id for source in streamed] == [c.note_id for c in whole]
+            assert [source.note_rel_path for source in streamed] == [c.note_rel_path for c in whole]
+            assert [list(source.wikilinks_out) for source in streamed] == [
+                list(c.wikilinks_out) for c in whole
+            ]
+            assert len(streamed) == 15
+        finally:
+            await store.close()
+
+    async def test_stopping_the_stream_early_stops_the_work(
+        self,
+        tmp_path: Path,
+        note_factory: NoteFactory,
+        chunk_factory: ChunkFactory,
+    ) -> None:
+        """A caller that has enough must stop paying, whatever the vault holds.
+
+        The whole list was complete before the first candidate was examined, so the
+        scan's own break saved nothing. Two vaults of different sizes must now cost
+        the same to take a page from, which no materialized list can satisfy.
+        """
+        parsed: list[int] = []
+        for note_count in (5, 50):
+            store = SQLiteFTS5Store()
+            await store.open(_db_path(tmp_path / str(note_count)))
+            try:
+                await self._fill(store, note_factory, chunk_factory, note_count)
+                seen = 0
+                async for _source in store.iter_wikilink_sources():
+                    seen += 1
+                    if seen >= 4:
+                        break
+                parsed.append(seen)
+            finally:
+                await store.close()
+
+        assert parsed == [4, 4]
+
+    async def test_the_page_is_fetched_whole_and_equals_the_indexed_chunks(
+        self,
+        tmp_path: Path,
+        note_factory: NoteFactory,
+        chunk_factory: ChunkFactory,
+    ) -> None:
+        """The returned page must still be byte-identical to what the index holds.
+
+        The protection pass compares each returned chunk against the note as it is on
+        disk, so a page assembled from anything less than a whole chunk would be
+        refused there rather than here.
+        """
+        store = SQLiteFTS5Store()
+        await store.open(_db_path(tmp_path))
+        try:
+            await self._fill(store, note_factory, chunk_factory, 4)
+            whole = await store.list_chunks_with_wikilinks()
+            wanted = [whole[1].chunk_id, whole[7].chunk_id]
+
+            fetched = await store.chunks_by_ids(wanted)
+
+            assert set(fetched) == set(wanted)
+            assert fetched[whole[1].chunk_id] == whole[1]
+            assert fetched[whole[7].chunk_id] == whole[7]
+            assert await store.chunks_by_ids([]) == {}
+        finally:
+            await store.close()
+
+    async def test_a_chunk_that_vanished_between_scan_and_fetch_is_omitted(
+        self,
+        tmp_path: Path,
+        note_factory: NoteFactory,
+        chunk_factory: ChunkFactory,
+    ) -> None:
+        """Another request may reindex the note between the two steps."""
+        store = SQLiteFTS5Store()
+        await store.open(_db_path(tmp_path))
+        try:
+            await self._fill(store, note_factory, chunk_factory, 2)
+            whole = await store.list_chunks_with_wikilinks()
+
+            fetched = await store.chunks_by_ids([whole[0].chunk_id, "gone::::0000"])
+
+            assert set(fetched) == {whole[0].chunk_id}
+        finally:
+            await store.close()
