@@ -306,8 +306,12 @@ Lorsqu'une mutation cible une note existante, elle stocke les octets antérieurs
 mode `history_mode=full`. Toute mutation validée écrit un manifeste pending, remplace ou crée
 atomiquement la note, ajoute le journal chaîné, puis retire le manifeste. Le mode `redacted`
 conserve les hashes et le journal mais pas les anciens octets; `revert_note` ne peut alors pas
-relire une version historique. La rétention vaut 30 jours par défaut et est configurable par
-`history_retention_days`.
+relire une version historique. La rétention vaut 1278 jours par défaut, soit quarante-deux mois, et est configurable
+par `history_retention_days`. Le défaut est long parce que la rétention décide quand le
+seul exemplaire conservé d'une version antérieure est supprimé, et qu'un sujet peut rester
+intouché pendant des mois avant d'être repris. Le balayage qui l'applique remonte jusqu'à
+sa date de coupure, donc une longue fenêtre coûte une lecture de cette fenêtre, plafonnée
+à une fois toutes les trente secondes d'écriture soutenue.
 
 Après une écriture MCP réussie, Datacron réconcilie l'index de façon synchrone. La réponse porte
 `indexed: true` seulement après cette réconciliation.

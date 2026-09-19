@@ -33,6 +33,18 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   is survivable, and a test pins that by requiring the loop to keep ticking through a sweep
   that would otherwise freeze it. Making it cheaper means paging admission alongside the SQL
   page, which changes what `total` counts, so it is not done here.
+- History retention defaults to 1278 days, forty-two months, instead of 30. Retention decides
+  when the only stored copy of a previous version of a note is deleted, and a subject can be
+  left untouched for months and then resumed, so a window measured in weeks silently discarded
+  the history of everything paused. An existing vault that sets `history_retention_days` keeps
+  its own value.
+- A long retention window costs a read of that window on the write path, and the sweep is
+  throttled to once every thirty seconds of sustained writing. A first attempt skipped the
+  read whenever the journal's oldest record was still inside the window, reasoning that
+  nothing could then be deleted. That reasoning was wrong and a test caught it: the sweep
+  deletes for two independent reasons, and the second is a blob no record names at all, left
+  behind when a write stores the previous bytes and then fails before appending its record.
+  Telling one of those apart from a live blob needs exactly the set the window scan builds.
 - Rebuilding the alias index costs the notes that moved instead of the whole vault. The
   index is dropped after every write, so in the ordinary loop of writing a note and then
   asking for its backlinks it was rebuilt once per write, and rebuilding it read, hashed and
@@ -173,6 +185,14 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   nothing. A link or reparse point inside the history directory still raises.
 
 ### Fixed
+
+- An unterminated `<!--` no longer hides every heading below it, which made a patch on the
+  section above replace the rest of the note. Headings inside a closed HTML comment are still
+  skipped, which is what that rule exists for; a comment that is never closed now masks
+  nothing. An opener with no closing marker is a typo, not an instruction to comment out the
+  rest of a note, and hiding gave up nothing in exchange: the damage a closed comment can
+  suffer is a marker relocated or orphaned by an edit, and there is no closing marker to
+  relocate. Found by the patch property test, which had never generated a bare `<!--` before.
 
 - `search_regex` no longer hangs when it finds enough results before ripgrep has finished
   writing. The search stops reading as soon as it has `limit` matches and kills the child,

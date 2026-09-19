@@ -296,7 +296,12 @@ When a mutation targets an existing note, it stores the prior bytes by SHA-256 i
 `history_mode=full`. Every committed mutation writes a pending manifest, atomically replaces or
 creates the note, appends the chained journal, then removes the manifest. `redacted` mode retains
 hashes and the journal but not prior bytes, so `revert_note` cannot read a historical version.
-Retention defaults to 30 days and is configurable through `history_retention_days`.
+Retention defaults to 1278 days, forty-two months, and is configurable through
+`history_retention_days`. The default is long because retention decides when the only
+stored copy of a previous version is deleted, and a subject can be left untouched for
+months and then resumed. The sweep that applies it reads back to its cutoff, so a long
+window costs a read of that window, throttled to once every thirty seconds of sustained
+writing.
 
 After a successful MCP write, Datacron refreshes the written note in the index synchronously. The response carries
 `indexed: true` only after that reconciliation.
