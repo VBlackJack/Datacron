@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
@@ -64,6 +65,24 @@ _MAX_HEADING_PATH_DEPTH: Final[int] = 6
 
 class StaleChunkError(ValueError):
     """Raised when a chunk belongs to an older byte version of its note."""
+
+
+def _admitted_note_paths(app: DatacronApp, rel_paths: Sequence[str]) -> list[str]:
+    """Keep the indexed paths this scope admits as live notes.
+
+    Admission resolves each path and stats it, which is two blocking filesystem
+    calls per note, and this runs over every indexed path because the page has to
+    be taken from the admitted ones. On the event loop that stopped the whole
+    server: nothing else it was serving could progress while the sweep ran, and the
+    sweep costs the same whether the caller asked for the first twenty notes or all
+    of them. Measured at about 410 microseconds per note, which is eight seconds of
+    dead server on a vault of twenty thousand.
+
+    Moving it to a thread does not make it cheaper, only survivable. Making it
+    cheaper means paging admission alongside the SQL page, which changes what
+    ``total`` counts, so it is not done here.
+    """
+    return [rel_path for rel_path in rel_paths if app.scope.allows_note_rel_path(rel_path)]
 
 
 async def _list_notes_impl(
@@ -191,9 +210,7 @@ async def _list_notes_from_index(
     )
     if repair["checked_notes"] and indexed_after <= 0:
         return None
-    admitted_paths = [
-        rel_path for rel_path in rel_paths if app.scope.allows_note_rel_path(rel_path)
-    ]
+    admitted_paths = await asyncio.to_thread(_admitted_note_paths, app, rel_paths)
     total = len(admitted_paths)
     start = min(offset, total)
     page_paths = admitted_paths[start : start + limit]

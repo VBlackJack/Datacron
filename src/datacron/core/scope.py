@@ -45,6 +45,7 @@ from datacron.core.paths import (
     PathConfinementError,
     assert_vault_rel_path,
     assert_within_paths,
+    assert_within_resolved_roots,
 )
 from datacron.core.protocols import VaultReader, VaultWriter
 from datacron.core.recovery import (
@@ -259,6 +260,7 @@ class SingleTenantVaultScope:
                 excluded_files=frozenset(config.excluded_files),
             )
         self._admission_policy = admission_policy
+        self._resolved_roots: tuple[Path, ...] = (self._vault_root,)
 
     @property
     def admission_policy(self) -> NoteAdmissionPolicy:
@@ -266,7 +268,9 @@ class SingleTenantVaultScope:
         return self._admission_policy
 
     def authorize_path(self, path: Path, access: AccessMode) -> Path:
-        resolved = assert_within_paths(path, [self._vault_root], kind=access)
+        # The vault root was resolved when this scope was built, so re-resolving it
+        # on every call bought nothing and cost a realpath per authorized path.
+        resolved = assert_within_resolved_roots(path, self._resolved_roots, kind=access)
         if access == "write":
             return assert_within_paths(resolved, self._settings.write_paths, kind="write")
         return resolved
