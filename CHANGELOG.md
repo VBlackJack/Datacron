@@ -20,6 +20,25 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- Rebuilding the alias index costs the notes that moved instead of the whole vault. The
+  index is dropped after every write, so in the ordinary loop of writing a note and then
+  asking for its backlinks it was rebuilt once per write, and rebuilding it read, hashed and
+  YAML-parsed every note in the vault to extract four fields from each. Three things
+  changed, none of which moves the source of truth off the files: a record carries only the
+  identity, title, filename stem and aliases the tiers consume, records are remembered
+  between rebuilds and re-read only when a note's `(st_mtime_ns, st_size)` moved, and the
+  relative path of a note produced by the vault walk is computed rather than resolved, which
+  removed two filesystem round trips per note from the event loop. Measured on 1500 notes,
+  interleaved against the previous build in the same process: 2236 ms, now 106 ms. Peak
+  allocation during a rebuild fell from 10 MiB to 3 MiB, because whole notes are no longer
+  held at once.
+- Identity, title and aliases are still resolved by the same helpers a full note read uses,
+  so the cheaper build cannot answer differently; a test pins the two against each other
+  over a vault covering every tier and every shape of the two inputs that are not stored
+  verbatim. The mtime gate is the one `reconcile` already applies. Unlike `reconcile` there
+  is no stored hash behind it here, so an out-of-band edit that leaves both the nanosecond
+  mtime and the size untouched is not seen until something else drops the records; writes
+  through Datacron move the mtime.
 - Indexing a vault commits in batches instead of once per note. `upsert_note` and
   `delete_note` each opened and committed their own transaction, which is the right
   boundary for a single tool call and the wrong one for a pass over the vault, so a cold
