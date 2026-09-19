@@ -964,3 +964,130 @@ async def test_stopping_a_child_early_does_not_hang_on_its_unread_output() -> No
     await asyncio.wait_for(ripgrep_module._terminate_ripgrep(proc), timeout=30)
 
     assert proc.returncode is not None
+
+
+async def test_many_matches_in_one_note_resolve_its_chunks_once(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A note is resolved once per search, not once per line that matched inside it.
+
+    ``chunks_fts`` declares ``note_id`` UNINDEXED, so listing a note's chunks scans
+    the table. Doing it per matching line made the cost of a search the number of
+    matches times the size of the notes they fell in, instead of the number of
+    distinct notes: twenty matches in one reference note scanned it twenty times.
+    """
+    alpha = indexed.vault_root / "alpha.md"
+    beta = indexed.vault_root / "folder" / "beta.md"
+    process = _FakeProcess(
+        [
+            _begin(alpha),
+            *[_match(alpha, 2, "first kafka line\n", [(6, 11)]) for _ in range(6)],
+            _match(alpha, 5, "later kafka line\n", [(6, 11)]),
+            _match(beta, 1, "beta kafka line\n", [(5, 10)]),
+            _end(beta),
+        ]
+    )
+    _install_process(monkeypatch, process)
+
+    chunk_fetches: list[str] = []
+    note_id_lookups: list[str] = []
+    original_chunks = SQLiteFTS5Store.list_chunks_for_note
+    original_note_id = SQLiteFTS5Store.get_note_id
+
+    async def _recording_chunks(self: SQLiteFTS5Store, note_id: str) -> list[Chunk]:
+        chunk_fetches.append(note_id)
+        return await original_chunks(self, note_id)
+
+    async def _recording_note_id(self: SQLiteFTS5Store, rel_path: str) -> str | None:
+        note_id_lookups.append(rel_path)
+        return await original_note_id(self, rel_path)
+
+    monkeypatch.setattr(SQLiteFTS5Store, "list_chunks_for_note", _recording_chunks)
+    monkeypatch.setattr(SQLiteFTS5Store, "get_note_id", _recording_note_id)
+
+    results = await RipgrepWrapper().search(
+        "kafka", indexed.vault_root, store=indexed.store, limit=20
+    )
+
+    assert len(results) == 8
+    # Two distinct notes were matched, whatever the number of matching lines.
+    assert sorted(set(chunk_fetches)) == sorted(chunk_fetches)
+    assert len(chunk_fetches) == 2
+    assert sorted(note_id_lookups) == ["alpha.md", "folder/beta.md"]
+
+
+async def test_a_path_the_glob_rejects_is_never_resolved(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The glob needs nothing from the index, so it must run before the lookup.
+
+    Resolving first meant a match the caller had already excluded still cost a scan
+    of the chunk table, which is the whole cost of the match.
+    """
+    alpha = indexed.vault_root / "alpha.md"
+    beta = indexed.vault_root / "folder" / "beta.md"
+    process = _FakeProcess(
+        [
+            _begin(alpha),
+            _match(alpha, 2, "first kafka line\n", [(6, 11)]),
+            _match(beta, 1, "beta kafka line\n", [(5, 10)]),
+            _end(beta),
+        ]
+    )
+    _install_process(monkeypatch, process)
+
+    note_id_lookups: list[str] = []
+    original_note_id = SQLiteFTS5Store.get_note_id
+
+    async def _recording_note_id(self: SQLiteFTS5Store, rel_path: str) -> str | None:
+        note_id_lookups.append(rel_path)
+        return await original_note_id(self, rel_path)
+
+    monkeypatch.setattr(SQLiteFTS5Store, "get_note_id", _recording_note_id)
+
+    results = await RipgrepWrapper().search(
+        "kafka", indexed.vault_root, glob="folder/*.md", store=indexed.store, limit=20
+    )
+
+    assert [result.chunk.note_rel_path for result in results] == ["folder/beta.md"]
+    assert note_id_lookups == ["folder/beta.md"]
+
+
+async def test_a_path_admission_rejects_is_never_resolved(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same for the scope admission callback, for the same reason."""
+    alpha = indexed.vault_root / "alpha.md"
+    beta = indexed.vault_root / "folder" / "beta.md"
+    process = _FakeProcess(
+        [
+            _begin(alpha),
+            _match(alpha, 2, "first kafka line\n", [(6, 11)]),
+            _match(beta, 1, "beta kafka line\n", [(5, 10)]),
+            _end(beta),
+        ]
+    )
+    _install_process(monkeypatch, process)
+
+    note_id_lookups: list[str] = []
+    original_note_id = SQLiteFTS5Store.get_note_id
+
+    async def _recording_note_id(self: SQLiteFTS5Store, rel_path: str) -> str | None:
+        note_id_lookups.append(rel_path)
+        return await original_note_id(self, rel_path)
+
+    monkeypatch.setattr(SQLiteFTS5Store, "get_note_id", _recording_note_id)
+
+    results = await RipgrepWrapper().search(
+        "kafka",
+        indexed.vault_root,
+        store=indexed.store,
+        limit=20,
+        admit=lambda rel_path: rel_path == "alpha.md",
+    )
+
+    assert [result.chunk.note_rel_path for result in results] == ["alpha.md"]
+    assert note_id_lookups == ["alpha.md"]

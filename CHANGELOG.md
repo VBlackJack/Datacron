@@ -33,6 +33,25 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   with the path computed 85 ms. A test pins the computed path against the resolved one over
   nested, spaced, uppercase and accented names, because a different spelling there would not
   look like a bug: the index would quietly stop recognising notes it already holds.
+- `get_follow_up` sizes a page by halving instead of by dropping one record at a time. Each
+  measurement re-serialises the page it is measuring, so dropping one record at a time cost
+  one serialisation of the whole remaining page per record dropped, and nothing bounds how
+  many records a note holds: the note count is capped at eight, the records harvested from
+  them are not. A canonical person or project note that accumulated a few hundred
+  commitments over a couple of years turned a read into seconds, once per page, on the
+  synchronous path. Measured on records of about a kilobyte, sizing one page of 27: 100
+  records 33 ms, 400 records 459 ms, 1000 records 3.0 s, 2000 records 12.5 s, now 1.4, 3.4,
+  6.2 and 12.1 ms. The page is the same one the loop arrived at, which a test pins across
+  budgets that fit a handful of records, the default page, and the whole set.
+- `search_regex` resolves a note once per search instead of once per line that matched in
+  it, and applies the glob and the scope admission before resolving at all. `chunks_fts`
+  declares `note_id` UNINDEXED, so listing a note's chunks scans the table and builds a model
+  for every chunk in it; doing that per matching line made the cost the number of matches
+  times the size of the notes they fell in, rather than the number of distinct notes. A
+  match the caller had already excluded by glob or scope paid that scan too, for a result
+  that was then discarded. Measured on 120 notes of 40 sections, a pattern matching every
+  section, limit 20: 214 ms and 20 chunk-list fetches, now 53 ms and one. The caches live
+  for one search.
 - `get_note` answers an unknown ULID without reading the vault. It does not repair the index
   first, so it falls back to looking at live notes for an identity written since the last
   pass, and that fallback read, decoded, hashed and YAML-parsed every note in the vault, on
