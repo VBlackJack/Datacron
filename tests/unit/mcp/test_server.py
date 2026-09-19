@@ -41,12 +41,13 @@ from datacron.core.config import Settings
 from datacron.core.durability import DurabilityStatus, RecoveryRequiredError
 from datacron.core.hashing import sha256_bytes
 from datacron.core.memory_protocol import FOLLOW_UP_MAX_RECORDS
+from datacron.core.models import Note
 from datacron.core.operation_log import OperationRecord
 from datacron.core.paths import PathConfinementError, sidecar_index_db, sidecar_vault_config
 from datacron.core.scope import SingleTenantVaultScope
 from datacron.core.vault import FilesystemVaultReader, JsonIdStore
 from datacron.core.vault_writer import FilesystemVaultWriter, VaultLockBusyError
-from datacron.indexing.reconcile import ReconcileStats
+from datacron.indexing.reconcile import ReconcileStats, reconcile
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
 from datacron.mcp.server import (
     SERVER_INSTRUCTIONS,
@@ -1376,3 +1377,93 @@ class TestStartupRecovery:
 
         assert writer.recovery_blocked[0].operation_id == record.operation_id
         assert "Startup operation-log recovery blocked" in caplog.text
+
+
+class TestBatchReconcileIsGated:
+    """The index refresh after a committed batch costs what the batch moved."""
+
+    @staticmethod
+    async def _indexed_app(vault: Path, note_count: int) -> Any:
+        (vault / "notes").mkdir(parents=True, exist_ok=True)
+        for index in range(note_count):
+            (vault / "notes" / f"note-{index:03d}.md").write_text(
+                f"# Note {index}" + chr(10) * 2 + f"body {index}" + chr(10), encoding="utf-8"
+            )
+        app = build_app(vault_root=vault, settings=Settings(write_paths=[vault]))
+        await app.store.open(sidecar_index_db(vault))
+        await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        return app
+
+    async def test_it_rereads_only_what_the_batch_touched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Refreshing after an apply must not cost the whole vault.
+
+        It ran ungated, reading and hashing every note in the vault on every apply.
+        That is the tail that pushed an apply of about twenty moves past the client
+        timeout and left the index half refreshed, which is the failure this exists
+        to avoid in the first place.
+        """
+        vault = tmp_path / "vault"
+        app = await self._indexed_app(vault, 8)
+        try:
+            (vault / "notes" / "note-003.md").write_text(
+                "# Note 3 rewritten" + chr(10) * 2 + "new body" + chr(10), encoding="utf-8"
+            )
+
+            reads: list[str] = []
+            original_read_note = app.vault_reader.read_note
+
+            async def recording_read_note(path: Path) -> Note:
+                reads.append(path.name)
+                return cast("Note", await original_read_note(path))
+
+            monkeypatch.setattr(app.vault_reader, "read_note", recording_read_note)
+            stats = await organization_tools._reconcile_batch_locked(app, removed_identity_ids=())
+
+            # A changed note is read twice by design: the pre-pass keeps only its
+            # identity, and the commit loop reads it again rather than holding every
+            # note of a vault. What must not appear is any note the batch left alone.
+            assert set(reads) == {"note-003.md"}
+            assert stats["reindexed_notes"] == 1
+        finally:
+            await app.store.close()
+
+    async def test_a_moved_note_is_still_reindexed_at_its_new_path(self, tmp_path: Path) -> None:
+        """The gate must not hide the one thing an organization batch does.
+
+        A move is what these batches are for, and a moved note that the index still
+        holds at its old path is a note the tool can no longer find. The gate cannot
+        hold for it: the new path has no row, and the old one is gone from the
+        enumeration.
+        """
+        vault = tmp_path / "vault"
+        app = await self._indexed_app(vault, 5)
+        try:
+            (vault / "archive").mkdir()
+            moved = vault / "archive" / "note-002.md"
+            (vault / "notes" / "note-002.md").rename(moved)
+
+            await organization_tools._reconcile_batch_locked(app, removed_identity_ids=())
+
+            indexed = await app.store.list_indexed_notes()
+            assert "archive/note-002.md" in indexed
+            assert "notes/note-002.md" not in indexed
+            assert len(indexed) == 5
+        finally:
+            await app.store.close()
+
+    async def test_a_deleted_note_is_still_dropped(self, tmp_path: Path) -> None:
+        """A note the batch removed must leave the index even though nothing was read."""
+        vault = tmp_path / "vault"
+        app = await self._indexed_app(vault, 4)
+        try:
+            (vault / "notes" / "note-001.md").unlink()
+
+            await organization_tools._reconcile_batch_locked(app, removed_identity_ids=())
+
+            indexed = await app.store.list_indexed_notes()
+            assert "notes/note-001.md" not in indexed
+            assert len(indexed) == 3
+        finally:
+            await app.store.close()

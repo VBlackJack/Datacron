@@ -331,7 +331,22 @@ async def _reconcile_batch_locked(
     removed_identity_ids: tuple[str, ...],
     progress: IndexProgress | None = None,
 ) -> ReconcileStats:
-    """Perform one full reconcile while the caller holds ``reconcile_lock``."""
+    """Refresh the index after a committed batch, while the caller holds the lock.
+
+    The gate is on, so this costs the notes the batch moved or rewrote rather than
+    every note in the vault. It used to run ungated, reading and hashing the whole
+    vault on every apply, which is the tail that pushed an apply of about twenty
+    moves past the client timeout and left the index half refreshed.
+
+    Gating loses nothing a batch can do. A moved note arrives at a path the index
+    has no row for, so the gate cannot hold and it is read; its old path is gone
+    from the enumeration, so its row is dropped by identity. A note rewritten in
+    place went through an atomic replace and carries a new mtime. A removed
+    identity is deleted above, before this runs. What the gate does not see is a
+    note edited outside Datacron whose mtime did not move, which is the exposure
+    every other pass in the product already accepts, including the read repair; the
+    ungated pass here was stricter than anywhere else, and nothing recorded why.
+    """
     await app.vault_reader.invalidate_alias_cache()
     for note_id in removed_identity_ids:
         await app.store.delete_note(note_id)
@@ -339,7 +354,7 @@ async def _reconcile_batch_locked(
         app.store,
         app.vault_reader,
         app.chunker,
-        mtime_gate=False,
+        mtime_gate=True,
         progress=progress,
     )
     app.repair_state.last_sweep_completed_at = time.monotonic()

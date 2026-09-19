@@ -20,6 +20,18 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- Refreshing the index after a committed organization batch costs the notes the batch moved
+  or rewrote, instead of every note in the vault. That pass ran ungated, reading and hashing
+  the whole vault on every apply, and it is the tail that pushed an apply of about twenty
+  moves past the client timeout and left the index half refreshed, which is the failure the
+  pass exists to prevent. Gating loses nothing a batch can do: a moved note arrives at a path
+  the index has no row for, so the gate cannot hold and it is read, while its old path is
+  gone from the enumeration and its row is dropped by identity; a note rewritten in place
+  went through an atomic replace and carries a new mtime; a removed identity is deleted
+  before the pass runs. What the gate does not see is a note edited outside Datacron whose
+  mtime did not move, which is the exposure every other pass already accepts, including the
+  read repair. The ungated pass was stricter here than anywhere else in the product and
+  nothing recorded why; arbitrated by Julien on 2026-09-19.
 - `contradiction_scan(mode='confirm')` refuses a confirmation larger than the caller's result
   budget instead of returning it. The confirmation carries the write call the caller is meant
   to execute, and that call carries the section's new content: the whole live section plus
