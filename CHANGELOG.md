@@ -20,6 +20,16 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- `get_note` answers an unknown ULID without reading the vault. It does not repair the index
+  first, so it falls back to looking at live notes for an identity written since the last
+  pass, and that fallback read, decoded, hashed and YAML-parsed every note in the vault, on
+  the event loop, with the scope resolving each path on top. The identity that reaches it is
+  precisely the one that resolves nowhere: a plausible but nonexistent ULID, which a caller
+  can repeat, stalling every other tool call each time before answering that there is no such
+  note. Only the notes the index has not seen in their current state are examined now, which
+  on a vault nobody has edited outside Datacron is none of them. That is the gate `reconcile`
+  already applies, and as there it decides whether to look, never what the content is: a note
+  written since the last pass is still read and still found.
 - Authorizing a path no longer resolves the vault root a second time. A scope resolves its
   root when it is built, and every authorization resolved it again before comparing, which is
   a realpath per call for an answer already held. This is on every path the product

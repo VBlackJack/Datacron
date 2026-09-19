@@ -1309,26 +1309,101 @@ class TestGetNoteFull:
         target, _raw = _write_memory_note(tmp_vault, "late-note.md", "# Late note\n")
         note = await app_with_open_store.vault_reader.read_note(target)
         assert await app_with_open_store.store.get_note_rel_path(note.id) is None
-        calls = 0
-        original_list_notes = app_with_open_store.vault_reader.list_notes
+        read_paths: list[str] = []
+        original_read_note = app_with_open_store.vault_reader.read_note
 
-        async def counting_list_notes(
-            folder: str | None = None,
-            limit: int | None = None,
-        ) -> list[Note]:
-            nonlocal calls
-            calls += 1
-            return await original_list_notes(folder=folder, limit=limit)
+        async def recording_read_note(path: Path) -> Note:
+            read_paths.append(path.name)
+            return await original_read_note(path)
 
-        monkeypatch.setattr(app_with_open_store.vault_reader, "list_notes", counting_list_notes)
+        monkeypatch.setattr(app_with_open_store.vault_reader, "read_note", recording_read_note)
 
         result = await _get_note_impl(app_with_open_store, id_or_path=note.id, fmt="full")
 
         assert result["rel_path"] == "late-note.md"
         assert result["id"] == note.id
-        assert calls == 1
+        # The note the index has never seen is the one the fallback reads.
+        assert "late-note.md" in read_paths
 
     @pytest.mark.asyncio
+    async def test_an_unknown_ulid_reads_no_note_when_the_index_has_seen_them_all(
+        self,
+        app_with_open_store: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Answering "no such note" must not cost the whole vault.
+
+        ``get_note`` does not repair the index first, so it falls back to looking at
+        live notes for an identity written since the last pass. That fallback read,
+        decoded, hashed and YAML-parsed every note in the vault, on the event loop,
+        and the identity that reaches it is the one that resolves nowhere: a
+        plausible but nonexistent ULID, which a caller can repeat at will.
+
+        A note whose stored mtime still matches its file cannot carry an identity the
+        index missed, because the index read that exact file. With every note indexed
+        in its current state, the right number of note reads is none.
+        """
+        from datacron.mcp.tools import _get_note_impl, _repair_index_on_read
+
+        for index in range(6):
+            _write_memory_note(
+                tmp_vault,
+                f"indexed-{index}.md",
+                f"# Note {index}\n",
+                metadata_overrides={"id": f"01HQXR7K9YZ8M2N3PQRSTV4W{index:02d}"},
+            )
+        await _repair_index_on_read(app_with_open_store)
+
+        reads: list[str] = []
+        original_read_note = app_with_open_store.vault_reader.read_note
+
+        async def recording_read_note(path: Path) -> Note:
+            reads.append(path.name)
+            return await original_read_note(path)
+
+        monkeypatch.setattr(app_with_open_store.vault_reader, "read_note", recording_read_note)
+
+        result = await _get_note_impl(
+            app_with_open_store, id_or_path="01ZZZZZZZZZZZZZZZZZZZZZZZZ", fmt="full"
+        )
+
+        assert result["error"]["type"] == "FileNotFoundError"
+        assert reads == [], f"the fallback read {len(reads)} notes to answer that none match"
+
+    async def test_an_unknown_ulid_still_reads_a_note_the_index_has_not_seen(
+        self,
+        app_with_open_store: DatacronApp,
+        tmp_vault: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Guard the guard: the gate must not turn the fallback off altogether.
+
+        A note written since the last pass is exactly what the fallback exists for,
+        and skipping it would trade a slow right answer for a fast wrong one.
+        """
+        from datacron.mcp.tools import _get_note_impl, _repair_index_on_read
+
+        _write_memory_note(tmp_vault, "indexed.md", "# Indexed\n")
+        await _repair_index_on_read(app_with_open_store)
+        _write_memory_note(tmp_vault, "written-since.md", "# Written since\n")
+
+        reads: list[str] = []
+        original_read_note = app_with_open_store.vault_reader.read_note
+
+        async def recording_read_note(path: Path) -> Note:
+            reads.append(path.name)
+            return await original_read_note(path)
+
+        monkeypatch.setattr(app_with_open_store.vault_reader, "read_note", recording_read_note)
+
+        result = await _get_note_impl(
+            app_with_open_store, id_or_path="01ZZZZZZZZZZZZZZZZZZZZZZZZ", fmt="full"
+        )
+
+        assert result["error"]["type"] == "FileNotFoundError"
+        assert reads == ["written-since.md"]
+
     async def test_unknown_ulid_with_complete_sidecar_still_checks_live_identities(
         self,
         app_with_open_store: DatacronApp,
@@ -1348,23 +1423,23 @@ class TestGetNoteFull:
             json.dumps(mappings),
             encoding="utf-8",
         )
-        calls = 0
 
-        async def counting_list_notes(
-            folder: str | None = None,
-            limit: int | None = None,
-        ) -> list[Note]:
-            nonlocal calls
-            calls += 1
-            return []
+        stat_calls = 0
+        original_stat_notes = app_with_open_store.vault_reader.stat_notes
 
-        monkeypatch.setattr(app_with_open_store.vault_reader, "list_notes", counting_list_notes)
+        async def counting_stat_notes() -> dict[str, tuple[Path, int]]:
+            nonlocal stat_calls
+            stat_calls += 1
+            return await original_stat_notes()
+
+        monkeypatch.setattr(app_with_open_store.vault_reader, "stat_notes", counting_stat_notes)
         bogus = "01ZZZZZZZZZZZZZZZZZZZZZZZZ"
         result = await _get_note_impl(app_with_open_store, id_or_path=bogus, fmt="full")
 
         assert "error" in result
         assert result["error"]["type"] == "FileNotFoundError"
-        assert calls == 1
+        # A complete sidecar must not stop the tool from looking at what is live.
+        assert stat_calls == 1
 
     @pytest.mark.asyncio
     async def test_invalid_format_returns_error(self, app: DatacronApp) -> None:

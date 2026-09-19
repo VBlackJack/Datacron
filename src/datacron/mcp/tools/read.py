@@ -484,7 +484,38 @@ async def _resolve_note_by_ulid(app: DatacronApp, note_id: str) -> Note | None:
         return sidecar_note
 
     # Fallback: fresh notes can exist on disk before the next reindex.
-    for note in await app.vault_reader.list_notes():
+    return await _resolve_note_from_unindexed_notes(app, note_id)
+
+
+async def _resolve_note_from_unindexed_notes(app: DatacronApp, note_id: str) -> Note | None:
+    """Look for ``note_id`` in the notes the index has not seen in their current state.
+
+    ``get_note`` does not repair the index first, so a note written since the last
+    pass can carry an identity the index has never recorded. Finding it used to mean
+    reading, decoding, hashing and YAML-parsing every note in the vault, on the event
+    loop, and the identity that triggers it is the one that resolves nowhere: a
+    plausible but nonexistent ULID, which a caller can repeat, stalls the server for
+    every other tool call each time and then answers that there is no such note.
+
+    A note whose stored mtime still matches the file cannot carry an identity the
+    index missed, because the index read that exact file. Only the notes that are new
+    or have moved since are examined, which on a vault nobody has edited outside
+    Datacron is none of them. That is the gate ``reconcile`` already applies, and like
+    ``reconcile`` it trusts the mtime only to decide whether to look, never to decide
+    what the content is.
+    """
+    try:
+        indexed = await app.store.list_indexed_notes_with_mtime()
+    except RuntimeError:
+        indexed = {}
+    for rel_path, (path, fs_mtime_ns) in (await app.vault_reader.stat_notes()).items():
+        entry = indexed.get(rel_path)
+        if entry is not None and entry[2] is not None and entry[2] == fs_mtime_ns:
+            continue
+        try:
+            note = await app.vault_reader.read_note(path)
+        except (OSError, ValueError, NoteAdmissionError, PathConfinementError):
+            continue
         if note.id == note_id:
             return note
     return None
