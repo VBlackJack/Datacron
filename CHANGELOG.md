@@ -20,6 +20,16 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- Finding a write request's receipt costs the journal's tail instead of its whole history.
+  The lookup parsed and chain-verified every record ever written, on every keyed write. It
+  now scans backwards and stops at the match, and a key the journal has never carried is
+  answered from an in-memory set of the keys it holds, without a scan at all. Measured on a
+  journal of 20000 operations, 13.5 MiB: a retry of the last write 836 ms to 1.3 ms, a first
+  use of a key 656 ms to 1.7 ms, plus 90 ms once per process to build the set. The set is
+  rebuilt from the journal and never written to disk, because a second durable structure is a
+  second thing that can disagree with it; it advances by reading only the bytes appended since
+  it was last brought up to date, from whichever process appended them, and it is only ever
+  trusted to say that a key is absent.
 - `apply_organization_manifest` validates the bundle once instead of twice. Before committing,
   it rebuilt the whole preview a second time and compared projected report hashes, which walks
   and hashes every note in the organization scope and reprojects the report. That second pass
@@ -275,6 +285,19 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- A write request's receipt no longer suppresses a write the note no longer holds. Any journal
+  record carrying the request key made the call a replay, and the caller got the old receipt
+  with `committed: true` while nothing was written. Revert a note and reissue the same call,
+  which is what `prepare_follow_up` does by design because it derives the request id from the
+  plan, and the entry was dropped with no trace: a write the caller was told had landed and
+  which is nowhere. The receipt is now read against the note as it is. The note still holds
+  what the record produced, so it is the ordinary retry after a timeout, a crash or a
+  concurrent duplicate, and it replays. The note has moved and the call carries
+  `expected_hash`, so the write proceeds and CAS judges it: a reverted note is written again,
+  a stale retry raises a conflict. The note has moved and no `expected_hash` was supplied, so
+  it refuses and says to re-read and retry with an exact hash, rather than fabricating a
+  receipt for bytes that are no longer anywhere or appending the entry twice. This covers all
+  nine ordinary write tools, not only follow-up plans.
 - `get_note_history` says whether each operation is still a restore point. It returned
   `history_stored`, which records what was stored when the write committed and says nothing
   about now: retention deletes a version once it falls out of the window, so the tool offered

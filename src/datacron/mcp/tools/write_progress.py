@@ -159,7 +159,16 @@ async def _inspect_target(
     entry = indexed.get(note.rel_path)
     item["indexed"] = entry is not None and entry[:2] == (note.id, note.content_hash)
     if receipt:
-        if note.content_hash != receipt.after_hash:
+        if note.content_hash == receipt.before_hash:
+            # The write was undone, not overwritten. Telling the caller not to repeat it
+            # would leave the note without the write and the caller believing it landed,
+            # which is how a reverted follow-up entry disappears for good. The writer
+            # accepts the same request id again once the call carries expected_hash.
+            item.update(
+                status="committed_reverted",
+                next_action="replay_identical_arguments_with_expected_hash",
+            )
+        elif note.content_hash != receipt.after_hash:
             item.update(status="committed_changed", next_action="read_current_note_do_not_repeat")
         elif item["indexed"]:
             item.update(status="committed_current", next_action="read_current_note")

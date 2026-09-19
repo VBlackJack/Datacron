@@ -556,7 +556,10 @@ Sans `request_id`, une relance avec l'ancien hash est refusée par CAS ; sans ha
 peut être dupliqué. Les erreurs avant commit confirmé conservent leur contrat existant.
 Sans `request_id`, une annulation ou une réponse perdue impose de vérifier la note et son
 historique. Avec un `request_id` stable, rejouer exactement les mêmes arguments permet
-de retrouver le reçu historique sans répéter une modification déjà effectuée.
+de retrouver le reçu sans répéter une modification déjà effectuée. Le reçu ne supprime
+qu'une écriture que la note porte encore : dès que la note s'est éloignée de ce que le reçu a
+enregistré, l'appel se poursuit sous CAS s'il porte `expected_hash`, et il est refusé sinon.
+C'est ce qui permet de refaire une écriture annulée sous son `request_id` d'origine.
 
 
 Voir [Améliorations de fiabilité](improvements.md) pour le rejeu des écritures, l'indexation ciblée, la sélection Markdown commune et les contrôles qualité.

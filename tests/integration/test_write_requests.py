@@ -28,7 +28,7 @@ from datacron.core.paths import sidecar_index_db
 from datacron.mcp.server import DatacronApp, build_app, create_server
 from datacron.mcp.tools.ops import _get_note_history_impl
 from datacron.mcp.tools.read import _get_note_impl
-from datacron.mcp.tools.write import _append_journal_impl
+from datacron.mcp.tools.write import _append_journal_impl, _revert_note_impl
 
 _ID = "01J00000000000000000000091"
 _KEY = "integration-request-001"
@@ -165,8 +165,16 @@ asyncio.run(main())
 async def test_historical_receipt_does_not_reapply_after_later_edit(
     request_app: DatacronApp,
 ) -> None:
+    """A receipt older than the note must not reapply, and must not be handed back.
+
+    The write still does not happen, which is what this has always guarded. What it
+    returns changed: it used to answer with the old receipt, whose `content_hash`
+    names bytes that are no longer anywhere, so a caller re-reading by that hash
+    found nothing and could not tell why. Without `expected_hash` there is nothing
+    left to tell a retry from a new write, so it refuses and says what to send.
+    """
     app = request_app
-    first = await _append_journal_impl(
+    await _append_journal_impl(
         app, rel_path="note.md", heading="Log", entry="First", request_id=_KEY
     )
     await _append_journal_impl(app, rel_path="note.md", heading="Log", entry="Later")
@@ -174,9 +182,85 @@ async def test_historical_receipt_does_not_reapply_after_later_edit(
     replay = await _append_journal_impl(
         app, rel_path="note.md", heading="Log", entry="First", request_id=_KEY
     )
-    assert replay["content_hash"] == first["content_hash"] != sha256_bytes(before)
-    assert replay["indexed"] is False
+    assert replay["error"]["type"] == "WriteConflictError"
+    assert "expected_hash" in replay["error"]["message"]
     assert before == (app.vault_root / "note.md").read_bytes()
+    assert len(await app.vault_writer.list_operations()) == 2
+
+
+async def test_a_stale_retry_with_expected_hash_conflicts_instead_of_duplicating(
+    request_app: DatacronApp,
+) -> None:
+    """A retry that carries the world it remembers is refused once the world moved.
+
+    This is the sibling of the case above, with `expected_hash` supplied. The receipt
+    no longer describes the note, so the write is not suppressed; CAS then refuses it
+    because the hash the caller remembers is not the hash on disk. Either path must
+    end without a second copy of the entry.
+    """
+    app = request_app
+    expected = sha256_bytes((app.vault_root / "note.md").read_bytes())
+    await _append_journal_impl(
+        app,
+        rel_path="note.md",
+        heading="Log",
+        entry="Once",
+        expected_hash=expected,
+        request_id=_KEY,
+    )
+    await _append_journal_impl(app, rel_path="note.md", heading="Log", entry="Later")
+
+    retry = await _append_journal_impl(
+        app,
+        rel_path="note.md",
+        heading="Log",
+        entry="Once",
+        expected_hash=expected,
+        request_id=_KEY,
+    )
+
+    assert "error" in retry, retry
+    assert (app.vault_root / "note.md").read_text().count("Once") == 1
+
+
+async def test_a_reverted_write_is_written_again_by_the_same_request(
+    request_app: DatacronApp,
+) -> None:
+    """Reverting a note must not turn its request into a receipt for nothing.
+
+    `prepare_follow_up` derives the request id from the plan, so a plan re-prepared
+    after a revert carries the same id and the same bytes by design. The receipt from
+    the first apply used to suppress the second one and report `committed: true`,
+    which loses the entry with no trace anywhere. The receipt now only suppresses a
+    write the note still holds.
+    """
+    app = request_app
+    original = sha256_bytes((app.vault_root / "note.md").read_bytes())
+    first = await _append_journal_impl(
+        app,
+        rel_path="note.md",
+        heading="Log",
+        entry="Restored",
+        expected_hash=original,
+        request_id=_KEY,
+    )
+    assert first["replayed"] is False
+    await _revert_note_impl(app, note="note.md", to_hash=original)
+    assert "Restored" not in (app.vault_root / "note.md").read_text()
+
+    again = await _append_journal_impl(
+        app,
+        rel_path="note.md",
+        heading="Log",
+        entry="Restored",
+        expected_hash=original,
+        request_id=_KEY,
+    )
+
+    assert "error" not in again, again
+    assert again["replayed"] is False
+    assert again["operation_id"] != first["operation_id"]
+    assert (app.vault_root / "note.md").read_text().count("Restored") == 1
 
 
 @pytest.mark.parametrize("key", ["", ".invalid", "x" * 129, "clé"])

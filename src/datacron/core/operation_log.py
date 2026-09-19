@@ -51,6 +51,15 @@ One step holds well over a hundred records, so the common baseline lookup,
 whose match is within the last few writes, reads the journal once.
 """
 _PENDING_TEMP_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\..+\.json\.[0-9a-f]{32}\.tmp$")
+_REQUEST_KEY_MARKER: Final[bytes] = b'"request_key_hash"'
+_REQUEST_KEY_PATTERN: Final[re.Pattern[bytes]] = re.compile(b'"request_key_hash":"([0-9a-f]{64})"')
+_REQUEST_KEY_PREFIX_CHARS: Final[int] = 16
+"""Hex characters of a request key kept in the in-memory prefilter.
+
+Sixty-four bits, which makes a collision between two of a vault's request keys a
+practical impossibility, and costs one integer per keyed record rather than a
+113-byte string.
+"""
 _FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = 0x0400
 _RECORD_KEYS_V2: Final[frozenset[str]] = frozenset(
     {
@@ -86,6 +95,11 @@ class HistoryUnavailableError(OperationLogError):
 
 class _StrictJsonError(ValueError):
     """Raised when JSON uses an ambiguous or non-standard construct."""
+
+
+def _request_key_prefix(key_hash: str) -> int:
+    """Return the fixed-width integer this module indexes one request key by."""
+    return int(key_hash[:_REQUEST_KEY_PREFIX_CHARS], 16)
 
 
 def _is_reparse_point(entry: os.DirEntry[str]) -> bool:
@@ -292,6 +306,8 @@ class OperationJournal:
         self._tail_record: OperationRecord | None = None
         self._tail_hash: str | None = None
         self._tail_loaded = False
+        self._request_keys: set[int] | None = None
+        self._request_keys_end = 0
 
     @property
     def history_enabled(self) -> bool:
@@ -578,6 +594,93 @@ class OperationJournal:
             if _relative_path_identity(record.rel_path) == path_identity:
                 match = record
         return match
+
+    def latest_record_for_request_key(self, key_hash: str) -> OperationRecord | None:
+        """Return the latest committed record for one write-request key.
+
+        The scan runs backwards and stops at the first record carrying the key. The
+        latest one is the only one that can describe the note: a request whose write
+        was reverted and made again has more than one record, and the earlier ones
+        name bytes that are no longer on disk.
+
+        A key that the journal has never carried is answered without a scan, from
+        an in-memory set of the keys it holds. That set is the common case: almost
+        every keyed write is a first use, and proving absence by reading back to
+        the first line made every one of them cost the whole journal, which is the
+        cost that grows forever. Records read on the way are chain-verified exactly
+        as :meth:`latest_record_for_path` describes.
+        """
+        operations_path = self._guard_operations_path()
+        if not operations_path.is_file():
+            return None
+        self._ensure_tail_state()
+        operations_path = self._guard_operations_path()
+        if not self._request_key_may_exist(operations_path, key_hash):
+            return None
+        match: OperationRecord | None = None
+        for _offset, record in _iter_verified_records_reverse(operations_path):
+            if match is not None:
+                return match
+            if record.parameters.get("request_key_hash") == key_hash:
+                match = record
+        return match
+
+    def _request_key_may_exist(self, operations_path: Path, key_hash: str) -> bool:
+        """Report whether the journal may hold a record carrying this request key.
+
+        The set behind this is a prefilter over what the journal already holds, and
+        it is only ever trusted to say *no*. A key it does not know cannot be in the
+        journal, so the write is a first use; a key it knows still goes through the
+        exact backwards scan, because a prefix is not an identity and because the
+        answer needed is the record, not a boolean.
+
+        It is rebuilt from the journal, never persisted and never written to disk:
+        a second durable structure alongside the journal is a second thing that can
+        disagree with it. It advances by reading only the bytes appended since it
+        was last brought up to date, from whichever process appended them, so a
+        concurrent writer's records are picked up on the next lookup rather than
+        missed. A journal that shrank or was rewritten shorter than the set covers
+        is treated as a different file and the set is rebuilt from the first line.
+        """
+        try:
+            size = operations_path.stat().st_size
+        except OSError:
+            # The index is an optimisation. If the size cannot be read the exact
+            # scan below is still correct, so fail towards doing the work.
+            return True
+        if self._request_keys is None or size < self._request_keys_end:
+            self._request_keys = set()
+            self._request_keys_end = 0
+        if size > self._request_keys_end:
+            self._extend_request_key_index(operations_path, size)
+        return _request_key_prefix(key_hash) in self._request_keys
+
+    def _extend_request_key_index(self, operations_path: Path, size: int) -> None:
+        known = self._request_keys
+        if known is None:  # pragma: no cover - set by the only caller
+            return
+        with operations_path.open("rb") as stream:
+            stream.seek(self._request_keys_end)
+            appended = stream.read(size - self._request_keys_end)
+        # A reader can see the journal between the write and its newline, so the
+        # last partial line is left for the next pass rather than parsed.
+        consumed = appended.rfind(b"\n") + 1
+        for line in appended[:consumed].splitlines():
+            if _REQUEST_KEY_MARKER not in line:
+                continue
+            match = _REQUEST_KEY_PATTERN.search(line)
+            if match is not None:
+                known.add(_request_key_prefix(match.group(1).decode("ascii")))
+                continue
+            # The pattern follows the canonical rendering this module writes. A
+            # line carrying the marker in any other shape is parsed rather than
+            # skipped, because a key missed here reads as a first use and would
+            # let a retry write a second time.
+            payload = _strict_json_loads(line.decode("ascii", errors="strict"))
+            record_key = OperationRecord.from_dict(payload).parameters.get("request_key_hash")
+            if isinstance(record_key, str):
+                known.add(_request_key_prefix(record_key))
+        self._request_keys_end += consumed
 
     def has_record(self, operation_id: str) -> bool:
         # Recovery queries are outside the append hot path, so a full verified scan

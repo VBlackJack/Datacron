@@ -535,7 +535,10 @@ Without `request_id`, a retry with the original expected hash is rejected by CAS
 the hash can duplicate an append. Failures before a confirmed commit retain their existing
 error contracts. Without `request_id`, cancellation or a lost transport response requires
 checking the note/history before deciding what to do. With a stable `request_id`, retry the
-exact same arguments to recover the historical receipt without repeating a committed edit.
+exact same arguments to recover the receipt without repeating a committed edit. The receipt
+only suppresses a write the note still holds: once the note has moved away from what the
+receipt recorded, the call proceeds under CAS if it carries `expected_hash`, and is refused
+otherwise. That is what lets a reverted write be made again under its original request id.
 
 
 See [Reliability improvements](improvements.md) for request replay, targeted indexing, shared Markdown selection and quality gates.

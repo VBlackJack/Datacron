@@ -1104,3 +1104,119 @@ def test_a_sweep_still_expires_what_falls_outside_a_long_window(tmp_path: Path) 
 
     assert removed == [expired_hash]
     assert (tmp_path / ".datacron" / "history" / kept_hash).is_file()
+
+
+def _keyed_record(
+    operation_id: str,
+    timestamp: datetime,
+    key_hash: str,
+) -> OperationRecord:
+    return OperationRecord(
+        operation_id=operation_id,
+        timestamp=timestamp.isoformat(timespec="microseconds"),
+        op="append_journal",
+        tool="append_journal",
+        note_id="01J00000000000000000000042",
+        rel_path="note.md",
+        before_hash=sha256_bytes(f"before-{operation_id}".encode()),
+        after_hash=sha256_bytes(f"after-{operation_id}".encode()),
+        actor="unit-test",
+        parameters={"request_key_hash": key_hash, "request_fingerprint": "f" * 64},
+        history_stored=True,
+    )
+
+
+class TestRequestKeyLookup:
+    """Finding a write request's receipt must not cost the whole journal."""
+
+    @staticmethod
+    def _key(name: str) -> str:
+        return sha256_bytes(name.encode())
+
+    def test_the_latest_record_answers_a_reused_key(self, tmp_path: Path) -> None:
+        """A key reused after a revert has more than one record, and only the last counts.
+
+        The earlier record describes bytes the note no longer holds, so answering
+        with it is what made a reverted write look like a completed one.
+        """
+        now = datetime(2026, 7, 10, tzinfo=UTC)
+        journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+        key = self._key("reused")
+        first = _keyed_record("first", now, key)
+        journal.append_record(first)
+        journal.append_record(_keyed_record("between", now + timedelta(minutes=1), self._key("x")))
+        second = _keyed_record("second", now + timedelta(minutes=2), key)
+        journal.append_record(second)
+
+        found = journal.latest_record_for_request_key(key)
+
+        assert found is not None
+        assert found.operation_id == "second"
+
+    def test_an_unused_key_is_answered_without_reading_the_journal(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Almost every keyed write is a first use, and that is the case that must be cheap.
+
+        Proving absence by reading back to the first line made every ordinary keyed
+        write cost the whole journal, which is a cost that only grows.
+        """
+        now = datetime(2026, 7, 10, tzinfo=UTC)
+        journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+        for index in range(20):
+            journal.append_record(
+                _keyed_record(f"op-{index}", now + timedelta(minutes=index), self._key(str(index)))
+            )
+        assert journal.latest_record_for_request_key(self._key("absent")) is None
+
+        monkeypatch.setattr(
+            operation_log,
+            "_iter_verified_records_reverse",
+            Mock(side_effect=AssertionError("scanned the journal for an unused key")),
+        )
+
+        assert journal.latest_record_for_request_key(self._key("also-absent")) is None
+
+    def test_a_record_another_process_appended_is_still_found(self, tmp_path: Path) -> None:
+        """The prefilter is only ever allowed to say no, so it must never be stale.
+
+        Two processes share one journal under the cross-process mutation lock. If the
+        set of known keys stopped at what this process had appended, the other's
+        records would read as first uses and a retry would write a second time.
+        """
+        now = datetime(2026, 7, 10, tzinfo=UTC)
+        here = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+        elsewhere = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+        here.append_record(_keyed_record("mine", now, self._key("mine")))
+        assert here.latest_record_for_request_key(self._key("theirs")) is None
+
+        elsewhere.append_record(
+            _keyed_record("theirs", now + timedelta(minutes=1), self._key("theirs"))
+        )
+
+        found = here.latest_record_for_request_key(self._key("theirs"))
+        assert found is not None
+        assert found.operation_id == "theirs"
+
+    def test_a_shorter_journal_rebuilds_the_index(self, tmp_path: Path) -> None:
+        """A journal replaced by a shorter one is a different journal.
+
+        Advancing from the old byte count would skip everything the new file holds
+        below it, and every key in there would read as unused.
+        """
+        now = datetime(2026, 7, 10, tzinfo=UTC)
+        journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+        for index in range(6):
+            journal.append_record(
+                _keyed_record(f"op-{index}", now + timedelta(minutes=index), self._key(str(index)))
+            )
+        assert journal.latest_record_for_request_key(self._key("0")) is not None
+
+        operations = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+        lines = operations.read_bytes().splitlines(keepends=True)
+        operations.write_bytes(b"".join(lines[:2]))
+
+        assert journal.latest_record_for_request_key(self._key("1")) is not None
+        assert journal.latest_record_for_request_key(self._key("5")) is None
