@@ -306,7 +306,12 @@ Lorsqu'une mutation cible une note existante, elle stocke les octets antérieurs
 mode `history_mode=full`. Toute mutation validée écrit un manifeste pending, remplace ou crée
 atomiquement la note, ajoute le journal chaîné, puis retire le manifeste. Le mode `redacted`
 conserve les hashes et le journal mais pas les anciens octets; `revert_note` ne peut alors pas
-relire une version historique. La rétention vaut 1278 jours par défaut, soit quarante-deux mois, et est configurable
+relire une version historique.
+Basculer un vault de `full` vers `redacted` arrête le stockage de nouveaux octets et laisse
+intacts ceux déjà sur le disque: le balayage de rétention ne fait rien tant que l'historique
+est désactivé. Supprimer ces versions est un acte délibéré, pas un effet de bord de la
+prochaine écriture.
+La rétention vaut 1278 jours par défaut, soit quarante-deux mois, et est configurable
 par `history_retention_days`. Le défaut est long parce que la rétention décide quand le
 seul exemplaire conservé d'une version antérieure est supprimé, et qu'un sujet peut rester
 intouché pendant des mois avant d'être repris. Le balayage qui l'applique remonte jusqu'à

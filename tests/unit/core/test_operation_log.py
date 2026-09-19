@@ -87,6 +87,38 @@ def test_retention_purges_only_unreferenced_expired_history(tmp_path: Path) -> N
     assert (tmp_path / ".datacron" / "history" / recent_hash).read_bytes() == recent_bytes
 
 
+def test_switching_to_redacted_keeps_the_versions_full_mode_stored(tmp_path: Path) -> None:
+    """Turning history off must not destroy the history already on disk.
+
+    ``redacted`` says this vault stores no new prior bytes. It never said the
+    ones an earlier ``full`` period stored should be destroyed, yet the sweep
+    did exactly that: with history disabled the retention scan was skipped, so
+    the retained set was empty and every blob counted as unreferenced. Editing
+    one key in VAULT.yaml and making one unrelated write deleted every earlier
+    version of every note, silently and with no way back.
+    """
+    now = datetime(2026, 7, 10, tzinfo=UTC)
+    full = OperationJournal(tmp_path, retention_days=1278, history_mode="full")
+    stored = []
+    for index in range(3, 0, -1):
+        content_hash = full.store_history(f"version {index}".encode())
+        stored.append(content_hash)
+        full.append_record(
+            _record(
+                f"operation-{index}",
+                now - timedelta(days=index),
+                content_hash,
+                sha256_bytes(f"after {index}".encode()),
+            )
+        )
+
+    redacted = OperationJournal(tmp_path, retention_days=1278, history_mode="redacted")
+
+    assert redacted.purge_history(now) == []
+    history_dir = tmp_path / ".datacron" / "history"
+    assert sorted(path.name for path in history_dir.iterdir()) == sorted(stored)
+
+
 def test_purge_history_skips_scan_until_interval_elapses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

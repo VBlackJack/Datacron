@@ -632,18 +632,24 @@ class OperationJournal:
         preserve_hashes: set[str] | None = None,
     ) -> list[str]:
         purge_at = (now or datetime.now(tz=UTC)).astimezone(UTC)
-        if (
-            self.history_enabled
-            and self._last_purge_at is not None
-            and purge_at - self._last_purge_at < self._purge_min_interval
+        if not self.history_enabled:
+            # ``redacted`` means this vault stores no new prior bytes. It has never
+            # meant destroying the ones a previous ``full`` period stored, and the
+            # sweep below would have done exactly that: with history disabled the
+            # retention scan is skipped, so the retained set is empty and every blob
+            # on disk is unreferenced. Changing one key in VAULT.yaml and making one
+            # unrelated write deleted every earlier version of every note, with no
+            # confirmation and no way back. Those bytes are now left alone; removing
+            # them is a deliberate act, not a side effect of the next write.
+            return []
+        if self._last_purge_at is not None and purge_at - self._last_purge_at < (
+            self._purge_min_interval
         ):
             return []
         history_dir = self._guard_history_root()
         if not history_dir.is_dir():
             return []
-        retained = set(preserve_hashes or ())
-        if self.history_enabled:
-            retained |= self._hashes_within_retention(purge_at)
+        retained = set(preserve_hashes or ()) | self._hashes_within_retention(purge_at)
         removed = self._purge_unretained_blobs(history_dir, retained)
         if removed:
             _durable_flush_directory(self._guard_history_root())

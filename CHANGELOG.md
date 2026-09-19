@@ -262,6 +262,14 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- Switching a vault's `history_mode` from `full` to `redacted` no longer destroys the versions
+  the `full` period stored. `redacted` means this vault stores no new prior bytes; it never
+  meant deleting the ones already on disk. The retention sweep is skipped while history is
+  disabled, so the retained set was empty and every blob counted as unreferenced: editing one
+  key in `.datacron/VAULT.yaml` and making one unrelated write deleted every earlier version of
+  every note, silently, with no confirmation and no way back. The sweep now does nothing at all
+  while history is disabled. Removing those bytes is a deliberate act, not a side effect of the
+  next write.
 - An unterminated `<!--` no longer hides every heading below it, which made a patch on the
   section above replace the rest of the note. Headings inside a closed HTML comment are still
   skipped, which is what that rule exists for; a comment that is never closed now masks

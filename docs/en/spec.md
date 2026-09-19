@@ -296,6 +296,9 @@ When a mutation targets an existing note, it stores the prior bytes by SHA-256 i
 `history_mode=full`. Every committed mutation writes a pending manifest, atomically replaces or
 creates the note, appends the chained journal, then removes the manifest. `redacted` mode retains
 hashes and the journal but not prior bytes, so `revert_note` cannot read a historical version.
+Switching a vault from `full` to `redacted` stops new bytes being stored and leaves the ones
+already on disk alone: the retention sweep does nothing while history is disabled. Removing
+those versions is a deliberate act, not a side effect of the next write.
 Retention defaults to 1278 days, forty-two months, and is configurable through
 `history_retention_days`. The default is long because retention decides when the only
 stored copy of a previous version is deleted, and a subject can be left untouched for
