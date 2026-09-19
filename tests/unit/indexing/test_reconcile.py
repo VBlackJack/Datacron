@@ -16,11 +16,13 @@
 from __future__ import annotations
 
 import gc
+import json
 import os
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
+import aiosqlite
 import pytest
 
 from datacron.core.models import Note
@@ -340,3 +342,172 @@ async def test_pre_pass_keeps_a_bounded_number_of_notes_alive(
 
     assert stats["reindexed_notes"] == note_count
     assert peak <= 8, f"{peak} of {note_count} Note objects were alive at once"
+
+
+def _write_vault(vault: Path, note_count: int) -> None:
+    """Fill ``vault`` with notes that carry no frontmatter id."""
+    for index in range(note_count):
+        (vault / f"note-{index:04d}.md").write_text(
+            f"# Note {index}\n\nbody {index}\n", encoding="utf-8"
+        )
+
+
+async def _count_pass_costs(
+    tmp_path: Path, vault: Path, chunker: MarkdownChunker
+) -> tuple[int, int]:
+    """Run one cold pass and return its sidecar rewrites and its durable commits."""
+    sidecar_rewrites = 0
+    commits = 0
+    original_replace = os.replace
+    original_commit = aiosqlite.Connection.commit
+
+    def _counting_replace(src: object, dst: object, **kwargs: object) -> None:
+        nonlocal sidecar_rewrites
+        if str(dst).endswith("ulids.json"):
+            sidecar_rewrites += 1
+        original_replace(src, dst, **kwargs)  # type: ignore[arg-type]
+
+    async def _counting_commit(self: aiosqlite.Connection) -> None:
+        nonlocal commits
+        commits += 1
+        await original_commit(self)
+
+    store = SQLiteFTS5Store()
+    await store.open(tmp_path / f"{vault.name}.db")
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(os, "replace", _counting_replace)
+            patch.setattr(aiosqlite.Connection, "commit", _counting_commit)
+            reader = FilesystemVaultReader(vault)
+            stats = await reconcile(store, reader, chunker, mtime_gate=True)
+        assert stats["reindexed_notes"] == len(list(vault.glob("*.md")))
+    finally:
+        await store.close()
+    return sidecar_rewrites, commits
+
+
+async def test_a_pass_writes_the_identity_sidecar_once_whatever_the_vault_size(
+    tmp_path: Path, chunker: MarkdownChunker
+) -> None:
+    """Resolving identities must not rewrite the sidecar once per note.
+
+    The whole mapping was reserialized and the file replaced on every resolved
+    identity, so a cold index of a vault of id-less notes wrote it once per note and
+    the total bytes grew with the square of the vault. Two vaults of very different
+    sizes must now cost the same one write, which no per-note rewrite can satisfy at
+    any threshold.
+    """
+    small = tmp_path / "small"
+    large = tmp_path / "large"
+    for vault, note_count in ((small, 5), (large, 60)):
+        vault.mkdir()
+        _write_vault(vault, note_count)
+
+    small_rewrites, _ = await _count_pass_costs(tmp_path, small, chunker)
+    large_rewrites, _ = await _count_pass_costs(tmp_path, large, chunker)
+
+    assert small_rewrites == large_rewrites == 1
+
+
+async def test_a_pass_commits_in_batches_rather_than_once_per_note(
+    tmp_path: Path, chunker: MarkdownChunker
+) -> None:
+    """Indexing a vault must not pay a durable commit per note.
+
+    Every ``upsert_note`` opened and committed its own transaction, so a cold index
+    of N notes performed N commits and they dominated its wall clock. The bound here
+    is deliberately loose: what it catches is a commit count that tracks the note
+    count, and the schema work around the pass contributes a handful of its own.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note_count = 60
+    _write_vault(vault, note_count)
+
+    _, commits = await _count_pass_costs(tmp_path, vault, chunker)
+
+    assert commits < note_count // 2, f"{commits} commits for {note_count} notes"
+
+
+async def test_identities_survive_a_pass_that_fails_before_its_end(
+    tmp_path: Path, chunker: MarkdownChunker
+) -> None:
+    """A pass that raises still persists the identities it resolved.
+
+    Deferring the writes is only safe because the identity of an id-less note is a
+    pure function of its path, so nothing is lost either way. The sidecar is still
+    flushed on the way out, because leaving a cache closer to the truth costs nothing
+    and a half-written pass should not make the next one redo the work.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _write_vault(vault, 4)
+    sidecar = vault / ".datacron" / "ulids.json"
+
+    reader = FilesystemVaultReader(vault)
+
+    async def _pass_that_fails() -> None:
+        async with reader.defer_identity_writes():
+            for path in sorted(vault.glob("*.md")):
+                await reader.read_note(path)
+            raise RuntimeError("the pass gave up here")
+
+    with pytest.raises(RuntimeError, match="pass gave up"):
+        await _pass_that_fails()
+
+    assert sidecar.is_file()
+    assert len(json.loads(sidecar.read_text(encoding="utf-8"))) == 4
+
+
+async def test_a_failed_write_discards_its_batch_and_leaves_the_store_usable(
+    tmp_path: Path, chunker: MarkdownChunker
+) -> None:
+    """A batch is one transaction, so a failure inside it takes the batch with it.
+
+    That is the weaker guarantee batching buys, and it is only acceptable because the
+    index is derived: the discarded notes are reindexed by the next pass. What must
+    not happen is a store left inside an open transaction, which would refuse every
+    later write.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _write_vault(vault, 3)
+    store = SQLiteFTS5Store()
+    await store.open(tmp_path / "index.db")
+    try:
+        reader = FilesystemVaultReader(vault)
+        notes = [await reader.read_note(path) for path in sorted(vault.glob("*.md"))]
+
+        async def _batch_that_fails() -> None:
+            async with store.bulk_writes(commit_every=1000):
+                await store.upsert_note(notes[0], chunker.chunk(notes[0]))
+                raise RuntimeError("the batch gave up here")
+
+        with pytest.raises(RuntimeError, match="batch gave up"):
+            await _batch_that_fails()
+
+        assert await store.list_indexed_notes_with_mtime() == {}
+
+        async with store.bulk_writes(commit_every=1000):
+            for note in notes:
+                await store.upsert_note(note, chunker.chunk(note))
+        assert len(await store.list_indexed_notes_with_mtime()) == 3
+    finally:
+        await store.close()
+
+
+async def test_a_bulk_scope_refuses_to_nest(tmp_path: Path) -> None:
+    """Two scopes would disagree about who owns the open transaction."""
+    store = SQLiteFTS5Store()
+    await store.open(tmp_path / "index.db")
+    try:
+
+        async def _nested() -> None:
+            async with store.bulk_writes():
+                pass
+
+        async with store.bulk_writes():
+            with pytest.raises(RuntimeError, match="already open"):
+                await _nested()
+    finally:
+        await store.close()

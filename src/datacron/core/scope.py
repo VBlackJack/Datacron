@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import stat
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path, PurePosixPath
 from typing import (
     TYPE_CHECKING,
@@ -398,6 +399,10 @@ class ScopedVaultReader:
     def bind_note_path_lookup(self, lookup: NotePathLookup) -> None:
         """Bind the existing index lookup used to authorize resolved note IDs."""
         self._note_path_lookup = lookup
+
+    def defer_identity_writes(self) -> AbstractAsyncContextManager[None]:
+        """Delegate the identity write scope to the reader this one wraps."""
+        return self._delegate.defer_identity_writes()
 
     async def read_note(self, path: Path) -> Note:
         resolved = self._scope.authorize_path(path, "read")

@@ -107,10 +107,71 @@ async def reconcile(
         await _report(progress, completed, total)
 
     await _report(progress, completed, total)
-    prepared, owners, unreadable = await _prepare_live_identities(
-        reader, live, indexed, gated=gated, on_settled=advance
-    )
+    # One pass is one scope for each of the two costs it used to pay per note.
+    # Resolving the identity of a note with no frontmatter id rewrote the whole
+    # sidecar, and every indexed note committed its own SQLite transaction, so both
+    # the bytes written and the durable commits grew with the vault on every pass.
+    # The identity scope covers the reads of both loops; the commit scope covers the
+    # writes of the second.
+    async with reader.defer_identity_writes():
+        prepared, owners, unreadable = await _prepare_live_identities(
+            reader, live, indexed, gated=gated, on_settled=advance
+        )
+        async with store.bulk_writes():
+            deleted, reindexed, skipped = await _apply_pass(
+                store,
+                reader,
+                chunker,
+                live=live,
+                indexed=indexed,
+                prepared=prepared,
+                gated=gated,
+                unreadable=unreadable,
+                owners=owners,
+                advance=advance,
+            )
 
+    if unreadable:
+        _LOGGER.warning(
+            "reconcile skipped %d unreadable note(s); each one was logged with its path above",
+            len(unreadable),
+        )
+
+    if reindexed or deleted:
+        await store.increment_generation()
+
+    stats = ReconcileStats(
+        checked_notes=len(live),
+        indexed_notes_before=len(indexed),
+        reindexed_notes=reindexed,
+        deleted_notes=deleted,
+        skipped_notes=skipped,
+    )
+    _LOGGER.info(
+        "reconcile complete (checked=%d reindexed=%d skipped=%d deleted=%d mtime_gate=%s)",
+        stats["checked_notes"],
+        reindexed,
+        skipped,
+        deleted,
+        mtime_gate,
+    )
+    return stats
+
+
+async def _apply_pass(
+    store: FTS5Store,
+    reader: VaultReader,
+    chunker: ASTChunker,
+    *,
+    live: dict[str, tuple[Path, int]],
+    indexed: dict[str, tuple[str, str, int | None]],
+    prepared: dict[str, tuple[str, str]],
+    gated: frozenset[str],
+    unreadable: frozenset[str],
+    owners: dict[str, str],
+    advance: Callable[[], Awaitable[None]],
+) -> tuple[int, int, int]:
+    """Apply one settled pass to the index and return deleted, reindexed and skipped."""
     reindexed = 0
     skipped = 0
     deleted = await _purge_vanished_notes(store, indexed, live, prepared)
@@ -156,31 +217,7 @@ async def reconcile(
         reindexed += 1
         await advance()
 
-    if unreadable:
-        _LOGGER.warning(
-            "reconcile skipped %d unreadable note(s); each one was logged with its path above",
-            len(unreadable),
-        )
-
-    if reindexed or deleted:
-        await store.increment_generation()
-
-    stats = ReconcileStats(
-        checked_notes=len(live),
-        indexed_notes_before=len(indexed),
-        reindexed_notes=reindexed,
-        deleted_notes=deleted,
-        skipped_notes=skipped,
-    )
-    _LOGGER.info(
-        "reconcile complete (checked=%d reindexed=%d skipped=%d deleted=%d mtime_gate=%s)",
-        stats["checked_notes"],
-        reindexed,
-        skipped,
-        deleted,
-        mtime_gate,
-    )
-    return stats
+    return deleted, reindexed, skipped
 
 
 async def _report(progress: IndexProgress | None, completed: int, total: int) -> None:

@@ -27,6 +27,8 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -154,9 +156,10 @@ def _coerce_datetime(value: object, fallback: datetime) -> datetime:
 class JsonIdStore:
     """JSON-backed mapping from vault-relative paths to ULIDs.
 
-    The store is lazy: it reads ``ulids.json`` on first access and persists
-    after every mutation. The FTS5 ``ulid_paths`` table becomes the source of
-    truth after indexing; the JSON file remains as a fallback bootstrap.
+    The store is lazy: it reads ``ulids.json`` on first access and persists after
+    every mutation, or once per pass inside :meth:`deferred_writes`. The FTS5
+    ``ulid_paths`` table becomes the source of truth after indexing; the JSON file
+    remains as a fallback bootstrap.
     """
 
     def __init__(self, path: Path, *, read_only: bool = False) -> None:
@@ -164,6 +167,9 @@ class JsonIdStore:
         self._read_only = read_only
         self._cache: dict[str, str] | None = None
         self._lock = asyncio.Lock()
+        # True while a pass is staging identities to be written once at its end.
+        self._deferring = False
+        self._deferred_dirty = False
 
     @property
     def path(self) -> Path:
@@ -230,7 +236,58 @@ class JsonIdStore:
         async with self._lock:
             cache = await self._ensure_loaded()
             cache[rel_path] = note_id
+            if self._deferring:
+                self._deferred_dirty = True
+                return
             await asyncio.to_thread(self._write_sync, dict(cache))
+
+    @asynccontextmanager
+    async def deferred_writes(self) -> AsyncIterator[None]:
+        """Stage identity writes in memory and persist them once, on exit.
+
+        Every write reserialized the whole mapping and replaced the file, so a pass
+        that resolves N new identities wrote the file N times and its total bytes grew
+        with the square of the vault. That is the shipped cold index: nothing else
+        resolves identities in bulk.
+
+        Deferring loses nothing on a crash. The identity of a note with no frontmatter
+        id is a pure function of its vault-relative path, so a pass that dies before
+        the flush recomputes exactly the same identities on the next run. The flush
+        also runs when the body raises, for the same reason it is safe to skip: the
+        file is a cache of a derivation, and leaving it closer to the truth is never
+        worse. A flush that fails there is logged rather than allowed to replace the
+        error that is already on its way out.
+        """
+        if self._read_only:
+            # A read-only store never writes, so there is nothing to defer. The scope
+            # stays usable because the pass that opens it does not know, and must not
+            # have to know, whether its reader can persist identities.
+            yield
+            return
+        if self._deferring:
+            raise RuntimeError("identity writes are already deferred")
+        self._deferring = True
+        self._deferred_dirty = False
+        try:
+            yield
+        except BaseException:
+            with suppress(OSError):
+                await self._flush_deferred()
+            raise
+        else:
+            await self._flush_deferred()
+        finally:
+            self._deferring = False
+            self._deferred_dirty = False
+
+    async def _flush_deferred(self) -> None:
+        """Write the staged mapping once, if anything was staged."""
+        async with self._lock:
+            if not self._deferred_dirty or self._cache is None:
+                return
+            snapshot = dict(self._cache)
+            self._deferred_dirty = False
+        await asyncio.to_thread(self._write_sync, snapshot)
 
     async def invalidate_cache(self) -> None:
         """Drop the lazy snapshot after an out-of-band sidecar mutation."""
@@ -298,6 +355,15 @@ class FilesystemVaultReader:
         return self._admission_policy
 
     # ------------------------------------------------------------------ read
+
+    def defer_identity_writes(self) -> AbstractAsyncContextManager[None]:
+        """Stage the identities resolved in this scope and persist them once at its end.
+
+        Resolving an identity rewrote the whole sidecar, so a pass over a vault of
+        id-less notes wrote it once per note. See :meth:`JsonIdStore.deferred_writes`
+        for why deferring cannot lose anything.
+        """
+        return self._id_store.deferred_writes()
 
     async def read_note(self, path: Path) -> Note:
         resolved = path.expanduser().resolve()

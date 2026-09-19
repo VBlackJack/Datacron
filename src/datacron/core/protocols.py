@@ -31,6 +31,7 @@ Silent drift between this module and the contract breaks consumers.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -113,6 +114,14 @@ class FTS5Store(Protocol):
 
     async def close(self) -> None:
         """Close the database. Idempotent."""
+        ...
+
+    def bulk_writes(self, *, commit_every: int = ...) -> AbstractAsyncContextManager[None]:
+        """Group the per-note writes of one pass into batched durable commits.
+
+        Outside this scope every write commits on its own, which is the right
+        boundary for a single tool call and the wrong one for a pass over the vault.
+        """
         ...
 
     async def upsert_note(
@@ -297,6 +306,15 @@ class VaultReader(Protocol):
     :meth:`resolve_alias` uses strict global priority
     (title -> filename stem -> aliases) across all notes, not per-note.
     """
+
+    def defer_identity_writes(self) -> AbstractAsyncContextManager[None]:
+        """Stage identities resolved in this scope and persist them once at its end.
+
+        A reader that resolves a missing identity persists it. One pass over the vault
+        resolves as many as it reads, and persisting each one on its own made the pass
+        cost grow with the square of the vault.
+        """
+        ...
 
     async def read_note(self, path: Path) -> Note:
         """Parse the markdown file at ``path`` into a populated Note.
