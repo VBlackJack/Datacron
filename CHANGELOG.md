@@ -159,6 +159,19 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   seconds, most of it the unlinking. The cost was paid in full even when the sweep deleted
   nothing. A link or reparse point inside the history directory still raises.
 
+### Fixed
+
+- `search_regex` no longer hangs when it finds enough results before ripgrep has finished
+  writing. The search stops reading as soon as it has `limit` matches and kills the child,
+  but `Process.wait` returns only once the child has exited *and* every pipe transport it
+  owns has closed, and a child killed with output still queued on stdout leaves that
+  transport open. The call then waited forever on output nobody would ever read, with the
+  server thread held. This is the ordinary path for any pattern with many matches, not an
+  error path: reproduced with a pattern matching every note of a 300 note vault, where the
+  tool ran for over ten minutes without returning, while a pattern matching nothing
+  resolvable on the same vault answered in 1.3 seconds. The remaining output is now read
+  before the wait, which is bounded because the child is already dead.
+
 ## [2026.0918.00] - 2026-09-18
 
 ### Security
