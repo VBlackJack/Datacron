@@ -237,12 +237,32 @@ class TestHeadingsInsideHtmlComments:
 
         assert [item.text for item in headings] == ["A", "B"]
 
-    def test_an_unterminated_comment_hides_everything_after_it(self) -> None:
-        body = "## A\n\n<!--\n## Hidden\n"
+    def test_an_unterminated_comment_hides_nothing(self) -> None:
+        """An opener with no closing marker is a typo, and hiding cost more than it saved.
+
+        This asserted the opposite until a property test showed the cost. With every
+        heading below the orphan opener hidden, the section above it reached the end of
+        the note, so patching that section replaced everything under it: exactly the
+        silent content loss this class exists to prevent.
+
+        Nothing is given up by not hiding. The damage a closed comment can suffer is a
+        marker relocated or orphaned by an edit, and an unterminated comment has no
+        closing marker to relocate; deleting the section holding the stray opener
+        repairs the note rather than breaking it.
+        """
+        body = "## A\n\n<!--\n## Still A Heading\n"
 
         headings = markdown_headings(body.splitlines(keepends=True))
 
-        assert [item.text for item in headings] == ["A"]
+        assert [item.text for item in headings] == ["A", "Still A Heading"]
+
+    def test_a_comment_closed_after_a_heading_still_hides_it(self) -> None:
+        """The span that does close is still masked, which is the case that matters."""
+        body = "## A\n\n<!--\n## Hidden\n-->\n\n## B\n"
+
+        headings = markdown_headings(body.splitlines(keepends=True))
+
+        assert [item.text for item in headings] == ["A", "B"]
 
     def test_a_comment_marker_inside_a_fence_does_not_open_a_comment(self) -> None:
         body = "## A\n\n```\n<!--\n```\n\n## B\n"

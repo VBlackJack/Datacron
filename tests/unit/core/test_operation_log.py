@@ -26,7 +26,7 @@ from unittest.mock import Mock
 import pytest
 
 from datacron.core import operation_log
-from datacron.core.config import Settings, VaultConfig
+from datacron.core.config import DEFAULT_HISTORY_RETENTION_DAYS, Settings, VaultConfig
 from datacron.core.hashing import sha256_bytes
 from datacron.core.operation_log import (
     _REVERSE_READ_CHUNK_BYTES,
@@ -1025,3 +1025,50 @@ async def test_a_failing_retention_sweep_does_not_fail_a_committed_write(
     assert second == sha256_bytes(b"second\n")
     assert (vault / "note.md").read_bytes() == b"second\n"
     assert len(await writer.list_operations()) == 2
+
+
+def test_the_default_retention_keeps_a_version_from_a_project_paused_for_a_year(
+    tmp_path: Path,
+) -> None:
+    """A project can pause for months, and its history must still be there on return.
+
+    Retention decides when the only stored copy of a previous version of a note is
+    deleted. The default was thirty days, which silently discarded the history of
+    every subject not touched that month. This pins the default against the case it
+    exists for rather than against its number.
+    """
+    now = datetime(2026, 9, 19, tzinfo=UTC)
+    journal = OperationJournal(
+        tmp_path,
+        retention_days=DEFAULT_HISTORY_RETENTION_DAYS,
+        history_mode="full",
+    )
+    paused_hash = journal.store_history(b"the version from before the pause")
+    journal.append_record(
+        _record("paused-project", now - timedelta(days=365), paused_hash, sha256_bytes(b"after"))
+    )
+    journal.append_record(
+        _record("today", now, sha256_bytes(b"before-today"), sha256_bytes(b"after-today"))
+    )
+
+    assert journal.purge_history(now) == []
+    assert (tmp_path / ".datacron" / "history" / paused_hash).is_file()
+
+
+def test_a_sweep_still_expires_what_falls_outside_a_long_window(tmp_path: Path) -> None:
+    """The cheap answer must not become a wrong answer: old blobs still go."""
+    now = datetime(2026, 9, 19, tzinfo=UTC)
+    journal = OperationJournal(tmp_path, retention_days=1278, history_mode="full")
+    expired_hash = journal.store_history(b"older than forty-two months")
+    kept_hash = journal.store_history(b"inside the window")
+    journal.append_record(
+        _record("ancient", now - timedelta(days=1400), expired_hash, sha256_bytes(b"after-old"))
+    )
+    journal.append_record(
+        _record("recent", now - timedelta(days=10), kept_hash, sha256_bytes(b"after-recent"))
+    )
+
+    removed = journal.purge_history(now)
+
+    assert removed == [expired_hash]
+    assert (tmp_path / ".datacron" / "history" / kept_hash).is_file()

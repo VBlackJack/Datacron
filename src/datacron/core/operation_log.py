@@ -653,6 +653,16 @@ class OperationJournal:
     def _hashes_within_retention(self, purge_at: datetime) -> set[str]:
         """Collect the history hashes that records inside the retention window name.
 
+        Reading the window is unavoidable even when nothing has expired. A first
+        version of this skipped the read whenever the journal's oldest record was
+        still inside the window, on the reasoning that nothing could then be deleted.
+        That reasoning was wrong and a test caught it: the sweep deletes for two
+        independent reasons, and the second one is a blob that no record names at
+        all. Those appear when a write stores the previous bytes and then fails
+        before appending its record, and telling one apart from a live blob needs
+        exactly the set this builds. A long retention window therefore costs a read
+        of the window, which is the price of keeping history that long.
+
         ``next_timestamp`` gives every appended record a timestamp strictly greater
         than the tail's, so timestamps increase with position and the records inside
         the window are a suffix of the journal. The scan therefore runs backwards and
