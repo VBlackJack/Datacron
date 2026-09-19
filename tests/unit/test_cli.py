@@ -29,11 +29,18 @@ from datacron.core.config import (
     DEFAULT_HISTORY_RETENTION_DAYS,
     reset_settings_cache,
 )
+from datacron.core.models import Note
 from datacron.core.paths import (
     sidecar_dir,
     sidecar_index_db,
     sidecar_index_dir,
     sidecar_vault_config,
+)
+from datacron.core.vault import (
+    ULID_SIDECAR_FILENAME,
+    FilesystemVaultReader,
+    _normalize_rel_path,
+    _walked_rel_path,
 )
 
 
@@ -653,3 +660,92 @@ class TestStatusDoesNotMutateTheIndex:
         assert result.exit_code == 0, result.stdout
         assert "cannot be opened" in result.stdout
         assert "datacron reindex" not in result.stdout
+
+
+def test_a_walked_relative_path_equals_the_resolved_one(tmp_path: Path) -> None:
+    """Computing the relative path must answer exactly what resolving it answered.
+
+    Three sweeps over the vault use this, including the one `reconcile` keys its
+    index by. A different spelling there would not look like a bug: the index would
+    simply stop recognising notes it already holds and reindex the vault, or worse,
+    hold two rows for one file. The shapes below are the ones where a resolve and a
+    join can legitimately differ.
+    """
+    vault = tmp_path / "vault"
+    (vault / "notes" / "deep" / "nested").mkdir(parents=True)
+    (vault / "notes" / "space in name").mkdir()
+    (vault / "UPPER").mkdir()
+    candidates = [
+        vault / "top.md",
+        vault / "notes" / "one.md",
+        vault / "notes" / "deep" / "nested" / "two.md",
+        vault / "notes" / "space in name" / "three.md",
+        vault / "UPPER" / "Four.MD",
+        vault / "notes" / "accentue-cle.md",
+    ]
+    for path in candidates:
+        path.write_text("# Note\n", encoding="utf-8")
+
+    resolved_root = vault.expanduser().resolve()
+    for path in candidates:
+        assert _walked_rel_path(path, resolved_root) == _normalize_rel_path(path, resolved_root)
+
+
+class TestStatusCountsWithoutReading:
+    """`datacron status` prints a number; it must not read the vault to get it."""
+
+    @staticmethod
+    def _make_vault(tmp_path: Path, note_count: int) -> Path:
+        vault = tmp_path / "vault"
+        (vault / "notes").mkdir(parents=True)
+        (vault / ".datacron").mkdir(exist_ok=True)
+        (vault / ".datacron" / "VAULT.yaml").write_text(
+            "vault_id: status-bench\nencoding: utf-8\nline_endings: lf\n", encoding="utf-8"
+        )
+        for index in range(note_count):
+            (vault / "notes" / f"note-{index:03d}.md").write_text(
+                f"# Note {index}\n\nbody\n", encoding="utf-8"
+            )
+        return vault
+
+    def test_status_reads_no_note_and_still_counts_them_all(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The count needs names, not contents.
+
+        Counting through `list_notes` read the bytes of every note, decoded them,
+        parsed the YAML, extracted tags and aliases and hashed the file, then threw
+        all of it away but the length. On a large vault that turned an operator's
+        health check into a full read of the vault.
+        """
+        vault = self._make_vault(tmp_path, 7)
+        reads: list[str] = []
+        original_read_note = FilesystemVaultReader.read_note
+
+        async def recording_read_note(self: FilesystemVaultReader, path: Path) -> Note:
+            reads.append(path.name)
+            return await original_read_note(self, path)
+
+        monkeypatch.setattr(FilesystemVaultReader, "read_note", recording_read_note)
+
+        result = runner.invoke(app, ["status", "--vault", str(vault)])
+
+        assert result.exit_code == 0
+        assert "notes:      7" in result.stdout
+        assert reads == [], f"status read {len(reads)} notes to print a count"
+
+    def test_status_writes_nothing_to_the_vault(self, runner: CliRunner, tmp_path: Path) -> None:
+        """A health check must not mutate what it reports on.
+
+        A writable reader resolves and persists an identity for every note with
+        neither a frontmatter id nor a sidecar entry, rewriting the whole sidecar
+        each time, so `status` on a fresh vault wrote it once per note.
+        """
+        vault = self._make_vault(tmp_path, 5)
+        sidecar = vault / ".datacron" / ULID_SIDECAR_FILENAME
+        assert not sidecar.exists()
+
+        result = runner.invoke(app, ["status", "--vault", str(vault)])
+
+        assert result.exit_code == 0
+        assert not sidecar.exists()

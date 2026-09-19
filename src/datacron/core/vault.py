@@ -140,6 +140,17 @@ def _normalize_rel_path(path: Path, vault_root: Path) -> str:
     return str(PurePosixPath(*rel.parts))
 
 
+def _walked_rel_path(path: Path, resolved_vault_root: Path) -> str:
+    """Return the vault-relative POSIX path of a file the vault walk produced.
+
+    The walk starts at an already-resolved root, so the answer is arithmetic on
+    strings. :func:`_normalize_rel_path` resolves both sides instead, which is two
+    filesystem round trips for something already known. Its callers here run once
+    per note in the vault, so that pair dominated a sweep that otherwise only stats.
+    """
+    return str(PurePosixPath(*path.relative_to(resolved_vault_root).parts))
+
+
 def _coerce_datetime(value: object, fallback: datetime) -> datetime:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=UTC)
@@ -472,7 +483,7 @@ class FilesystemVaultReader:
     def _stat_markdown_paths(self) -> dict[str, tuple[Path, int]]:
         result: dict[str, tuple[Path, int]] = {}
         for path in self._collect_markdown_paths(self._vault_root):
-            rel_path = _normalize_rel_path(path, self._vault_root)
+            rel_path = _walked_rel_path(path, self._vault_root)
             result[rel_path] = (path, path.stat().st_mtime_ns)
         return result
 
@@ -558,7 +569,7 @@ class FilesystemVaultReader:
                 exc,
             )
             metadata, body = {}, raw_text
-        rel_path = _normalize_rel_path(path, self._vault_root)
+        rel_path = _walked_rel_path(path, self._vault_root)
         return _AliasRecord(
             note_id=await self._resolve_id(metadata, rel_path),
             title=resolve_note_title(
@@ -594,11 +605,7 @@ class FilesystemVaultReader:
         reused = self._alias_records
         records: dict[str, _AliasRecord] = {}
         for path, fingerprint in fingerprints.items():
-            # ``os.walk`` produced these under the already-resolved vault root, so the
-            # relative path is arithmetic on strings. ``_normalize_rel_path`` resolves
-            # both sides instead, which is two filesystem round trips per note, on the
-            # event loop, for an answer that is known.
-            rel_path = str(PurePosixPath(*path.relative_to(self._vault_root).parts))
+            rel_path = _walked_rel_path(path, self._vault_root)
             known = reused.get(rel_path)
             if known is not None and known.fingerprint == fingerprint:
                 records[rel_path] = known
