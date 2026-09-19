@@ -407,9 +407,17 @@ def status(
     initialized = config is not None
 
     if config is not None:
-        reader = build_configured_reader(vault_root)
-        notes = asyncio.run(reader.list_notes())
-        note_count = len(notes)
+        # Counting notes needs their names, not their contents. ``list_notes`` read
+        # the bytes of every note, decoded them, parsed the YAML, extracted tags and
+        # aliases and hashed the file, then everything but the length was discarded.
+        # ``stat_notes`` enumerates exactly the same notes and only stats them.
+        #
+        # The reader is also read-only, because status writes nothing: a writable one
+        # resolves and persists an identity for every note that has neither a
+        # frontmatter id nor a sidecar entry, which on a fresh vault turned a health
+        # check into a rewrite of the sidecar once per note.
+        reader = build_configured_reader(vault_root, read_only=True)
+        note_count = len(asyncio.run(reader.stat_notes()))
     else:
         note_count = 0
 

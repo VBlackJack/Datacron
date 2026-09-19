@@ -20,6 +20,19 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- `datacron status` counts notes without reading them, and without writing to the vault. It
+  listed every note, which reads the bytes, decodes them, parses the YAML, extracts tags and
+  aliases and hashes the file, then discarded all of it but the length. Its reader was also
+  writable, so on a vault whose notes have no frontmatter id and no sidecar entry the health
+  check resolved an identity for each one and rewrote the whole sidecar every time.
+- The vault-relative path of a file the vault walk produced is computed rather than resolved.
+  The walk starts at an already-resolved root, so both sides were being resolved for an
+  answer already known, twice per note, in three sweeps including the one `reconcile` keys
+  its index by. Measured on 1200 notes, all three interleaved in one process: counting
+  through `list_notes` takes 1726 ms, through `stat_notes` 601 ms, and through `stat_notes`
+  with the path computed 85 ms. A test pins the computed path against the resolved one over
+  nested, spaced, uppercase and accented names, because a different spelling there would not
+  look like a bug: the index would quietly stop recognising notes it already holds.
 - `get_follow_up` sizes a page by halving instead of by dropping one record at a time. Each
   measurement re-serialises the page it is measuring, so dropping one record at a time cost
   one serialisation of the whole remaining page per record dropped, and nothing bounds how
