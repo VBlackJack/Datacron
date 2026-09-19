@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import subprocess
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -520,6 +520,9 @@ class _CountingVaultWriter:
 
     async def list_operations(self) -> list[OperationRecord]:
         return await self._delegate.list_operations()
+
+    async def present_history_hashes(self, hashes: Iterable[str | None]) -> set[str]:
+        return await self._delegate.present_history_hashes(hashes)
 
     async def purge_history(self) -> list[str]:
         return await self._delegate.purge_history()

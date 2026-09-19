@@ -59,6 +59,7 @@ L'outil reste en lecture seule ; il ne promet pas un instantané atomique multi-
 |---|---|
 | `committed_current` | Le reçu correspond aux octets et à l'index actuels. Relire la note. |
 | `committed_changed` | L'opération est enregistrée, puis les octets ont divergé. Relire sans répéter l'écriture. |
+| `committed_reverted` | L'opération est enregistrée puis annulée : les octets courants sont ceux qu'elle avait remplacés. Rejouer les mêmes arguments avec `expected_hash`. |
 | `committed_index_incomplete` | Les octets correspondent au reçu, mais pas l'index. Réparer l'index sans nouvelle mutation. |
 | `conflict` | Aucun reçu trouvé et le hash CAS d'origine diffère. Examiner la requête initiale avant de repréparer. |
 | `not_recorded` | Aucun reçu validé trouvé. Examiner la reprise ou rejouer exactement les mêmes arguments avec la même clé. |

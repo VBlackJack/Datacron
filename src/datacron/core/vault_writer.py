@@ -22,7 +22,7 @@ import re
 import sqlite3
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -387,6 +387,18 @@ class FilesystemVaultWriter:
         """Return an immutable snapshot of committed operation records."""
         return await asyncio.to_thread(self._list_operations_sync)
 
+    async def present_history_hashes(self, hashes: Iterable[str | None]) -> set[str]:
+        """Return which of these restore points still have their bytes on disk."""
+        return await asyncio.to_thread(self._present_history_hashes_sync, list(hashes))
+
+    def _present_history_hashes_sync(self, hashes: list[str | None]) -> set[str]:
+        journal = self._operation_journal
+        return {
+            content_hash
+            for content_hash in dict.fromkeys(hashes)
+            if content_hash is not None and journal.has_history(content_hash)
+        }
+
     async def purge_history(self) -> list[str]:
         """Apply the configured content-history retention policy now."""
         self._write_policy.ensure_writable()
@@ -531,13 +543,13 @@ class FilesystemVaultWriter:
         )
         self._raise_if_recovery_blocked(recovery)
         target, safe_rel_path = self._resolve_target(rel_path)
-        self._check_request_replay(safe_rel_path)
         if note_id is not None and not _ULID_PATTERN.fullmatch(note_id):
             raise ValueError("note_id must be a canonical 26-character ULID")
 
         identity_lock = self._advisory_lock("identity") if note_id is not None else nullcontext()
         with identity_lock, self._advisory_lock(f"note:{self._lock_key(target)}"):
             current_bytes = target.read_bytes() if target.exists() else None
+            self._check_request_replay(safe_rel_path, current_bytes, expected_hash)
             _check_expected_hash(expected_hash, current_bytes)
             if current_bytes is not None and not overwrite:
                 raise FileExistsError(f"{safe_rel_path} already exists.")
@@ -589,9 +601,9 @@ class FilesystemVaultWriter:
         )
         self._raise_if_recovery_blocked(recovery)
         target, safe_rel_path = self._resolve_target(rel_path)
-        self._check_request_replay(safe_rel_path)
         with self._advisory_lock(f"note:{self._lock_key(target)}"):
             current_bytes = target.read_bytes() if target.is_file() else None
+            self._check_request_replay(safe_rel_path, current_bytes, expected_hash)
             _check_expected_hash(expected_hash, current_bytes)
             if expected_hash is None:
                 self._check_committed_baseline(safe_rel_path, current_bytes)
@@ -643,9 +655,9 @@ class FilesystemVaultWriter:
         )
         self._raise_if_recovery_blocked(recovery)
         target, safe_rel_path = self._resolve_target(rel_path)
-        self._check_request_replay(safe_rel_path)
         with self._advisory_lock(f"note:{self._lock_key(target)}"):
             current_bytes = target.read_bytes() if target.is_file() else None
+            self._check_request_replay(safe_rel_path, current_bytes, expected_hash)
             _check_expected_hash(expected_hash, current_bytes)
             if expected_hash is None:
                 self._check_committed_baseline(safe_rel_path, current_bytes)
@@ -673,23 +685,60 @@ class FilesystemVaultWriter:
                     operation,
                 )
 
-    def _check_request_replay(self, safe_rel_path: Path) -> None:
-        """Check durable receipts under the mutation lock, after recovery and confinement."""
+    def _check_request_replay(
+        self,
+        safe_rel_path: Path,
+        current_bytes: bytes | None,
+        expected_hash: str | None,
+    ) -> None:
+        """Check durable receipts under the mutation lock, after recovery and confinement.
+
+        A receipt alone does not mean this call is a retry. It used to: any record
+        carrying the request key made the write a replay, and the caller was handed
+        the old receipt with ``committed: true`` while nothing happened. Revert a note
+        and reissue the same call, which is what ``prepare_follow_up`` does by design
+        because it derives the request id from the plan, and the entry was silently
+        dropped. That is a write the caller was told had landed and which is nowhere.
+
+        So the receipt is read against the note as it is now:
+
+        - the note still holds what the record produced, so this is the ordinary
+          retry, after a timeout, a crash or a concurrent duplicate. Replay it.
+        - the note has moved and the caller supplied ``expected_hash``. Let the write
+          proceed and let CAS judge it: a reverted note matches and is written again,
+          a stale retry raises a conflict.
+        - the note has moved and the caller supplied no ``expected_hash``. Nothing
+          left can tell a retry from a new write, so refuse rather than guess. The
+          old answer fabricated a receipt naming bytes no longer on disk; the other
+          guess would append the entry twice.
+
+        The lookup takes the latest record for the key, not the first. A reverted
+        and rewritten request has more than one, and only the last describes the
+        note; it also lets a retry be answered from the journal's tail rather than
+        from a parse of its whole history.
+        """
         request = ACTIVE_WRITE_REQUEST.get()
         if request is None:
             return
         with self._advisory_lock("oplog"):
-            records = self._operation_journal.read_records()
-        for record in records:
-            if record.parameters.get("request_key_hash") != request.key_hash:
-                continue
-            if (
-                record.parameters.get("request_fingerprint") != request.fingerprint
-                or record.rel_path != safe_rel_path.as_posix()
-            ):
-                raise WriteConflictError("request_id was already used with different arguments")
-            request.record = record
-            raise ReplayedWriteError(record)
+            record = self._operation_journal.latest_record_for_request_key(request.key_hash)
+        if record is None:
+            return
+        if (
+            record.parameters.get("request_fingerprint") != request.fingerprint
+            or record.rel_path != safe_rel_path.as_posix()
+        ):
+            raise WriteConflictError("request_id was already used with different arguments")
+        current_hash = sha256_bytes(current_bytes) if current_bytes is not None else None
+        if current_hash != record.after_hash:
+            if expected_hash is None:
+                raise WriteConflictError(
+                    "request_id was already committed and the note has changed since; "
+                    "re-read and retry with an exact expected_hash"
+                )
+            return
+        request.record = record
+        raise ReplayedWriteError(record)
 
     def _check_committed_baseline(
         self,

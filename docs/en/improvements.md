@@ -27,10 +27,24 @@ a recovered committed transaction returns its receipt without repeating the edit
 The initial keyed success includes `operation_id`, `committed=true`, `replayed=false`,
 `rel_path`, `content_hash` and `indexed=true`, plus the ordinary tool-specific result.
 A replay returns the common receipt with `replayed=true` and `indexed=false`; it does not
-reconstruct tool-specific results or claim the index is current. Its hash identifies the
-**historical commit**, even if later operations changed or removed the note. Read the note again
-before using a hash for a new CAS operation. Current confinement and writable-policy checks
-still apply, so a receipt does not grant access to a path that is now forbidden.
+reconstruct tool-specific results or claim the index is current. Current confinement and
+writable-policy checks still apply, so a receipt does not grant access to a path that is now
+forbidden.
+
+A receipt only replays a write the note still holds. The key is matched against the note's
+current bytes, and a receipt whose result is no longer on disk is not treated as a retry:
+
+- the note still holds what the receipt recorded: the call is replayed, unchanged.
+- the note has moved and the call carries `expected_hash`: the write proceeds and CAS judges
+  it. A note reverted to the state the call expects is written again; a stale retry gets
+  `WriteConflictError`.
+- the note has moved and the call carries no `expected_hash`: `WriteConflictError`, saying to
+  re-read and retry with an exact hash. Nothing distinguishes a retry from a new write there.
+
+The second case is what makes a reverted write recoverable. A plan that `prepare_follow_up`
+derives from its content keeps the same `request_id` across preparations, so before this the
+first apply's receipt suppressed every later one and reported `committed: true` while writing
+nothing.
 
 Use `get_note_history(note="_memory/example.md", request_id="milestone-20260905-001")`
 to query a committed receipt without writing. No match means no committed receipt was found,
