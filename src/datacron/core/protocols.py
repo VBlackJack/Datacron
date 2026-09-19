@@ -45,6 +45,7 @@ from datacron.core.models import (
     Note,
     SearchResult,
     Wikilink,
+    WikilinkSource,
 )
 from datacron.core.operation_log import OperationContext, OperationRecord
 from datacron.core.recovery import (
@@ -184,6 +185,19 @@ class FTS5Store(Protocol):
 
     async def list_chunks_for_note(self, note_id: str) -> list[Chunk]:
         """Return all chunks for a note in ordinal order."""
+        ...
+
+    def iter_wikilink_sources(self) -> AsyncIterator[WikilinkSource]:
+        """Stream the identity and outgoing links of every chunk that has any.
+
+        A backlink scan reads those four fields per candidate and keeps at most a
+        page. Whole chunks make it pay for every chunk body in the vault before it
+        can reject the first candidate.
+        """
+        ...
+
+    async def chunks_by_ids(self, chunk_ids: Sequence[str]) -> dict[str, Chunk]:
+        """Return the named chunks whole, keyed by id, in one statement."""
         ...
 
     async def list_chunks_with_wikilinks(self) -> list[Chunk]:

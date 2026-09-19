@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
@@ -595,25 +596,35 @@ async def _find_backlink_sources(
     alias_cache: dict[str, str | None] = {target_alias_lower: target_note_id}
     admission_cache: dict[str, bool] = {}
     seen_chunk_ids: set[str] = set()
-    matched: list[Chunk] = []
+    matched_ids: list[str] = []
 
-    for chunk in await app.store.list_chunks_with_wikilinks():
-        admitted = admission_cache.get(chunk.note_rel_path)
+    # The scan reads four fields per candidate and keeps at most one page. Reading
+    # whole chunks brought every chunk body in the vault into memory as a validated
+    # model before the first candidate was examined, so stopping at the limit saved
+    # nothing. The page is fetched whole afterwards, because the protection pass
+    # compares each returned chunk against the note as it is on disk right now.
+    async for source in app.store.iter_wikilink_sources():
+        admitted = admission_cache.get(source.note_rel_path)
         if admitted is None:
-            admitted = app.scope.allows_note_rel_path(chunk.note_rel_path)
-            admission_cache[chunk.note_rel_path] = admitted
+            admitted = app.scope.allows_note_rel_path(source.note_rel_path)
+            admission_cache[source.note_rel_path] = admitted
         if not admitted:
             continue
-        if chunk.note_id == target_note_id:
+        if source.note_id == target_note_id:
             continue
-        if chunk.chunk_id in seen_chunk_ids:
+        if source.chunk_id in seen_chunk_ids:
             continue
-        if not await _chunk_links_to(app, chunk.wikilinks_out, target_note_id, alias_cache):
+        if not await _chunk_links_to(app, source.wikilinks_out, target_note_id, alias_cache):
             continue
-        seen_chunk_ids.add(chunk.chunk_id)
-        matched.append(chunk)
-        if len(matched) >= limit:
+        seen_chunk_ids.add(source.chunk_id)
+        matched_ids.append(source.chunk_id)
+        if len(matched_ids) >= limit:
             break
+
+    by_id = await app.store.chunks_by_ids(matched_ids)
+    # A chunk can vanish between the scan and this fetch if another request reindexed
+    # its note. Dropping it is right: the protection pass below would refuse it anyway.
+    matched: list[Chunk] = [by_id[chunk_id] for chunk_id in matched_ids if chunk_id in by_id]
     # Protect every source in one pass: the parent note is read once per source note,
     # not once per matching chunk.
     protected = await protect_results(
@@ -656,7 +667,7 @@ def _filter_admitted_results(
 
 async def _chunk_links_to(
     app: DatacronApp,
-    wikilinks: list[str],
+    wikilinks: Sequence[str],
     target_note_id: str,
     alias_cache: dict[str, str | None],
 ) -> bool:
