@@ -41,6 +41,16 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   index against the vault independently of what produced it, and a note edited while the
   rebuild ran is the one case where publishing would publish something already wrong. A test
   pins that independence.
+- `get_follow_up` sizes a page by halving instead of by dropping one record at a time. Each
+  measurement re-serialises the page it is measuring, so dropping one record at a time cost
+  one serialisation of the whole remaining page per record dropped, and nothing bounds how
+  many records a note holds: the note count is capped at eight, the records harvested from
+  them are not. A canonical person or project note that accumulated a few hundred
+  commitments over a couple of years turned a read into seconds, once per page, on the
+  synchronous path. Measured on records of about a kilobyte, sizing one page of 27: 100
+  records 33 ms, 400 records 459 ms, 1000 records 3.0 s, 2000 records 12.5 s, now 1.4, 3.4,
+  6.2 and 12.1 ms. The page is the same one the loop arrived at, which a test pins across
+  budgets that fit a handful of records, the default page, and the whole set.
 - `search_regex` resolves a note once per search instead of once per line that matched in
   it, and applies the glob and the scope admission before resolving at all. `chunks_fts`
   declares `note_id` UNINDEXED, so listing a note's chunks scans the table and builds a model
