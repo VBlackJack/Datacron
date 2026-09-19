@@ -33,6 +33,18 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   is survivable, and a test pins that by requiring the loop to keep ticking through a sweep
   that would otherwise freeze it. Making it cheaper means paging admission alongside the SQL
   page, which changes what `total` counts, so it is not done here.
+- `get_backlinks` reads four fields per candidate instead of whole chunks, and stops when it
+  has a page. It listed every chunk in the vault carrying a wikilink, with its body, and
+  turned each one into a validated model before examining the first candidate, so the scan's
+  own break saved nothing and a call with `limit=10` still paid for the whole vault. The scan
+  now streams identity, note and outgoing links, and the page it keeps is fetched whole in
+  one statement afterwards, because the protection pass compares each returned chunk against
+  the note as it is on disk right now. Measured on 4800 linking chunks: 202 ms and 17.8 MiB
+  of peak allocation, now 2 ms and no measurable allocation when the page fills early. The
+  worst case, a target with no backlinks, reads every candidate and measured between 46 and
+  116 ms across runs against 202 ms. A chunk that disappears between the scan and the fetch
+  is dropped from the page rather than failing the call, which is what the protection pass
+  would do with it anyway.
 - History retention defaults to 1278 days, forty-two months, instead of 30. Retention decides
   when the only stored copy of a previous version of a note is deleted, and a subject can be
   left untouched for months and then resumed, so a window measured in weeks silently discarded

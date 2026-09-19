@@ -42,7 +42,7 @@ from datacron.core.frontmatter import (
     matches_frontmatter_filter,
 )
 from datacron.core.logger import get_logger
-from datacron.core.models import Chunk, ChunkType, IndexStats, Note, SearchResult
+from datacron.core.models import Chunk, ChunkType, IndexStats, Note, SearchResult, WikilinkSource
 from datacron.core.paths import read_ulid_mappings
 from datacron.core.query_expansion import expand_terms, normalize_term_map
 from datacron.core.temporal import TemporalMeta
@@ -493,8 +493,7 @@ WHERE note_id = ?
 ORDER BY rowid;
 """
 
-_LIST_CHUNKS_WITH_WIKILINKS_SQL: Final[str] = """
-SELECT
+_CHUNK_COLUMNS_SQL: Final[str] = """
     chunk_id,
     note_id,
     note_rel_path,
@@ -509,11 +508,49 @@ SELECT
     line_end,
     wikilinks_out_json,
     lang
+"""
+
+_WIKILINK_SOURCE_FILTER_SQL: Final[str] = """
 FROM chunks_fts
 WHERE wikilinks_out_json IS NOT NULL
   AND wikilinks_out_json != '[]'
+"""
+
+_LIST_CHUNKS_WITH_WIKILINKS_SQL: Final[str] = f"""
+SELECT
+{_CHUNK_COLUMNS_SQL}
+{_WIKILINK_SOURCE_FILTER_SQL}
 ORDER BY rowid;
 """
+
+_ITER_WIKILINK_SOURCES_SQL: Final[str] = f"""
+SELECT chunk_id, note_id, note_rel_path, wikilinks_out_json
+{_WIKILINK_SOURCE_FILTER_SQL}
+ORDER BY rowid;
+"""
+"""The four fields a backlink scan reads, and none of the ten it does not.
+
+The scan looks at a chunk's identity, its note and its outgoing links. Selecting
+the whole row instead carried every chunk body through Python and turned each one
+into a validated model, for rows the scan goes on to discard.
+"""
+
+
+def _chunks_by_ids_sql(count: int) -> str:
+    """Fetch, in one statement, the handful of chunks a backlink scan returns.
+
+    Only the number of placeholders varies. The ids themselves are bound, never
+    interpolated, so nothing a caller supplies reaches the statement text.
+    """
+    placeholders = ", ".join(["?"] * count)
+    return f"""
+SELECT
+{_CHUNK_COLUMNS_SQL}
+FROM chunks_fts
+WHERE chunk_id IN ({placeholders})
+ORDER BY rowid;
+"""  # noqa: S608
+
 
 _LIST_INDEXED_NOTES_SQL: Final[str] = """
 SELECT rel_path, note_id, content_hash
@@ -1028,6 +1065,44 @@ class SQLiteFTS5Store:
         async with connection.execute(_LIST_CHUNKS_WITH_WIKILINKS_SQL) as cursor:
             rows = cast("list[sqlite3.Row]", await cursor.fetchall())
         return [_chunk_from_row(row) for row in rows]
+
+    async def iter_wikilink_sources(self) -> AsyncIterator[WikilinkSource]:
+        """Stream the identity and outgoing links of every chunk that has any.
+
+        A backlink scan reads these four fields, decides, and keeps at most a page of
+        chunks. Handing it whole chunks meant every chunk body in the vault crossed
+        into Python and became a validated model before the scan could reject it, and
+        the list was complete before the first one was examined, so stopping early
+        saved nothing. Streaming lets the scan stop, and the rows it never reaches
+        cost nothing at all.
+        """
+        connection = self._require_connection()
+        async with connection.execute(_ITER_WIKILINK_SOURCES_SQL) as cursor:
+            async for row in cursor:
+                yield WikilinkSource(
+                    chunk_id=str(row["chunk_id"]),
+                    note_id=str(row["note_id"]),
+                    note_rel_path=str(row["note_rel_path"]),
+                    wikilinks_out=tuple(_wikilinks_from_json(row["wikilinks_out_json"])),
+                )
+
+    async def chunks_by_ids(self, chunk_ids: Sequence[str]) -> dict[str, Chunk]:
+        """Return the named chunks whole, keyed by id, in one statement.
+
+        The backlink scan needs complete chunks for the page it returns, because the
+        protection pass compares each one against the note as it is on disk right now.
+        It needs them for that page only, which is why they are fetched here rather
+        than built for every candidate the scan looked at.
+        """
+        if not chunk_ids:
+            return {}
+        connection = self._require_connection()
+        async with connection.execute(
+            _chunks_by_ids_sql(len(chunk_ids)), tuple(chunk_ids)
+        ) as cursor:
+            rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+        chunks = (_chunk_from_row(row) for row in rows)
+        return {chunk.chunk_id: chunk for chunk in chunks}
 
     async def get_note_rel_path(self, note_id: str) -> str | None:
         """Return the indexed vault-relative path for ``note_id``, if present."""

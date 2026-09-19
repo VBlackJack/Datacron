@@ -97,6 +97,22 @@ class ChunkType(StrEnum):
     QUOTE = "quote"
 
 
+class WikilinkSource(BaseModel):
+    """What a backlink scan reads from one chunk before deciding to keep it.
+
+    The scan needs an identity, the note the chunk belongs to, and the chunk's
+    outgoing links. Carrying a whole :class:`Chunk` instead made it pay for every
+    chunk body in the vault before it could reject the first candidate.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    chunk_id: str
+    note_id: str
+    note_rel_path: str
+    wikilinks_out: tuple[str, ...]
+
+
 class Chunk(BaseModel):
     """A semantic unit extracted from a Note.
 
