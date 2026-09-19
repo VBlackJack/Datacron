@@ -20,6 +20,15 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- `search_regex` resolves a note once per search instead of once per line that matched in
+  it, and applies the glob and the scope admission before resolving at all. `chunks_fts`
+  declares `note_id` UNINDEXED, so listing a note's chunks scans the table and builds a model
+  for every chunk in it; doing that per matching line made the cost the number of matches
+  times the size of the notes they fell in, rather than the number of distinct notes. A
+  match the caller had already excluded by glob or scope paid that scan too, for a result
+  that was then discarded. Measured on 120 notes of 40 sections, a pattern matching every
+  section, limit 20: 214 ms and 20 chunk-list fetches, now 53 ms and one. The caches live
+  for one search.
 - `get_note` answers an unknown ULID without reading the vault. It does not repair the index
   first, so it falls back to looking at live notes for an identity written since the last
   pass, and that fallback read, decoded, hashed and YAML-parsed every note in the vault, on
