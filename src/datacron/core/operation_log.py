@@ -406,6 +406,21 @@ class OperationJournal:
             raise OperationLogError(f"history blob hash mismatch: {content_hash}")
         return data
 
+    def has_history(self, content_hash: str | None) -> bool:
+        """Report whether the exact prior bytes named by ``content_hash`` are on disk.
+
+        This answers a listing, so it checks presence and does not read or rehash the
+        blob: a history page returns up to ``max_result_count`` records, and verifying
+        each one would read that many whole note versions to render a page of
+        metadata. :meth:`read_history` still verifies the bytes it returns, so a revert
+        of a corrupt blob fails there rather than being silently accepted.
+        """
+        if content_hash is None or not _HASH_PATTERN.fullmatch(content_hash):
+            return False
+        if not self.history_enabled:
+            return False
+        return self._guard_history_target(self._history_dir / content_hash).is_file()
+
     def write_pending(self, record: OperationRecord) -> None:
         record.validate()
         payload = _record_line(record)

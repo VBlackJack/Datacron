@@ -311,6 +311,10 @@ Basculer un vault de `full` vers `redacted` arrête le stockage de nouveaux octe
 intacts ceux déjà sur le disque: le balayage de rétention ne fait rien tant que l'historique
 est désactivé. Supprimer ces versions est un acte délibéré, pas un effet de bord de la
 prochaine écriture.
+`get_note_history` marque chaque opération d'un `restore_available`, qui dit si les octets
+antérieurs nommés par son `before_hash` sont encore sur le disque. `history_stored` ne dit
+que ce qui a été stocké au moment de l'écriture, et proposerait donc seul des points de
+restauration que la rétention a depuis supprimés.
 La rétention vaut 1278 jours par défaut, soit quarante-deux mois, et est configurable
 par `history_retention_days`. Le défaut est long parce que la rétention décide quand le
 seul exemplaire conservé d'une version antérieure est supprimé, et qu'un sujet peut rester

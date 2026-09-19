@@ -828,7 +828,11 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         description=(
             "Filter by request_id to retrieve an ordinary-write receipt. "
             "List committed operation metadata for one note without reading history "
-            "content or modifying the journal."
+            "content or modifying the journal. Each operation carries "
+            "restore_available, saying whether its before_hash is still on disk and "
+            "can therefore be passed to revert_note; history_stored alone only says "
+            "the bytes were stored when the write committed, not that retention has "
+            "kept them."
         ),
         annotations=_READ_ANNOTATIONS,
     )

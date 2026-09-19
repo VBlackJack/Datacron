@@ -299,6 +299,10 @@ hashes and the journal but not prior bytes, so `revert_note` cannot read a histo
 Switching a vault from `full` to `redacted` stops new bytes being stored and leaves the ones
 already on disk alone: the retention sweep does nothing while history is disabled. Removing
 those versions is a deliberate act, not a side effect of the next write.
+`get_note_history` marks each operation with `restore_available`, saying whether the prior
+bytes its `before_hash` names are still on disk. `history_stored` only records what was
+stored when the write committed, so on its own it would offer restore points retention has
+since deleted.
 Retention defaults to 1278 days, forty-two months, and is configurable through
 `history_retention_days`. The default is long because retention decides when the only
 stored copy of a previous version is deleted, and a subject can be left untouched for

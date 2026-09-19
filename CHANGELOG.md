@@ -262,6 +262,14 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- `get_note_history` says whether each operation is still a restore point. It returned
+  `history_stored`, which records what was stored when the write committed and says nothing
+  about now: retention deletes a version once it falls out of the window, so the tool offered
+  reverts that could only fail. Each operation now also carries `restore_available`, the
+  presence of the bytes its `before_hash` names. A listing checks presence rather than reading
+  and rehashing every blob, because a page holds up to `max_result_count` records and
+  verifying each would read that many whole note versions to render metadata; `revert_note`
+  still verifies the bytes it restores.
 - Switching a vault's `history_mode` from `full` to `redacted` no longer destroys the versions
   the `full` period stored. `redacted` means this vault stores no new prior bytes; it never
   meant deleting the ones already on disk. The retention sweep is skipped while history is

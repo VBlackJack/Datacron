@@ -104,9 +104,15 @@ async def _get_note_history_impl(
             if record.parameters.get("request_key_hash") == hash_text(request_id)
         ]
     returned = matching[-bounded_limit:]
+    try:
+        present = await app.vault_writer.present_history_hashes(
+            record.before_hash for record in returned
+        )
+    except Exception:
+        return _internal_error_response("get_note_history", started, note=cleaned_note)
     payload = {
         "note": cleaned_note,
-        "operations": [_operation_payload(record) for record in returned],
+        "operations": [_restore_point_payload(record, present) for record in returned],
         "total": len(matching),
         "returned": len(returned),
         "limit_applied": bounded_limit,
@@ -185,6 +191,24 @@ async def _audit_query_impl(
 
 def _operation_payload(record: OperationRecord) -> dict[str, object]:
     return record.to_dict()
+
+
+def _restore_point_payload(
+    record: OperationRecord,
+    present_hashes: set[str],
+) -> dict[str, object]:
+    """Add to one history record whether it is still a restore point.
+
+    ``history_stored`` says the prior bytes were stored when the write committed,
+    which is not the same as their being there now: retention deletes a version once
+    it falls out of the window, and a vault switched to ``redacted`` stores nothing
+    new. A caller reading ``history_stored: true`` months later would offer a revert
+    that fails, which on a vault resumed after a long pause is the common case rather
+    than the rare one.
+    """
+    payload = record.to_dict()
+    payload["restore_available"] = record.before_hash in present_hashes
+    return payload
 
 
 def _parse_audit_time(value: str | None, *, field: str) -> datetime | None:

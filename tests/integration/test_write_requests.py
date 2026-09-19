@@ -78,6 +78,41 @@ async def test_concurrent_replay_and_receipt_lookup(request_app: DatacronApp) ->
     assert len(await app.vault_writer.list_operations()) == 1
 
 
+async def test_history_says_which_restore_points_still_exist(request_app: DatacronApp) -> None:
+    """A listed operation must not offer a revert whose bytes retention deleted.
+
+    ``history_stored`` records what happened when the write committed. It says
+    nothing about now: retention deletes a version once it falls out of the window.
+    A caller reading ``history_stored: true`` on an old operation would offer a
+    restore point that no longer exists, which on a vault picked up after months
+    away is the ordinary case, not the rare one.
+    """
+    app = request_app
+    await _call(
+        app,
+        "append_journal",
+        {"rel_path": "note.md", "heading": "Log", "entry": "First", "request_id": "req-001"},
+    )
+    await _call(
+        app,
+        "append_journal",
+        {"rel_path": "note.md", "heading": "Log", "entry": "Second", "request_id": "req-002"},
+    )
+
+    history = await _get_note_history_impl(app, note="note.md", limit=100)
+    operations = history["operations"]
+    assert [operation["history_stored"] for operation in operations] == [True, True]
+    assert [operation["restore_available"] for operation in operations] == [True, True]
+
+    purged = operations[0]["before_hash"]
+    (app.vault_root / ".datacron" / "history" / purged).unlink()
+
+    history = await _get_note_history_impl(app, note="note.md", limit=100)
+    operations = history["operations"]
+    assert [operation["history_stored"] for operation in operations] == [True, True]
+    assert [operation["restore_available"] for operation in operations] == [False, True]
+
+
 @pytest.mark.parametrize("fault", ["after_pending_write", "after_note_write", "after_oplog_write"])
 async def test_retry_after_process_exit(tmp_path: Path, fault: str) -> None:
     (tmp_path / "note.md").write_text(

@@ -22,7 +22,7 @@ import re
 import sqlite3
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -386,6 +386,18 @@ class FilesystemVaultWriter:
     async def list_operations(self) -> list[OperationRecord]:
         """Return an immutable snapshot of committed operation records."""
         return await asyncio.to_thread(self._list_operations_sync)
+
+    async def present_history_hashes(self, hashes: Iterable[str | None]) -> set[str]:
+        """Return which of these restore points still have their bytes on disk."""
+        return await asyncio.to_thread(self._present_history_hashes_sync, list(hashes))
+
+    def _present_history_hashes_sync(self, hashes: list[str | None]) -> set[str]:
+        journal = self._operation_journal
+        return {
+            content_hash
+            for content_hash in dict.fromkeys(hashes)
+            if content_hash is not None and journal.has_history(content_hash)
+        }
 
     async def purge_history(self) -> list[str]:
         """Apply the configured content-history retention policy now."""
