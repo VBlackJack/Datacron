@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from contextlib import AbstractAsyncContextManager, nullcontext
 from pathlib import Path
 from typing import Any, cast
 
@@ -44,6 +45,9 @@ _NOTE_ID = "01J00000000000000000000091"
 class _CountingReader:
     def __init__(self) -> None:
         self.list_notes_calls = 0
+
+    def defer_identity_writes(self) -> AbstractAsyncContextManager[None]:
+        return nullcontext()
 
     async def read_note(self, path: Path) -> Note:
         raise AssertionError(f"unexpected read_note call for {path}")
@@ -113,6 +117,9 @@ class _RedirectingReader:
     def __init__(self, delegate: FilesystemVaultReader, target: Path) -> None:
         self._delegate = delegate
         self._target = target
+
+    def defer_identity_writes(self) -> AbstractAsyncContextManager[None]:
+        return self._delegate.defer_identity_writes()
 
     async def read_note(self, path: Path) -> Note:
         del path
