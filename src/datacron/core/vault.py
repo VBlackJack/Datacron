@@ -300,6 +300,23 @@ class JsonIdStore:
             return dict(cache)
 
 
+@dataclass(frozen=True)
+class _AliasRecord:
+    """What one note contributes to the alias index, and nothing more.
+
+    The alias tiers read an identity, a title, a filename stem and a list of
+    aliases. Carrying a whole :class:`Note` instead meant reading, hashing and
+    parsing every note in the vault to build them.
+    """
+
+    note_id: str
+    title: str
+    rel_path: str
+    aliases: list[str]
+    fingerprint: tuple[int, int]
+    """The note file's ``(st_mtime_ns, st_size)`` when this record was read."""
+
+
 @final
 class FilesystemVaultReader:
     """Filesystem-backed implementation of the :class:`VaultReader` protocol.
@@ -339,6 +356,10 @@ class FilesystemVaultReader:
             excluded_files=frozenset(excluded_files or ()),
         )
         self._alias_cache: dict[str, str | None] | None = None
+        # Survives an alias-cache invalidation on purpose: dropping the resolved index
+        # is how a write is noticed, and re-reading the notes that did not move is
+        # what made noticing it cost the whole vault.
+        self._alias_records: dict[str, _AliasRecord] = {}
         self._alias_lock = asyncio.Lock()
 
     @property
@@ -513,29 +534,112 @@ class FilesystemVaultReader:
         await self._id_store.set(rel_path, new_id)
         return new_id
 
+    async def _read_alias_record(self, path: Path, fingerprint: tuple[int, int]) -> _AliasRecord:
+        """Read only the four values the alias tiers are built from.
+
+        The index is rebuilt whenever a write invalidates it, which in the normal
+        loop of writing a note and then asking for its backlinks means once per
+        write. Reading every note in full to get four fields made that rebuild cost
+        the whole vault: the hash, the tag extraction, the timestamps and the note
+        object itself are all discarded immediately.
+
+        Identity, title and aliases are resolved by the same helpers
+        :meth:`read_note` uses, so the two cannot answer differently. What is skipped
+        is only what the tiers never look at.
+        """
+        raw_bytes = await asyncio.to_thread(read_bytes_with_windows_retry, path)
+        raw_text = raw_bytes.decode("utf-8", errors="strict")
+        try:
+            metadata, body = parse(raw_text)
+        except FrontmatterError as exc:
+            _LOGGER.warning(
+                "Invalid YAML frontmatter in %s; reading note with empty metadata: %s",
+                path,
+                exc,
+            )
+            metadata, body = {}, raw_text
+        rel_path = _normalize_rel_path(path, self._vault_root)
+        return _AliasRecord(
+            note_id=await self._resolve_id(metadata, rel_path),
+            title=resolve_note_title(
+                metadata,
+                body,
+                path,
+                h1_pattern=_H1_PATTERN,
+                empty_h1_falls_back=True,
+            ),
+            rel_path=rel_path,
+            aliases=coerce_string_list(metadata.get("aliases"), keep_empty_scalar=True),
+            fingerprint=fingerprint,
+        )
+
+    async def _collect_alias_records(self) -> list[_AliasRecord]:
+        """Return one record per note, re-reading only the notes that moved.
+
+        The resolved index is dropped after every write, so this runs once per write
+        in the loop of writing a note and then asking for its backlinks. Re-reading
+        the whole vault each time made that loop cost the whole vault; a note whose
+        file has not moved cannot have changed the four values a record holds.
+
+        The gate is the note's ``(st_mtime_ns, st_size)``, which is the gate
+        ``reconcile`` already applies to decide whether to re-read a note, so this
+        trusts nothing the index does not trust already. Unlike ``reconcile`` there is
+        no stored hash to fall back on, so an in-place edit that leaves both the
+        nanosecond mtime and the size untouched is not seen here until something else
+        drops the records. Writes through Datacron do not rely on that: they update
+        the mtime.
+        """
+        paths = await asyncio.to_thread(self._collect_markdown_paths, self._vault_root)
+        fingerprints = await asyncio.to_thread(self._fingerprint_notes, paths)
+        reused = self._alias_records
+        records: dict[str, _AliasRecord] = {}
+        for path, fingerprint in fingerprints.items():
+            # ``os.walk`` produced these under the already-resolved vault root, so the
+            # relative path is arithmetic on strings. ``_normalize_rel_path`` resolves
+            # both sides instead, which is two filesystem round trips per note, on the
+            # event loop, for an answer that is known.
+            rel_path = str(PurePosixPath(*path.relative_to(self._vault_root).parts))
+            known = reused.get(rel_path)
+            if known is not None and known.fingerprint == fingerprint:
+                records[rel_path] = known
+                continue
+            try:
+                records[rel_path] = await self._read_alias_record(path, fingerprint)
+            except (OSError, ValueError) as exc:
+                _LOGGER.warning("Alias index: skipping %s: %s", path, exc)
+        self._alias_records = records
+        return list(records.values())
+
+    @staticmethod
+    def _fingerprint_notes(paths: list[Path]) -> dict[Path, tuple[int, int]]:
+        """Stat every note once, dropping the ones that vanished mid-sweep."""
+        fingerprints: dict[Path, tuple[int, int]] = {}
+        for path in paths:
+            try:
+                stat = path.stat()
+            except OSError as exc:
+                _LOGGER.warning("Alias index: skipping %s: %s", path, exc)
+                continue
+            fingerprints[path] = (stat.st_mtime_ns, stat.st_size)
+        return fingerprints
+
     async def _build_alias_index(self) -> dict[str, str | None]:
         async with self._alias_lock:
             if self._alias_cache is not None:
                 return self._alias_cache
 
-            paths = await asyncio.to_thread(self._collect_markdown_paths, self._vault_root)
-            notes: list[Note] = []
-            for path in paths:
-                try:
-                    notes.append(await self.read_note(path))
-                except (OSError, ValueError) as exc:
-                    _LOGGER.warning("Alias index: skipping %s: %s", path, exc)
+            records = await self._collect_alias_records()
 
             # Strict global priority per contracts section 2.6: title -> filename stem
             # -> aliases. A higher tier shadows lower tiers entirely. Within a
             # tier, multiple notes claiming the same key resolve to None
             # (ambiguous within that tier).
             self._alias_cache = build_tiered_alias_index(
-                notes,
-                identity=lambda note: note.id,
-                title=lambda note: (note.title,),
-                stem=lambda note: (Path(note.rel_path).stem,),
-                aliases=lambda note: note.aliases,
+                records,
+                identity=lambda record: record.note_id,
+                title=lambda record: (record.title,),
+                stem=lambda record: (Path(record.rel_path).stem,),
+                aliases=lambda record: record.aliases,
                 normalize=lambda value: value.strip().lower(),
             )
             for key, value in self._alias_cache.items():

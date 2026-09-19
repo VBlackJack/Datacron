@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from datacron.core.frontmatter import build_tiered_alias_index
 from datacron.core.hashing import sha256_bytes
 from datacron.core.vault import FilesystemVaultReader, JsonIdStore, build_configured_reader
 
@@ -415,3 +416,128 @@ class TestIdPersistence:
         store = JsonIdStore(path)
 
         assert await store.get("a.md") == "01HQXR7K9YZ8M2N3PQRSTV4WX5"
+
+
+class TestAliasIndexRebuildCost:
+    """The alias index is dropped after every write, so its rebuild is a hot path."""
+
+    @staticmethod
+    def _write_varied_vault(vault: Path) -> None:
+        """Write notes covering every shape the alias tiers resolve differently."""
+        (vault / "plain.md").write_text(
+            "---\ntitle: Plain Title\naliases:\n  - plain-one\n  - plain-two\n---\n\nBody.\n",
+            encoding="utf-8",
+        )
+        (vault / "from-h1.md").write_text("# Heading Title\n\nBody.\n", encoding="utf-8")
+        (vault / "no-title.md").write_text("Body with no heading.\n", encoding="utf-8")
+        (vault / "empty-h1.md").write_text("#\n\nBody.\n", encoding="utf-8")
+        (vault / "scalar-alias.md").write_text(
+            "---\naliases: single\n---\n\n# Scalar\n\nBody.\n", encoding="utf-8"
+        )
+        (vault / "empty-alias.md").write_text(
+            "---\naliases: []\n---\n\n# Empty\n\nBody.\n", encoding="utf-8"
+        )
+        (vault / "accents.md").write_text(
+            "---\ntitle: Reunion Equipe\naliases:\n  - reunion\n---\n\nBody.\n",
+            encoding="utf-8",
+        )
+        (vault / "clash-a.md").write_text(
+            "---\ntitle: Shared Title\n---\n\nBody.\n", encoding="utf-8"
+        )
+        (vault / "clash-b.md").write_text(
+            "---\ntitle: Shared Title\n---\n\nBody.\n", encoding="utf-8"
+        )
+        (vault / "shadowing.md").write_text(
+            "---\ntitle: plain-one\n---\n\nBody.\n", encoding="utf-8"
+        )
+
+    @staticmethod
+    async def _index_from_full_notes(
+        reader: FilesystemVaultReader, vault: Path
+    ) -> dict[str, str | None]:
+        """Build the alias index the way it was built before records existed."""
+        notes = [await reader.read_note(path) for path in sorted(vault.rglob("*.md"))]
+        return build_tiered_alias_index(
+            notes,
+            identity=lambda note: note.id,
+            title=lambda note: (note.title,),
+            stem=lambda note: (Path(note.rel_path).stem,),
+            aliases=lambda note: note.aliases,
+            normalize=lambda value: value.strip().lower(),
+        )
+
+    async def test_records_resolve_exactly_like_whole_notes(self, tmp_path: Path) -> None:
+        """Reading four fields instead of the whole note must not move one answer.
+
+        The alias index decides which note a wikilink points at, so a build that is
+        cheaper but not identical would silently reroute backlinks. The cases cover
+        every tier and every shape of the two inputs that are not stored verbatim:
+        a title resolved from frontmatter, from an H1, from an empty H1 and from the
+        filename, and aliases given as a list, as a scalar and as an empty list.
+        """
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        self._write_varied_vault(vault)
+        reader = FilesystemVaultReader(vault)
+
+        from_records = await reader._build_alias_index()
+        from_notes = await self._index_from_full_notes(reader, vault)
+
+        assert from_records == from_notes
+        # Guard the guard: comparing two empty mappings would also pass.
+        assert len(from_records) > 10
+        assert from_records["plain-two"] is not None
+        assert from_records["shared title"] is None
+
+    async def test_a_rebuild_rereads_only_the_notes_whose_file_moved(self, tmp_path: Path) -> None:
+        """Dropping the resolved index must not re-read notes that cannot have changed.
+
+        The index is dropped after every write, so this rebuild runs once per write in
+        the loop of writing a note and then asking for its backlinks. Re-reading every
+        note to rebuild it made that loop cost the whole vault.
+        """
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        self._write_varied_vault(vault)
+        reader = FilesystemVaultReader(vault)
+        await reader.resolve_alias("plain-one")
+
+        read_paths: list[Path] = []
+        original = FilesystemVaultReader._read_alias_record
+
+        async def _recording(
+            self: FilesystemVaultReader, path: Path, fingerprint: tuple[int, int]
+        ) -> object:
+            read_paths.append(path)
+            return await original(self, path, fingerprint)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(FilesystemVaultReader, "_read_alias_record", _recording)
+            await reader.invalidate_alias_cache()
+            assert await reader.resolve_alias("plain-one") is not None
+            assert read_paths == []
+
+            (vault / "plain.md").write_text(
+                "---\ntitle: Plain Title\naliases:\n  - renamed-alias\n---\n\nBody.\n",
+                encoding="utf-8",
+            )
+            await reader.invalidate_alias_cache()
+            assert await reader.resolve_alias("renamed-alias") is not None
+
+        assert [path.name for path in read_paths] == ["plain.md"]
+        # "plain-one" survives as the title of another note, which is the tier order
+        # working; "plain-two" existed only as an alias of the note just rewritten.
+        assert await reader.resolve_alias("plain-two") is None
+
+    async def test_a_rebuild_forgets_a_note_that_was_deleted(self, tmp_path: Path) -> None:
+        """A remembered record must not outlive the file it was read from."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        self._write_varied_vault(vault)
+        reader = FilesystemVaultReader(vault)
+        assert await reader.resolve_alias("plain-two") is not None
+
+        (vault / "plain.md").unlink()
+        await reader.invalidate_alias_cache()
+
+        assert await reader.resolve_alias("plain-two") is None
