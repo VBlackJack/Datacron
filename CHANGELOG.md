@@ -347,6 +347,50 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- `datacron mcp install` keeps the settings an existing entry already carries. It rewrote the
+  whole env block, so re-running it after an upgrade dropped `DATACRON_WRITE_PATHS`,
+  `DATACRON_READ_ONLY` and `DATACRON_DURABILITY`: a configured writable vault became a
+  read-only one, and the next write was refused with nothing connecting the two. Anything the
+  call supplies still wins; only the keys it does not mention survive.
+- Client configs and instruction files are written the way Datacron writes its own: durably,
+  and with a copy of what was there. These are files the product does not own. The Codex
+  `config.toml` came back with every comment gone, because the TOML and JSON writers emit data
+  rather than documents, and there was nothing to restore it from; none of these writes reached
+  an fsync or a directory flush either. Each replacement now leaves a `.datacron-backup` beside
+  the file.
+- An instruction file that is a symlink or a junction is refused instead of replaced. Writing
+  through it put a regular file in the link's place: the user's dotfiles repository still held
+  the old file with nothing pointing at it, and what Datacron wrote was the only copy. The
+  refusal names the link's target.
+- `datacron setup --client none` no longer reports write paths, read-only and durability as
+  configured. Those three reach the server through a client's env block, so with no client
+  written they were chosen and discarded; the operator left believing a writable vault was set
+  up. They are marked as requested but not applied, with the environment variables to set.
+- A Cursor project rule written into the home directory is left alone by the next user-scope
+  install. `--project` defaults to the working directory and nothing requires it to be a
+  project, so running the install from home writes a project rule at the exact path a
+  user-scope rule uses; stripping it left an orphan frontmatter file that is non-blank, so it
+  was not deleted, and Cursor applied an empty rule with `alwaysApply: true`. The scope
+  resolution also warns when the project directory resolves to the home directory.
+- The Windsurf budget refusal says whose characters they are. The protocol block is within 66
+  characters of that client's entire 6000-character global-rules budget, so the install fails
+  for anyone with existing rules, and a bare limit message sent them looking through their own
+  text to cut. A test states the invariant with a named 1500-character reserve and fails
+  expectedly until a shorter Windsurf variant exists, which is a decision about what the
+  protocol says.
+- The Inno Setup compiler is found when it is not in the conventional location.
+  `PROGRAMFILES(X86)` is set on every 64-bit Windows, so returning the conventional path
+  whenever that variable exists made the PATH lookup unreachable: a non-default Inno Setup
+  install failed with a path the user never chose.
+- Four defects in the Windows installer script, which cannot be compiled or exercised by this
+  suite and are covered by static guards on its source: `/RESETCONFIG` seeds the wizard page
+  instead of overriding the "Keep my current configuration" the operator then chooses; the
+  vault path is normalized once so a trailing backslash cannot escape the closing quote of
+  every command line built from it, and a path carrying a double quote is refused; the Start
+  menu shortcuts quote the executable and the vault path unconditionally, with `/s`, so an
+  ampersand in a space-free path can no longer inject a second command; and a failed
+  unregistration of a superseded vault is reported as the warning its own message already
+  described, rather than failing an install that did everything it had to do.
 - Six documentation pages carried a `verified:` date older than their own last edit, and the
   guard hard-coded those dates so it pinned the staleness rather than catching it. Every
   checkable assertion on all six was re-checked against the code, which found ten more wrong

@@ -73,7 +73,8 @@ english.WritePageDescription=Choose whether your AI assistants can create notes.
 english.WritePageSubCaption=By default, your AI assistants (Claude, Cursor...) can READ your notes but never change them. Check the first box to also let them create and update notes - only inside three dedicated subfolders (_memory, _drafts, _journal). Everything else stays untouched. If unsure, leave unchecked: you can enable this later by running Datacron Setup again.
 english.EnableWriteTools=Let my AI assistants write notes (in 3 dedicated subfolders only)
 english.MachineWideWrite=Remember this permission for AI assistants installed later
-english.VaultRequiredSilent=/VAULT=<path> is required for a silent Datacron installation.
+english.VaultRequiredSilent=/VAULT=<path> is required for a silent Datacron installation.
+english.VaultQuoteRejected=The vault path must not contain a double quote character; such a path cannot be passed safely to a command line.
 english.SetupFailed=Datacron was installed, but automatic setup failed. Correct the problem, then run Datacron Setup from the Start menu. Setup will return a failure exit code.
 english.PathFailed=Datacron could not add its application folder to your user PATH.
 english.DirectoryFailed=Datacron could not create the selected vault folder:
@@ -96,7 +97,8 @@ french.WritePageDescription=Choisissez si vos assistants IA peuvent creer des no
 french.WritePageSubCaption=Par defaut, vos assistants IA (Claude, Cursor...) peuvent LIRE vos notes mais jamais les modifier. Cochez la premiere case pour leur permettre aussi de creer et mettre a jour des notes - uniquement dans trois sous-dossiers dedies (_memory, _drafts, _journal). Tout le reste de vos notes reste intouchable. Dans le doute, laissez decoche : vous pourrez l'activer plus tard en relancant Datacron Setup.
 french.EnableWriteTools=Autoriser mes assistants IA a ecrire des notes (dans 3 sous-dossiers dedies uniquement)
 french.MachineWideWrite=Retenir cette autorisation pour les assistants IA installes plus tard
-french.VaultRequiredSilent=/VAULT=<chemin> est obligatoire pour une installation silencieuse de Datacron.
+french.VaultRequiredSilent=/VAULT=<chemin> est obligatoire pour une installation silencieuse de Datacron.
+french.VaultQuoteRejected=Le chemin du vault ne doit pas contenir de guillemet double ; un tel chemin ne peut pas etre transmis sans risque a une ligne de commande.
 french.SetupFailed=Datacron a ete installe, mais la configuration automatique a echoue. Corrigez le probleme, puis lancez Datacron Setup depuis le menu Demarrer. Le setup retournera un code d'echec.
 french.PathFailed=Datacron n'a pas pu ajouter son dossier d'application au PATH utilisateur.
 french.DirectoryFailed=Datacron n'a pas pu creer le dossier de vault selectionne :
@@ -128,6 +130,8 @@ var
   VaultPath: String;
   ExistingConfigDetected: Boolean;
   SetupFailed: Boolean;
+  UnregisterWarning: Boolean;
+  ResetSwitchDefault: Integer;
 
 function CommandLineSwitchPresent(const Name: String): Boolean;
 var
@@ -167,10 +171,13 @@ end;
 
 function ResetConfigurationRequested: Boolean;
 begin
-  if CommandLineSwitchPresent('RESETCONFIG') then
-    Result := True
-  else if WizardSilent then
-    Result := False
+  { /RESETCONFIG seeds the wizard page; it does not override what the operator
+    then chooses on it. Answering it first and ignoring the page destroyed a
+    custom VAULT.yaml for anyone who passed the switch out of habit and then
+    picked "Keep my current configuration", which is the one choice the page
+    exists to offer. In silent mode there is no page, so the switch decides. }
+  if WizardSilent then
+    Result := CommandLineSwitchPresent('RESETCONFIG')
   else
     Result := ExistingConfigDetected and (ReinstallPage.SelectedValueIndex = 1);
 end;
@@ -206,9 +213,14 @@ function ShortcutParameters(const Subcommand: String): String;
 var
   Command: String;
 begin
-  Command := AddQuotes(ExpandConstant('{app}\datacron.exe')) +
-    ' ' + Subcommand + ' --vault ' + AddQuotes(EffectiveVaultPath);
-  Result := '/k "' + Command + '"';
+  { Quote unconditionally. AddQuotes only quotes a path containing a space, so a
+    space-free vault path carrying an ampersand reached cmd unquoted: cmd splits
+    on the ampersand and runs whatever follows it as a second command, from a
+    Start menu shortcut the installer wrote. /s tells cmd to strip exactly the
+    outer pair of quotes, which is what makes the inner quoting reliable. }
+  Command := '"' + ExpandConstant('{app}\datacron.exe') + '"' +
+    ' ' + Subcommand + ' --vault "' + EffectiveVaultPath + '"';
+  Result := '/s /k "' + Command + '"';
 end;
 
 function StatusShortcutParameters(Param: String): String;
@@ -232,6 +244,12 @@ procedure InitializeWizard;
 var
   InitialPath: String;
 begin
+  { The switch chooses which option the page opens on; the operator still decides. }
+  if CommandLineSwitchPresent('RESETCONFIG') then
+    ResetSwitchDefault := 1
+  else
+    ResetSwitchDefault := 0;
+  UnregisterWarning := False;
   PreviousVaultPath := '';
   RegQueryStringValue(
     HKCU,
@@ -312,12 +330,12 @@ begin
 
   CandidateVault := Trim(VaultPage.Values[0]);
   if CompareText(CandidateVault, LastDetectedVaultPath) <> 0 then
-    ReinstallPage.SelectedValueIndex := 0;
+    ReinstallPage.SelectedValueIndex := ResetSwitchDefault;
   ExistingConfigDetected := (CandidateVault <> '') and FileExists(
     AddBackslash(CandidateVault) + '.datacron\VAULT.yaml'
   );
   if not ExistingConfigDetected then
-    ReinstallPage.SelectedValueIndex := 0;
+    ReinstallPage.SelectedValueIndex := ResetSwitchDefault;
   LastDetectedVaultPath := CandidateVault;
 end;
 
@@ -330,6 +348,17 @@ begin
     Result := not ExistingConfigDetected
   else
     Result := False;
+end;
+
+procedure MarkSetupWarning(const MessageText: String);
+begin
+  { A step that failed without leaving the product unconfigured. It is reported
+    on its own, because the SetupFailed suffix tells the operator the install did
+    not work and exit 20 tells their deployment tool the same, when in fact
+    everything the install had to do was done. }
+  UnregisterWarning := True;
+  Log('Datacron post-install warning: ' + MessageText);
+  SuppressibleMsgBox(MessageText, mbInformation, MB_OK, IDOK);
 end;
 
 procedure MarkSetupFailure(const MessageText: String);
@@ -347,7 +376,16 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
-  VaultPath := SelectedVaultPath;
+  { Normalize once, here, so every later use agrees: a path ending in a backslash
+    would otherwise escape the closing quote of every Exec() and every shortcut
+    command line built from it. A path carrying its own double quote cannot be
+    quoted safely at all and is refused. }
+  VaultPath := NormalizePathEntry(SelectedVaultPath);
+  if Pos('"', VaultPath) > 0 then
+  begin
+    Result := CustomMessage('VaultQuoteRejected');
+    Exit;
+  end;
   if VaultPath = '' then
   begin
     if WizardSilent then
@@ -427,7 +465,14 @@ begin
     NewPath := CurrentPath + ';' + AppPath;
   Result := RegWriteExpandStringValue(HKCU, 'Environment', 'Path', NewPath);
   if Result then
+  begin
+    { Record that this install is the one that added the entry. Uninstall used to
+      remove the directory whenever it appeared in the user PATH, including when
+      the user had put it there themselves, or when a second install had added
+      it: removing one product took a line out of someone else's environment. }
+    RegWriteStringValue(HKCU, InstallerStateKey, 'PathEntryAdded', AppPath);
     Log('Added Datacron application directory to the user PATH.');
+  end;
 end;
 
 function PathWithoutEntry(
@@ -477,8 +522,23 @@ procedure RemoveAppFromUserPath;
 var
   CurrentPath: String;
   NewPath: String;
+  AddedPath: String;
   Removed: Boolean;
 begin
+  { Only remove what this installer added. Without the receipt, uninstalling
+    deleted a PATH entry the user had written by hand. }
+  if not RegQueryStringValue(HKCU, InstallerStateKey, 'PathEntryAdded', AddedPath) then
+  begin
+    Log('Leaving the user PATH alone: this installer did not add the entry.');
+    Exit;
+  end;
+  if CompareText(
+    NormalizePathEntry(AddedPath), NormalizePathEntry(ExpandConstant('{app}'))
+  ) <> 0 then
+  begin
+    Log('Leaving the user PATH alone: the recorded entry is a different directory.');
+    Exit;
+  end;
   if not RegQueryStringValue(HKCU, 'Environment', 'Path', CurrentPath) then
     Exit;
   NewPath := PathWithoutEntry(CurrentPath, ExpandConstant('{app}'), Removed);
@@ -488,6 +548,7 @@ begin
     RegDeleteValue(HKCU, 'Environment', 'Path')
   else
     RegWriteExpandStringValue(HKCU, 'Environment', 'Path', NewPath);
+  RegDeleteValue(HKCU, InstallerStateKey, 'PathEntryAdded');
   Log('Removed Datacron application directory from the user PATH.');
 end;
 
@@ -522,14 +583,14 @@ begin
       ewWaitUntilTerminated,
       ResultCode
     ) then
-      MarkSetupFailure(CustomMessage('UnregisterFailed'))
+      MarkSetupWarning(CustomMessage('UnregisterFailed'))
     else if ResultCode <> 0 then
     begin
       Log(
         'Datacron old-vault unregistration returned exit code ' +
         IntToStr(ResultCode) + '.'
       );
-      MarkSetupFailure(CustomMessage('UnregisterFailed'));
+      MarkSetupWarning(CustomMessage('UnregisterFailed'));
     end;
   end;
 

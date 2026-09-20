@@ -215,10 +215,19 @@ def install_claude_desktop_config(
             "refusing to overwrite."
         )
 
-    env = {
-        "DATACRON_VAULT_ROOT": str(resolved_vault),
-        "DATACRON_READ_PATHS": str(resolved_vault),
-    }
+    # Carry forward the DATACRON_* settings already in the entry. Rewriting the
+    # env wholesale silently dropped DATACRON_WRITE_PATHS, DATACRON_READ_ONLY and
+    # DATACRON_DURABILITY from an existing install, so re-running `mcp install`
+    # after an upgrade turned a configured writable vault back into a read-only
+    # one, with the next write refused and nothing saying why. Anything this call
+    # supplies still wins; only the keys it does not mention are preserved.
+    env = _preserved_datacron_env(servers.get(DATACRON_SERVER_KEY))
+    env.update(
+        {
+            "DATACRON_VAULT_ROOT": str(resolved_vault),
+            "DATACRON_READ_PATHS": str(resolved_vault),
+        }
+    )
     if extra_env:
         env.update(extra_env)
 
@@ -236,6 +245,20 @@ def install_claude_desktop_config(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _preserved_datacron_env(existing_entry: object) -> dict[str, str]:
+    """Return the DATACRON_* environment an existing entry already declares."""
+    if not isinstance(existing_entry, dict):
+        return {}
+    existing_env = existing_entry.get("env")
+    if not isinstance(existing_env, dict):
+        return {}
+    return {
+        key: value
+        for key, value in existing_env.items()
+        if isinstance(key, str) and isinstance(value, str) and key.startswith("DATACRON_")
+    }
 
 
 def _load_existing_config(path: Path) -> dict[str, Any]:
