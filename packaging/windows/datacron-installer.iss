@@ -73,7 +73,7 @@ english.WritePageDescription=Choose whether your AI assistants can create notes.
 english.WritePageSubCaption=By default, your AI assistants (Claude, Cursor...) can READ your notes but never change them. Check the first box to also let them create and update notes - only inside three dedicated subfolders (_memory, _drafts, _journal). Everything else stays untouched. If unsure, leave unchecked: you can enable this later by running Datacron Setup again.
 english.EnableWriteTools=Let my AI assistants write notes (in 3 dedicated subfolders only)
 english.MachineWideWrite=Remember this permission for AI assistants installed later
-english.VaultRequiredSilent=/VAULT=<path> is required for a silent Datacron installation.
+english.VaultRequiredSilent=/VAULT=<path> is required for a silent Datacron installation.
 english.VaultQuoteRejected=The vault path must not contain a double quote character; such a path cannot be passed safely to a command line.
 english.SetupFailed=Datacron was installed, but automatic setup failed. Correct the problem, then run Datacron Setup from the Start menu. Setup will return a failure exit code.
 english.PathFailed=Datacron could not add its application folder to your user PATH.
@@ -97,7 +97,7 @@ french.WritePageDescription=Choisissez si vos assistants IA peuvent creer des no
 french.WritePageSubCaption=Par defaut, vos assistants IA (Claude, Cursor...) peuvent LIRE vos notes mais jamais les modifier. Cochez la premiere case pour leur permettre aussi de creer et mettre a jour des notes - uniquement dans trois sous-dossiers dedies (_memory, _drafts, _journal). Tout le reste de vos notes reste intouchable. Dans le doute, laissez decoche : vous pourrez l'activer plus tard en relancant Datacron Setup.
 french.EnableWriteTools=Autoriser mes assistants IA a ecrire des notes (dans 3 sous-dossiers dedies uniquement)
 french.MachineWideWrite=Retenir cette autorisation pour les assistants IA installes plus tard
-french.VaultRequiredSilent=/VAULT=<chemin> est obligatoire pour une installation silencieuse de Datacron.
+french.VaultRequiredSilent=/VAULT=<chemin> est obligatoire pour une installation silencieuse de Datacron.
 french.VaultQuoteRejected=Le chemin du vault ne doit pas contenir de guillemet double ; un tel chemin ne peut pas etre transmis sans risque a une ligne de commande.
 french.SetupFailed=Datacron a ete installe, mais la configuration automatique a echoue. Corrigez le probleme, puis lancez Datacron Setup depuis le menu Demarrer. Le setup retournera un code d'echec.
 french.PathFailed=Datacron n'a pas pu ajouter son dossier d'application au PATH utilisateur.
@@ -373,6 +373,20 @@ begin
   );
 end;
 
+function NormalizePathEntry(const Value: String): String;
+begin
+  Result := Trim(Value);
+  if (Length(Result) >= 2) and (Result[1] = '"') and
+     (Result[Length(Result)] = '"') then
+  begin
+    Delete(Result, Length(Result), 1);
+    Delete(Result, 1, 1);
+  end;
+  StringChangeEx(Result, '/', '\', True);
+  while (Length(Result) > 3) and (Result[Length(Result)] = '\') do
+    Delete(Result, Length(Result), 1);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
@@ -396,20 +410,6 @@ begin
 
   if not DirExists(VaultPath) and not ForceDirectories(VaultPath) then
     Result := CustomMessage('DirectoryFailed') + #13#10 + VaultPath;
-end;
-
-function NormalizePathEntry(const Value: String): String;
-begin
-  Result := Trim(Value);
-  if (Length(Result) >= 2) and (Result[1] = '"') and
-     (Result[Length(Result)] = '"') then
-  begin
-    Delete(Result, Length(Result), 1);
-    Delete(Result, 1, 1);
-  end;
-  StringChangeEx(Result, '/', '\', True);
-  while (Length(Result) > 3) and (Result[Length(Result)] = '\') do
-    Delete(Result, Length(Result), 1);
 end;
 
 function UserPathContains(const UserPath, Entry: String): Boolean;

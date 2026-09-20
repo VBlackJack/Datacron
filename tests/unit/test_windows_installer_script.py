@@ -34,8 +34,55 @@ _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 _INSTALLER: Final[Path] = _REPO_ROOT / "packaging" / "windows" / "datacron-installer.iss"
 
 
+_ROUTINE: Final[re.Pattern[str]] = re.compile(r"^(?:function|procedure)\s+([A-Za-z_]\w*)", re.M)
+_BRACE_COMMENT: Final[re.Pattern[str]] = re.compile(r"\{[^}]*\}", re.S)
+_LINE_COMMENT: Final[re.Pattern[str]] = re.compile(r"//[^\n]*")
+_STRING_LITERAL: Final[re.Pattern[str]] = re.compile(r"'(?:[^']|'')*'")
+
+
 def _source() -> str:
     return _INSTALLER.read_text(encoding="utf-8")
+
+
+def _code_section() -> str:
+    """Return the Pascal Script with comments and string literals blanked out.
+
+    A routine named inside a comment or a message string is not a call, and
+    keeping them would make the declaration-order check below report a routine
+    that only its own explanation mentions.
+    """
+    body = _source()
+    code = body[body.index("[Code]") :]
+    for pattern in (_BRACE_COMMENT, _LINE_COMMENT, _STRING_LITERAL):
+        code = pattern.sub(lambda match: " " * len(match.group(0)), code)
+    return code
+
+
+def test_no_routine_is_called_before_it_is_declared() -> None:
+    """Inno Setup's Pascal Script has no implicit forward declaration.
+
+    Moving the vault-path normalization into ``PrepareToInstall`` left it calling
+    ``NormalizePathEntry`` twenty-five lines before that function was declared.
+    The compiler answers ``Unknown identifier`` and aborts, so the installer
+    could not be built at all - and every guard in this file passed, because the
+    text they each look for was exactly where they looked for it. Compiling needs
+    Inno Setup and a built payload; the declaration order does not.
+    """
+    code = _code_section()
+    declarations = [(match.group(1), match.start()) for match in _ROUTINE.finditer(code)]
+    assert len(declarations) > 20, "the routine scan found almost nothing, so it is broken"
+
+    offences: list[str] = []
+    for index, (name, start) in enumerate(declarations):
+        end = declarations[index + 1][1] if index + 1 < len(declarations) else len(code)
+        body = code[start:end]
+        for other, other_start in declarations:
+            if other == name or other_start <= start:
+                continue
+            if re.search(rf"(?<![A-Za-z0-9_.]){other}(?![A-Za-z0-9_])", body):
+                offences.append(f"{name} calls {other}, declared later")
+
+    assert not offences, "; ".join(offences)
 
 
 def test_shortcut_command_lines_quote_unconditionally() -> None:
