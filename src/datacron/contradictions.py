@@ -249,7 +249,7 @@ async def build_scan_report(
 ) -> tuple[dict[str, Any], list[Candidate]]:
     """Scan the live index within configured bounds and return stable candidates."""
     proposal_date = today or datetime.now(tz=UTC).date()
-    candidates, examined_pairs, section_count = await _scan_candidate_models(app)
+    candidates, examined_pairs, section_count, vault_sections = await _scan_candidate_models(app)
     payload_candidates = [
         _candidate_payload(
             app,
@@ -266,7 +266,12 @@ async def build_scan_report(
         "candidate_count": len(payload_candidates),
         "examined_pairs": examined_pairs,
         "section_count": section_count,
+        # An audit that stopped early must not read as a clean one. section_count
+        # is what was looked at; vault_section_count is what exists.
+        "vault_section_count": vault_sections,
+        "sections_truncated": section_count < vault_sections,
         "limits": {
+            "max_sections": app.settings.contradiction_max_sections,
             "max_pairs": app.settings.contradiction_max_pairs,
             "max_candidates": app.settings.contradiction_max_candidates,
             "max_per_note_pair": app.settings.contradiction_max_per_note_pair,
@@ -284,7 +289,7 @@ async def confirm_proposal(
 ) -> dict[str, Any]:
     """Recompute and confirm one proposal without mutating server or vault state."""
     proposal_date = _proposal_date_from_token(proposal_token)
-    candidates, _examined_pairs, _section_count = await _scan_candidate_models(app)
+    candidates, _examined_pairs, _section_count, _vault_sections = await _scan_candidate_models(app)
     proposal = _find_proposal(
         candidates,
         proposal_token=proposal_token,
@@ -393,8 +398,10 @@ def build_proposal(
 
 async def _scan_candidate_models(
     app: DatacronApp,
-) -> tuple[list[Candidate], int, int]:
-    sections = await _collect_sections(app, limit=app.settings.contradiction_max_pairs)
+) -> tuple[list[Candidate], int, int, int]:
+    sections, vault_sections = await _collect_sections(
+        app, limit=app.settings.contradiction_max_sections
+    )
     section_by_key = {(item.note_id, item.header_path): item for item in sections}
     seen_pairs: set[tuple[tuple[str, str], tuple[str, str]]] = set()
     raw_candidates: list[Candidate] = []
@@ -446,11 +453,13 @@ async def _scan_candidate_models(
         await _resolve_addressability(app, candidate, indexed_notes, note_cache)
         for candidate in limited
     ]
-    return resolved, len(seen_pairs), len(sections)
+    return resolved, len(seen_pairs), len(sections), vault_sections
 
 
-async def _collect_sections(app: DatacronApp, *, limit: int) -> list[SectionAssertion]:
+async def _collect_sections(app: DatacronApp, *, limit: int) -> tuple[list[SectionAssertion], int]:
+    """Collect up to ``limit`` sections, and report how many the vault holds."""
     builders: dict[tuple[str, str], _SectionBuilder] = {}
+    seen_keys: set[tuple[str, str]] = set()
     admission_cache: dict[str, bool] = {}
     async for chunk in app.store.iter_all_chunks():
         admitted = admission_cache.get(chunk.note_rel_path)
@@ -462,8 +471,15 @@ async def _collect_sections(app: DatacronApp, *, limit: int) -> list[SectionAsse
         if chunk.chunk_type in {ChunkType.FRONTMATTER, ChunkType.HEADING, ChunkType.CODE}:
             continue
         key = (chunk.note_id, chunk.header_path)
+        seen_keys.add(key)
         if key not in builders and len(builders) >= limit:
-            break
+            # Past the budget the scan keeps counting but stops collecting. It used
+            # to stop the whole iteration, which meant the payload could not tell
+            # "this vault has 256 sections" from "we looked at 256 of them", and an
+            # operator read candidate_count: 0 as a consistent vault. Counting to
+            # the end costs one streamed pass over chunks the index already holds;
+            # examining a pair costs a search, which is what the budget is for.
+            continue
         builders.setdefault(key, _SectionBuilder(chunks=[])).chunks.append(chunk)
 
     sections: list[SectionAssertion] = []
@@ -487,7 +503,7 @@ async def _collect_sections(app: DatacronApp, *, limit: int) -> list[SectionAsse
                 content=content,
             )
         )
-    return sorted(sections, key=lambda item: item.stable_key)
+    return sorted(sections, key=lambda item: item.stable_key), len(seen_keys)
 
 
 def _classify_pair(left: SectionAssertion, right: SectionAssertion) -> Candidate | None:
@@ -979,9 +995,22 @@ def _dates(value: str) -> list[date]:
 
 
 def _block_dates(value: str) -> list[date]:
-    return [
-        date.fromisoformat(match.group("date")) for match in _UPDATE_BLOCK_PATTERN.finditer(value)
-    ]
+    """Read the dates of hand-written update blocks, skipping the impossible ones.
+
+    The pattern matches the shape of a date, not a date: ``2026-02-30`` gets
+    through it and raises on parse. These blocks are typed by hand, in French, so
+    an out-of-range day is an ordinary typo, and one of them anywhere in the vault
+    took `contradiction_scan` down for the whole vault, scan and confirm alike,
+    leaving "day is out of range for month" as the only clue to which note. The
+    sibling helper above already knew this; this one did not.
+    """
+    parsed: list[date] = []
+    for match in _UPDATE_BLOCK_PATTERN.finditer(value):
+        try:
+            parsed.append(date.fromisoformat(match.group("date")))
+        except ValueError:
+            continue
+    return parsed
 
 
 def _without_update_blocks(value: str) -> str:

@@ -156,12 +156,23 @@ async def _elicit_first_candidate(
     proposal_date = today or datetime.now(tz=UTC).date()
     classification = CandidateClass(result.data.classification)
     scope = MutationScope(result.data.scope)
-    proposal = build_proposal(
-        candidate,
-        classification=classification,
-        scope=scope,
-        today=proposal_date,
-    )
+    try:
+        proposal = build_proposal(
+            candidate,
+            classification=classification,
+            scope=scope,
+            today=proposal_date,
+        )
+    except ValueError as exc:
+        # The form presents classification and scope as six free choices and four
+        # of them build. Its own default is the class that cannot be widened to a
+        # whole note, so picking the safe class and then the wider scope lands on a
+        # refusal the form itself offered. That refusal used to unwind past the
+        # scan and replace the whole response with an error, throwing away every
+        # candidate and every proposal token already computed, and the scan that
+        # produced them re-walks every chunk and issues one search per section.
+        # The scan survives; only the proposal is refused.
+        return {"elicitation_action": f"rejected: {exc}"}
     return await confirm_proposal(app, proposal.token)
 
 

@@ -334,6 +334,8 @@ class ContradictionScanOutput(TypedDict, total=False):
     candidate_count: int | None
     examined_pairs: int | None
     section_count: int | None
+    vault_section_count: int | None
+    sections_truncated: bool | None
     limits: ContradictionLimitsOutput | None
     deterministic_order: str | None
     index_repair: ReconcileStatsOutput | None

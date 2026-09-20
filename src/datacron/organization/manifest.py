@@ -107,6 +107,17 @@ ORGANIZATION_MANIFEST_SCHEMA: Final[str] = "organization-apply-v1"
 MAX_MANIFEST_BYTES: Final[int] = 1024 * 1024
 MAX_OPERATION_COUNT: Final[int] = 512
 MAX_PAYLOAD_BYTES: Final[int] = 2 * 1024 * 1024
+MAX_INVENTORY_NOTE_BYTES: Final[int] = 64 * 1024 * 1024
+"""Ceiling for a live note the identity inventory reads but no operation touches.
+
+``MAX_PAYLOAD_BYTES`` bounds what a bundle may carry, and it was also applied to
+every admitted note in the vault. One 2.5 MB journal or pasted log - entirely
+legal for ``datacron reorganize``, which reads notes with no limit at all - then
+failed every validate and every apply, including a bundle that only creates a
+note in an unrelated folder, and the error named an identity inventory rather
+than a size rule. This bound exists to stop a pathological file, not to govern
+what a vault may hold.
+"""
 MAX_TOTAL_PAYLOAD_BYTES: Final[int] = 16 * 1024 * 1024
 
 _MANIFEST_SUFFIX: Final[str] = ".json"
@@ -1384,11 +1395,22 @@ def _read_projected_identity(
     try:
         raw_bytes = _read_bounded_bytes(
             path,
-            limit=MAX_PAYLOAD_BYTES,
+            limit=MAX_INVENTORY_NOTE_BYTES,
             label=f"admitted note {rel_path}",
         )
         text = raw_bytes.decode("utf-8", errors="strict")
         metadata, body = parse_organization_note_strict(text)
+    except OrganizationManifestError as exc:
+        if exc.code != "bundle_limit_exceeded":
+            raise
+        # Say which note and which rule. Folded into identity_inventory_invalid,
+        # a size refusal read as a corrupt inventory and sent the operator looking
+        # for the wrong thing.
+        raise OrganizationManifestError(
+            "admitted_note_too_large",
+            f"Admitted note {rel_path!r} exceeds the identity-inventory size limit "
+            f"of {MAX_INVENTORY_NOTE_BYTES} bytes: {exc}",
+        ) from exc
     except (OSError, UnicodeDecodeError, FrontmatterError, ValueError) as exc:
         raise OrganizationManifestError(
             "identity_inventory_invalid",
