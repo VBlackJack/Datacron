@@ -52,6 +52,7 @@ _POWERSHELL: Final[str] = str(
     / "v1.0"
     / "powershell.exe"
 )
+_WINDOWS_ONLY: Final[str] = "Installer validation requires Windows"
 _MANUAL_STEP: Final[str] = (
     "/RESETCONFIG followed by choosing Keep my current configuration on the reinstall "
     "page: a wizard interaction, not covered by this script"
@@ -89,24 +90,38 @@ def digest(path: Path) -> str:
 
 
 def _registry_value(key: str, name: str) -> str | None:
-    """Return one HKCU string value, or None when the key or value is absent."""
-    import winreg  # noqa: PLC0415
+    """Return one HKCU string value, or None when the key or value is absent.
 
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as handle:
-            value, _kind = winreg.QueryValueEx(handle, name)
-    except FileNotFoundError:
-        return None
-    return str(value)
+    The platform check is what lets this file be type-checked on Linux, where
+    ``winreg`` does not exist: the three matrices that run there check every
+    line the guard leaves reachable.
+    """
+    if sys.platform == "win32":
+        import winreg  # noqa: PLC0415
+
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as handle:
+                value, _kind = winreg.QueryValueEx(handle, name)
+        except FileNotFoundError:
+            return None
+        return str(value)
+    raise RuntimeError(_WINDOWS_ONLY)
+
+
+def _set_registry_string(key: str, name: str, value: str, *, expand: bool = False) -> None:
+    """Write one HKCU string value into a key that already exists."""
+    if sys.platform == "win32":
+        import winreg  # noqa: PLC0415
+
+        kind = winreg.REG_EXPAND_SZ if expand else winreg.REG_SZ
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE) as handle:
+            winreg.SetValueEx(handle, name, 0, kind, value)
+        return
+    raise RuntimeError(_WINDOWS_ONLY)
 
 
 def _set_user_path(value: str) -> None:
-    import winreg  # noqa: PLC0415
-
-    with winreg.OpenKey(
-        winreg.HKEY_CURRENT_USER, _ENVIRONMENT_KEY, 0, winreg.KEY_SET_VALUE
-    ) as handle:
-        winreg.SetValueEx(handle, "Path", 0, winreg.REG_EXPAND_SZ, value)
+    _set_registry_string(_ENVIRONMENT_KEY, "Path", value, expand=True)
 
 
 def _start_menu_shortcut(name: str) -> Path:
@@ -338,13 +353,8 @@ def scenario_superseded_unregistration_warns(context: Context) -> dict[str, Any]
 
     evidence: dict[str, Any] = {}
     try:
-        import winreg  # noqa: PLC0415
-
         unreachable = "Z:\\datacron-does-not-exist"
-        with winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER, _STATE_KEY, 0, winreg.KEY_SET_VALUE
-        ) as handle:
-            winreg.SetValueEx(handle, _VAULT_VALUE, 0, winreg.REG_SZ, unreachable)
+        _set_registry_string(_STATE_KEY, _VAULT_VALUE, unreachable)
         evidence["superseded_vault"] = unreachable
 
         second_vault = context.root / "second-vault"
