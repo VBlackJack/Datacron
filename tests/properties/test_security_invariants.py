@@ -294,6 +294,10 @@ class _RecordingScope:
         self.events.append(("read", rel_path))
         return rel_path not in self.denied and self._delegate.allows_note_rel_path(rel_path)
 
+    def admits_walked_note(self, rel_path: str, path: Path) -> bool:
+        self.events.append(("read", rel_path))
+        return rel_path not in self.denied and self._delegate.admits_walked_note(rel_path, path)
+
 
 async def test_prop_scope_mediation(tmp_path: Path) -> None:
     """Read, search, contradiction, write, resource, and audit paths hit one scope."""

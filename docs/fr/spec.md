@@ -479,6 +479,10 @@ dans [freshness-contract-v1.md](freshness-contract-v1.md).
   même vérifié, donc une note indexée par une écriture ciblée depuis le sweep est comptée.
   Une note supprimée hors Datacron entre deux sweeps reste dans `total` jusqu'au suivant,
   la même fenêtre pendant laquelle une recherche renvoie encore des résultats pour elle.
+  Ce parcours tranche l'admission avec une seule résolution par chemin: il tient a la fois
+  le chemin d'un fichier et son écriture relative au vault, et dès que les deux
+  concordent, résoudre la seconde ne pourrait que redonner la première. Un couple dont
+  les deux faces divergent est résolu des deux côtés et doit se rejoindre.
 - Un `chunk_id` conservé par un client devient périmé si l'identité ou le `content_hash` de sa
   note parent ne correspond plus à l'index. `get_note(chunk_id)` renvoie alors une erreur
   explicite demandant de réindexer et de réessayer; il ne sert jamais silencieusement un chunk

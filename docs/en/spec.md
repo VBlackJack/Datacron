@@ -459,7 +459,10 @@ defined in [freshness-contract-v1.md](freshness-contract-v1.md).
   admission a second time per indexed path. It is used only to confirm admission: a path the
   walk does not hold is still checked, so a note indexed by a targeted write since the sweep
   is counted. A note deleted outside Datacron between sweeps stays in `total` until the next
-  one, which is the same window in which a search still returns hits for it.
+  one, which is the same window in which a search still returns hits for it. That walk
+  decides admission from one resolution of each path: it holds both a file's path and its
+  vault-relative spelling, and once the two agree, resolving the second could only return
+  the first. A pair whose two sides disagree is resolved on both sides and must meet.
 - A client-held `chunk_id` becomes stale if its parent note identity or `content_hash` no longer
   matches the index. `get_note(chunk_id)` then returns an explicit error requesting reindex and
   retry; it never silently serves a stale chunk.

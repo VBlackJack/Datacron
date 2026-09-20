@@ -20,6 +20,26 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- One scoped enumeration of the vault decides each note's admission once, not twice. The
+  filter that every walk passes through resolved the path it was handed, then resolved the
+  vault-relative spelling of the same file to compare the two. A realpath resolves to itself,
+  so once the pair agrees the second resolution can only return the path already in hand: the
+  two admission checks then read the same components and the liveness check the same file.
+  The pair a walk produces always agrees, because the walk derives one side from the other by
+  the same expression this compares against. Agreeing means the identical string and not an
+  equivalent one: normalising the two sides towards each other would make the proof
+  platform-dependent, since a backslash separates components on Windows and names a file
+  everywhere else. A pair that disagrees is not assumed to be anything and goes through the
+  full two-sided comparison, so a delegate answering with a path and an unrelated spelling of
+  some other note is refused exactly as before; a test removes the equality guard and shows
+  that refusal disappearing. Measured on 4000 notes: `note_paths` 665 to 342 microseconds per
+  note, `stat_notes` 684 to 434, which is about five seconds off a cold sweep of twenty
+  thousand.
+- `VaultScope` gained `admits_walked_note`. The protocol is `runtime_checkable`, so a scope
+  injected by an embedder and written against the previous protocol no longer satisfies it
+  and raises when an index sweep reaches the new method. Implementations must add it;
+  delegating to the pair of calls it replaced, `authorize_path` and
+  `authorize_note_rel_path`, reproduces the previous behaviour exactly.
 - A page of `list_notes` costs the page, not the whole index. Deciding admission resolves a
   path and stats it, about 340 microseconds each measured, and it ran over every indexed path
   so that `total` could count the admitted ones: close to seven seconds on a vault of twenty
