@@ -358,7 +358,11 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   carrying an ampersand, a trailing backslash or a double quote, a PATH entry written by hand,
   a superseded vault whose unregistration fails, a silent install with no `/VAULT=` - so all
   four survived every install anyone had run. Seven scenarios now run, each in its own
-  installation, and the report names the one step that stays manual.
+  installation. Five pass on a disposable host; two report themselves inconclusive rather
+  than passing, because the command line cannot deliver a double quote to the installer and
+  because the unregistration under test did not fail; the report names both, and names the
+  wizard step that stays manual. Uninstalling waits for Inno's relaunched uninstaller to
+  finish before reading what it left, which the exit code does not say.
 - `datacron mcp install` keeps the settings an existing entry already carries. It rewrote the
   whole env block, so re-running it after an upgrade dropped `DATACRON_WRITE_PATHS`,
   `DATACRON_READ_ONLY` and `DATACRON_DURABILITY`: a configured writable vault became a
