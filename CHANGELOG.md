@@ -347,6 +347,29 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- `datacron eval` no longer reports success on an empty question set, and refuses to save one
+  as a baseline. Every metric of a run with no questions is zero, so a baseline written from it
+  cannot be regressed against and `--compare` reports PASS for good; the run itself also exited
+  zero, so a question file that failed to load looked like a clean evaluation.
+- A question with no ground truth is refused where the set is loaded. Every metric divides by
+  an expectation set, so a question naming nothing and expecting nothing scored a perfect 1.0
+  on both gate metrics and pulled the aggregate up with it. Expecting nothing is still
+  expressible, with `expected_empty`.
+- The evaluation config hash covers the archive tags and the read paths. Which paths are served
+  changes which notes a question can retrieve, and archive tags demote results, so an edit that
+  moved every score left the hash identical and the stale-baseline warning silent through
+  exactly the change it exists to catch.
+- The conversation grader stops failing every trace that contains an organization apply. That
+  tool moves many notes at once and takes no `rel_path`, so the per-note re-read rule could
+  never be satisfied. It is checked against its own receipt instead: committed, indexed, no
+  committed error, and a final report matching the projected one.
+- `audit_excluded_notes.py` renders the healthy vault. The median of an empty list raises, so a
+  vault with nothing excluded - the outcome the report exists to certify - ended in a traceback.
+  It also matches exclusion folders and files the way the indexer does, casefolded: a vault
+  declaring `_Archive` over a directory named `_archive` had every archived note reported as an
+  unexplained index gap, which is the one line of that report an operator acts on. Its verdict
+  reports the archived-candidate count it already computed instead of the words "One archived
+  note".
 - One hand-typed date no longer takes `contradiction_scan` down for the whole vault. The
   provenance pattern matches the shape of a date, not a date, so `> CORRECTION 2026-02-30 :`
   in one note raised on parse and unwound out of every candidate: scan and confirm alike were

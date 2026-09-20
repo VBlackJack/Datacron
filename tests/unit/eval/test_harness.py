@@ -219,7 +219,7 @@ async def test_tool_eval_requests_configured_result_ceiling() -> None:
         return {"query": query, "results": [], "returned": 0, "limit_applied": limit}
 
     await _silent_harness(tool_search=search).run(
-        [EvalQuestion(id="q-limit", question="ceiling")],
+        [EvalQuestion(id="q-limit", question="ceiling", expected_empty=True)],
         _app(_FailingStore(), max_result_count=40),
         render=False,
     )

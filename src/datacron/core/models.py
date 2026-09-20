@@ -262,9 +262,21 @@ class EvalQuestion(BaseModel):
 
     @model_validator(mode="after")
     def validate_empty_expectation(self) -> EvalQuestion:
-        """Refuse contradictory ground truth for negative queries."""
+        """Refuse a question whose ground truth is contradictory, or absent.
+
+        A question that expects nothing and names nothing scored a perfect 1.0 on
+        both gate metrics, because every metric divides by an expectation set that
+        is empty, and it then pulled the aggregate up. Ground truth is the whole
+        point of a question, so its absence is a defect in the set rather than a
+        result: it is refused where the set is loaded, not counted as a pass.
+        """
         if self.expected_empty and (self.expected_paths or self.expected_chunk_ids):
             raise ValueError("expected_empty cannot accompany expected paths or chunks")
+        if not self.expected_empty and not self.expected_paths and not self.expected_chunk_ids:
+            raise ValueError(
+                "question has no ground truth: set expected_paths, expected_chunk_ids, "
+                "or expected_empty"
+            )
         return self
 
 
