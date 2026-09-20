@@ -29,6 +29,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +54,7 @@ _POWERSHELL: Final[str] = str(
     / "powershell.exe"
 )
 _WINDOWS_ONLY: Final[str] = "Installer validation requires Windows"
+_UNINSTALL_SETTLE_SECONDS: Final[int] = 60
 _MANUAL_STEP: Final[str] = (
     "/RESETCONFIG followed by choosing Keep my current configuration on the reinstall "
     "page: a wizard interaction, not covered by this script"
@@ -197,6 +199,13 @@ def _install(
 
 
 def _uninstall(context: Context, destination: Path) -> int:
+    """Uninstall and wait for it to finish, which the exit code does not say.
+
+    Inno's uninstaller copies itself into the temporary directory and relaunches
+    from there, so the process started here returns before anything has been
+    removed. Waiting on it alone made every scenario hand the next one a
+    recorded vault, and reported the leftover as the installer's doing.
+    """
     uninstaller = destination / "unins000.exe"
     if not uninstaller.is_file():
         return -1
@@ -209,7 +218,20 @@ def _uninstall(context: Context, destination: Path) -> int:
         env=context.env,
         creationflags=_CREATION_FLAGS,
     )
+    _wait_until_removed(destination, min(context.timeout, _UNINSTALL_SETTLE_SECONDS))
     return completed.returncode
+
+
+def _wait_until_removed(destination: Path, seconds: int) -> bool:
+    """Poll until the executable and the registry entry are both gone."""
+    deadline = time.monotonic() + seconds
+    while True:
+        footprint = _footprint(destination)
+        if not footprint["executable"] and footprint["recorded_vault"] is None:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.5)
 
 
 def _footprint(destination: Path) -> dict[str, Any]:
