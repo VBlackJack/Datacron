@@ -347,6 +347,22 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- The Windows installer compiles again. Inno Setup's Pascal Script has no implicit forward
+  declaration, and moving the vault-path normalization into `PrepareToInstall` left it calling
+  `NormalizePathEntry` before that function was declared, so the compiler answered
+  `Unknown identifier` and aborted: no installer could be built at all. Every static guard on
+  the script passed, because each found the text it looked for exactly where it looked for it.
+  A guard now reads the routine declarations in order and refuses a call to one declared later.
+- `scripts/verify_windows_install.py` exercises the four installer defects the audit found,
+  not only a default install. Each needs a state a normal install never reaches - a vault path
+  carrying an ampersand, a trailing backslash or a double quote, a PATH entry written by hand,
+  a superseded vault whose unregistration fails, a silent install with no `/VAULT=` - so all
+  four survived every install anyone had run. Seven scenarios now run, each in its own
+  installation. Five pass on a disposable host; two report themselves inconclusive rather
+  than passing, because the command line cannot deliver a double quote to the installer and
+  because the unregistration under test did not fail; the report names both, and names the
+  wizard step that stays manual. Uninstalling waits for Inno's relaunched uninstaller to
+  finish before reading what it left, which the exit code does not say.
 - `datacron mcp install` keeps the settings an existing entry already carries. It rewrote the
   whole env block, so re-running it after an upgrade dropped `DATACRON_WRITE_PATHS`,
   `DATACRON_READ_ONLY` and `DATACRON_DURABILITY`: a configured writable vault became a

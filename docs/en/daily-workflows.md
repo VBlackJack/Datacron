@@ -128,6 +128,15 @@ Hosted Windows is not a pristine retail Windows image. Interactive installer pag
 accessibility and a true clean-image bootstrap still require separate VM evidence.
 No successful remote run is implied by adding this workflow.
 
+It runs seven scenarios, each in its own installation, and writes one entry per
+scenario into the report. Six of them exist because a default install never
+reaches the state that breaks: a vault path carrying an ampersand, one given with
+a trailing backslash, one containing a double quote, a PATH entry the user wrote
+by hand, a superseded vault whose unregistration fails, and a silent install with
+no `/VAULT=`. Run a subset with `--only <scenario>`, repeated. The report lists
+what it did not cover: choosing "Keep my current configuration" after passing
+`/RESETCONFIG` is a wizard interaction and still needs a person.
+
 For a clean Windows Sandbox image, use the candidate installer and standalone
 validator from the workflow's `windows-sandbox-inputs` artifact:
 

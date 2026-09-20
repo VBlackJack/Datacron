@@ -26,16 +26,67 @@ is that, on a machine that opted in.
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Final
 
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 _INSTALLER: Final[Path] = _REPO_ROOT / "packaging" / "windows" / "datacron-installer.iss"
+_VALIDATOR: Final[Path] = _REPO_ROOT / "scripts" / "verify_windows_install.py"
+
+
+_ROUTINE: Final[re.Pattern[str]] = re.compile(r"^(?:function|procedure)\s+([A-Za-z_]\w*)", re.M)
+_BRACE_COMMENT: Final[re.Pattern[str]] = re.compile(r"\{[^}]*\}", re.S)
+_LINE_COMMENT: Final[re.Pattern[str]] = re.compile(r"//[^\n]*")
+_STRING_LITERAL: Final[re.Pattern[str]] = re.compile(r"'(?:[^']|'')*'")
 
 
 def _source() -> str:
     return _INSTALLER.read_text(encoding="utf-8")
+
+
+def _code_section() -> str:
+    """Return the Pascal Script with comments and string literals blanked out.
+
+    A routine named inside a comment or a message string is not a call, and
+    keeping them would make the declaration-order check below report a routine
+    that only its own explanation mentions.
+    """
+    body = _source()
+    code = body[body.index("[Code]") :]
+    for pattern in (_BRACE_COMMENT, _LINE_COMMENT, _STRING_LITERAL):
+        code = pattern.sub(lambda match: " " * len(match.group(0)), code)
+    return code
+
+
+def test_no_routine_is_called_before_it_is_declared() -> None:
+    """Inno Setup's Pascal Script has no implicit forward declaration.
+
+    Moving the vault-path normalization into ``PrepareToInstall`` left it calling
+    ``NormalizePathEntry`` twenty-five lines before that function was declared.
+    The compiler answers ``Unknown identifier`` and aborts, so the installer
+    could not be built at all - and every guard in this file passed, because the
+    text they each look for was exactly where they looked for it. Compiling needs
+    Inno Setup and a built payload; the declaration order does not.
+    """
+    code = _code_section()
+    declarations = [(match.group(1), match.start()) for match in _ROUTINE.finditer(code)]
+    assert len(declarations) > 20, "the routine scan found almost nothing, so it is broken"
+
+    offences: list[str] = []
+    for index, (name, start) in enumerate(declarations):
+        end = declarations[index + 1][1] if index + 1 < len(declarations) else len(code)
+        body = code[start:end]
+        for other, other_start in declarations:
+            if other == name or other_start <= start:
+                continue
+            if re.search(rf"(?<![A-Za-z0-9_.]){other}(?![A-Za-z0-9_])", body):
+                offences.append(f"{name} calls {other}, declared later")
+
+    assert not offences, "; ".join(offences)
 
 
 def test_shortcut_command_lines_quote_unconditionally() -> None:
@@ -107,3 +158,40 @@ def test_a_stale_unregister_is_a_warning_and_not_a_failed_install() -> None:
     ]
     assert "SetupFailed := True" not in warning, "a warning must not set the failure flag"
     assert "CustomMessage('SetupFailed')" not in warning
+
+
+def _validator_module() -> ModuleType:
+    """Load the disposable-machine validator without installing anything.
+
+    Importing it runs no scenario: every one of them is behind ``main``, which
+    is behind ``installation_guard``.
+    """
+    spec = importlib.util.spec_from_file_location("verify_windows_install", _VALIDATOR)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_each_installer_finding_has_a_scenario_that_would_catch_it() -> None:
+    """The four defects above are answered by a run, not only by the guards here.
+
+    Each needs a vault path or a machine state a default install never reaches,
+    which is how all four survived every install anyone had done. Naming them
+    here keeps the claim and the script from drifting apart, and keeps the one
+    step that stays manual visible instead of quietly dropped.
+    """
+    module = _validator_module()
+    names = {name for name, _run in module._SCENARIOS}
+
+    assert {
+        "ampersand_vault_path",
+        "trailing_backslash_vault_path",
+        "quote_in_vault_path_refused",
+        "user_path_entry_preserved",
+        "superseded_unregistration_warns",
+        "silent_without_vault_refused",
+    } <= names
+    assert "RESETCONFIG" in module._MANUAL_STEP, "the wizard step is still owed and must say so"
