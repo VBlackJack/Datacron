@@ -1,6 +1,6 @@
 ---
 title: User guide
-verified: 2026-08-30
+verified: 2026-09-20
 tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
@@ -77,9 +77,10 @@ only to replace the top-level `organization` mapping without changing `organizat
 Datacron may also add one derived internal `.datacron/ulids.json` member, strictly limited to key
 migrations required by validated moves and mechanically proven obsolete case collisions. Validate
 mode exposes their count and a content-free SHA-256, both token-bound; the durable receipt retains
-the exact evidence needed for recovery and index cleanup. An existing source must carry its `id`
-in frontmatter;
-sources whose identity exists only in the sidecar are unsupported in v1. Stop every other Datacron
+the exact evidence needed for recovery and index cleanup. A `replace_exact` source without a
+frontmatter `id` is accepted when the ULID sidecar maps its exact path to the identity the
+manifest names and the payload writes that `id` into frontmatter; a `move_replace_exact`
+source must carry its `id` in frontmatter. Stop every other Datacron
 client and server during this maintenance window.
 
 The receipt distinguishes manifest operations from derived internal members. If bytes are already

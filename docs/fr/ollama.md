@@ -1,6 +1,6 @@
 ---
 title: Utiliser Datacron avec Ollama
-verified: 2026-08-11
+verified: 2026-09-20
 tested_on: "Windows 11 / Ollama 0.32.6 / mcpo 0.0.20 / MCP 1.28.1 / Datacron 2026.0721.01"
 ---
 
@@ -23,7 +23,7 @@ Les niveaux de preuve de cette page sont distincts :
 | Voie | Etat au 11 août 2026 |
 |---|---|
 | `ollmcp` | Vérifié sur la documentation officielle, mais non exécuté de bout en bout : sa TUI `prompt_toolkit` exige un vrai écran console Windows et ne démarre pas dans le canal headless utilisé pour le test. |
-| `mcpo` | Transport `stdio` vers OpenAPI testé localement avec Datacron : découverte de 17 routes, puis appels réels de `get_health`, `search_text` et `get_note`. |
+| `mcpo` | Transport `stdio` vers OpenAPI testé localement avec Datacron : découverte de 17 routes sur la version testée ci-dessous, puis appels réels de `get_health`, `search_text` et `get_note`. Le nombre de routes suit la surface d'outils, qui a grandi depuis. |
 | Open WebUI avec Ollama | Compatibilité et configuration vérifiées sur la documentation officielle, mais Open WebUI local n'a pas été reconfiguré pendant le test. |
 
 ## Préparer Datacron en lecture seule
@@ -38,9 +38,11 @@ $env:DATACRON_READ_PATHS = "<YOUR_VAULT>"
 Remove-Item Env:DATACRON_WRITE_PATHS -ErrorAction SilentlyContinue
 ```
 
-Ne définissez pas `DATACRON_WRITE_PATHS` pour cette première connexion. Les outils
-d'écriture restent enregistrés, mais Datacron les refuse parce qu'aucune racine d'écriture
-n'est configurée.
+Ne définissez pas `DATACRON_WRITE_PATHS` pour cette première connexion. Neuf des dix outils
+d'écriture restent enregistrés et Datacron refuse toute cible parce qu'aucune racine
+d'écriture n'est configurée ; `apply_organization_manifest` n'est pas enregistré du tout sans
+elle. `DATACRON_READ_ONLY=true` est la posture la plus forte : elle retire tous les outils
+mutateurs de la surface.
 
 ## Option 1 - client direct `ollmcp`
 

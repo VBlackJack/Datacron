@@ -1,6 +1,6 @@
 ---
 title: Datacron - Contrat public du vault et du serveur MCP
-verified: 2026-08-30
+verified: 2026-09-20
 tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
@@ -244,7 +244,7 @@ les hashes bornés de chaque membre ; il ne conserve aucun payload de note.
 
 ## 9. Surface des tools MCP
 
-En mode standard, le serveur enregistre exactement le manifeste fermé décrit ci-dessous. En
+En mode standard et avec les écritures effectivement activées, le serveur enregistre exactement le manifeste fermé décrit ci-dessous. En
 mode certifié read-only (`DATACRON_READ_ONLY=true`), tous les tools mutateurs sont retirés et
 seuls les tools de lecture, advisory et opérationnels restent exposés.
 
@@ -285,8 +285,11 @@ de récupération sont assainis et expurgés selon la même politique.
 Les write tools sont opt-in au niveau des effets:
 
 - `DATACRON_READ_ONLY=true` les retire de la surface MCP;
-- sinon ils sont enregistrés, mais une allowlist `DATACRON_WRITE_PATHS` vide rend toute cible
-  non autorisée et `policy/active` annonce les écritures comme désactivées;
+- sinon neuf des dix write tools sont enregistrés et une allowlist `DATACRON_WRITE_PATHS` vide
+  rend toute cible non autorisée, `policy/active` annonçant les écritures comme désactivées;
+  `apply_organization_manifest` n'est pas enregistré du tout tant que les écritures ne sont pas
+  effectivement activées et que le périmètre n'est pas le scope de vault mono-locataire, donc
+  la même condition le retire aussi en durabilité `strict` sans flush de répertoire;
 - chaque cible doit être dans le vault et sous au moins une racine de l'allowlist;
 - le mode de durabilité doit autoriser l'écriture.
 
@@ -341,8 +344,11 @@ pas partie du token. Le mode `apply` exige ce jeton exact, recharge et revalide 
 verrou global de mutation, puis accepte seulement `create_exact`, `replace_exact`,
 `move_replace_exact` et le remplacement CAS exact de `.datacron/VAULT.yaml` où seul le mapping
 top-level `organization` peut changer sémantiquement et où `organization.scope` reste inchangé.
-Une source existante doit porter l'`id` attendu dans son frontmatter ; une note identifiée
-uniquement par sidecar est hors du schéma v1. Si un déplacement possède aussi une entrée redondante
+Une source `replace_exact` sans `id` de frontmatter est acceptée quand le sidecar ULID
+associe son chemin exact à l'identité que nomme le manifeste et que la charge écrit cet `id`
+dans le frontmatter ; tout autre état du sidecar, absent, identité différente, casse
+différente ou clé non normalisée, est refusé avec `source_identity_invalid`. Une source
+`move_replace_exact` doit porter l'`id` attendu dans son frontmatter. Si un déplacement possède aussi une entrée redondante
 dans `ulids.json`, Datacron dérive sa migration comme membre interne. Il peut aussi supprimer une
 collision de casse obsolète seulement si l'inventaire live prouve mécaniquement la clé exacte et
 l'ID non réutilisé. Le mode validate expose le nombre de ces canonicalisations et leur SHA-256

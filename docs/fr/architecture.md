@@ -1,6 +1,6 @@
 ---
 title: Datacron - Architecture et spécification technique
-verified: 2026-08-30
+verified: 2026-09-20
 tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
@@ -29,7 +29,9 @@ au dump de notes en contexte.
 Le socle livré reste volontairement **minimaliste** :
 
 1. **Couche vault** - Tout dossier de fichiers Markdown. Aucune migration requise.
-2. **Couche `.datacron/`** - Sidecar invisible (SQLite FTS5, ULID side-table, logs, historique et journal d'opérations).
+2. **Couche `.datacron/`** - Sidecar invisible (SQLite FTS5, ULID side-table, historique et
+   journal d'opérations). Les logs d'exécution ne sont pas là : ils vont par défaut dans
+   `~/.datacron/logs`, et `.datacron/logs` est créé au bootstrap mais jamais écrit.
 3. **Couche serveur MCP** - `MCPServer` du SDK Python MCP v2, stdio. Read/search tools, write tools approuvés côté client, 3 resources.
 4. **Couche client** - Neuf IDs de setup via config user et, si disponible, projet.
 
@@ -103,12 +105,12 @@ flowchart TB
         RES[3 resources]
         SBX[Content sandboxing]
         CONF[Path confinement]
-        AUD[Audit log NDJSON]
+        AUD[Audit log + journal d'ecritures]
     end
 
     subgraph SIDE[".datacron/ sidecar"]
         DB[(SQLite FTS5 + ULIDs)]
-        LOGS[Logs]
+        HIST[Historique + journal d'operations]
     end
 
     subgraph VAULT["Vault Markdown (any structure)"]
@@ -164,9 +166,11 @@ flowchart TB
 
 `apply_organization_manifest` applique un lot d'organisation; il ne le calcule pas. L'écart
 entre le vault et l'organisation déclarée dans `VAULT.yaml` est mesuré hors MCP, par la
-commande CLI `datacron reorganize --dry-run`, en lecture seule. Le planner qui la sert ne
-partage avec le manifeste que les contrôles de chemin, de portée et d'admission : mesure et
-application restent deux surfaces distinctes, et aucune des deux ne déduit l'autre. Voir
+commande CLI `datacron reorganize --dry-run`, en lecture seule. Le planner qui la sert
+partage avec le manifeste les contrôles de chemin, de portée et d'admission, et la surface
+manifeste l'exécute aussi pour calculer les hashes du rapport projeté et du rapport
+post-commit. Ce qui reste séparé, c'est la décision : la mesure ne produit jamais de batch et
+l'application n'en déduit jamais un. Voir
 [Organisation du vault](organization.md).
 
 ### 5.2 Resources (3)
@@ -180,7 +184,8 @@ application restent deux surfaces distinctes, et aucune des deux ne déduit l'au
 ### 5.3 Garde-fous techniques (tous les tools)
 
 - **Path confinement** : `DATACRON_READ_PATHS` enforced au niveau lib.
-- **Bounded results** : `maxMatchesPerHit=20`, content truncation si > 8k tokens, citations obligatoires.
+- **Bounded results** : `max_result_count=20` résultats par appel (`DATACRON_MAX_RESULT_COUNT`),
+  troncature du contenu au-delà de `max_result_tokens` (8k), citations obligatoires.
 - **Sandboxing** : tout contenu de note retourné est wrappé :
   ```
   <vault_content path="...">
@@ -188,7 +193,9 @@ application restent deux surfaces distinctes, et aucune des deux ne déduit l'au
   ...
   </vault_content>
   ```
-- **Audit log NDJSON** sur chaque appel.
+- **Ligne d'audit** sur chaque appel, dans le log texte : `AUDIT tool=... duration_ms=...`.
+  Le fichier NDJSON est le journal d'écritures `operations.jsonl`, qui n'enregistre que les
+  écritures validées, pas chaque appel.
 
 ### 5.4 Matrice de compatibilité protocolaire MCP
 
@@ -320,14 +327,15 @@ supersédées des résultats (la démotion les garde accessibles).
 ### ADR-016 - Lignes sur-longues brute-splittees : resolution a la premiere piece (limite acceptee)
 Le modèle `Chunk` adresse les chunks par plage de lignes (`line_start`/`line_end`, 1-indexé)
 pour que ripgrep resolve une correspondance (fichier, ligne) sans table annexe. Une ligne
-source unique dépassant `chunk_max_chars` est brute-splittée en N sous-chunks
+source unique dépassant le budget de caractères dérivé (`chunk_max_tokens * 4`) est
+brute-splittée en N sous-chunks
 (`_brute_split_line`/`_segment_generic`) partageant tous la même plage (i, i).
 Conséquence : une correspondance ripgrep sur cette ligne résout vers le PREMIER sous-chunk
 (first-match containment) ; les sous-chunks 2..N ne sont pas adressables individuellement.
 Le contenu reste intégralement indexé et correct ; seul le chunk_id/snippet retourné pour
 une correspondance dans le débordement d'une ligne monstre pointe vers la pièce 1.
 **Décision : accepté (WAI).** Le fix propre exigerait des offsets caractère sub-ligne dans
-le modèle `Chunk` (frozen), disproportionné pour un edge rare (lignes > ~`chunk_max_chars` :
+le modèle `Chunk` (frozen), disproportionné pour un edge rare (lignes au-delà de ce budget dérivé :
 minifié, base64, mono-ligne géant). Clôt l'item backlog P3 chunker.
 Écarté : offsets caractère sub-ligne dans le modèle `Chunk` (frozen), disproportionné pour un
 edge rare.
@@ -523,9 +531,9 @@ sequenceDiagram
 | Transport | Interception | stdio local only |
 | FS confinement | Read hors vault | `DATACRON_READ_PATHS` enforced |
 | Prompt injection | Note malveillante détourne le client | Sandbox wrap + escape `<system>`, `Ignore previous...` |
-| Context bloat | Tool renvoie trop | `maxMatchesPerHit=20`, truncation 8k tokens |
+| Context bloat | Tool renvoie trop | `max_result_count=20`, troncature `max_result_tokens` 8k tokens |
 | Exfiltration cross-tool | Datacron + autre tool MCP coordonnent malicieusement | Resource declarations explicites, pas de tool "execute arbitrary" |
-| Audit | Pas de traçabilité | NDJSON append-only sur chaque appel |
+| Audit | Pas de traçabilité | Une ligne d'audit sur chaque appel ; un journal NDJSON append-only pour chaque écriture validée |
 | Écriture accidentelle | Datacron modifie un fichier non prévu | `DATACRON_WRITE_PATHS` obligatoire, confinement strict, writes OFF par défaut |
 | Perte de contenu | Overwrite destructif | Historique adressé par contenu + écriture atomique temp/replace |
 | Privacy LLM cloud | Chunks partent chez Anthropic via Claude | Documenté honnêtement dans README "What leaves your machine" |

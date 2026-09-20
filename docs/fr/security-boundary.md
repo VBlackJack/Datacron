@@ -1,6 +1,6 @@
 ---
 title: Frontière de sécurité locale de Datacron
-verified: 2026-08-11
+verified: 2026-09-20
 tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 

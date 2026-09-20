@@ -1,6 +1,6 @@
 ---
 title: Operational health, certified read-only mode, and durability policy
-verified: 2026-08-30
+verified: 2026-09-20
 tested_on: "Datacron 2026.0828.01 / MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 

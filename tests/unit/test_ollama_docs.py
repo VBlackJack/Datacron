@@ -23,7 +23,7 @@ import pytest
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 FRENCH_GUIDE = REPOSITORY_ROOT / "docs" / "fr" / "ollama.md"
 ENGLISH_GUIDE = REPOSITORY_ROOT / "docs" / "en" / "ollama.md"
-VERIFIED_DATE = "2026-08-11"
+VERIFIED_DATE = "2026-09-20"
 PINNED_MCPO_COMMAND = "uvx --with mcp==1.28.1 mcpo==0.0.20"
 OFFICIAL_SOURCE_URLS = (
     "https://docs.ollama.com/api/introduction",

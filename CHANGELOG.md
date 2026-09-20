@@ -347,6 +347,21 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- Six documentation pages carried a `verified:` date older than their own last edit, and the
+  guard hard-coded those dates so it pinned the staleness rather than catching it. Every
+  checkable assertion on all six was re-checked against the code, which found ten more wrong
+  claims, all of them mirrored identically in French: the spec said every write tool is
+  registered when `DATACRON_WRITE_PATHS` is empty, while `apply_organization_manifest` is
+  de-registered entirely unless writes are effectively enabled and the scope is the
+  single-tenant one; the spec and the user guide said a source identified only by the sidecar
+  is unsupported, while a `replace_exact` source is accepted on an exact sidecar match, and it
+  is `move_replace_exact` that requires the frontmatter `id`; the architecture page named a
+  `maxMatchesPerHit` and a `chunk_max_chars` that do not exist, called the per-call audit line
+  an NDJSON log when the NDJSON file is the write journal of committed writes, placed the
+  runtime logs in the vault sidecar when they default to `~/.datacron/logs`, and understated
+  the planner sharing that the manifest surface actually performs; the Ollama page repeated the
+  write-tool claim and gave a route count with no version attached. The dates and the constants
+  now move together, and both languages carry every correction.
 - The typography guard sweeps the tracked tree instead of two hand-listed roots. It covered
   137 of 299 tracked files, and everything a user reads outside `docs/` was outside it: the
   Windows installer's own UI strings, the PyPI long description, the MCP registry entry. A
