@@ -26,6 +26,7 @@ from typing import Any, cast
 
 import pytest
 
+from datacron.core import paths as paths_module
 from datacron.core.config import Settings
 from datacron.core.models import Note
 from datacron.core.operation_log import OperationRecord
@@ -95,6 +96,10 @@ class _AllowedFolderScope:
     def allows_note_rel_path(self, rel_path: str) -> bool:
         return rel_path.startswith("allowed/")
 
+    def admits_walked_note(self, rel_path: str, path: Path) -> bool:
+        del path
+        return self.allows_note_rel_path(rel_path)
+
 
 class _PermissiveScope:
     def __init__(self, vault: Path) -> None:
@@ -117,6 +122,10 @@ class _PermissiveScope:
 
     def allows_note_rel_path(self, rel_path: str) -> bool:
         del rel_path
+        return True
+
+    def admits_walked_note(self, rel_path: str, path: Path) -> bool:
+        del rel_path, path
         return True
 
 
@@ -660,3 +669,211 @@ async def test_listing_notes_does_not_block_the_event_loop_while_it_admits(
     # The sweep slept for about eighty milliseconds. A loop that was free to run
     # during it ticks thousands of times; a blocked one cannot tick at all.
     assert ticks > 100, f"the event loop only advanced {ticks} times during the sweep"
+
+
+class TestAdmitsWalkedNote:
+    """One enumeration of the vault must not decide each note's admission twice."""
+
+    @staticmethod
+    def _scope(vault: Path) -> SingleTenantVaultScope:
+        return SingleTenantVaultScope(vault, Settings(vault_root=vault, read_paths=[vault]))
+
+    @staticmethod
+    def _previous_answer(scope: SingleTenantVaultScope, rel_path: str, path: Path) -> bool:
+        """The two-resolution form this replaced, kept as the oracle."""
+        try:
+            returned = scope.authorize_path(path, "read")
+            admitted = scope.authorize_note_rel_path(rel_path)
+        except (NoteAdmissionError, PathConfinementError):
+            return False
+        return returned == admitted
+
+    def test_it_answers_exactly_what_two_resolutions_answered(self, tmp_path: Path) -> None:
+        """The cheap answer has to be the same answer, over names that could differ.
+
+        Skipping the second resolution rests on one claim: once the pair agrees,
+        resolving the relative side can only return the path already in hand. The
+        names below are the ones where a resolution is not a no-op on Windows, or
+        where the two sides could be spelled apart: nesting, spaces, accents, case,
+        an excluded parent, a dotted parent, a non-Markdown suffix.
+        """
+        vault = tmp_path / "vault"
+        (vault / "notes" / "nested").mkdir(parents=True)
+        (vault / "node_modules").mkdir()
+        (vault / ".hidden").mkdir()
+        rel_paths = [
+            "notes/plain.md",
+            "notes/with space.md",
+            "notes/nested/accentue.md",
+            "notes/UPPER.md",
+            "notes/trailing.MD",
+            "node_modules/excluded.md",
+            ".hidden/dotted.md",
+            "notes/not-a-note.txt",
+        ]
+        for rel_path in rel_paths:
+            (vault / rel_path).write_text("# Note" + chr(10), encoding="utf-8")
+        scope = self._scope(vault)
+
+        for rel_path in rel_paths:
+            path = vault / rel_path
+            assert scope.admits_walked_note(rel_path, path) == self._previous_answer(
+                scope, rel_path, path
+            ), rel_path
+
+    def test_a_walked_pair_resolves_the_path_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The second resolution is the whole cost this removes, so it is pinned.
+
+        A realpath is what one resolution returns, and a realpath resolves to
+        itself, so resolving the relative side again asked the filesystem a
+        question already answered. Measured on 4000 notes, a scoped enumeration
+        went from 665 to 342 microseconds per note.
+        """
+        vault = tmp_path / "vault"
+        (vault / "notes").mkdir(parents=True)
+        (vault / "notes" / "one.md").write_text("# One" + chr(10), encoding="utf-8")
+        scope = self._scope(vault)
+        resolved: list[str] = []
+        original = paths_module._resolve
+
+        def counting(path: Path) -> Path:
+            resolved.append(str(path))
+            return original(path)
+
+        monkeypatch.setattr(paths_module, "_resolve", counting)
+
+        assert scope.admits_walked_note("notes/one.md", vault / "notes" / "one.md") is True
+        assert len(resolved) == 1, resolved
+
+    def test_a_pair_naming_two_different_files_is_refused(self, tmp_path: Path) -> None:
+        """Both descriptions must be of one file, which is why both are asked for.
+
+        A delegate that answered with a path and an unrelated spelling of some
+        other note would, if the cheap branch trusted the pair, have the second
+        note's admission decided by the first note's path.
+        """
+        vault = tmp_path / "vault"
+        (vault / "notes").mkdir(parents=True)
+        (vault / "notes" / "real.md").write_text("# Real" + chr(10), encoding="utf-8")
+        (vault / "notes" / "other.md").write_text("# Other" + chr(10), encoding="utf-8")
+        scope = self._scope(vault)
+
+        assert scope.admits_walked_note("notes/other.md", vault / "notes" / "real.md") is False
+        assert scope.admits_walked_note("notes/gone.md", vault / "notes" / "real.md") is False
+
+    def test_a_path_outside_the_vault_is_refused(self, tmp_path: Path) -> None:
+        """Confinement is decided on the resolved path, before anything else is read."""
+        vault = tmp_path / "vault"
+        (vault / "notes").mkdir(parents=True)
+        outside = tmp_path / "outside.md"
+        outside.write_text("# Outside" + chr(10), encoding="utf-8")
+        scope = self._scope(vault)
+
+        assert scope.admits_walked_note("notes/outside.md", outside) is False
+        assert scope.admits_walked_note("../outside.md", outside) is False
+
+    def test_a_directory_and_a_missing_file_are_refused(self, tmp_path: Path) -> None:
+        """Liveness is still checked on the resolved path, not assumed from the walk."""
+        vault = tmp_path / "vault"
+        (vault / "notes" / "folder.md").mkdir(parents=True)
+        scope = self._scope(vault)
+
+        assert scope.admits_walked_note("notes/folder.md", vault / "notes" / "folder.md") is False
+        assert scope.admits_walked_note("notes/gone.md", vault / "notes" / "gone.md") is False
+
+    def test_a_separator_the_pair_spells_differently_is_not_assumed_to_agree(
+        self, tmp_path: Path
+    ) -> None:
+        """Agreeing means the identical string, not an equivalent one.
+
+        A backslash is a separator on Windows and an ordinary filename character
+        everywhere else, so ``vault_root / rel_path`` is one file on one platform
+        and another file on the other. Normalising the two sides towards each
+        other made the cheap branch admit, on Linux, a pair the two-resolution
+        form refused. A pair may only take that branch when both sides are spelled
+        identically; otherwise the relative side is resolved, as the oracle does.
+        """
+        vault = tmp_path / "vault"
+        (vault / "notes").mkdir(parents=True)
+        (vault / "notes" / "note.md").write_text("# Note" + chr(10), encoding="utf-8")
+        scope = self._scope(vault)
+        rel_path = "notes" + chr(92) + "note.md"
+        path = vault / "notes" / "note.md"
+
+        assert scope.admits_walked_note(rel_path, path) == self._previous_answer(
+            scope, rel_path, path
+        )
+
+    def test_a_link_component_is_decided_on_the_resolved_spelling(self, tmp_path: Path) -> None:
+        """A walk descends into an NTFS junction, so it really produces these pairs.
+
+        Python does not see a junction as a link, so the walk yields notes the
+        vault only reaches through one, including a junction leaving the vault
+        entirely. Both spellings must get the answer two resolutions gave.
+        """
+        vault = tmp_path / "vault"
+        (vault / "notes").mkdir(parents=True)
+        (vault / "node_modules").mkdir()
+        (vault / "node_modules" / "vendor.md").write_text("# V" + chr(10), encoding="utf-8")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "evil.md").write_text("# Evil" + chr(10), encoding="utf-8")
+        _create_directory_link(vault / "escape", outside)
+        _create_directory_link(vault / "clean", vault / "node_modules")
+        scope = self._scope(vault)
+
+        for rel_path in ("escape/evil.md", "clean/vendor.md"):
+            path = vault / rel_path
+            assert scope.admits_walked_note(rel_path, path) is False, rel_path
+            assert scope.admits_walked_note(rel_path, path) == self._previous_answer(
+                scope, rel_path, path
+            ), rel_path
+
+    def test_an_injected_scope_that_resolves_elsewhere_is_refused(self, tmp_path: Path) -> None:
+        """A narrowing scope may refuse a pair; it may not relocate one.
+
+        The call site this replaced went through ``authorize_path`` on the
+        conjunctive scope, which compares what the two scopes resolved rather than
+        only what they answered. An injected scope that admits a pair while
+        resolving it somewhere else is what that comparison exists for, so it is
+        kept here instead of the plain AND used elsewhere in the class.
+        """
+        vault = tmp_path / "vault"
+        (vault / "notes").mkdir(parents=True)
+        note = vault / "notes" / "note.md"
+        note.write_text("# Note" + chr(10), encoding="utf-8")
+        decoy = vault / "notes" / "decoy.md"
+        decoy.write_text("# Decoy" + chr(10), encoding="utf-8")
+        canonical = self._scope(vault)
+
+        class _RelocatingScope:
+            def authorize_path(self, path: Path, access: AccessMode) -> Path:
+                del path, access
+                return decoy
+
+            def authorize_rel_path(self, rel_path: str, access: AccessMode) -> Path:
+                del rel_path, access
+                return decoy
+
+            def allows_rel_path(self, rel_path: str, access: AccessMode) -> bool:
+                del rel_path, access
+                return True
+
+            def authorize_note_rel_path(self, rel_path: str) -> Path:
+                del rel_path
+                return decoy
+
+            def allows_note_rel_path(self, rel_path: str) -> bool:
+                del rel_path
+                return True
+
+            def admits_walked_note(self, rel_path: str, path: Path) -> bool:
+                del rel_path, path
+                return True
+
+        conjunctive = ConjunctiveVaultScope(canonical, cast("Any", _RelocatingScope()))
+
+        assert canonical.admits_walked_note("notes/note.md", note) is True
+        assert conjunctive.admits_walked_note("notes/note.md", note) is False

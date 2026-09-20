@@ -186,6 +186,10 @@ class VaultScope(Protocol):
         """Return whether the relative path identifies an admissible live note."""
         ...
 
+    def admits_walked_note(self, rel_path: str, path: Path) -> bool:
+        """Return whether one ``(rel_path, path)`` pair from a vault walk is a note."""
+        ...
+
 
 class OrganizationBatchWriter(VaultWriter, Protocol):
     """Narrow extension implemented only by organization-capable vault writers."""
@@ -308,6 +312,62 @@ class SingleTenantVaultScope:
             return False
         return True
 
+    def admits_walked_note(self, rel_path: str, path: Path) -> bool:
+        """Return whether one ``(rel_path, path)`` pair from a vault walk is a note.
+
+        The caller holds two descriptions of one file and both must be admitted,
+        which is why this asks for both rather than for whichever is handier. The
+        answer is the one :meth:`authorize_path` and :meth:`authorize_note_rel_path`
+        give together, and it used to be computed exactly that way: two realpaths
+        per note, on a sweep that visits every note in the vault.
+
+        The second one is provably redundant whenever the pair agrees. Resolving
+        confines ``path`` to a realpath, and a realpath resolves to itself, so once
+        ``rel_path`` is the resolved path's own vault-relative spelling, resolving
+        ``vault_root / rel_path`` can only return the path already in hand. The two
+        admission checks then read the same components, and the liveness check the
+        same file. The pair a walk produces always agrees, because the walk derives
+        one from the other by the same expression this compares against.
+
+        Agreeing means the identical string, not an equivalent one. Normalising the
+        two sides towards each other would make the proof platform-dependent, and
+        it did: a backslash is a separator on Windows and an ordinary filename
+        character everywhere else, so ``notes\\note.md`` names one file here and a
+        different one on Linux, where this admitted a pair the two-resolution form
+        refused.
+
+        A pair that disagrees is not assumed to be anything. It goes through the
+        general comparison, which resolves the ``rel_path`` side and requires the
+        two to meet: a caller handing in a path and an unrelated spelling of it,
+        or a delegate answering from outside the vault, is refused exactly as
+        before. Only the resolved side is reused there, so nothing resolves twice.
+        """
+        try:
+            resolved = self.authorize_path(path, "read")
+        except PathConfinementError:
+            return False
+        # authorize_path proved the resolved path is under this scope's only root,
+        # which is the vault root, so the relative spelling always exists.
+        canonical = str(PurePosixPath(*resolved.relative_to(self._vault_root).parts))
+        if canonical != rel_path:
+            return self._admits_resolved_pair(rel_path, resolved)
+        try:
+            assert_vault_rel_path(rel_path)
+            self._assert_admitted_parts(
+                PurePosixPath(canonical).parts,
+                rel_path=rel_path,
+            )
+        except (NoteAdmissionError, PathConfinementError):
+            return False
+        return resolved.is_file()
+
+    def _admits_resolved_pair(self, rel_path: str, resolved: Path) -> bool:
+        """Admit a pair whose two sides have to be resolved separately to compare."""
+        try:
+            return resolved == self.authorize_note_rel_path(rel_path)
+        except (NoteAdmissionError, PathConfinementError):
+            return False
+
     def _assert_admitted_parts(self, parts: tuple[str, ...], *, rel_path: str) -> None:
         if not parts or not parts[-1].casefold().endswith(".md"):
             raise NoteAdmissionError(f"Path is not a Markdown note: {rel_path!r}")
@@ -370,6 +430,26 @@ class ConjunctiveVaultScope:
         return self._canonical.allows_note_rel_path(
             rel_path
         ) and self._restriction.allows_note_rel_path(rel_path)
+
+    def admits_walked_note(self, rel_path: str, path: Path) -> bool:
+        if not (
+            self._canonical.admits_walked_note(rel_path, path)
+            and self._restriction.admits_walked_note(rel_path, path)
+        ):
+            return False
+        # The call site this serves compared the two scopes' resolutions, not only
+        # their verdicts, because it went through authorize_path. An injected scope
+        # that admits a pair while resolving it somewhere else is exactly what that
+        # comparison is for, so it is kept rather than traded for the plain AND
+        # that allows_note_rel_path settles for.
+        try:
+            self._assert_same_path(
+                self._canonical.authorize_path(path, "read"),
+                self._restriction.authorize_path(path, "read"),
+            )
+        except PathConfinementError:
+            return False
+        return True
 
     @staticmethod
     def _assert_same_path(canonical: Path, restricted: Path) -> None:
@@ -473,12 +553,7 @@ class ScopedVaultReader:
         return returned == admitted and (expected_path is None or returned == expected_path)
 
     def _matches_stat_admission(self, rel_path: str, path: Path) -> bool:
-        try:
-            returned = self._scope.authorize_path(path, "read")
-            admitted = self._scope.authorize_note_rel_path(rel_path)
-        except (NoteAdmissionError, PathConfinementError):
-            return False
-        return returned == admitted
+        return self._scope.admits_walked_note(rel_path, path)
 
 
 @final
