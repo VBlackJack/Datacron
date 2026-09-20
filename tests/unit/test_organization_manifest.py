@@ -26,7 +26,12 @@ import pytest
 from pydantic import ValidationError
 
 import datacron.organization.manifest as manifest_module
-from datacron.core.config import Settings
+from datacron.core.config import (
+    OrganizationConfig,
+    OrganizationRule,
+    Settings,
+    VaultConfig,
+)
 from datacron.core.scope import (
     LinkedPathError,
     SingleTenantVaultScope,
@@ -46,6 +51,7 @@ from datacron.organization.manifest import (
     validate_organization_bundle,
 )
 from datacron.organization.planner import (
+    _snapshot_target_folders,
     hash_organization_plan,
     plan_organization,
     plan_organization_snapshot,
@@ -1294,3 +1300,121 @@ def test_projected_identity_title_follows_the_shared_h1_pattern(
     identity = manifest_module._read_projected_identity(note, vault_root=vault, id_mappings={})
 
     assert identity.title == expected_title
+
+
+_CASE_INSENSITIVE_ONLY: Final = pytest.mark.skipif(
+    os.name != "nt",
+    reason="a config spelling that differs only in case names another directory here",
+)
+
+
+class TestOrganizationCaseAndSizeP2:
+    """Audit findings whose failure mode bricks organization work on a whole vault."""
+
+    @staticmethod
+    def _config(scope: str, folder: str) -> VaultConfig:
+        return VaultConfig(
+            organization=OrganizationConfig(
+                scope=scope,
+                rules=(OrganizationRule(tag="memory/fact", folder=folder, naming="{slug}"),),
+            )
+        )
+
+    @_CASE_INSENSITIVE_ONLY
+    def test_the_projection_spells_folders_the_way_the_filesystem_does(
+        self, tmp_path: Path
+    ) -> None:
+        """A vault whose config case differs from its directories must still match.
+
+        The live report derives its folders from a resolved path, which on Windows
+        carries the true on-disk case, while the projection took them verbatim from
+        VAULT.yaml. Every scope check casefolds, so validation passed and then the
+        two reports disagreed on every governed note: the projection called a
+        correctly placed note WRONG_FOLDER, the hashes could never be equal, and
+        every apply on that vault ended in committed_report_mismatch after it had
+        already committed.
+
+        The divergence needs a filesystem that resolves two spellings to one
+        directory, which is the same contract ``_filesystem_parts`` keys on. Where
+        ``_Memory`` and ``_memory`` are two directories there is nothing to
+        reconcile, and resolving a path that does not exist returns it unchanged.
+        """
+        vault = tmp_path / "vault"
+        (vault / "_memory" / "facts").mkdir(parents=True)
+
+        scope, _active, targets = _snapshot_target_folders(
+            vault, self._config("_Memory", "_Memory/facts")
+        )
+
+        assert scope == "_memory"
+        assert targets["memory/fact"] == "_memory/facts"
+
+    @_CASE_INSENSITIVE_ONLY
+    def test_a_folder_the_batch_will_create_is_spelled_the_same_way(self, tmp_path: Path) -> None:
+        """Resolving corrects the components that exist and leaves the rest alone.
+
+        A rule folder that does not exist yet has to reach the same answer as the
+        live report will once the batch creates it, or the mismatch simply moves.
+        """
+        vault = tmp_path / "vault"
+        (vault / "_memory").mkdir(parents=True)
+
+        _scope, _active, targets = _snapshot_target_folders(
+            vault, self._config("_Memory", "_Memory/NotYet")
+        )
+
+        assert targets["memory/fact"] == "_memory/NotYet"
+
+    def test_a_vault_whose_spellings_already_agree_is_left_alone(self, tmp_path: Path) -> None:
+        """Canonicalizing must be invisible on the vault that never had the defect.
+
+        Resolving is not free of consequences: it walks links and returns an
+        absolute path, so the folder it hands back has to come out relative to the
+        vault and spelled the way the rule spelled it. This is the case that runs
+        on every platform.
+        """
+        vault = tmp_path / "vault"
+        (vault / "_memory" / "facts").mkdir(parents=True)
+
+        scope, _active, targets = _snapshot_target_folders(
+            vault, self._config("_memory", "_memory/facts")
+        )
+
+        assert scope == "_memory"
+        assert targets["memory/fact"] == "_memory/facts"
+
+    def test_an_oversized_live_note_names_the_size_rule(self, tmp_path: Path) -> None:
+        """A long journal must not brick organization work, and must say why if it does.
+
+        Every admitted note in the vault was read under the bundle payload bound,
+        so one 2.5 MB pasted log failed every validate and every apply, including a
+        bundle that only creates a note in an unrelated folder, and the error named
+        an identity inventory rather than a size rule. The inventory now has its own
+        ceiling, and a note past it is refused by name.
+        """
+        vault = tmp_path / "vault"
+        (vault / "notes").mkdir(parents=True)
+        note = vault / "notes" / "journal.md"
+        note.write_text("# Journal" + chr(10) * 2 + ("x" * 4096 + chr(10)) * 800, encoding="utf-8")
+        assert note.stat().st_size > manifest_module.MAX_PAYLOAD_BYTES
+
+        identity = manifest_module._read_projected_identity(note, vault_root=vault, id_mappings={})
+
+        assert identity.rel_path == "notes/journal.md"
+        assert len(identity.sha256) == 64
+
+    def test_a_note_past_the_inventory_ceiling_is_refused_by_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The ceiling still exists; what changed is that it says what it is."""
+        vault = tmp_path / "vault"
+        (vault / "notes").mkdir(parents=True)
+        note = vault / "notes" / "journal.md"
+        note.write_text("# Journal" + chr(10) * 2 + "body" + chr(10), encoding="utf-8")
+        monkeypatch.setattr(manifest_module, "MAX_INVENTORY_NOTE_BYTES", 4)
+
+        with pytest.raises(OrganizationManifestError) as caught:
+            manifest_module._read_projected_identity(note, vault_root=vault, id_mappings={})
+
+        assert caught.value.code == "admitted_note_too_large"
+        assert "notes/journal.md" in str(caught.value)

@@ -51,6 +51,15 @@ DEFAULT_REPAIR_MIN_INTERVAL_SECONDS: Final[float] = 30.0
 DEFAULT_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS: Final[float] = 30.0
 DEFAULT_EVAL_REGRESSION_TOLERANCE: Final[float] = 0.02
 DEFAULT_CONTRADICTION_MAX_PAIRS: Final[int] = 256
+DEFAULT_CONTRADICTION_MAX_SECTIONS: Final[int] = 4096
+"""Sections one scan will hold, separately from the pairs it will examine.
+
+One number used to serve both, so a vault with more than 256 sections had
+everything past the first 256 silently excluded from the audit, in index
+insertion order: editing a note moved it to the end of that order and out of the
+window. Collecting a section is cheap, examining a pair issues a search, so the
+two budgets are not the same size.
+"""
 DEFAULT_CONTRADICTION_MAX_CANDIDATES: Final[int] = 20
 DEFAULT_CONTRADICTION_MAX_PER_NOTE_PAIR: Final[int] = 2
 DEFAULT_CONTRADICTION_SUMMARY_EVIDENCE_CHARS: Final[int] = 160
@@ -806,6 +815,7 @@ class Settings(BaseSettings):
         ge=0.0,
     )
     contradiction_max_pairs: int = Field(default=DEFAULT_CONTRADICTION_MAX_PAIRS, ge=1)
+    contradiction_max_sections: int = Field(default=DEFAULT_CONTRADICTION_MAX_SECTIONS, ge=1)
     contradiction_max_candidates: int = Field(
         default=DEFAULT_CONTRADICTION_MAX_CANDIDATES,
         ge=1,

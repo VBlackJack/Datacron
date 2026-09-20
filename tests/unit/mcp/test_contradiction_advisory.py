@@ -296,10 +296,14 @@ async def test_live_scan_is_deterministic_bounded_and_read_only(
     assert first["candidate_count"] == 1
     assert first["examined_pairs"] <= app.settings.contradiction_max_pairs
     assert first["limits"] == {
+        "max_sections": 4096,
         "max_pairs": 64,
         "max_candidates": 10,
         "max_per_note_pair": 2,
     }
+    # An audit that stopped early must not read as a clean one.
+    assert first["sections_truncated"] is False
+    assert first["vault_section_count"] == first["section_count"]
     candidate = first["candidates"][0]
     assert candidate["class"] == "CONTRADICTION"
     assert candidate["addressable"] is True

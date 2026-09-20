@@ -347,6 +347,39 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- One hand-typed date no longer takes `contradiction_scan` down for the whole vault. The
+  provenance pattern matches the shape of a date, not a date, so `> CORRECTION 2026-02-30 :`
+  in one note raised on parse and unwound out of every candidate: scan and confirm alike were
+  dead vault-wide, with "day is out of range for month" as the only clue to which note. The
+  sibling helper already skipped an unparseable date; this one now does too.
+- `contradiction_scan` no longer reports a partial audit as a clean one. One setting served as
+  both the cap on sections collected and the cap on pairs examined, so a vault with more than
+  256 sections had everything past the first 256 excluded, in index insertion order - and
+  editing a note moves it to the end of that order, out of the window, precisely when it is
+  most likely to contradict something. The payload said `section_count: 256` with no way to
+  tell that from a vault of 256 sections. Sections now have their own budget, and the payload
+  carries `vault_section_count` and `sections_truncated`. The selection within that budget is
+  still index order, which a larger budget makes rarely reached but does not make principled.
+- A refused proposal no longer throws away the scan that produced it. The elicitation form
+  offers six combinations of classification and scope and four of them build; its own default
+  is the class that cannot be widened to a whole note, so picking the safe class and then the
+  wider scope lands on a refusal the form itself offered. That refusal replaced the entire
+  response, discarding every candidate and every proposal token, and recomputing them re-walks
+  every chunk and issues one search per section. The scan survives; only the proposal is
+  refused, and the reason is reported as the elicitation outcome.
+- One long note no longer blocks every organization validate and apply. Each admitted note in
+  the vault was read under the bundle payload bound of 2 MiB, so a single pasted log - legal
+  for `datacron reorganize`, which applies no limit at all - failed every bundle, including one
+  that only creates a note in an unrelated folder, and reported a corrupt identity inventory
+  rather than a size rule. The inventory has its own ceiling now, and a note past it is refused
+  as `admitted_note_too_large`, by name.
+- A vault whose config case differs from its directories can commit an organization batch
+  again. The live report derives folders from a resolved path, which on Windows carries the
+  true on-disk case, while the projection took them verbatim from `VAULT.yaml`. Every scope
+  check casefolds, so validation passed and the two reports then disagreed on every governed
+  note: the projection called a correctly placed note `WRONG_FOLDER`, the hashes could never be
+  equal, and every apply ended in `committed_report_mismatch` after committing. The projection
+  resolves the same way, which also corrects the case of a folder the batch has yet to create.
 - `get_note` finds a note renamed on disk before the next reindex. Admission raises its own
   exception type, which is not a `ValueError`, so the best-effort read whose whole contract is
   to answer "not here" propagated instead: resolution stopped at the stale index row and never

@@ -843,16 +843,42 @@ def _plan_snapshots(
     )
 
 
-def _snapshot_target_folders(config: VaultConfig) -> tuple[str, OrganizationConfig, dict[str, str]]:
+def _on_disk_spelling(resolved_root: Path, rel_path: PurePosixPath) -> str:
+    """Return the spelling the filesystem uses for a folder that exists.
+
+    The live report derives its folders from ``Path.resolve()``, which on Windows
+    returns the true on-disk case, while the projection took them verbatim from
+    VAULT.yaml. A vault declaring ``_Memory`` over a directory named ``_memory``
+    passes every scope check, because those casefold, and then the two reports
+    disagree on every governed note: the projection reports WRONG_FOLDER for a
+    note that is exactly where it belongs, the hashes can never match, and every
+    apply on that vault ends in committed_report_mismatch after committing.
+
+    A folder the batch has yet to create is canonicalized too: resolving corrects
+    the case of every component that does exist and leaves the rest alone, which
+    is the same answer the live report reaches for the same path.
+    """
+    try:
+        candidate = (resolved_root / Path(*rel_path.parts)).resolve()
+        return candidate.relative_to(resolved_root).as_posix()
+    except (OSError, ValueError):
+        return rel_path.as_posix()
+
+
+def _snapshot_target_folders(
+    vault_root: Path,
+    config: VaultConfig,
+) -> tuple[str, OrganizationConfig, dict[str, str]]:
     """Validate rule folders lexically for an in-memory planner projection."""
     organization = config.organization
     if organization is None or not organization.rules or organization.scope is None:
         raise OrganizationConfigurationError("active organization rules require a scope")
-    scope = PurePosixPath(organization.scope)
+    resolved_root = vault_root.expanduser().resolve()
+    scope = PurePosixPath(_on_disk_spelling(resolved_root, PurePosixPath(organization.scope)))
     scope_key = _filesystem_parts(scope)
     targets: dict[str, str] = {}
     for rule in organization.rules:
-        folder = PurePosixPath(rule.folder)
+        folder = PurePosixPath(_on_disk_spelling(resolved_root, PurePosixPath(rule.folder)))
         folder_key = _filesystem_parts(folder)
         if folder_key[: len(scope_key)] != scope_key:
             raise OrganizationConfigurationError(
@@ -880,7 +906,7 @@ def plan_organization_snapshot(
             deviations=(),
             skipped=(),
         )
-    scope, active, targets = _snapshot_target_folders(config)
+    scope, active, targets = _snapshot_target_folders(vault_root, config)
     scope_key = _filesystem_parts(PurePosixPath(scope))
     materialized = tuple(notes)
     for note in materialized:
