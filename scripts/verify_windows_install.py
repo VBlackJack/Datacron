@@ -392,6 +392,7 @@ def scenario_quote_in_vault_path(context: Context) -> dict[str, Any]:
             return {"refused": True, "attempts": attempts}
     return {
         "refused": None,
+        "inconclusive": True,
         "attempts": attempts,
         "note": "no command line spelling delivered a double quote; this stays manual",
     }
@@ -451,8 +452,17 @@ def scenario_superseded_unregistration_warns(context: Context) -> dict[str, Any]
         evidence["reported_as_warning"] = "Datacron post-install warning" in text
         if second.returncode != 0:
             raise ScenarioError(f"a superseded vault left the install at exit {second.returncode}")
-        if evidence["unregistration_failed"] and not evidence["reported_as_warning"]:
-            raise ScenarioError("the failed unregistration was not reported as a warning")
+        if evidence["unregistration_failed"]:
+            if not evidence["reported_as_warning"]:
+                raise ScenarioError("the failed unregistration was not reported as a warning")
+        else:
+            # Pointing the recorded vault at an unreachable drive was meant to
+            # make `datacron unregister` exit non-zero. It did not, so the
+            # install stayed at exit 0 for the ordinary reason and the warning
+            # path was never entered. Passing on that would claim the fix was
+            # measured when only its absence was.
+            evidence["inconclusive"] = True
+            evidence["note"] = "the unregistration succeeded, so the warning path was not exercised"
     finally:
         evidence["uninstall_exit_code"] = _uninstall(context, destination)
     return evidence
@@ -559,6 +569,11 @@ def scenario_install_reinstall_and_serve(context: Context) -> dict[str, Any]:
         evidence["note_preserved"] = True
     finally:
         evidence["uninstall_exit_code"] = _uninstall(context, destination)
+        # Measured because the first run showed every scenario handing the next
+        # one a recorded vault: the uninstaller's own log line says it removes
+        # this key, so whether it is still here after a clean uninstall is worth
+        # a receipt rather than an assumption.
+        evidence["footprint_after_uninstall"] = _footprint(destination)
     return evidence
 
 
@@ -614,6 +629,7 @@ def main() -> int:
 
     results: dict[str, Any] = {}
     failures: list[str] = []
+    inconclusive: list[str] = []
     environment = _clean_environment()
     for name, run in selected:
         with tempfile.TemporaryDirectory(prefix=f"datacron-{name}-") as directory:
@@ -628,21 +644,33 @@ def main() -> int:
                 results[name] = {"passed": True, "evidence": run(context)}
             except (ScenarioError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
                 results[name] = {"passed": False, "error": f"{type(exc).__name__}: {exc}"}
+                failures.append(name)
             if any(value is not None and value is not False for value in leftover.values()):
                 results[name]["state_left_by_an_earlier_scenario"] = leftover
-                failures.append(name)
+            evidence = results[name].get("evidence")
+            if isinstance(evidence, dict) and evidence.get("inconclusive"):
+                inconclusive.append(name)
 
     report = {
         "installer_sha256": arguments.sha256,
         "runtime_path": environment["PATH"],
         "scenarios": results,
         "failed": failures,
+        "inconclusive": inconclusive,
         "not_covered": [_MANUAL_STEP],
         "scope": "disposable_windows_silent_install_not_interactive_gui",
     }
     arguments.report.parent.mkdir(parents=True, exist_ok=True)
     arguments.report.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(json.dumps({"failed": failures, "report": str(arguments.report)}))
+    print(
+        json.dumps(
+            {
+                "failed": failures,
+                "inconclusive": inconclusive,
+                "report": str(arguments.report),
+            }
+        )
+    )
     return 1 if failures else 0
 
 
