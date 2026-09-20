@@ -169,7 +169,7 @@ distincts.
 `/VAULT` est obligatoire en mode silencieux. Les autres switches Datacron sont opt-in :
 
 ```bat
-Datacron-Setup.exe /VERYSILENT /VAULT="C:\Users\me\Notes" /INDEX /ENABLEWRITE
+Datacron-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /VAULT="C:\Users\me\Notes" /INDEX /ENABLEWRITE
 ```
 
 - `/VAULT="CHEMIN"` : sélectionne le vault ; obligatoire pour une installation silencieuse.

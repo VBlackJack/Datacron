@@ -1,6 +1,6 @@
 ---
 title: Guide utilisateur
-verified: 2026-08-30
+verified: 2026-09-20
 tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
@@ -80,9 +80,10 @@ comme membre déclaré, sous CAS, et uniquement pour remplacer le mapping de pre
 dérivé pour `.datacron/ulids.json`, strictement limité aux migrations de clés imposées par les
 déplacements validés et aux collisions de casse obsolètes prouvées mécaniquement. Le mode validate
 expose leur nombre et un SHA-256 content-free, tous deux liés au token ; le reçu durable conserve
-les preuves exactes nécessaires à la recovery et à la purge d'index. Une source existante doit
-porter son `id` dans le frontmatter ; les sources dont
-l'identité existe seulement dans le sidecar ne sont pas prises en charge en v1. Arrête donc les
+les preuves exactes nécessaires à la recovery et à la purge d'index. Une source `replace_exact` sans `id`
+de frontmatter est acceptée quand le sidecar ULID associe son chemin exact à l'identité que
+nomme le manifeste et que la charge écrit cet `id` dans le frontmatter ; une source
+`move_replace_exact` doit porter son `id` dans le frontmatter. Arrête donc les
 autres clients et serveurs Datacron pendant cette maintenance.
 
 Le reçu distingue les opérations du manifeste des membres internes dérivés. Si les octets sont

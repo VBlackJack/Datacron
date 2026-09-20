@@ -160,7 +160,7 @@ protocol blocks, the installed application, or a user-level write environment se
 `/VAULT` is required in silent mode. The other Datacron switches are opt-in:
 
 ```bat
-Datacron-Setup.exe /VERYSILENT /VAULT="C:\Users\me\Notes" /INDEX /ENABLEWRITE
+Datacron-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /VAULT="C:\Users\me\Notes" /INDEX /ENABLEWRITE
 ```
 
 - `/VAULT="PATH"`: select the vault; required for a silent install.

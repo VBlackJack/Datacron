@@ -209,15 +209,25 @@ def _has_frontmatter_tags(value: object) -> bool:
 
 def _group(rel_path: str) -> str:
     top = rel_path.split("/", 1)[0]
-    return top if top in _REQUESTED_GROUPS else "other"
+    folded = {group.casefold() for group in _REQUESTED_GROUPS}
+    return top if top.casefold() in folded else "other"
 
 
 def _exclusion_reason(rel_path: str, config: VaultConfig) -> str:
+    """Explain one excluded note the way the indexer decided to exclude it.
+
+    The indexer casefolds both sides of every exclusion test, and this report
+    compared them exactly. A vault whose config says ``_Archive`` over a directory
+    named ``_archive`` had every archived note reported as an unexplained index
+    gap, which is the one line of this report an operator is meant to act on.
+    """
     parts = Path(rel_path).parts
+    parent_parts = {part.casefold() for part in parts[:-1]}
     for folder in config.excluded_folders:
-        if folder in parts[:-1]:
+        if folder.casefold() in parent_parts:
             return f"folder:{folder}"
-    if parts[-1] in config.excluded_files:
+    excluded_files = {name.casefold() for name in config.excluded_files}
+    if parts[-1].casefold() in excluded_files:
         return f"file:{parts[-1]}"
     return "unexplained_index_gap"
 
@@ -256,7 +266,9 @@ def _render(
         f"The integrity scan sees {scan_count:,} Markdown notes and the index contains "
         f"{index_count:,}, leaving exactly {len(rows):,} excluded notes.",
         "",
-        f"One archived note is a plausible reintegration candidate. {len(configured_candidates)} "
+        f"{len(archive_candidates)} archived "
+        f"{'note is' if len(archive_candidates) == 1 else 'notes are'} a plausible "
+        f"reintegration candidate. {len(configured_candidates)} "
         "additional knowledge-like files are explicitly under non-default excluded paths; "
         "they should remain excluded unless the vault owner deliberately restores that material. "
         f"There are {len(unexplained)} unexplained index gaps.",
@@ -282,9 +294,15 @@ def _render(
             f"| Age 91-365 days | {sum(91 <= row.age_days <= 365 for row in rows)} |",
             f"| Age 366+ days | {sum(row.age_days > 365 for row in rows)} |",
             f"| Total bytes | {sum(sizes):,} |",
-            f"| Median bytes | {int(statistics.median(sizes)):,} |",
-            f"| Smallest note | {min(sizes):,} |",
-            f"| Largest note | {max(sizes):,} |",
+            # A vault with nothing excluded is the outcome this report exists to
+            # certify, and it was the one outcome it could not render: the median
+            # of an empty list raises StatisticsError, so the healthy case ended
+            # in a traceback instead of a clean bill of health.
+            f"| Median bytes | {int(statistics.median(sizes)):,} |"
+            if sizes
+            else "| Median bytes | 0 |",
+            f"| Smallest note | {min(sizes):,} |" if sizes else "| Smallest note | 0 |",
+            f"| Largest note | {max(sizes):,} |" if sizes else "| Largest note | 0 |",
             "",
             "## Knowledge-like heuristic",
             "",

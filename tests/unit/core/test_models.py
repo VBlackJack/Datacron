@@ -195,10 +195,20 @@ class TestIndexStats:
 
 class TestEvalModels:
     def test_question_defaults(self) -> None:
-        q = EvalQuestion(id="q1", question="What is x?")
+        q = EvalQuestion(id="q1", question="What is x?", expected_empty=True)
         assert q.expected_chunk_ids == []
         assert q.expected_paths == []
         assert q.forbidden_paths == []
+
+    def test_a_question_without_ground_truth_is_refused(self) -> None:
+        """No ground truth is a defect in the set, not a question that always passes.
+
+        Every metric divides by an expectation set, so a question naming nothing
+        and expecting nothing scored a perfect 1.0 on both gate metrics and pulled
+        the aggregate up with it.
+        """
+        with pytest.raises(ValidationError, match="no ground truth"):
+            EvalQuestion(id="q1", question="What is x?")
 
     def test_result_clamped_precision(self) -> None:
         with pytest.raises(ValidationError):

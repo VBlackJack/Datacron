@@ -1,6 +1,6 @@
 ---
 title: Frontière de sécurité locale de Datacron
-verified: 2026-08-11
+verified: 2026-09-20
 tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
@@ -44,12 +44,24 @@ espaces de noms par tenant et les ACL inter-tenants ne sont pas implémentés.
 
 ## Périmètre du vault
 
-`SingleTenantVaultScope` autorise aujourd'hui les lectures dans tout le vault configuré. Les
-écritures doivent en plus tomber dans une racine `DATACRON_WRITE_PATHS` explicite. Des
-adaptateurs de lecture et d'écriture à périmètre médient les opérations filesystem, tandis que
-les résultats d'index, la résolution de chunk, les backlinks, les ressources, les métadonnées
-d'audit et la racine de recherche ripgrep fixe sont vérifiés contre la même dépendance de
-périmètre.
+`SingleTenantVaultScope` confine tout chemin à une racine de vault configurée, et les deux
+frontières la rétrécissent différemment.
+
+Les lectures ne sont **pas** autorisées dans tout le vault. Toute lecture de note passe aussi
+l'admission : le chemin doit finir par `.md`, aucun composant parent ne doit commencer par un
+point ni figurer dans `excluded_folders`, et le nom de fichier ne doit pas figurer dans
+`excluded_files`, les deux venant de `VAULT.yaml` et comparés sans tenir compte de la casse. Un
+fichier que le vault contient mais que la politique exclut est refusé à tous les outils de
+lecture.
+
+Les écritures sont confinées à la racine du vault et doivent en plus tomber dans une racine
+`DATACRON_WRITE_PATHS` explicite. Aucune des deux frontières n'implique l'autre : un chemin peut
+être lisible et non inscriptible, et un chemin hors admission n'est ni l'un ni l'autre.
+
+Des adaptateurs de lecture et d'écriture à périmètre médient les opérations filesystem, tandis
+que les résultats d'index, la résolution de chunk, les backlinks, les ressources, les
+métadonnées d'audit et la racine de recherche ripgrep fixe sont vérifiés contre la même
+dépendance de périmètre.
 
 Le lecteur sous-jacent et l'écrivain durable conservent leurs propres contrôles de confinement
 de chemin. `VaultScope` est la couture de remplacement pour une future politique d'ACL ou

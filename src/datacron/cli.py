@@ -1505,6 +1505,17 @@ async def _run_eval(  # noqa: PLR0912 -- command orchestration covers optional o
             tolerance=settings.eval_regression_tolerance,
             config_hash=eval_config_hash(settings, config),
         )
+    if report.summary.question_count == 0:
+        # An empty question set is not a passing run. Saved as a baseline it is
+        # worse than useless: every metric is zero, so no later run can regress
+        # against it and --compare reports PASS for good. The run itself also
+        # exited zero, so a question file that failed to load looked like a clean
+        # evaluation.
+        _print(
+            "No questions were evaluated; refusing to report success or save a baseline. "
+            "Check the question set path and its contents."
+        )
+        return 1
     saved_path = None
     if save_baseline_requested:
         save_baseline(report, vault_root, settings, config)

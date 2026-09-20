@@ -283,7 +283,12 @@ operational-health guide rather than repairing or quarantining one member.
 Datacron indexes a folder of Markdown notes, exposes a local MCP server, then returns the
 relevant notes or chunks to the client instead of a full dump. The vault stays an ordinary
 Markdown folder: Datacron only adds a `.datacron/` sidecar for the index, logs, internal
-ULIDs, history, and the operation journal.
+ULIDs, history, and the operation journal. The one exception is `datacron setup` at project
+scope, which is part of the default: it also writes each detected client's project config
+into the vault root, such as `.mcp.json`, `.cursor/mcp.json`, `.gemini/settings.json`,
+`.agents/mcp_config.json`, `.codex/config.toml` or `.vscode/mcp.json`. Those files carry
+machine-local absolute paths, so a synced vault carries them to every machine. Pass
+`--scope user` to keep the vault free of them.
 
 | Surface | Current state |
 |---|---|

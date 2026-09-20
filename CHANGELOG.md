@@ -347,6 +347,76 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- Six documentation pages carried a `verified:` date older than their own last edit, and the
+  guard hard-coded those dates so it pinned the staleness rather than catching it. Every
+  checkable assertion on all six was re-checked against the code, which found ten more wrong
+  claims, all of them mirrored identically in French: the spec said every write tool is
+  registered when `DATACRON_WRITE_PATHS` is empty, while `apply_organization_manifest` is
+  de-registered entirely unless writes are effectively enabled and the scope is the
+  single-tenant one; the spec and the user guide said a source identified only by the sidecar
+  is unsupported, while a `replace_exact` source is accepted on an exact sidecar match, and it
+  is `move_replace_exact` that requires the frontmatter `id`; the architecture page named a
+  `maxMatchesPerHit` and a `chunk_max_chars` that do not exist, called the per-call audit line
+  an NDJSON log when the NDJSON file is the write journal of committed writes, placed the
+  runtime logs in the vault sidecar when they default to `~/.datacron/logs`, and understated
+  the planner sharing that the manifest surface actually performs; the Ollama page repeated the
+  write-tool claim and gave a route count with no version attached. The dates and the constants
+  now move together, and both languages carry every correction.
+- The typography guard sweeps the tracked tree instead of two hand-listed roots. It covered
+  137 of 299 tracked files, and everything a user reads outside `docs/` was outside it: the
+  Windows installer's own UI strings, the PyPI long description, the MCP registry entry. A
+  sweep a curly quote can walk around is the failure the rule exists to stop, so the scan is
+  driven from `git ls-files` and two files outside `docs/` are asserted reachable.
+- The tool-annotation guard covers every registered tool. It asserted a hand-written subset and
+  never checked the subset was the surface, so five tools carried unasserted annotations,
+  `move_note_section`'s `destructiveHint` among them. A tool registered without being classified
+  now fails the test instead of shipping unclassified.
+- `release.bat` pushes the version bump to a side branch instead of attempting an atomic push to
+  `main` that the branch ruleset cannot accept. The refusal used to arrive after the commit and
+  the tag already existed locally, leaving the operator to undo both by hand; the script now
+  prints the pull-request and tag steps, and says how to roll back if even the branch push
+  fails.
+- A released binary is exercised as an MCP server before publication, not only with `--help`.
+  A one-file bundle fails at import time on the user's machine when a module reached through a
+  dynamic import was not collected, and `--help` returns before any of that is imported. The
+  release workflow now indexes a throwaway vault with the built binary, serves one MCP session
+  from it and reads a note back.
+- The three PyInstaller recipes cannot drift apart unnoticed. The bundling flags are spelled in
+  the POSIX build script, the Windows build script and the release workflow that produces the
+  published binaries, with nothing linking them: a module collected in the scripts an operator
+  runs locally and forgotten in the workflow ships a binary that fails on a user's machine. A
+  test compares the three. Merging them is deliberately not done here, because it changes how
+  the published binaries are built.
+- The reliability policy fixture is pinned by its own consistency rather than by a literal
+  copied from it: the accepted counts must equal the lengths of the accepted fingerprint lists,
+  and the lists must hold no duplicate. Editing a list used to move the debt the policy accepts
+  with nothing to say so.
+- The offline library is tested in both rendering languages. Every `LibraryOptions` in the suite
+  pinned French, so the default English path - the one a first-time reader gets - had no test at
+  all, and a key present in one language table and missing from the other would have shipped.
+- `datacron eval` no longer reports success on an empty question set, and refuses to save one
+  as a baseline. Every metric of a run with no questions is zero, so a baseline written from it
+  cannot be regressed against and `--compare` reports PASS for good; the run itself also exited
+  zero, so a question file that failed to load looked like a clean evaluation.
+- A question with no ground truth is refused where the set is loaded. Every metric divides by
+  an expectation set, so a question naming nothing and expecting nothing scored a perfect 1.0
+  on both gate metrics and pulled the aggregate up with it. Expecting nothing is still
+  expressible, with `expected_empty`.
+- The evaluation config hash covers the archive tags and the read paths. Which paths are served
+  changes which notes a question can retrieve, and archive tags demote results, so an edit that
+  moved every score left the hash identical and the stale-baseline warning silent through
+  exactly the change it exists to catch.
+- The conversation grader stops failing every trace that contains an organization apply. That
+  tool moves many notes at once and takes no `rel_path`, so the per-note re-read rule could
+  never be satisfied. It is checked against its own receipt instead: committed, indexed, no
+  committed error, and a final report matching the projected one.
+- `audit_excluded_notes.py` renders the healthy vault. The median of an empty list raises, so a
+  vault with nothing excluded - the outcome the report exists to certify - ended in a traceback.
+  It also matches exclusion folders and files the way the indexer does, casefolded: a vault
+  declaring `_Archive` over a directory named `_archive` had every archived note reported as an
+  unexplained index gap, which is the one line of that report an operator acts on. Its verdict
+  reports the archived-candidate count it already computed instead of the words "One archived
+  note".
 - One hand-typed date no longer takes `contradiction_scan` down for the whole vault. The
   provenance pattern matches the shape of a date, not a date, so `> CORRECTION 2026-02-30 :`
   in one note raised on parse and unwound out of every candidate: scan and confirm alike were
@@ -612,6 +682,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - The archive tags and the state-note namespace are declared once, in the core
   configuration. A vault overrides the archive tags through `organization.tags.archive_tags`
   in `VAULT.yaml`; the index, the offline library and the planner follow the same source.
+  An executable older than that release refuses a `VAULT.yaml` that declares the key, as it
+  does for the whole `tags` block: upgrade every installation first.
   The planner names its expectation for a missing state note as `one note carrying any
   kind/* tag`, which is what it checks.
 - The library command module lives outside the domain package (`datacron.cli_library`);

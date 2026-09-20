@@ -1,6 +1,6 @@
 ---
 title: Datacron local security boundary
-verified: 2026-08-11
+verified: 2026-09-20
 tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
@@ -44,10 +44,21 @@ namespaces, and cross-tenant ACLs are not implemented.
 
 ## Vault scope
 
-`SingleTenantVaultScope` currently permits reads throughout one configured vault.
-Writes must also fall within an explicit `DATACRON_WRITE_PATHS` root. Scoped reader
-and writer adapters mediate filesystem operations, while index results, chunk
-resolution, backlinks, resources, audit metadata, and the fixed ripgrep search root
+`SingleTenantVaultScope` confines every path to one configured vault root, and the two
+boundaries narrow it differently.
+
+Reads are **not** permitted throughout the vault. Every note read also passes note
+admission: the path must end in `.md`, no parent component may start with a dot or appear
+in `excluded_folders`, and the filename must not appear in `excluded_files`, both taken
+from `VAULT.yaml` and compared casefolded. A file the vault holds but the policy excludes
+is refused to every read tool.
+
+Writes are confined to the vault root and, in addition, must fall within an explicit
+`DATACRON_WRITE_PATHS` root. Neither boundary implies the other: a path can be readable
+and not writable, and a path outside note admission is neither.
+
+Scoped reader and writer adapters mediate filesystem operations, while index results,
+chunk resolution, backlinks, resources, audit metadata, and the fixed ripgrep search root
 are checked against the same scope dependency.
 
 The underlying reader and durable writer retain their own path-containment checks.

@@ -21,7 +21,13 @@ from pathlib import Path
 
 import pytest
 
-from datacron.core.config import Settings, VaultConfig
+from datacron.core.config import (
+    OrganizationConfig,
+    OrganizationRule,
+    OrganizationTagPolicy,
+    Settings,
+    VaultConfig,
+)
 from datacron.core.models import (
     EvalPipeline,
     EvalReport,
@@ -154,3 +160,32 @@ def test_eval_config_hash_changes_with_retrieval_config() -> None:
     changed_hash = eval_config_hash(Settings(max_result_tokens=4000), VaultConfig())
 
     assert default_hash != changed_hash
+
+
+def test_eval_config_hash_covers_what_changes_the_answers(tmp_path: Path) -> None:
+    """A config edit that moves every score must not leave the hash identical.
+
+    The hash exists so a baseline compared against a differently configured run
+    says so. Which paths are served changes which notes a question can retrieve,
+    and archive tags demote results: both were missing, so the warning stayed
+    silent through exactly the edits it is there to catch.
+    """
+    default_hash = eval_config_hash(Settings(), VaultConfig())
+
+    archived = eval_config_hash(
+        Settings(),
+        VaultConfig(
+            organization=OrganizationConfig(
+                scope="notes",
+                rules=(OrganizationRule(tag="memory/fact", folder="notes", naming="{slug}"),),
+                tags=OrganizationTagPolicy(
+                    placement_namespace="memory",
+                    archive_tags=("status/retired",),
+                ),
+            )
+        ),
+    )
+    narrowed = eval_config_hash(Settings(read_paths=[tmp_path]), VaultConfig())
+
+    assert archived != default_hash
+    assert narrowed != default_hash

@@ -90,9 +90,16 @@ def eval_config_hash(settings: Settings, vault_config: VaultConfig) -> str:
             "read_only": settings.read_only,
             "redact_secrets": settings.redact_secrets,
             "secret_redaction_patterns": settings.secret_redaction_patterns,
+            # Which paths are served changes which notes a question can retrieve,
+            # and archive tags demote results, so both change the answers this
+            # hash exists to detect a change in. Leaving them out meant an edit
+            # that moved every score left the hash identical and the stale-baseline
+            # warning silent.
+            "read_paths": sorted(str(path) for path in settings.read_paths),
             "write_scope_configured": bool(settings.write_paths),
         },
         "vault": {
+            "archive_tags": sorted(vault_config.archive_tags),
             "encoding": vault_config.encoding,
             "excluded_files": vault_config.excluded_files,
             "excluded_folders": vault_config.excluded_folders,

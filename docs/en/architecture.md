@@ -1,6 +1,6 @@
 ---
 title: Datacron - Architecture and technical specification
-verified: 2026-08-30
+verified: 2026-09-20
 tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 ---
 
@@ -29,7 +29,9 @@ context.
 The delivered foundation stays deliberately **minimalist**:
 
 1. **Vault layer** - Any folder of Markdown files. No migration required.
-2. **`.datacron/` layer** - Invisible sidecar (SQLite FTS5, ULID side-table, logs, history, and operation journal).
+2. **`.datacron/` layer** - Invisible sidecar (SQLite FTS5, ULID side-table, history, and
+   operation journal). Runtime logs are not here: they default to `~/.datacron/logs`, and
+   `.datacron/logs` is created at bootstrap but never written to.
 3. **MCP server layer** - Python MCP SDK v2 `MCPServer`, stdio. Read/search tools, client-approved write tools, 3 resources.
 4. **Client layer** - Nine setup client IDs through user and, where available, project config.
 
@@ -103,12 +105,12 @@ flowchart TB
         RES[3 resources]
         SBX[Content sandboxing]
         CONF[Path confinement]
-        AUD[Audit log NDJSON]
+        AUD[Audit log + write journal]
     end
 
     subgraph SIDE[".datacron/ sidecar"]
         DB[(SQLite FTS5 + ULIDs)]
-        LOGS[Logs]
+        HIST[History + operation journal]
     end
 
     subgraph VAULT["Markdown vault (any structure)"]
@@ -164,9 +166,10 @@ flowchart TB
 
 `apply_organization_manifest` applies an organization batch; it does not compute one. The gap
 between the vault and the organization declared in `VAULT.yaml` is measured outside MCP, by the
-`datacron reorganize --dry-run` CLI command, read-only. The planner behind it shares only the
-path, scope, and admission checks with the manifest: measurement and application remain two
-distinct surfaces, and neither infers the other. See
+`datacron reorganize --dry-run` CLI command, read-only. The planner behind it shares the
+path, scope and admission checks with the manifest, and the manifest surface also runs it to
+compute the projected and post-commit report hashes. What stays separate is the decision:
+measurement never produces a batch and application never infers one. See
 [Vault organization](organization.md).
 
 ### 5.2 Resources (3)
@@ -180,7 +183,8 @@ distinct surfaces, and neither infers the other. See
 ### 5.3 Technical guardrails (all tools)
 
 - **Path confinement**: `DATACRON_READ_PATHS` enforced at the library level.
-- **Bounded results**: `maxMatchesPerHit=20`, content truncation if > 8k tokens, mandatory citations.
+- **Bounded results**: `max_result_count=20` results per call (`DATACRON_MAX_RESULT_COUNT`),
+  content truncation above `max_result_tokens` (8k), mandatory citations.
 - **Sandboxing**: any returned note content is wrapped:
   ```
   <vault_content path="...">
@@ -188,7 +192,9 @@ distinct surfaces, and neither infers the other. See
   ...
   </vault_content>
   ```
-- **NDJSON audit log** on every call.
+- **Audit line** on every call, in the plain-text log: `AUDIT tool=... duration_ms=...`.
+  The NDJSON file is the write journal `operations.jsonl`, which records committed writes
+  only, not every call.
 
 ### 5.4 MCP protocol compatibility matrix
 
@@ -285,10 +291,13 @@ Rejected: adding retrieval technology on intuition; every addition passes the me
 
 ### ADR-013 - Incremental index reconciliation, `mtime` gate, `content_hash` authority
 `datacron index` and read-path repair share a single reconciliation: a note whose stored
-`st_mtime_ns` is unchanged is skipped (neither read nor hashed); `content_hash` stays the
-authority as soon as a note is read, so an unreliable `mtime` never causes a false skip. A note
-that was touched but has identical content has its `mtime` refreshed so the next pass skips it.
-Replaces the O(n) full scan with a `stat` sweep; a `reindex --drop` forces a full rebuild.
+`st_mtime_ns` is unchanged is skipped, neither read nor hashed, so for that note `mtime` is the
+sole authority and `content_hash` is never consulted. `content_hash` is the authority for every
+note the pass does read. The consequence to know: a rewrite that lands within one `mtime` tick
+of the stored value is invisible until a full rebuild, which is why the comparison is a strict
+`==` and why a coarse-granularity filesystem is a reason to reindex. A note that was touched but
+has identical content has its `mtime` refreshed so the next pass skips it. Replaces the O(n)
+full scan with a `stat` sweep; `datacron reindex` forces a full rebuild.
 Strict `==` comparison (never `<=`) to handle restores with an older `mtime`.
 Rejected: `mtime` as sole authority (exFAT 2 s granularity, sync tools preserving `mtime`);
 full O(n) re-read on every pass.
@@ -310,13 +319,13 @@ results (demotion keeps them reachable).
 ### ADR-016 - Over-long lines brute-split: resolution to the first piece (accepted limit)
 The `Chunk` model addresses chunks by line range (`line_start`/`line_end`, 1-indexed) so that
 ripgrep resolves a (file, line) match without a side table. A single source line exceeding
-`chunk_max_chars` is brute-split into N sub-chunks (`_brute_split_line`/`_segment_generic`) all
+the derived character budget (`chunk_max_tokens * 4`) is brute-split into N sub-chunks (`_brute_split_line`/`_segment_generic`) all
 sharing the same range (i, i). Consequence: a ripgrep match on that line resolves to the FIRST
 sub-chunk (first-match containment); sub-chunks 2..N are not individually addressable. The
 content stays fully indexed and correct; only the chunk_id/snippet returned for a match in the
 overflow of a monster line points to piece 1. **Decision: accepted (WAI).** The clean fix would
 require sub-line character offsets in the (frozen) `Chunk` model, disproportionate for a rare
-edge case (lines > ~`chunk_max_chars`: minified, base64, giant single-line). Closes the P3
+edge case (lines beyond that derived budget: minified, base64, giant single-line). Closes the P3
 chunker backlog item.
 Rejected: sub-line character offsets in the frozen `Chunk` model (disproportionate for a rare
 edge case).
@@ -508,9 +517,9 @@ sequenceDiagram
 | Transport | Interception | local stdio only |
 | FS confinement | Read outside vault | `DATACRON_READ_PATHS` enforced |
 | Prompt injection | Malicious note hijacks the client | Sandbox wrap + escape `<system>`, `Ignore previous...` |
-| Context bloat | Tool returns too much | `maxMatchesPerHit=20`, 8k-token truncation |
+| Context bloat | Tool returns too much | `max_result_count=20`, `max_result_tokens` 8k-token truncation |
 | Cross-tool exfiltration | Datacron + another MCP tool coordinate maliciously | Explicit resource declarations, no "execute arbitrary" tool |
-| Audit | No traceability | Append-only NDJSON on every call |
+| Audit | No traceability | An audit line on every call; an append-only NDJSON journal for every committed write |
 | Accidental write | Datacron modifies an unintended file | `DATACRON_WRITE_PATHS` mandatory, strict confinement, writes OFF by default |
 | Content loss | Destructive overwrite | Content-addressed history + atomic temp/replace write |
 | Cloud LLM privacy | Chunks go to Anthropic via Claude | Honestly documented in the README "What leaves your machine" |

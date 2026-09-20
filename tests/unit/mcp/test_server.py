@@ -265,6 +265,10 @@ async def test_rename_note_section_tool_annotations_describe_local_effects(
         "get_note_history",
         "audit_query",
         "contradiction_scan",
+        "session_context",
+        "prepare_follow_up",
+        "get_follow_up",
+        "get_write_progress",
     }
     for name in read_names:
         assert annotations[name] == {
@@ -286,6 +290,7 @@ async def test_rename_note_section_tool_annotations_describe_local_effects(
         "patch_note_section",
         "delete_note_section",
         "rename_note_section",
+        "move_note_section",
         "apply_organization_manifest",
     ):
         assert annotations[name] == {
@@ -300,6 +305,23 @@ async def test_rename_note_section_tool_annotations_describe_local_effects(
         "idempotentHint": True,
         "openWorldHint": False,
     }
+    # The guard asserted a hand-written subset and never checked it covered the
+    # surface, so five registered tools carried unasserted annotations, including
+    # move_note_section's destructiveHint. A tool registered without being
+    # classified here now fails this test rather than shipping unclassified.
+    classified = read_names | {
+        "create_note_ai",
+        "append_journal",
+        "set_frontmatter",
+        "patch_note_preamble",
+        "patch_note_section",
+        "delete_note_section",
+        "rename_note_section",
+        "move_note_section",
+        "apply_organization_manifest",
+        "revert_note",
+    }
+    assert set(annotations) == classified
 
 
 @pytest.mark.asyncio

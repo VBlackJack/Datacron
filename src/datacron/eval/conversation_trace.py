@@ -112,10 +112,40 @@ def _citation_failures(case: ConversationCase, events: list[TraceEvent], final: 
     ]
 
 
+_BATCH_WRITE_TOOLS: frozenset[str] = frozenset({"apply_organization_manifest"})
+"""Mutating tools that do not write one note at a given ``rel_path``.
+
+A manifest apply moves and rewrites many notes at once and takes no ``rel_path``
+argument at all, so the per-note re-read rule below could never be satisfied and
+every trace containing one was graded as a failed write. Its receipt carries what
+there is to verify: the batch committed and the report it produced matches.
+"""
+
+
+def _batch_write_failure(index: int, event: TraceEvent) -> str | None:
+    """Check a batch apply against its own receipt rather than against a path."""
+    result = event.result
+    if result.get("already_committed") is True:
+        return None
+    if result.get("status") != "applied" or result.get("indexed") is not True:
+        return f"batch_not_applied:{index}"
+    if result.get("committed_error_code") is not None:
+        return f"batch_committed_error:{index}"
+    projected = result.get("projected_report_sha256")
+    if projected is not None and projected != result.get("final_report_sha256"):
+        return f"batch_report_mismatch:{index}"
+    return None
+
+
 def _write_failures(events: list[TraceEvent]) -> list[str]:
     failures: list[str] = []
     for index, event in enumerate(events):
         if event.tool not in MUTATING_TOOL_NAMES or "error" in event.result:
+            continue
+        if event.tool in _BATCH_WRITE_TOOLS:
+            batch_failure = _batch_write_failure(index, event)
+            if batch_failure is not None:
+                failures.append(batch_failure)
             continue
         if not event.result.get("replayed") and event.result.get("indexed") is not True:
             failures.append(f"unconfirmed_index:{index}")

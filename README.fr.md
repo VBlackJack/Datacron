@@ -283,7 +283,12 @@ rollback hors ligne complet du guide de santé opérationnelle, sans réparer ni
 Datacron indexe un dossier de notes Markdown, expose un serveur MCP local, puis renvoie
 au client les notes ou chunks pertinents au lieu d'un dump complet. Le vault reste un
 dossier Markdown normal : Datacron ajoute seulement un sidecar `.datacron/` pour l'index,
-les logs, les ULID internes, l'historique et le journal d'opérations.
+les logs, les ULID internes, l'historique et le journal d'opérations. Seule exception, et
+elle fait partie du défaut : `datacron setup` au périmètre projet écrit aussi la configuration
+projet de chaque client détecté à la racine du vault, par exemple `.mcp.json`,
+`.cursor/mcp.json`, `.gemini/settings.json`, `.agents/mcp_config.json`, `.codex/config.toml`
+ou `.vscode/mcp.json`. Ces fichiers portent des chemins absolus propres à la machine, donc un
+vault synchronisé les emporte partout. Passer `--scope user` pour en garder le vault exempt.
 
 | Surface | État actuel |
 |---|---|

@@ -57,4 +57,4 @@ a Markdown vault from Claude, without sending the whole vault into the context.
 | Document | For what |
 |---|---|
 | [Datacron 2026.0913.02: offline library](offline-library-release-notes.md) | The release that added the local Markdown library. |
-| [Pending release: surface test fixes](surface-fixes-release-notes.md) | Heading trails with actual Markdown levels and the reindex they require. |
+| [Datacron 2026.0910.02: surface test fixes](surface-fixes-release-notes.md) | Heading trails with actual Markdown levels and the reindex they require. |

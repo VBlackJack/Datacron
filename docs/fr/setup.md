@@ -8,7 +8,12 @@ branché sur Claude Desktop ou Claude Code. Il complète le [README](../../READM
 [questions fréquentes](faq.md).
 
 > Datacron ne modifie jamais tes notes sans que tu l'actives explicitement, et n'envoie
-> rien vers un service cloud. Il ajoute seulement un dossier `.datacron/` à côté de tes notes.
+> rien vers un service cloud. Il ajoute un dossier `.datacron/` à côté de tes notes, et au
+> périmètre projet, qui est celui par défaut, il écrit aussi la configuration projet de chaque
+> client détecté à la racine du vault : `.mcp.json`, `.cursor/mcp.json`,
+> `.gemini/settings.json`, `.agents/mcp_config.json`, `.codex/config.toml` ou
+> `.vscode/mcp.json`, selon ce qui est installé. Ces fichiers portent des chemins absolus
+> propres à la machine. Passer `--scope user` pour les garder hors du vault.
 
 ## Parcours guidé (le plus simple)
 

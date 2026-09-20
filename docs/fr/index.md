@@ -57,4 +57,4 @@ et maintient un vault Markdown depuis Claude, sans envoyer le vault complet dans
 | Document | Pour quoi |
 |---|---|
 | [Datacron 2026.0913.02 : bibliothèque hors ligne](offline-library-release-notes.md) | La version qui a ajouté la bibliothèque Markdown locale. |
-| [Version à venir : correctifs du test de surface](surface-fixes-release-notes.md) | Les fils de titres aux vrais niveaux Markdown et la réindexation qu'ils imposent. |
+| [Datacron 2026.0910.02 : correctifs du test de surface](surface-fixes-release-notes.md) | Les fils de titres aux vrais niveaux Markdown et la réindexation qu'ils imposent. |

@@ -10,7 +10,7 @@ import json
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import pytest
 from typer.testing import CliRunner, Result
@@ -38,12 +38,20 @@ from datacron.organization.library_models import (
     LibraryOptions,
     SourceReference,
 )
+from datacron.organization.library_text import TEXT
 from datacron.organization.library_workbench import check_library, prepare_library
 from datacron.organization.manifest import OrganizationBundle
 
 
-@pytest.fixture
-def library(tmp_path: Path) -> tuple[Path, LibraryOptions, Settings]:
+@pytest.fixture(params=["fr", "en"])
+def library(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> tuple[Path, LibraryOptions, Settings]:
+    """The library fixture, in both rendering languages.
+
+    Every LibraryOptions in the suite pinned ``language="fr"``, so the default
+    English rendering path - the one a first-time reader gets - had no test at all.
+    """
     vault = tmp_path / "vault"
     (vault / "notes").mkdir(parents=True)
     (vault / ".datacron").mkdir()
@@ -53,7 +61,10 @@ def library(tmp_path: Path) -> tuple[Path, LibraryOptions, Settings]:
         encoding="utf-8",
     )
     options = LibraryOptions(
-        scope="notes", home="notes/accueil.md", tags=["memory/fact"], language="fr"
+        scope="notes",
+        home="notes/accueil.md",
+        tags=["memory/fact"],
+        language=cast("Literal['en', 'fr']", request.param),
     )
     return (
         vault,
@@ -99,7 +110,8 @@ async def test_prepare_is_read_only_and_links_open_offline(
     for note in generated:
         for target, wiki in links_and_tasks(note.content)[0]:
             assert resolve_link(note.rel_path, target, wiki, index)[0] == "note"
-    assert "Cases ouvertes" in (output / "preview/notes/accueil.md").read_text(encoding="utf-8")
+    home_text = (output / "preview/notes/accueil.md").read_text(encoding="utf-8")
+    assert TEXT[options.language]["tasks"] in home_text
 
 
 @pytest.mark.parametrize(
@@ -831,3 +843,13 @@ def test_cli_prepare_reports_a_missing_note_field_without_a_traceback(
     assert isinstance(result.exception, SystemExit)
     assert "Missing required note field: title" in result.output
     assert "Traceback" not in result.output
+
+
+def test_both_rendering_languages_declare_the_same_keys() -> None:
+    """A key present in one language and missing in the other renders a KeyError.
+
+    The suite pinned French everywhere, so the English table was never exercised
+    and a key added to one side only would have shipped.
+    """
+    assert set(TEXT["en"]) == set(TEXT["fr"])
+    assert all(TEXT["en"][key] and TEXT["fr"][key] for key in TEXT["en"])
