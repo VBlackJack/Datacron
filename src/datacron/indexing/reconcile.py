@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
 
@@ -118,23 +119,38 @@ async def reconcile(
     # the bytes written and the durable commits grew with the vault on every pass.
     # The identity scope covers the reads of both loops; the commit scope covers the
     # writes of the second.
-    async with reader.defer_identity_writes():
-        prepared, owners, unreadable = await _prepare_live_identities(
-            reader, live, indexed, gated=gated, on_settled=advance
-        )
-        async with store.bulk_writes():
-            deleted, reindexed, skipped = await _apply_pass(
-                store,
-                reader,
-                chunker,
-                live=live,
-                indexed=indexed,
-                prepared=prepared,
-                gated=gated,
-                unreadable=unreadable,
-                owners=owners,
-                advance=advance,
+    counts = _PassCounts()
+    try:
+        async with reader.defer_identity_writes():
+            prepared, owners, unreadable = await _prepare_live_identities(
+                reader, live, indexed, gated=gated, on_settled=advance
             )
+            async with store.bulk_writes():
+                await _apply_pass(
+                    store,
+                    reader,
+                    chunker,
+                    live=live,
+                    indexed=indexed,
+                    prepared=prepared,
+                    gated=gated,
+                    unreadable=unreadable,
+                    owners=owners,
+                    advance=advance,
+                    counts=counts,
+                )
+    except Exception:
+        # Every delete and every upsert commits as it goes, so a pass that fails
+        # part-way has already published rows. The generation is what tells the
+        # temporal cache its answer is stale, and that cache lives as long as the
+        # server process: leaving it unmoved kept a note ranked from its pre-edit
+        # metadata for the rest of the run, with no error on any later search. A
+        # refusal that published nothing, such as a duplicate identity, leaves the
+        # counter alone, which is why the pass reports what it wrote as it writes.
+        if counts.published:
+            await _advance_generation_after_failure(store)
+        raise
+    deleted, reindexed, skipped = counts.deleted, counts.reindexed, counts.skipped
 
     if unreadable:
         _LOGGER.warning(
@@ -163,6 +179,34 @@ async def reconcile(
     return stats
 
 
+@dataclass
+class _PassCounts:
+    """What one pass has published so far.
+
+    Owned by the caller rather than returned, because the question it answers is
+    only interesting when the pass did not finish: every delete and every upsert
+    commits as it goes, so a pass that raises has already changed rows, and the
+    generation has to move for exactly those rows and not for a refusal that
+    changed nothing.
+    """
+
+    deleted: int = 0
+    reindexed: int = 0
+    skipped: int = 0
+
+    @property
+    def published(self) -> bool:
+        return bool(self.deleted or self.reindexed)
+
+
+async def _advance_generation_after_failure(store: FTS5Store) -> None:
+    """Move the generation after a failed pass, without masking why it failed."""
+    try:
+        await store.increment_generation()
+    except Exception as exc:
+        _LOGGER.error("Could not advance the index generation after a failed pass: %s", exc)
+
+
 async def _apply_pass(
     store: FTS5Store,
     reader: VaultReader,
@@ -175,25 +219,24 @@ async def _apply_pass(
     unreadable: frozenset[str],
     owners: dict[str, str],
     advance: Callable[[], Awaitable[None]],
-) -> tuple[int, int, int]:
-    """Apply one settled pass to the index and return deleted, reindexed and skipped."""
-    reindexed = 0
-    skipped = 0
-    deleted = await _purge_vanished_notes(store, indexed, live, prepared)
+    counts: _PassCounts,
+) -> None:
+    """Apply one settled pass to the index, recording what it publishes as it goes."""
+    counts.deleted = await _purge_vanished_notes(store, indexed, live, prepared)
 
     for rel_path, (path, st_mtime_ns) in live.items():
         entry = indexed.get(rel_path)
 
         # Cheap path: mtime unchanged -> trust the index, do not read or hash.
         if rel_path in gated:
-            skipped += 1
+            counts.skipped += 1
             await advance()
             continue
 
         if rel_path in unreadable:
             # Already reported as settled by the pre-pass; its index rows, if any,
             # are left as they were rather than dropped on a transient read error.
-            skipped += 1
+            counts.skipped += 1
             continue
 
         note_id, content_hash = prepared[rel_path]
@@ -203,7 +246,7 @@ async def _apply_pass(
             # mtime so the next pass can skip this note via the gate above.
             if entry[2] != st_mtime_ns:
                 await store.record_mtime(note_id, st_mtime_ns)
-            skipped += 1  # Already reported as settled by the pre-pass.
+            counts.skipped += 1  # Already reported as settled by the pre-pass.
             continue
 
         # New note, or content actually changed: read it again now. The pre-pass kept
@@ -212,17 +255,15 @@ async def _apply_pass(
             note = await reader.read_note(path)
         except (OSError, ValueError) as exc:
             _LOGGER.warning("Skipping unreadable note %s: %s", path, exc)
-            skipped += 1
+            counts.skipped += 1
             await advance()
             continue
         if note.id != note_id and owners.get(note.id, rel_path) != rel_path:
             raise DuplicateNoteIdentityError(note.id, owners[note.id], rel_path)
         owners[note.id] = rel_path
         await store.upsert_note(note, chunker.chunk(note), fs_mtime_ns=st_mtime_ns)
-        reindexed += 1
+        counts.reindexed += 1
         await advance()
-
-    return deleted, reindexed, skipped
 
 
 async def _report(progress: IndexProgress | None, completed: int, total: int) -> None:

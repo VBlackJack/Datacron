@@ -275,6 +275,17 @@ async def run_integrity_scrub(
         scope,
     )
     anomalies = {key: value for key, value in anomalies.items() if key[0] != "canary"}
+    # A note anomaly is only dropped when that exact path is checked again, and the
+    # pass only walks paths the index still holds. So doing the right thing about a
+    # flagged note - restoring it under another name, or deleting it - took its path
+    # out of the walk and its anomaly was carried forward into every later pass.
+    # get_health then reported critical for the rest of the vault's life, with no
+    # command to clear it short of deleting the checkpoint, which also discards the
+    # genuine evidence. Evidence about a note the index no longer holds is retired
+    # here, the way canary evidence already is.
+    anomalies = {
+        key: value for key, value in anomalies.items() if key[0] != "note" or key[1] in indexed
+    }
     for canary_anomaly in canary_anomalies:
         anomalies[canary_anomaly.key] = canary_anomaly
         _log_alert(canary_anomaly)

@@ -339,7 +339,9 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
             "Use this to find related context the user did not mention. Return chunks "
             "whose wikilinks point at the given target. Target may be a note ULID or a "
             "wikilink alias (resolved via title -> filename -> aliases). Empty list if "
-            "unresolved or no incoming links."
+            "unresolved or no incoming links. The scan stops at limit, so truncated=true "
+            "means there are more incoming links than were returned and returned is not "
+            "a count of them; raise limit to see further."
         ),
         annotations=_READ_ANNOTATIONS,
     )

@@ -697,7 +697,7 @@ class TestSearchRegex:
         assert "error" in result
         assert "results" not in result
         assert result["error"]["type"] == "ValueError"
-        assert "pattern rejected by ripgrep" in result["error"]["message"]
+        assert "ripgrep returned no results and exited with an error" in result["error"]["message"]
         assert "regex parse error" in result["error"]["message"]
         assert "internal error" not in result["error"]["message"].lower()
 

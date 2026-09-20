@@ -543,12 +543,10 @@ async def test_rg_error_exit_raises_typed_error_and_logs_warning(
 
     logger = _LoggerSpy()
     monkeypatch.setattr(ripgrep_module, "_LOGGER", logger)
-    alpha = indexed.vault_root / "alpha.md"
-    process = _FakeProcess(
-        [_match(alpha, 2, "kafka\n", [(0, 5)])],
-        returncode=2,
-        stderr=b"regex parse error",
-    )
+    # A pattern ripgrep will not compile produces no matches: it fails before it
+    # searches anything. That is what separates it from a traversal error, which
+    # exits 2 after printing every match it did find.
+    process = _FakeProcess([], returncode=2, stderr=b"regex parse error")
     _install_process(monkeypatch, process)
 
     with pytest.raises(RipgrepError) as exc_info:
@@ -1091,3 +1089,35 @@ async def test_a_path_admission_rejects_is_never_resolved(
 
     assert [result.chunk.note_rel_path for result in results] == ["alpha.md"]
     assert note_id_lookups == ["alpha.md"]
+
+
+async def test_rg_partial_traversal_keeps_the_matches_it_printed(
+    indexed: _IndexedFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A file ripgrep could not read must not discard the ones it could.
+
+    ripgrep exits 2 when any file failed, even after printing matches for every
+    other file, and on Windows that is routine: one note held open by the editor,
+    one placeholder that does not hydrate, one folder without rights. Discarding
+    the results told the caller its pattern was rejected while the message
+    underneath read "Access is denied", so an agent rewrote a correct regex
+    indefinitely.
+    """
+    import datacron.indexing.ripgrep as ripgrep_module
+
+    logger = _LoggerSpy()
+    monkeypatch.setattr(ripgrep_module, "_LOGGER", logger)
+    alpha = indexed.vault_root / "alpha.md"
+    process = _FakeProcess(
+        [_match(alpha, 2, "kafka\n", [(0, 5)])],
+        returncode=2,
+        stderr=b"rg: ./locked.md: Access is denied. (os error 5)",
+    )
+    _install_process(monkeypatch, process)
+
+    results = await RipgrepWrapper().search("kafka", indexed.vault_root, store=indexed.store)
+
+    assert [result.chunk.note_id for result in results]
+    # The failure is still reported, to the log, where a partial traversal belongs.
+    assert logger.warning_calls

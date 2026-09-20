@@ -220,6 +220,16 @@ class RipgrepWrapper:
                 proc.returncode,
                 stderr.strip() or "(no stderr)",
             )
+            if results:
+                # ripgrep exits 2 when any file could not be read, which on Windows
+                # is routine: one note held by the editor, one placeholder that does
+                # not hydrate, one folder without rights. Every match it printed
+                # first is valid, and discarding them told the caller its pattern was
+                # rejected when the message underneath was an access error, so an
+                # agent rewrote a correct regex indefinitely. A run that reached the
+                # end and matched nothing is the only one that can be a pattern
+                # problem, and that one still raises.
+                return results
             raise RipgrepError(proc.returncode, stderr)
         return results
 

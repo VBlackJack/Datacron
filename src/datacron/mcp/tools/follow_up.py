@@ -35,7 +35,7 @@ from datacron.core.models import Note
 from datacron.core.paths import PathConfinementError
 from datacron.core.scope import NoteAdmissionError
 from datacron.mcp.sandbox import sanitize_metadata_value, wrap_vault_content
-from datacron.mcp.tools.follow_up_read import follow_up_entries
+from datacron.mcp.tools.follow_up_read import FollowUpEntryError, follow_up_entries
 from datacron.mcp.tools.payloads import _audit, _error_response, _internal_error_response
 from datacron.mcp.tools.session import rendered_size
 
@@ -307,16 +307,23 @@ async def prepare_follow_up(app: DatacronApp, records: list[FollowUpRecord]) -> 
         return output
     except FollowUpValidationError as exc:
         return _error_response("prepare_follow_up", exc, started)
-    except (ValueError, FileNotFoundError, NoteAdmissionError, PathConfinementError):
-        # Caller values and full vault text must not leak through validation messages.
-        return _error_response(
-            "prepare_follow_up",
-            ValueError(
+    except (ValueError, FileNotFoundError, NoteAdmissionError, PathConfinementError) as exc:
+        # Caller values and full vault text must not leak through validation
+        # messages, so the generic refusal stays generic. A malformed stored
+        # envelope is the exception: it is the one cause the caller cannot fix by
+        # re-reading and resubmitting, and one bad target refuses a request that
+        # may carry records for notes that are perfectly healthy. Naming it is the
+        # least this can do; the message it used to share listed six other causes
+        # and not this one, so an agent re-prepared the same plan forever.
+        reported: Exception = (
+            exc
+            if isinstance(exc, FollowUpEntryError)
+            else ValueError(
                 "follow-up validation failed: check identity, source "
                 "hashes/excerpt, history heading, revision and budget"
-            ),
-            started,
+            )
         )
+        return _error_response("prepare_follow_up", reported, started)
     except Exception:
         return _internal_error_response("prepare_follow_up", started)
 

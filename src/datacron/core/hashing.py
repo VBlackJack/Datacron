@@ -19,9 +19,13 @@ import hashlib
 from collections.abc import Mapping
 from typing import Final
 
+from ulid import ULID
+
 __all__ = [
     "FRESHNESS_CONTRACT_ID",
     "HASH_HEX_LENGTH",
+    "NOTE_ID_LENGTH",
+    "derive_note_id",
     "hash_text",
     "index_generation_hash",
     "normalize_text",
@@ -30,6 +34,10 @@ __all__ = [
 
 FRESHNESS_CONTRACT_ID: Final[str] = "freshness-contract-v1"
 HASH_HEX_LENGTH: Final[int] = 64
+NOTE_ID_LENGTH: Final[int] = 26
+"""Characters in a canonical ULID, the length every identity check compares."""
+_NOTE_ID_SALT: Final[str] = "datacron-rel-path-id\x00"
+_NOTE_ID_DIGEST_BYTES: Final[int] = 16
 _BOM: Final[str] = "\ufeff"
 
 
@@ -70,3 +78,19 @@ def index_generation_hash(indexed: Mapping[str, tuple[str, str]]) -> str:
         digest.update(content_hash.encode("ascii"))
         digest.update(b"\n")
     return digest.hexdigest()
+
+
+def derive_note_id(rel_path: str) -> str:
+    """Derive the identity of a note that carries none, from its path alone.
+
+    A note with no frontmatter ``id`` and no sidecar row still has to be the same
+    note to everyone who looks at it. The derivation was copied into three
+    modules: the vault scan that mints and persists the id, the recovery path that
+    reconstructs it, and the organization projection that plans moves against it.
+    Nothing linked the copies and no test asserted they agreed, so changing the
+    salt or the digest width in one of them would have had the scanner and the
+    manifest disagree about which note is which, and a planned move applied
+    against an identity the index does not hold.
+    """
+    digest = hashlib.sha256(f"{_NOTE_ID_SALT}{rel_path}".encode()).digest()
+    return str(ULID.from_bytes(digest[:_NOTE_ID_DIGEST_BYTES]))

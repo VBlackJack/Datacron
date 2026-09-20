@@ -333,10 +333,14 @@ async def _search_regex_impl(
         mapped_exc = ValueError(str(exc)) if isinstance(exc, RegexFallbackError) else exc
         return _error_response("search_regex", mapped_exc, started, pattern=pattern, glob=glob)
     except RipgrepError as exc:
+        # Only a run that produced nothing reaches here, so the pattern is the
+        # likely cause; it is still not the only one, and the message says so
+        # rather than asserting a rejection over a stderr that reads "Access is
+        # denied". An agent told its regex was rejected rewrites the regex.
         message = exc.stderr.strip() or str(exc)
         return _error_response(
             "search_regex",
-            ValueError(f"pattern rejected by ripgrep: {message}"),
+            ValueError(f"ripgrep returned no results and exited with an error: {message}"),
             started,
             pattern=pattern,
             glob=glob,
@@ -426,6 +430,12 @@ async def _get_backlinks_impl(
         "results": sources,
         "returned": len(sources),
         "limit_applied": bounded_limit,
+        # The scan stops the moment it has a full page, so a hub note referenced
+        # more times than the cap returned exactly the cap with nothing to say the
+        # rest existed. Every other listing on this surface carries a truncation
+        # signal; this one could only mislead by omission, and a caller reading
+        # `returned` as a count answered "twenty notes reference this".
+        "truncated": len(sources) >= bounded_limit,
     }
     if repair["reindexed_notes"] or repair["deleted_notes"]:
         payload["index_repair"] = repair
