@@ -48,6 +48,28 @@ _ENTRY = re.compile(
 )
 
 
+class FollowUpEntryError(ValueError):
+    """Raised when a note's own stored follow-up bytes are malformed.
+
+    Separate from every other refusal this subsystem makes, because it is the only
+    one the caller cannot fix by re-reading and resubmitting. It was reported
+    through the generic handler, whose message lists identity, source hashes,
+    excerpt, heading, revision and budget - six things to re-check, and not the one
+    in play. An agent told that does exactly what the memory discipline tells it to
+    do on a refusal: reread the targets, refresh the hashes, prepare again. No
+    amount of that changes bytes already in the note, so it loops.
+    """
+
+    code = "follow_up_entry_malformed"
+
+    def __init__(self, reason: str, rel_path: str) -> None:
+        super().__init__(
+            f"{reason} in {rel_path!r}; read that note and append a correction "
+            "revision, re-preparing the same plan will not change it"
+        )
+        self.rel_path = rel_path
+
+
 def follow_up_entries(note: Note) -> list[dict[str, Any]]:
     """Validate envelopes and revision chains before using persisted tracking data."""
     text = note.content.replace("\r\n", "\n")
@@ -56,10 +78,10 @@ def follow_up_entries(note: Note) -> list[dict[str, Any]]:
     for match in _ENTRY.finditer(text):
         body = match["body"]
         if sha256(body.encode()).hexdigest() != match["digest"]:
-            raise ValueError("follow-up entry digest mismatch")
+            raise FollowUpEntryError("follow-up entry digest mismatch", note.rel_path)
         item = json.loads(body)
         if not isinstance(item, dict) or not isinstance(item.get("record_id"), str):
-            raise ValueError("invalid follow-up record")
+            raise FollowUpEntryError("invalid follow-up record", note.rel_path)
         key = sha256(f"{note.id}:{item['record_id']}".encode()).hexdigest()
         if (
             key != match["key"]
@@ -67,14 +89,14 @@ def follow_up_entries(note: Note) -> list[dict[str, Any]]:
             or item.get("revision") != match["revision"]
             or item.get("previous_revision") != latest.get(key)
         ):
-            raise ValueError("invalid follow-up identity or revision chain")
+            raise FollowUpEntryError("invalid follow-up identity or revision chain", note.rel_path)
         latest[key] = match["revision"]
         entries.append(item)
     marker_count = len(
         re.findall(r"^<!-- " + re.escape(FOLLOW_UP_MARKER_PREFIX), text, re.MULTILINE)
     )
     if marker_count != len(entries):
-        raise ValueError("malformed follow-up envelope")
+        raise FollowUpEntryError("malformed follow-up envelope", note.rel_path)
     return entries
 
 
@@ -145,10 +167,16 @@ async def get_follow_up(
         return output
     except FollowUpReadError as exc:
         return _error_response("get_follow_up", exc, started)
-    except (ValueError, FileNotFoundError, NoteAdmissionError, PathConfinementError):
-        return _error_response(
-            "get_follow_up", ValueError("follow-up source unavailable or invalid"), started
+    except (ValueError, FileNotFoundError, NoteAdmissionError, PathConfinementError) as exc:
+        # A malformed stored envelope names its note. This batch reads up to
+        # SESSION_MAX_NOTES of them and the generic message names none of them,
+        # so the one refusal the caller cannot fix by retrying said the least.
+        reported = (
+            exc
+            if isinstance(exc, FollowUpEntryError)
+            else ValueError("follow-up source unavailable or invalid")
         )
+        return _error_response("get_follow_up", reported, started)
     except Exception:
         return _internal_error_response("get_follow_up", started)
 

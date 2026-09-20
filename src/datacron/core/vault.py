@@ -23,7 +23,6 @@ mutating the user's notes -- IDs are stored in a JSON sidecar at
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import re
@@ -33,8 +32,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, final
-
-from ulid import ULID
 
 from datacron.core.config import (
     SIDECAR_DIR_NAME,
@@ -51,7 +48,7 @@ from datacron.core.frontmatter import (
     parse,
     resolve_note_title,
 )
-from datacron.core.hashing import sha256_bytes
+from datacron.core.hashing import NOTE_ID_LENGTH, derive_note_id, sha256_bytes
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
 from datacron.core.paths import read_ulid_mappings
@@ -543,13 +540,12 @@ class FilesystemVaultReader:
 
     async def _resolve_id(self, metadata: dict[str, object], rel_path: str) -> str:
         front_id = metadata.get("id")
-        if isinstance(front_id, str) and len(front_id) == 26:
+        if isinstance(front_id, str) and len(front_id) == NOTE_ID_LENGTH:
             return front_id
         existing = await self._id_store.get(rel_path)
         if existing:
             return existing
-        digest = hashlib.sha256(f"datacron-rel-path-id\x00{rel_path}".encode()).digest()
-        new_id = str(ULID.from_bytes(digest[:16]))
+        new_id = derive_note_id(rel_path)
         if self._read_only:
             return new_id
         await self._id_store.set(rel_path, new_id)

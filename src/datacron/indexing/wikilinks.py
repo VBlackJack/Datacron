@@ -44,7 +44,8 @@ _INLINE_CODE_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?P<ticks>`+)[^\n]*?
 _BASH_OPERATOR_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?:^|\s)(?:-[A-Za-z]|==|!=|=~|<=|>=|<|>|-nt|-ot|-ef|-n|-z)(?:\s|$)"
 )
-_BASH_PREFIX_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?:^|\b)(?:if|elif|while)\s*$")
+_BASH_PREFIX_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?:^|\b)(?:if|elif|while|until)\s*$")
+_BASH_SUFFIX_PATTERN: Final[re.Pattern[str]] = re.compile(r"^(?:;?\s*(?:then|do)\b|&&|\|\|)")
 
 
 @final
@@ -178,6 +179,21 @@ def _inside(position: int, ranges: list[tuple[int, int]]) -> bool:
 
 
 def _looks_like_bash_condition(content: str, start: int, end: int) -> bool:
+    """Report a ``[[ ... ]]`` that is a shell test rather than a wikilink.
+
+    Any one of these signals used to be enough, and each one fires on ordinary
+    English. The keyword arm dropped "Applies only if [[Retention Policy]] is
+    signed." and "Runs while [[Batch Job]] is active."; the operator arm dropped
+    "See [[Plan A > Plan B]] for the comparison." on a bare ``>`` and
+    "[[Runbook|use git log -n 5]]" on the ``-n``. A dropped candidate leaves no
+    row at all, so ``get_backlinks`` omitted the source note and the link graph was
+    incomplete with nothing to say so.
+
+    Corroboration is required instead. A shell test carries an operator **and**
+    something else that only shell has: the keyword that opens it, the syntax that
+    closes it, or a variable reference between the brackets. Code fences and inline
+    code are excluded upstream, so what reaches here is prose.
+    """
     line_start = content.rfind("\n", 0, start) + 1
     line_end = content.find("\n", end)
     if line_end < 0:
@@ -185,11 +201,12 @@ def _looks_like_bash_condition(content: str, start: int, end: int) -> bool:
     prefix = content[line_start:start].strip()
     suffix = content[end:line_end].strip()
     inner = content[start + 2 : end - 2].strip()
+    if _BASH_OPERATOR_PATTERN.search(inner) is None:
+        return False
     return (
-        _BASH_OPERATOR_PATTERN.search(inner) is not None
-        or _BASH_PREFIX_PATTERN.search(prefix) is not None
-        or suffix.startswith("; then")
-        or suffix == "then"
+        _BASH_PREFIX_PATTERN.search(prefix) is not None
+        or _BASH_SUFFIX_PATTERN.match(suffix) is not None
+        or "$" in inner
     )
 
 

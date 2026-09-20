@@ -33,8 +33,6 @@ from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, Literal, NoReturn, TypeAlias, final
 
-from ulid import ULID
-
 from datacron.core.config import SIDECAR_DIR_NAME, VaultConfig
 from datacron.core.durability import (
     RecoveryRequiredError,
@@ -47,7 +45,7 @@ from datacron.core.frontmatter import (
     coerce_string_list,
     resolve_note_title,
 )
-from datacron.core.hashing import sha256_bytes
+from datacron.core.hashing import NOTE_ID_LENGTH, derive_note_id, sha256_bytes
 from datacron.core.logger import get_logger
 from datacron.core.operation_log import (
     JsonScalar,
@@ -2727,11 +2725,6 @@ def _note_effect_path_identities(
     return effects
 
 
-def _fallback_note_id(rel_path: str) -> str:
-    digest = hashlib.sha256(f"datacron-rel-path-id\x00{rel_path}".encode()).digest()
-    return str(ULID.from_bytes(digest[:16]))
-
-
 def _recovery_identity_from_bytes(
     rel_path: str,
     raw_bytes: bytes,
@@ -2747,8 +2740,8 @@ def _recovery_identity_from_bytes(
     if note_id is None:
         note_id = (
             frontmatter_id
-            if isinstance(frontmatter_id, str) and len(frontmatter_id) == 26
-            else id_mappings.get(rel_path, _fallback_note_id(rel_path))
+            if isinstance(frontmatter_id, str) and len(frontmatter_id) == NOTE_ID_LENGTH
+            else id_mappings.get(rel_path, derive_note_id(rel_path))
         )
     aliases = expected_aliases
     if aliases is None:

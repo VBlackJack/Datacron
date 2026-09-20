@@ -34,7 +34,6 @@ from typing import Annotated, Final, Literal, TypeAlias, final
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
-from ulid import ULID
 from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 from datacron.core.config import OrganizationConfig, VaultConfig
@@ -45,6 +44,7 @@ from datacron.core.frontmatter import (
     parse,
     resolve_note_title,
 )
+from datacron.core.hashing import NOTE_ID_LENGTH, derive_note_id
 from datacron.core.paths import (
     PathConfinementError,
     assert_within_paths,
@@ -1374,11 +1374,6 @@ def _collect_admitted_note_paths(vault_root: Path, scope: VaultScope) -> tuple[P
     return tuple(sorted(discovered, key=lambda path: path.relative_to(vault_root).as_posix()))
 
 
-def _fallback_note_id(rel_path: str) -> str:
-    digest = hashlib.sha256(f"datacron-rel-path-id\x00{rel_path}".encode()).digest()
-    return str(ULID.from_bytes(digest[:16]))
-
-
 def _read_projected_identity(
     path: Path,
     *,
@@ -1402,8 +1397,8 @@ def _read_projected_identity(
     frontmatter_id = metadata.get("id")
     note_id = (
         frontmatter_id
-        if isinstance(frontmatter_id, str) and len(frontmatter_id) == 26
-        else id_mappings.get(rel_path, _fallback_note_id(rel_path))
+        if isinstance(frontmatter_id, str) and len(frontmatter_id) == NOTE_ID_LENGTH
+        else id_mappings.get(rel_path, derive_note_id(rel_path))
     )
     return _ProjectedIdentity(
         rel_path=rel_path,

@@ -20,6 +20,12 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Changed
 
+- The derivation that gives a note without frontmatter its identity lives in one place. The
+  same two lines, salt and digest width included, were copied into the vault scan that mints
+  and persists the id, the recovery path that reconstructs it, and the organization projection
+  that plans moves against it. Nothing linked them and no test asserted they agreed, so
+  changing one would have had the scanner and the manifest disagree about which note is which,
+  and a planned move applied against an identity the index does not hold.
 - One scoped enumeration of the vault decides each note's admission once, not twice. The
   filter that every walk passes through resolved the path it was handed, then resolved the
   vault-relative spelling of the same file to compare the two. A realpath resolves to itself,
@@ -341,6 +347,51 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- `get_note` finds a note renamed on disk before the next reindex. Admission raises its own
+  exception type, which is not a `ValueError`, so the best-effort read whose whole contract is
+  to answer "not here" propagated instead: resolution stopped at the stale index row and never
+  reached the sidecar and on-disk fallbacks that exist for this case. The note was present,
+  readable and carried the ULID asked for, and the tool reported it unresolvable until a
+  rebuild. A refusal met on one route no longer ends the resolution, and it is carried rather
+  than dropped: when no route finds the note, the refusal is what the caller is told, so a
+  path the scope will not serve is still reported as an admission decision and not as an
+  absence.
+- Wikilinks in ordinary prose are no longer discarded as shell tests. Any one signal was
+  enough, and each fires on English: "Applies only if [[Retention Policy]] is signed." and
+  "Runs while [[Batch Job]] is active." went on the keyword, "See [[Plan A > Plan B]] for the
+  comparison." on a bare `>`, "[[Runbook|use git log -n 5]]" on the `-n`. A discarded
+  candidate leaves no row at all, so `get_backlinks` omitted the source and the link graph was
+  incomplete with nothing to say so. A shell test now needs an operator and something only
+  shell has: the keyword that opens it, the syntax that closes it, or a variable between the
+  brackets.
+- `search_regex` keeps the matches ripgrep printed before it failed. ripgrep exits 2 when any
+  file could not be read, which on Windows is routine, and every valid result was discarded to
+  report `pattern rejected by ripgrep` over a stderr reading `Access is denied`, so an agent
+  rewrote a correct regex indefinitely. A run that produced nothing and exited 2 still raises,
+  and says it returned no results rather than asserting the pattern was at fault.
+- A scrub anomaly for a note that has left the index no longer pins `get_health` to critical
+  for good. Note anomalies are only dropped when that exact path is checked again, and the
+  pass only walks paths the index still holds, so doing the right thing about a flagged note -
+  restoring it under another name, or deleting it - carried its anomaly forward into every
+  later pass, with no way to clear it but deleting the checkpoint and its genuine evidence.
+  Evidence about a note the index no longer holds is retired the way canary evidence already
+  is.
+- A reconcile pass that fails after publishing rows advances the index generation. Every
+  delete and every upsert commits as it goes, so a pass that aborts part-way has already
+  changed the index; the generation is what tells the temporal cache its answer is stale, and
+  that cache lives as long as the server, so an unmoved counter kept a note ranked from its
+  pre-edit metadata for the rest of the run with no error on any later search. A refusal that
+  published nothing, such as a duplicate identity, still leaves the counter alone: the pass now
+  records what it writes as it writes it, so the two cases are told apart rather than guessed.
+- `prepare_follow_up` and `get_follow_up` name the note whose stored follow-up bytes are
+  malformed. It was reported through the generic handler, whose message lists six other causes
+  and not this one, and every one of those is fixed by re-reading and resubmitting: an agent
+  did exactly that, forever, because no amount of rereading changes bytes already in a note.
+  One bad target still refuses the whole request, which may carry records for up to twenty
+  notes; saying which target it was is the least that can be done about it.
+- `get_backlinks` reports `truncated`. The scan stops the moment it has a full page, so a hub
+  note referenced more times than the cap returned exactly the cap with nothing to say the rest
+  existed, and it was the only listing on this surface that could mislead by omission.
 - A failed append no longer wedges the operation log. The rollback that exists to stop a torn
   record could not run: the journal was opened buffered, so the first real write happened
   inside `flush()`, and `truncate()` flushes before truncating, which re-attempted the write

@@ -484,24 +484,46 @@ async def _resolve_note(app: DatacronApp, id_or_path: str) -> Note | None:
 
 
 async def _resolve_note_by_ulid(app: DatacronApp, note_id: str) -> Note | None:
+    """Resolve one ULID through the index, the sidecar, then the live vault.
+
+    A route that leads to a path this scope will not serve does not end the
+    resolution, because the row that named it may simply be stale: a note renamed
+    on disk keeps its identity, and the later routes exist to find it. It does end
+    the *answer* when no route finds the note, and that distinction is the reason
+    the refusal is carried rather than dropped. Reporting a plain "no note found"
+    for a path the scope refused would turn an admission decision into an absence,
+    on the one surface where the difference is the boundary itself.
+    """
+    refusal: NoteAdmissionError | None = None
+
     # Fast path: resolve the indexed identity without loading the note catalog.
     try:
         indexed_rel_path = await app.store.get_note_rel_path(note_id)
     except RuntimeError:
         indexed_rel_path = None
     if indexed_rel_path is not None:
-        indexed_note = await _try_read_note_by_rel_path(app, indexed_rel_path)
-        if indexed_note is not None and indexed_note.id == note_id:
-            return indexed_note
+        try:
+            indexed_note = await _read_note_by_rel_path(app, indexed_rel_path)
+        except NoteAdmissionError as exc:
+            refusal = exc
+        except (FileNotFoundError, PathConfinementError, ValueError):
+            pass
+        else:
+            if indexed_note.id == note_id:
+                return indexed_note
 
     # A sidecar hit is verified against current bytes. Path coverage alone
     # cannot prove absence: a frontmatter ID may have changed since indexing.
-    sidecar_note = await _resolve_note_from_sidecar(app, note_id)
+    sidecar_note, sidecar_refusal = await _resolve_note_from_sidecar(app, note_id)
     if sidecar_note is not None:
         return sidecar_note
+    refusal = refusal or sidecar_refusal
 
     # Fallback: fresh notes can exist on disk before the next reindex.
-    return await _resolve_note_from_unindexed_notes(app, note_id)
+    unindexed_note = await _resolve_note_from_unindexed_notes(app, note_id)
+    if unindexed_note is None and refusal is not None:
+        raise refusal
+    return unindexed_note
 
 
 async def _resolve_note_from_unindexed_notes(app: DatacronApp, note_id: str) -> Note | None:
@@ -541,11 +563,17 @@ async def _resolve_note_from_unindexed_notes(app: DatacronApp, note_id: str) -> 
 async def _resolve_note_from_sidecar(
     app: DatacronApp,
     note_id: str,
-) -> Note | None:
-    """Return a sidecar hit only after checking the live note identity."""
+) -> tuple[Note | None, NoteAdmissionError | None]:
+    """Return a sidecar hit, and any admission refusal met on the way to it.
+
+    The refusal is returned rather than raised because a sidecar row can be as
+    stale as an index row, and the caller has further routes to try. It is
+    returned rather than dropped because if no route finds the note, that refusal
+    is the true answer.
+    """
     sidecar_path = sidecar_dir(app.vault_root) / ULID_SIDECAR_FILENAME
     if not sidecar_path.is_file():
-        return None
+        return None, None
     try:
         mappings = await asyncio.to_thread(
             read_ulid_mappings,
@@ -553,20 +581,18 @@ async def _resolve_note_from_sidecar(
             require_string_pairs=True,
         )
     except (OSError, UnicodeError, ValueError):
-        return None
+        return None, None
 
     matching_paths = [rel_path for rel_path, mapped_id in mappings.items() if mapped_id == note_id]
-    if len(matching_paths) == 1:
-        note = await _try_read_note_by_rel_path(app, matching_paths[0])
-        return note if note is not None and note.id == note_id else None
-    return None
-
-
-async def _try_read_note_by_rel_path(app: DatacronApp, rel_path: str) -> Note | None:
+    if len(matching_paths) != 1:
+        return None, None
     try:
-        return await _read_note_by_rel_path(app, rel_path)
+        note = await _read_note_by_rel_path(app, matching_paths[0])
+    except NoteAdmissionError as exc:
+        return None, exc
     except (FileNotFoundError, PathConfinementError, ValueError):
-        return None
+        return None, None
+    return (note, None) if note.id == note_id else (None, None)
 
 
 async def _read_note_by_rel_path(app: DatacronApp, rel_path: str) -> Note:
