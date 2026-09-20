@@ -21,6 +21,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from itertools import accumulate
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -1220,3 +1221,74 @@ class TestRequestKeyLookup:
 
         assert journal.latest_record_for_request_key(self._key("1")) is not None
         assert journal.latest_record_for_request_key(self._key("5")) is None
+
+
+class _PartialThenFailingStream:
+    """A raw stream that accepts some bytes and then refuses the rest, like ENOSPC."""
+
+    def __init__(self, inner: Any, budget: int) -> None:
+        self._inner = inner
+        self._budget = budget
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def __enter__(self) -> _PartialThenFailingStream:
+        self._inner.__enter__()
+        return self
+
+    def __exit__(self, *exc_info: Any) -> Any:
+        return self._inner.__exit__(*exc_info)
+
+    def write(self, payload: Any) -> int:
+        if self._budget <= 0:
+            raise OSError(28, "No space left on device")
+        written = int(self._inner.write(bytes(payload)[: self._budget]))
+        self._budget -= written
+        return written
+
+
+def test_a_partly_written_record_is_rolled_back_not_left_torn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed append must not leave the journal ending mid-line.
+
+    A tail that does not end at a JSONL boundary is refused by every append,
+    every recovery scan and every read, and no command repairs one, so the vault
+    becomes unwritable for good. The rollback that exists for this could not run:
+    through a buffered writer the first real write happened inside ``flush()``,
+    and ``truncate()`` flushes before truncating, so it re-attempted the write
+    that had just failed and was swallowed. Measured on the previous code: 936
+    committed bytes became 976 with no trailing newline, and the next read raised
+    ``operation log does not end at a JSONL boundary``.
+    """
+    now = datetime(2026, 9, 20, tzinfo=UTC)
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    journal.append_record(_record("first", now, sha256_bytes(b"a"), sha256_bytes(b"b")))
+    operations = tmp_path / ".datacron" / "oplog" / "operations.jsonl"
+    committed = operations.read_bytes()
+
+    real_open = Path.open
+
+    def failing_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        stream = real_open(self, *args, **kwargs)
+        mode = args[0] if args else str(kwargs.get("mode", ""))
+        if self.name == "operations.jsonl" and "a" in mode:
+            return _PartialThenFailingStream(stream, budget=40)
+        return stream
+
+    monkeypatch.setattr(Path, "open", failing_open)
+    with pytest.raises(OperationLogError):
+        journal.append_record(
+            _record("second", now + timedelta(minutes=1), sha256_bytes(b"c"), sha256_bytes(b"d"))
+        )
+    monkeypatch.undo()
+
+    assert operations.read_bytes() == committed
+    reopened = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    assert [item.operation_id for item in reopened.read_records()] == ["first"]
+    reopened.append_record(
+        _record("third", now + timedelta(minutes=2), sha256_bytes(b"e"), sha256_bytes(b"f"))
+    )
+    assert [item.operation_id for item in reopened.read_records()] == ["first", "third"]

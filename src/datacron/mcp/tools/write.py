@@ -860,6 +860,51 @@ async def _patch_note_section_impl(
     )
 
 
+def _assert_renamed_heading_survives(
+    lines: list[str],
+    *,
+    heading_index: int,
+    level: int,
+    new_heading: str,
+) -> None:
+    """Refuse a rename whose result is no longer the heading it claims to be.
+
+    The rename spliced text into the note and reported success without asking the
+    parser what it had produced, which `move_note_section` has never done: it
+    verifies its result and refuses any edit that changes heading interpretation.
+    Two ways the missing check lost a section outright.
+
+    A Setext title is written as a bare line above its surviving underline, so a
+    title that opens a block turns the heading into something else entirely:
+    ``2026. Bilan`` over ``------`` is an ordered list and a thematic break, and
+    the section stops existing. Its body merges into the section above, and no
+    selector can address it again.
+
+    An ATX title ending in ``#`` is a closing sequence the parser strips, so
+    renaming ``Bar`` to ``Foo #`` beside an existing ``Foo`` produced two headings
+    whose identity is ``Foo``. The guard whose stated purpose is refusing to create
+    an ambiguous heading had compared the raw string and passed it.
+
+    Both are caught by the same question: after the splice, is the heading at this
+    index still a heading, still at this level, and does the parser read its text
+    as the title that was asked for?
+    """
+    headings = markdown_headings(lines)
+    renamed = next((item for item in headings if item.start == heading_index), None)
+    if renamed is None or renamed.level != level or renamed.text != new_heading:
+        raise ValueError(
+            "new_heading does not survive as a level-"
+            f"{level} heading; refusing an edit that would drop the section"
+        )
+    if any(
+        item.start != heading_index and item.text == renamed.text and item.level == level
+        for item in headings
+    ):
+        raise ValueError(
+            "new_heading already exists in the note; refusing to create an ambiguous heading"
+        )
+
+
 @replayable_write
 async def _rename_note_section_impl(
     app: DatacronApp,
@@ -948,6 +993,12 @@ async def _rename_note_section_impl(
                 first_line = lines[heading_index]
                 eol = "\r\n" if first_line.endswith("\r\n") else "\n"
                 lines[heading_index : selected.end - 1] = [cleaned_new_heading + eol]
+            _assert_renamed_heading_survives(
+                lines,
+                heading_index=heading_index,
+                level=matched_level,
+                new_heading=cleaned_new_heading,
+            )
             operation_parameters.update(
                 old_heading=matched_text,
                 heading_level=matched_level,

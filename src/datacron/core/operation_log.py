@@ -21,7 +21,7 @@ import os
 import re
 import stat
 from collections.abc import Iterator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -95,6 +95,44 @@ class HistoryUnavailableError(OperationLogError):
 
 class _StrictJsonError(ValueError):
     """Raised when JSON uses an ambiguous or non-standard construct."""
+
+
+def _write_all(stream: BinaryIO, payload: bytes) -> None:
+    """Write every byte of ``payload``, because a raw stream may take only some."""
+    remaining = memoryview(payload)
+    while remaining:
+        written = stream.write(remaining)
+        if not written:
+            raise OSError("the operation log accepted no bytes")
+        remaining = remaining[written:]
+
+
+def _truncate_to_committed_length(stream: BinaryIO, committed_size: int) -> None:
+    """Cut the journal back to its last complete record, on the raw descriptor.
+
+    A partial write leaves the journal ending mid-line, and that is unrecoverable
+    in practice: every append, every recovery scan and every read refuse a tail
+    that does not end at a JSONL boundary, and no command repairs one. So the
+    rollback is not allowed to fail quietly. When the cut itself cannot be made,
+    the caller learns the journal is torn, by name, instead of discovering it at
+    the next write.
+
+    A cut that lands but cannot be flushed is a different thing and is not
+    reported as torn. The file already holds the last complete record; only the
+    proof that it reached the platter is missing, and the append's own error is
+    about to be raised anyway.
+    """
+    try:
+        os.ftruncate(stream.fileno(), committed_size)
+    except OSError as exc:
+        raise OperationLogError(
+            "the operation log is torn: an append failed and could not be rolled "
+            f"back to its last complete record at {committed_size} bytes"
+        ) from exc
+    try:
+        os.fsync(stream.fileno())
+    except OSError as exc:
+        _LOGGER.warning("Rolled back a failed operation-log append without a flush: %s", exc)
 
 
 def _request_key_prefix(key_hash: str) -> int:
@@ -364,7 +402,15 @@ class OperationJournal:
                 continue
             if not _HASH_PATTERN.fullmatch(entry.name) or entry.name in retained:
                 continue
-            Path(entry.path).unlink()
+            try:
+                Path(entry.path).unlink()
+            except OSError as exc:
+                # One blob a sync client or a scanner still holds open must not
+                # end the pass. A vault in a synced folder meets this routinely,
+                # and abandoning the sweep at the first locked file left every
+                # later blob to accumulate behind it, sweep after sweep.
+                _LOGGER.warning("Could not delete expired history blob %s: %s", entry.name, exc)
+                continue
             removed.append(entry.name)
         return removed
 
@@ -523,21 +569,30 @@ class OperationJournal:
         operations_path = self._guard_operations_path()
         created = not operations_path.exists()
         try:
-            with operations_path.open("ab") as stream:
+            # Unbuffered, so the bytes that reached the disk are the bytes this
+            # wrote. Through a BufferedWriter the first real write happened inside
+            # flush(), and the rollback below could not undo it: truncate() on a
+            # buffered stream flushes first, so it re-attempted the write that had
+            # just failed, raised again, and was swallowed. The journal was then
+            # left ending mid-line, which every later append, every recovery scan
+            # and every read refuse, with no repair path.
+            with operations_path.open("ab", buffering=0) as stream:
                 previous_size = stream.seek(0, os.SEEK_END)
                 try:
-                    stream.write(line)
-                    stream.flush()
+                    _write_all(stream, line)
                     os.fsync(stream.fileno())
                 except OSError:
-                    # Never leave a torn record behind: a tail that does not end at a
-                    # JSONL boundary would refuse every later append until repaired.
-                    with suppress(OSError):
-                        stream.truncate(previous_size)
+                    # Never leave a torn record behind: a tail that does not end at
+                    # a JSONL boundary would refuse every later append until
+                    # repaired.
+                    _truncate_to_committed_length(stream, previous_size)
                     raise
         except OSError as exc:
             self._tail_loaded = False
             raise OperationLogError("failed to append the operation log") from exc
+        except OperationLogError:
+            self._tail_loaded = False
+            raise
         if created:
             _durable_flush_directory(oplog_dir)
         self._tail_record = chained

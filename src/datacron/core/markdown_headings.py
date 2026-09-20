@@ -15,7 +15,14 @@ from typing import Any
 
 from mistletoe import block_token
 
-_SETEXT = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
+_SETEXT = re.compile(r"^ {0,3}(?:=|-)+[ \t]*$")
+"""The underline language mistletoe's own setext pattern accepts.
+
+It reads ``(=|-)+``, which admits a mixed run: ``-=-=-`` under a line of text is
+a setext heading to the parser. Requiring one repeated character here made the
+parser and this module disagree about what a heading is, and the search for the
+underline of a heading mistletoe had already built then found nothing at all.
+"""
 _FENCE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})")
 _COMMENT_OPEN = "<!--"
 _COMMENT_CLOSE = "-->"
@@ -110,10 +117,20 @@ def markdown_headings(lines: list[str]) -> list[MarkdownHeading]:
             continue
         end = start + 1
         if isinstance(token, block_token.SetextHeading):
+            # A default rather than a bare next(). The underline is a heading the
+            # parser has already built, so failing to find it means this module
+            # and the parser disagree, and a disagreement must degrade to a wrong
+            # span rather than to StopIteration: that exception is not in any
+            # write tool's expected set, and inside the generator below PEP 479
+            # turns it into a RuntimeError, which left the note unreadable and
+            # unwritable through every tool at once.
             end = next(
-                i + 1
-                for i in range(start + 1, len(lines))
-                if _SETEXT.fullmatch(lines[i].rstrip("\r\n"))
+                (
+                    i + 1
+                    for i in range(start + 1, len(lines))
+                    if _SETEXT.fullmatch(lines[i].rstrip("\r\n"))
+                ),
+                min(start + 2, len(lines)),
             )
         result.append(MarkdownHeading(start, end, int(token.level), token_text(token).strip()))
     return result
