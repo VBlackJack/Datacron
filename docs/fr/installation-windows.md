@@ -72,10 +72,14 @@ d'abord l'ancien vault de tes clients, pour éviter les entrées fantômes.
 
 ## 5. Installation silencieuse (déploiement)
 
-Pour un déploiement scripté, `/VAULT=` est **obligatoire** en mode silencieux :
+Pour un déploiement scripté, `/VAULT=` est **obligatoire** en mode silencieux. Passer
+`/SUPPRESSMSGBOXES` avec lui : sans ce commutateur, un échec de configuration, par exemple
+un `/VAULT=` absent ou vide, ouvre une boîte de dialogue modale qu'une exécution sans
+surveillance ne peut pas fermer, et le déploiement se bloque jusqu'au délai d'attente de la
+tâche au lieu d'échouer :
 
 ```bat
-Datacron-Setup.exe /VERYSILENT /VAULT="C:\Users\moi\Notes"
+Datacron-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /VAULT="C:\Users\moi\Notes"
 ```
 
 Options :

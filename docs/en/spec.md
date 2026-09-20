@@ -99,6 +99,7 @@ absent until given a value.
 | `valid_from` | Optional ISO date, validated but with no direct effect on current ranking |
 | `invalid_at` | Optional ISO 8601 UTC datetime; the note becomes historical in default ranking |
 | `invalidated_by` | Optional validated ULID, retained as provenance with no direct effect on current ranking |
+| `archived` | Optional boolean; a true value demotes the note in default ranking the way an archive tag does |
 
 Every `create_note_ai` or `create_exact` creation requires a canonical Crockford ULID. To replace
 or move an existing note, the manifest also accepts its bounded historical identifier of 26
@@ -106,8 +107,9 @@ uppercase alphanumeric characters, but requires it to be preserved exactly in th
 channel never migrates an identity.
 
 `set_frontmatter` can change `origin`, `confidence`, `last_verified`, `supersedes`, `rejected`,
-`valid_from`, `invalid_at`, `invalidated_by`, and `last_id`; it also updates `updated` and preserves the
-Markdown body. An empty `rejected` list removes that key. Every unknown frontmatter key is
+`valid_from`, `invalid_at`, `invalidated_by`, `archived`, and `last_id`; it also updates `updated`
+and preserves the Markdown body. `archived` takes a boolean and requires `expected_hash`, because
+it changes how every later search ranks the note. An empty `rejected` list removes that key. Every unknown frontmatter key is
 preserved during serialization.
 
 `last_id` requires CAS and cannot decrease. See [note section operations](note-sections.md)

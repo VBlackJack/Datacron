@@ -71,10 +71,13 @@ old vault from your clients to avoid stale entries.
 
 ## 5. Silent install (deployment)
 
-For scripted deployment, `/VAULT=` is **required** in silent mode:
+For scripted deployment, `/VAULT=` is **required** in silent mode. Pass
+`/SUPPRESSMSGBOXES` with it: without that switch a configuration failure, such as a
+missing or empty `/VAULT=`, raises a modal error box that an unattended run cannot
+dismiss, and the deployment blocks until the task times out instead of failing:
 
 ```bat
-Datacron-Setup.exe /VERYSILENT /VAULT="C:\Users\me\Notes"
+Datacron-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /VAULT="C:\Users\me\Notes"
 ```
 
 Options:

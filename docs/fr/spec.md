@@ -106,6 +106,7 @@ optionnels restent absents tant qu'aucune valeur ne leur est donnée.
 | `valid_from` | Date ISO optionnelle, validée mais sans effet direct sur le ranking actuel |
 | `invalid_at` | Datetime ISO 8601 UTC optionnel; la note devient historique dans le ranking par défaut |
 | `invalidated_by` | ULID optionnel validé, conservé comme provenance sans effet direct sur le ranking actuel |
+| `archived` | Booléen optionnel ; une valeur vraie démote la note dans le ranking par défaut, comme un tag d'archive |
 
 Toute création par `create_note_ai` ou `create_exact` exige un ULID Crockford canonique. Pour
 remplacer ou déplacer une note existante, le manifeste accepte aussi son identifiant historique
@@ -113,8 +114,9 @@ borné à 26 caractères alphanumériques majuscules, mais impose de le préserv
 résultat : ce canal ne migre jamais une identité.
 
 `set_frontmatter` peut modifier `origin`, `confidence`, `last_verified`, `supersedes`,
-`rejected`, `valid_from`, `invalid_at`, `invalidated_by` et `last_id`; il met aussi `updated` à jour et
-préserve le corps Markdown. Une liste `rejected` vide supprime cette clé. Toute clé de
+`rejected`, `valid_from`, `invalid_at`, `invalidated_by`, `archived` et `last_id`; il met aussi
+`updated` à jour et préserve le corps Markdown. `archived` prend un booléen et exige
+`expected_hash`, parce qu'il change la façon dont toute recherche ultérieure classe la note. Une liste `rejected` vide supprime cette clé. Toute clé de
 frontmatter inconnue est préservée lors d'une sérialisation.
 
 `last_id` exige CAS et ne peut pas diminuer. Consultez les [opérations de section](note-sections.md)

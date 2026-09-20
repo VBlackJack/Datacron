@@ -1,4 +1,4 @@
-# Version à venir : correctifs du test de surface
+# Datacron 2026.0910.02 : correctifs du test de surface
 
 [Translation](../en/surface-fixes-release-notes.md)
 
@@ -46,9 +46,8 @@ changent et la conservation lorsqu'ils restent identiques. Conserver un véritab
 token avant le prochain reindex contrôlé permettra de vérifier ce cas en migration
 réelle.
 
-Le candidat local reste `2026.0910.01` ; la version publique prévue est
-`2026.0910.02`. Un vault déjà reconstruit avec `.01` n'a pas besoin d'un nouveau
-reindex pour ce seul incrément de version.
+Ces correctifs sont sortis dans `2026.0910.02`. Un vault déjà reconstruit avec le candidat
+`2026.0910.01` n'avait pas besoin d'un nouveau reindex pour ce seul incrément de version.
 
 ## Limite connue : budget du contexte de session
 

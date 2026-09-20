@@ -291,11 +291,14 @@ mesuré.
 
 ### ADR-013 - Réconciliation d'index incrémentale, gate `mtime`, `content_hash` autorité
 `datacron index` et la réparation read-path partagent une seule réconciliation : une note
-dont le `st_mtime_ns` stocké est inchangé est sautée (ni lecture ni hash) ; le `content_hash`
-reste l'autorité dès qu'une note est lue, de sorte qu'un `mtime` non fiable ne provoque jamais
-de faux skip. Une note touchée mais au contenu identique voit son `mtime` rafraîchi pour que la
-passe suivante la saute. Remplace le full-scan O(n) par un balayage `stat` ; un `reindex --drop`
-force la reconstruction complète. Comparaison stricte `==` (jamais `<=`) pour gérer les
+dont le `st_mtime_ns` stocké est inchangé est sautée, ni lue ni hashée, donc pour cette note le
+`mtime` est l'autorité unique et le `content_hash` n'est jamais consulté. Le `content_hash` est
+l'autorité pour toute note que la passe lit. La conséquence à connaître : une réécriture qui
+tombe dans le même tick de `mtime` que la valeur stockée reste invisible jusqu'à une
+reconstruction complète, d'où la comparaison stricte `==` et d'où le fait qu'un système de
+fichiers à granularité grossière est une raison de réindexer. Une note touchée mais au contenu
+identique voit son `mtime` rafraîchi pour que la passe suivante la saute. Remplace le full-scan
+O(n) par un balayage `stat` ; `datacron reindex` force la reconstruction complète. Comparaison stricte `==` (jamais `<=`) pour gérer les
 restaurations à `mtime` plus ancien.
 Écarté : `mtime` comme autorité unique (granularité exFAT 2 s, outils de sync préservant le
 `mtime`) ; relecture complète O(n) à chaque passe.

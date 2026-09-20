@@ -1,4 +1,4 @@
-# Pending release: surface test fixes
+# Datacron 2026.0910.02: surface test fixes
 
 [Translation](../fr/surface-fixes-release-notes.md)
 
@@ -42,9 +42,8 @@ covers rejection when chunk IDs change and preservation when they remain unchang
 Retain a real proposal token before the next controlled reindex to exercise this
 case in a live migration.
 
-The local candidate remains `2026.0910.01`; the intended public version is
-`2026.0910.02`. A vault already rebuilt with `.01` does not need another reindex
-solely for this version increment.
+These fixes shipped in `2026.0910.02`. A vault already rebuilt with the `2026.0910.01`
+candidate did not need another reindex solely for that version increment.
 
 ## Known limitation: session context budget
 

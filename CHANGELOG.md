@@ -635,6 +635,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - The archive tags and the state-note namespace are declared once, in the core
   configuration. A vault overrides the archive tags through `organization.tags.archive_tags`
   in `VAULT.yaml`; the index, the offline library and the planner follow the same source.
+  An executable older than that release refuses a `VAULT.yaml` that declares the key, as it
+  does for the whole `tags` block: upgrade every installation first.
   The planner names its expectation for a missing state note as `one note carrying any
   kind/* tag`, which is what it checks.
 - The library command module lives outside the domain package (`datacron.cli_library`);

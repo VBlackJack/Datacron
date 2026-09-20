@@ -285,10 +285,13 @@ Rejected: adding retrieval technology on intuition; every addition passes the me
 
 ### ADR-013 - Incremental index reconciliation, `mtime` gate, `content_hash` authority
 `datacron index` and read-path repair share a single reconciliation: a note whose stored
-`st_mtime_ns` is unchanged is skipped (neither read nor hashed); `content_hash` stays the
-authority as soon as a note is read, so an unreliable `mtime` never causes a false skip. A note
-that was touched but has identical content has its `mtime` refreshed so the next pass skips it.
-Replaces the O(n) full scan with a `stat` sweep; a `reindex --drop` forces a full rebuild.
+`st_mtime_ns` is unchanged is skipped, neither read nor hashed, so for that note `mtime` is the
+sole authority and `content_hash` is never consulted. `content_hash` is the authority for every
+note the pass does read. The consequence to know: a rewrite that lands within one `mtime` tick
+of the stored value is invisible until a full rebuild, which is why the comparison is a strict
+`==` and why a coarse-granularity filesystem is a reason to reindex. A note that was touched but
+has identical content has its `mtime` refreshed so the next pass skips it. Replaces the O(n)
+full scan with a `stat` sweep; `datacron reindex` forces a full rebuild.
 Strict `==` comparison (never `<=`) to handle restores with an older `mtime`.
 Rejected: `mtime` as sole authority (exFAT 2 s granularity, sync tools preserving `mtime`);
 full O(n) re-read on every pass.
