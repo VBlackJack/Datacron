@@ -28,10 +28,10 @@ from datacron.core.config import Settings
 from datacron.core.durability import RecoveryRequiredError
 from datacron.core.frontmatter import parse, serialize
 from datacron.core.hashing import hash_text
-from datacron.core.markdown_headings import MarkdownHeading
+from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
 from datacron.core.models import Note
 from datacron.core.operation_log import OperationContext, OperationRecord
-from datacron.core.paths import sidecar_dir
+from datacron.core.paths import sidecar_dir, sidecar_index_db
 from datacron.core.recovery import (
     BlockedOperation,
     RecoveryRepairAction,
@@ -5371,3 +5371,181 @@ class TestBacklogLastId:
             )
             assert refused.is_error is True
             assert target.read_bytes() == committed
+
+
+class TestWritePathP2Fixes:
+    """Findings from the 2026-09-17 audit whose failure mode is a lost section."""
+
+    @staticmethod
+    async def _app(vault: Path, body: str) -> DatacronApp:
+        vault.mkdir(parents=True, exist_ok=True)
+        (vault / "note.md").write_text(
+            serialize({"id": "01J00000000000000000000091"}, body), encoding="utf-8"
+        )
+        settings = Settings(vault_root=vault, read_paths=[vault], write_paths=[vault])
+        app = build_app(settings=settings, vault_root=vault)
+        await app.store.open(sidecar_index_db(vault))
+        return app
+
+    @staticmethod
+    def _body_headings(vault: Path) -> list[tuple[int, str]]:
+        raw = (vault / "note.md").read_text(encoding="utf-8")
+        body = raw.split("---", 2)[2] if raw.startswith("---") else raw
+        return [
+            (item.level, item.text) for item in markdown_headings(body.splitlines(keepends=True))
+        ]
+
+    @pytest.mark.parametrize("new_heading", ["2026. Bilan", "- Roadmap", "> Bilan"])
+    async def test_a_setext_rename_that_stops_being_a_heading_is_refused(
+        self, tmp_path: Path, new_heading: str
+    ) -> None:
+        """A rename must not delete the section it claims to rename.
+
+        The Setext branch writes the bare title above the surviving underline, so a
+        title that opens a block turns the heading into an ordered list, a bullet or
+        a quote followed by a thematic break. The section then does not exist: its
+        body merges into the one above it, and no selector reaches it again. The
+        tool reported success. `move_note_section` has always verified its own
+        result; rename did not.
+        """
+        from datacron.mcp.tools.write import _rename_note_section_impl
+
+        vault = tmp_path / "vault"
+        app = await self._app(vault, "# Note\n\nAncien titre\n------------\n\nbody text\n")
+        try:
+            before = self._body_headings(vault)
+            result = await _rename_note_section_impl(
+                app,
+                rel_path="note.md",
+                heading="Ancien titre",
+                heading_level=2,
+                new_heading=new_heading,
+            )
+        finally:
+            await app.store.close()
+
+        assert result["error"]["type"] == "ValueError", result
+        assert "does not survive" in result["error"]["message"]
+        assert self._body_headings(vault) == before
+
+    async def test_a_trailing_hash_that_would_duplicate_a_heading_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """The guard against ambiguity must not be the thing that creates it.
+
+        `## Foo #` reads as `Foo` to the parser, because a trailing run of hashes is
+        an optional closing sequence. The duplicate check compared the raw string,
+        so renaming `Bar` to `Foo #` beside an existing `Foo` passed it and produced
+        two level-2 headings with the same identity. Every later patch of `Foo`
+        without an occurrence then failed as ambiguous.
+        """
+        from datacron.mcp.tools.write import _rename_note_section_impl
+
+        vault = tmp_path / "vault"
+        app = await self._app(vault, "# Note\n\n## Foo\n\na\n\n## Bar\n\nb\n")
+        try:
+            result = await _rename_note_section_impl(
+                app, rel_path="note.md", heading="Bar", heading_level=2, new_heading="Foo #"
+            )
+        finally:
+            await app.store.close()
+
+        assert result["error"]["type"] == "ValueError", result
+        assert self._body_headings(vault) == [(1, "Note"), (2, "Foo"), (2, "Bar")]
+
+    async def test_an_ordinary_rename_still_applies(self, tmp_path: Path) -> None:
+        """Guard the guard, on both heading styles."""
+        from datacron.mcp.tools.write import _rename_note_section_impl
+
+        for body, heading, expected in (
+            ("# Note\n\n## Foo\n\na\n", "Foo", [(1, "Note"), (2, "Baz")]),
+            (
+                "# Note\n\nAncien titre\n------------\n\nbody\n",
+                "Ancien titre",
+                [(1, "Note"), (2, "Baz")],
+            ),
+        ):
+            vault = tmp_path / f"vault-{heading}"
+            app = await self._app(vault, body)
+            try:
+                result = await _rename_note_section_impl(
+                    app, rel_path="note.md", heading=heading, heading_level=2, new_heading="Baz"
+                )
+            finally:
+                await app.store.close()
+            assert "error" not in result, result
+            assert self._body_headings(vault) == expected
+
+    async def test_append_journal_refuses_a_multi_line_heading(self, tmp_path: Path) -> None:
+        """A heading with a newline matched nothing, so every call added another one.
+
+        `append_journal` is the tool that synthesizes the heading line, and an ATX
+        heading cannot carry a newline. The value never matched the section it had
+        just created, so each call took the create branch again: the note gained a
+        duplicate heading per call, without bound, until patching any of them was
+        ambiguous. `rename_note_section` already refused exactly this input.
+        """
+        from datacron.mcp.tools.write import _append_journal_impl
+
+        vault = tmp_path / "vault"
+        app = await self._app(vault, "# Root\n\n## Log\n\nInitial\n")
+        try:
+            result = await _append_journal_impl(
+                app,
+                rel_path="note.md",
+                heading="Session 2026-09-20" + chr(10) + "Notes",
+                entry="An entry.",
+            )
+        finally:
+            await app.store.close()
+
+        assert result["error"]["type"] == "ValueError", result
+        assert "single line" in result["error"]["message"]
+        assert self._body_headings(vault) == [(1, "Root"), (2, "Log")]
+
+    async def test_set_frontmatter_refuses_last_id_with_a_block_list(self, tmp_path: Path) -> None:
+        """An impossible combination must say so, not fail as a YAML parse error.
+
+        `create_note_ai` serialises a non-empty list in block style, and a block
+        collection's span ends after its terminating newline while the flow value
+        the edit renders carries none. Splicing one over the other ran the next key
+        onto the same line and the header stopped parsing, so the caller was handed
+        a parser message about a file it never wrote, every time.
+        """
+        from datacron.mcp.tools.write import _set_frontmatter_impl
+
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+        rel_path = "_memory/backlog.md"
+        (vault / "_memory").mkdir()
+        (vault / rel_path).write_text(
+            serialize(
+                {
+                    "id": "01J00000000000000000000092",
+                    "title": "Backlog",
+                    "tags": ["backlog"],
+                    "rejected": ["A -- b"],
+                },
+                "# Backlog\n\nbody\n",
+            ),
+            encoding="utf-8",
+        )
+        settings = Settings(vault_root=vault, read_paths=[vault], write_paths=[vault])
+        app = build_app(settings=settings, vault_root=vault)
+        await app.store.open(sidecar_index_db(vault))
+        before = (vault / rel_path).read_bytes()
+        expected_hash = hashlib.sha256(before).hexdigest()
+        try:
+            result = await _set_frontmatter_impl(
+                app,
+                rel_path=rel_path,
+                last_id="BL-0002",
+                rejected=["A -- b2"],
+                expected_hash=expected_hash,
+            )
+        finally:
+            await app.store.close()
+
+        assert result["error"]["type"] == "ValueError", result
+        assert "block list" in result["error"]["message"]
+        assert (vault / rel_path).read_bytes() == before

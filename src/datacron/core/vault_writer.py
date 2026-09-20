@@ -979,6 +979,21 @@ class FilesystemVaultWriter:
             return BatchRecoveryOutcome()
 
     def _inspect_recovery_sync(self) -> tuple[BlockedOperation, ...]:
+        """Report blocked operations without changing durable state.
+
+        Under the oplog lock, like every other reader of the journal. It was the
+        one that took no lock at all, and the promise in its own name was what made
+        that dangerous: reading the journal can rewrite it, because loading the tail
+        migrates a format-version-1 log in place, and that rewrite replaces the whole
+        file. Run against a live server it could swap in content predating an append
+        the server had just made inside its own lock, losing a committed record while
+        the CLI printed that no changes were made. Unlocked it could also read the
+        journal mid-append, or a pending manifest the server was unlinking.
+        """
+        with self._advisory_lock("oplog"):
+            return self._inspect_recovery_locked_sync()
+
+    def _inspect_recovery_locked_sync(self) -> tuple[BlockedOperation, ...]:
         blocked: list[BlockedOperation] = list(self._batch_transaction.inspect())
         records = self._operation_journal.read_records()
         for pending_path in self._operation_journal.pending_paths():

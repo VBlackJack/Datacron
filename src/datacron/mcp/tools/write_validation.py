@@ -126,6 +126,15 @@ def _validate_append_journal_request(
         raise ValueError("rel_path must end with .md")
     if not cleaned_heading:
         raise ValueError("heading must not be empty")
+    if "\n" in cleaned_heading or "\r" in cleaned_heading:
+        # This tool is the one that synthesizes a heading line, and an ATX heading
+        # cannot carry a newline. A multi-line value never matched the section it
+        # had just created, so every call took the create branch again and the note
+        # grew one more duplicate heading, without bound, until patching any of
+        # them became ambiguous. rename_note_section already refuses this.
+        raise ValueError("heading must be a single line")
+    if cleaned_heading.startswith("#"):
+        raise ValueError("heading must not start with '#'; the tool supplies the level")
     if not entry.strip():
         raise ValueError("entry must not be empty")
     return cleaned_rel_path, cleaned_heading, entry
@@ -565,8 +574,19 @@ def _apply_field_edits(
         existing = nodes.get(field)
         if existing is None:
             additions += f"{field}: {rendered}{eol}"
-        else:
-            edits.append((existing.start_mark.index, existing.end_mark.index, rendered))
+            continue
+        if isinstance(existing, yaml.CollectionNode) and not existing.flow_style:
+            # A block collection's span ends after its terminating newline, while
+            # the flow value rendered above carries none, so splicing one over the
+            # other ran the next key onto the same line and the header stopped
+            # parsing. Every such call failed, and what the caller saw was a YAML
+            # parser message about a file it had never written. The refusal says
+            # what the tool cannot do instead.
+            raise ValueError(
+                f"last_id cannot be combined with an edit to {field!r}, which this note "
+                "stores as a block list; set that field in a separate call"
+            )
+        edits.append((existing.start_mark.index, existing.end_mark.index, rendered))
     for begin, finish, replacement in sorted(edits, reverse=True):
         header = header[:begin] + replacement + header[finish:]
     return header, additions

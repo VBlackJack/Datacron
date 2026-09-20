@@ -341,6 +341,50 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- A failed append no longer wedges the operation log. The rollback that exists to stop a torn
+  record could not run: the journal was opened buffered, so the first real write happened
+  inside `flush()`, and `truncate()` flushes before truncating, which re-attempted the write
+  that had just failed and was swallowed. Measured with a write that accepts 40 bytes and then
+  refuses: 936 committed bytes became 976 with no trailing newline, and the journal was
+  unreadable and unwritable for good, since every append, every recovery scan and every read
+  refuse a tail that does not end at a JSONL boundary and no command repairs one. The journal
+  is now written unbuffered and rolled back with `ftruncate` on the raw descriptor. A cut that
+  cannot be made says the journal is torn, by name; a cut that lands but cannot be flushed is
+  logged, because the file already holds the last complete record.
+- A mixed setext underline no longer makes a note unreadable and unwritable. `-=-=-` under a
+  line of text is a heading to the parser, whose underline pattern accepts a mixed run, while
+  this module required one repeated character. The search for an underline the parser had
+  already found then raised `StopIteration`, which no write tool expects and which PEP 479
+  turns into a `RuntimeError` inside the caller's generator, so every read and every write of
+  that note failed until a human edited the file outside Datacron. The two patterns now agree,
+  and a disagreement degrades to a wrong span rather than an uncaught exception.
+- `rename_note_section` refuses a rename whose result is no longer the heading it claims.
+  A Setext title is written as a bare line above its surviving underline, so `2026. Bilan`,
+  `- Roadmap` or `> Bilan` turned the heading into a list or a quote followed by a thematic
+  break: the section stopped existing, its body merged into the one above, no selector reached
+  it again, and the tool reported success. An ATX title ending in `#` is a closing sequence the
+  parser strips, so renaming `Bar` to `Foo #` beside an existing `Foo` produced two headings
+  with the same identity, which is what the duplicate guard exists to prevent. Both are caught
+  by asking the parser what the splice produced, the post-condition `move_note_section` has
+  always had.
+- `append_journal` refuses a heading containing a newline. An ATX heading cannot carry one, so
+  the value never matched the section the tool had just created: every call took the create
+  branch again and the note gained another duplicate heading, without bound, until patching any
+  of them was ambiguous. `rename_note_section` already refused the same input.
+- `set_frontmatter` says what it cannot do instead of failing as a YAML parse error. Combining
+  `last_id` with an edit to a list the note stores in block style spliced a flow value over a
+  span that ends after its newline, which ran the next key onto the same line and broke the
+  header; the caller was handed a parser message about a file it had never written. The
+  combination is now refused by name, and the note was never modified either way.
+- The history retention sweep no longer abandons the rest of its pass at the first blob it
+  cannot delete. A vault in a synced folder meets a locked file routinely, and everything
+  behind it accumulated, sweep after sweep.
+- `datacron ops inspect` reads the journal under the same lock as every other reader. It was
+  the only one that took none, and its own promise to change nothing is what made that
+  dangerous: loading the tail migrates a format-version-1 log by replacing the whole file, so
+  run against a live server it could swap in content predating an append the server had just
+  made inside its own lock, losing a committed record while the command printed that no changes
+  were made.
 - A write request's receipt no longer suppresses a write the note no longer holds. Any journal
   record carrying the request key made the call a replay, and the caller got the old receipt
   with `committed: true` while nothing was written. Revert a note and reissue the same call,
