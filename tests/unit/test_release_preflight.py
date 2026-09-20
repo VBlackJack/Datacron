@@ -383,7 +383,14 @@ def test_committed_phase_rejects_and_hides_object_emails(
     assert sentinel not in combined
 
 
-def test_release_batch_wires_all_phases_and_one_atomic_push() -> None:
+def test_release_batch_wires_all_phases_and_pushes_a_side_branch() -> None:
+    """Every phase in order, and the bump reaching main through a pull request.
+
+    A direct push cannot satisfy the branch ruleset, which requires the Quality
+    gate to have passed on the exact SHA. The refusal used to arrive only after
+    the local commit and tag already existed, leaving the operator to undo both by
+    hand, so the script pushes a side branch and prints the remaining steps.
+    """
     content = _RELEASE_BATCH.read_text(encoding="utf-8")
     clean = content.index("scripts\\release_preflight.py clean")
     bump = content.index("scripts\\bump_version.py ||")
@@ -393,14 +400,18 @@ def test_release_batch_wires_all_phases_and_one_atomic_push() -> None:
     commit = content.index('git commit -m "chore(version): %VER%"')
     tag = content.index('git tag -a "v%VER%"')
     committed = content.index("scripts\\release_preflight.py committed")
-    push = content.index(
-        'git push --atomic origin "HEAD:refs/heads/main" "refs/tags/v%VER%:refs/tags/v%VER%"'
-    )
+    push = content.index('git push origin "HEAD:refs/heads/release/v%VER%"')
 
     assert clean < bump < bumped < stage < staged < commit < tag < committed < push
     assert "git add src\\datacron\\__init__.py server.json CHANGELOG.md" not in content
     assert "--force" not in content
     assert "core.hooksPath" not in content
+    assert "refs/heads/main" not in content
+    assert "--atomic" not in content
+    assert "gh pr create --base main --head release/v%VER%" in content
+    # The tag stays local until main carries the merge, so it lands on the commit
+    # the gate approved.
+    assert content.index("Tag v%VER% exists locally and is not pushed yet") > push
 
 
 @pytest.mark.parametrize("phase", ["clean", "committed"])

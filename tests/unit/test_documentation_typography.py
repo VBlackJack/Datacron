@@ -25,18 +25,41 @@ The mapping only improves the failure message; it never grants permission.
 from __future__ import annotations
 
 import re
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Final
 
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
-_DOCUMENTATION_ROOTS: Final[tuple[Path, ...]] = (
-    _REPO_ROOT / "docs",
-    _REPO_ROOT / "README.md",
-    _REPO_ROOT / "README.fr.md",
-    _REPO_ROOT / "CHANGELOG.md",
-)
 _REQUIRED_SUBDIRECTORY: Final[Path] = _REPO_ROOT / "docs" / "fr"
+_BINARY_SUFFIXES: Final[frozenset[str]] = frozenset(
+    {
+        ".db",
+        ".gif",
+        ".ico",
+        ".jpeg",
+        ".jpg",
+        ".pdf",
+        ".png",
+        ".pyc",
+        ".svg",
+        ".woff",
+        ".woff2",
+        ".zip",
+    }
+)
+_REQUIRED_NON_DOCS_FILES: Final[tuple[Path, ...]] = (
+    _REPO_ROOT / "packaging" / "windows" / "datacron-installer.iss",
+    _REPO_ROOT / "pyproject.toml",
+)
+"""Files outside ``docs/`` whose text reaches a user, pinned so the sweep keeps them.
+
+The guard used to scan two hand-listed roots, which covered 137 of the repository's
+299 tracked files. Everything a user reads outside ``docs/`` was outside it: the
+installer's own UI strings, the PyPI long description, the MCP registry entry. A sweep
+a curly quote can walk around is the failure this rule exists to stop, so the scan is
+the tracked tree now and these two are asserted reachable.
+"""
 
 _REMEDIES: Final[dict[str, str]] = {
     "\u2014": "-",  # em dash
@@ -65,12 +88,37 @@ _REMEDIES: Final[dict[str, str]] = {
 }
 
 
+def _tracked_text_files() -> Iterator[Path]:
+    """Every tracked file the typography rule governs, decoded as text.
+
+    Driven from ``git ls-files`` rather than a list of roots, because a list of roots
+    is exactly what let the installer UI and the packaging metadata drift out of reach.
+    A file that is not valid UTF-8 is not text and is skipped; so is a known binary
+    suffix, which saves reading it at all.
+    """
+    listing = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+        encoding="utf-8",
+    )
+    for entry in listing.stdout.split("\0"):
+        if not entry:
+            continue
+        path = _REPO_ROOT / entry
+        if path.suffix.casefold() in _BINARY_SUFFIXES or not path.is_file():
+            continue
+        try:
+            path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        yield path
+
+
 def _markdown_files() -> Iterator[Path]:
-    for root in _DOCUMENTATION_ROOTS:
-        if root.is_file():
-            yield root
-        elif root.is_dir():
-            yield from sorted(root.rglob("*.md"))
+    yield from (path for path in _tracked_text_files() if path.suffix.casefold() == ".md")
 
 
 def _violations(path: Path) -> list[str]:
@@ -91,8 +139,19 @@ def test_documentation_scan_reaches_nested_directories() -> None:
     )
 
 
+def test_the_scan_reaches_user_facing_text_outside_the_docs_tree() -> None:
+    """A sweep is only worth its result if it reaches what it claims to cover.
+
+    Two hand-listed roots covered 137 of 299 tracked files, and the text a user reads
+    in the installer and on PyPI sat outside them for as long as nobody looked.
+    """
+    scanned = set(_tracked_text_files())
+    missing = [path for path in _REQUIRED_NON_DOCS_FILES if path not in scanned]
+    assert not missing, f"the sweep does not reach {[str(path) for path in missing]}"
+
+
 def test_documentation_uses_ascii_punctuation() -> None:
-    findings = [finding for path in _markdown_files() for finding in _violations(path)]
+    findings = [finding for path in _tracked_text_files() for finding in _violations(path)]
     assert not findings, "\n".join(findings)
 
 

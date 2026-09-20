@@ -531,6 +531,16 @@ def test_checked_in_reliability_policy_tracks_expected_legacy_counts() -> None:
         for values in policy["accepted_fingerprints"].values()
         for fingerprint in values
     )
+    # The counts above were a literal copied from the fixture, so editing the
+    # fingerprint lists moved the debt the policy accepts and nothing said so. The
+    # two halves of the fixture must agree, which is the property that actually
+    # pins it: adding or dropping a fingerprint now fails here.
+    assert {kind: len(values) for kind, values in policy["accepted_fingerprints"].items()} == (
+        policy["accepted_counts"]
+    )
+    assert all(
+        len(set(values)) == len(values) for values in policy["accepted_fingerprints"].values()
+    )
 
 
 def test_mounted_vault_has_no_new_global_invariant_violations() -> None:

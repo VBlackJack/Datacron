@@ -73,6 +73,11 @@ jobs:
         run: |
           "${{ matrix.binary }}" --help
 
+      - name: Serve one MCP round trip from the built binary
+        shell: bash
+        run: |
+          uv run --frozen --extra build python scripts/smoke_released_binary.py "${{ matrix.binary }}"
+
       - name: Resolve Windows installer version
         if: runner.os == 'Windows'
         shell: pwsh

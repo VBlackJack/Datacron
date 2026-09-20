@@ -347,6 +347,38 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- The typography guard sweeps the tracked tree instead of two hand-listed roots. It covered
+  137 of 299 tracked files, and everything a user reads outside `docs/` was outside it: the
+  Windows installer's own UI strings, the PyPI long description, the MCP registry entry. A
+  sweep a curly quote can walk around is the failure the rule exists to stop, so the scan is
+  driven from `git ls-files` and two files outside `docs/` are asserted reachable.
+- The tool-annotation guard covers every registered tool. It asserted a hand-written subset and
+  never checked the subset was the surface, so five tools carried unasserted annotations,
+  `move_note_section`'s `destructiveHint` among them. A tool registered without being classified
+  now fails the test instead of shipping unclassified.
+- `release.bat` pushes the version bump to a side branch instead of attempting an atomic push to
+  `main` that the branch ruleset cannot accept. The refusal used to arrive after the commit and
+  the tag already existed locally, leaving the operator to undo both by hand; the script now
+  prints the pull-request and tag steps, and says how to roll back if even the branch push
+  fails.
+- A released binary is exercised as an MCP server before publication, not only with `--help`.
+  A one-file bundle fails at import time on the user's machine when a module reached through a
+  dynamic import was not collected, and `--help` returns before any of that is imported. The
+  release workflow now indexes a throwaway vault with the built binary, serves one MCP session
+  from it and reads a note back.
+- The three PyInstaller recipes cannot drift apart unnoticed. The bundling flags are spelled in
+  the POSIX build script, the Windows build script and the release workflow that produces the
+  published binaries, with nothing linking them: a module collected in the scripts an operator
+  runs locally and forgotten in the workflow ships a binary that fails on a user's machine. A
+  test compares the three. Merging them is deliberately not done here, because it changes how
+  the published binaries are built.
+- The reliability policy fixture is pinned by its own consistency rather than by a literal
+  copied from it: the accepted counts must equal the lengths of the accepted fingerprint lists,
+  and the lists must hold no duplicate. Editing a list used to move the debt the policy accepts
+  with nothing to say so.
+- The offline library is tested in both rendering languages. Every `LibraryOptions` in the suite
+  pinned French, so the default English path - the one a first-time reader gets - had no test at
+  all, and a key present in one language table and missing from the other would have shipped.
 - `datacron eval` no longer reports success on an empty question set, and refuses to save one
   as a baseline. Every metric of a run with no questions is zero, so a baseline written from it
   cannot be regressed against and `--compare` reports PASS for good; the run itself also exited

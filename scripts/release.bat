@@ -58,11 +58,24 @@ git tag -a "v%VER%" -m "Datacron %VER%" || (echo git tag failed. & exit /b 1)
     echo Committed release state is unsafe; nothing was pushed.
     exit /b 1
 )
-git push --atomic origin "HEAD:refs/heads/main" "refs/tags/v%VER%:refs/tags/v%VER%" || (
-    echo Atomic branch and tag push failed.
+REM The main ruleset requires the Quality gate to have passed on the exact SHA, which
+REM a direct push cannot satisfy: it is refused, and before this the refusal arrived
+REM only after the commit and tag already existed locally, leaving the operator to
+REM undo both by hand. The bump goes to a side branch, its PR carries the SHA through
+REM the gate, and the tag is pushed once main holds it.
+git push origin "HEAD:refs/heads/release/v%VER%" || (
+    echo Pushing the release branch failed; the local commit and tag are still here.
+    echo   git reset --hard %BASE%  ^&^&  git tag -d v%VER%
     exit /b 1
 )
 
 echo.
-echo   Released v%VER% - the GitHub release workflow will build the binaries.
+echo   Pushed release/v%VER%. Finish the release with:
+echo.
+echo     gh pr create --base main --head release/v%VER% --fill
+echo     gh pr merge --merge ^<number^>          (or merge it from the web UI)
+echo     git fetch origin ^&^& git push origin "refs/tags/v%VER%:refs/tags/v%VER%"
+echo.
+echo   Tag v%VER% exists locally and is not pushed yet; push it once main carries
+echo   the merge, so the tag lands on the commit the Quality gate approved.
 endlocal
