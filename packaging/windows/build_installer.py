@@ -42,10 +42,19 @@ class InstallerBuildError(RuntimeError):
 
 
 def _default_iscc_path() -> Path:
-    """Return the conventional Inno Setup 6 compiler path when available."""
+    """Return the Inno Setup 6 compiler path, by convention then by PATH.
+
+    ``PROGRAMFILES(X86)`` is set on every 64-bit Windows, so returning the
+    conventional path whenever that variable exists made the PATH lookup below
+    unreachable there: an installation anywhere else failed with a path the user
+    never chose, while ``ISCC.exe`` sat on their PATH. The convention is tried
+    first and only kept when the file is actually there.
+    """
     program_files_x86 = os.environ.get("PROGRAMFILES(X86)")
     if program_files_x86:
-        return Path(program_files_x86) / "Inno Setup 6" / "ISCC.exe"
+        candidate = Path(program_files_x86) / "Inno Setup 6" / "ISCC.exe"
+        if candidate.is_file():
+            return candidate
     discovered = shutil.which("ISCC.exe") or shutil.which("iscc")
     return Path(discovered) if discovered else Path("ISCC.exe")
 

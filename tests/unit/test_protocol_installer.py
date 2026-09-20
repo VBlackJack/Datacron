@@ -29,12 +29,15 @@ from datacron.core.memory_protocol import SESSION_START_INSTRUCTION
 from datacron.installers import mcp_clients, protocol
 from datacron.installers.claude_desktop import MCPServerInvocation
 from datacron.installers.protocol import (
+    _WINDSURF_GLOBAL_RULE_MAX_CHARS,
     PROTOCOL_ALL,
     PROTOCOL_BLOCK,
     PROTOCOL_CLIENT_IDS,
     PROTOCOL_MARKER_BEGIN,
     PROTOCOL_MARKER_END,
+    ProtocolInstallError,
     ProtocolInstallOutcome,
+    _atomic_write_text,
     install_memory_protocol,
     uninstall_memory_protocol,
 )
@@ -97,6 +100,10 @@ def test_install_and_uninstall_are_idempotent_and_reversible(
     assert removed[0].changed is True
     assert absent[0].changed is False
     assert path.read_bytes() == original
+
+
+_USER_RULES_RESERVE_CHARS = 1500
+"""Room a user's own global rules need beside the protocol block."""
 
 
 def test_cursor_install_returns_manual_instructions_without_creating_home_file(
@@ -164,7 +171,12 @@ def test_windsurf_global_rule_limit_fails_without_rewriting(fake_home: Path) -> 
 
     assert outcome.successful is False
     assert outcome.changed is False
-    assert "6000 characters" in outcome.detail
+    assert "client limit of 6000" in outcome.detail
+    # The message names whose bytes they are, because the block alone is within a
+    # hundred characters of this client's whole budget: for most users the answer
+    # is not to shorten their own rules.
+    assert "The Datacron block is" in outcome.detail
+    assert "your existing rules are" in outcome.detail
     assert path.read_bytes() == original
     assert not (fake_home / ".cursorrules").exists()
 
@@ -792,3 +804,62 @@ def test_protocol_block_has_single_marked_source() -> None:
     assert "lifecycle invalidation" in PROTOCOL_BLOCK
     assert "indexed: true" in PROTOCOL_BLOCK
     assert "datacron reindex" in PROTOCOL_BLOCK
+
+
+def test_the_protocol_block_leaves_a_client_room_for_its_own_rules() -> None:
+    """A block that fills the budget makes the install fail for every real user.
+
+    Windsurf's global rules file holds 6000 characters and the rendered block is
+    within a hundred of that, so anyone with existing rules cannot install. This
+    pins the shape of the problem rather than the current number: the block must
+    leave a named reserve, and when it does not, that is a product decision about
+    what the protocol says, not a test to loosen.
+    """
+    rendered = PROTOCOL_BLOCK.replace("\n", "\r\n")
+    reserve = _WINDSURF_GLOBAL_RULE_MAX_CHARS - len(rendered)
+    assert reserve >= 0, "the block alone exceeds the smallest client budget"
+    if reserve < _USER_RULES_RESERVE_CHARS:
+        pytest.xfail(
+            f"the block leaves {reserve} characters of the {_WINDSURF_GLOBAL_RULE_MAX_CHARS} "
+            f"budget, under the {_USER_RULES_RESERVE_CHARS} a user needs for their own "
+            "rules; a shorter Windsurf variant is the open decision"
+        )
+
+
+def test_an_instruction_file_that_is_a_link_is_refused(fake_home: Path) -> None:
+    """Replacing a link with a regular file detaches a dotfiles repository.
+
+    ``os.replace`` onto a symlink writes through the link's place, not through the
+    link: the repository still holds the old file and nothing points at it any
+    more, while the content Datacron wrote is the only copy. These are files the
+    product does not own, so it refuses and names the target.
+    """
+    real = fake_home / "dotfiles" / "AGENTS.md"
+    real.parent.mkdir(parents=True)
+    real.write_text("# My instructions" + chr(10), encoding="utf-8")
+    link = fake_home / ".codex" / "AGENTS.md"
+    link.parent.mkdir(parents=True)
+    try:
+        link.symlink_to(real)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+
+    with pytest.raises(ProtocolInstallError, match="is a link to"):
+        _atomic_write_text(link, "replaced" + chr(10), has_bom=False)
+
+    assert link.is_symlink()
+    assert real.read_text(encoding="utf-8") == "# My instructions" + chr(10)
+
+
+def test_an_instruction_file_keeps_a_copy_of_what_it_replaced(fake_home: Path) -> None:
+    """A file the product does not own is not rewritten without a way back."""
+    path = fake_home / ".codex" / "AGENTS.md"
+    path.parent.mkdir(parents=True)
+    original = "# Mine" + chr(10) + chr(10) + "Notes I wrote." + chr(10)
+    path.write_text(original, encoding="utf-8")
+
+    _atomic_write_text(path, "# Replaced" + chr(10), has_bom=False)
+
+    assert path.read_text(encoding="utf-8") == "# Replaced" + chr(10)
+    backup = path.with_name(path.name + ".datacron-backup")
+    assert backup.read_text(encoding="utf-8") == original

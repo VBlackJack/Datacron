@@ -37,6 +37,7 @@ _VALIDATE_ISCC_ARGUMENTS = cast(
     "Callable[[Sequence[str]], None]",
     _SCRIPT_GLOBALS["_validate_additional_iscc_arguments"],
 )
+_DEFAULT_ISCC_PATH = cast("Callable[[], Path]", _SCRIPT_GLOBALS["_default_iscc_path"])
 
 
 def _payload(tmp_path: Path) -> Path:
@@ -139,3 +140,37 @@ def test_ci_and_iss_require_the_shared_version_guard() -> None:
     assert "#if !SameStr(AppVersion, PayloadVersionVerified)" in installer
     assert "packaging\\windows\\build_installer.py @arguments" in workflow
     assert "& $iscc @arguments" not in workflow
+
+
+def test_iscc_discovery_falls_through_to_path_when_the_convention_is_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-default Inno Setup install must still be found.
+
+    PROGRAMFILES(X86) is set on every 64-bit Windows, so returning the
+    conventional path whenever the variable exists made the PATH lookup
+    unreachable there: an installation anywhere else failed with a path the user
+    never chose, while ISCC.exe sat on their PATH.
+    """
+    elsewhere = tmp_path / "tools" / "ISCC.exe"
+    elsewhere.parent.mkdir(parents=True)
+    elsewhere.write_bytes(b"placeholder")
+    monkeypatch.setenv("PROGRAMFILES(X86)", str(tmp_path / "no-inno-here"))
+    monkeypatch.setattr(
+        _SCRIPT_GLOBALS["shutil"], "which", lambda name: str(elsewhere) if "ISCC" in name else None
+    )
+
+    assert _DEFAULT_ISCC_PATH() == elsewhere
+
+
+def test_iscc_discovery_prefers_the_conventional_path_when_it_is_there(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guard the guard: the convention still wins when the compiler is where it belongs."""
+    conventional = tmp_path / "Inno Setup 6" / "ISCC.exe"
+    conventional.parent.mkdir(parents=True)
+    conventional.write_bytes(b"placeholder")
+    monkeypatch.setenv("PROGRAMFILES(X86)", str(tmp_path))
+    monkeypatch.setattr(_SCRIPT_GLOBALS["shutil"], "which", lambda _name: "C:/elsewhere/ISCC.exe")
+
+    assert _DEFAULT_ISCC_PATH() == conventional

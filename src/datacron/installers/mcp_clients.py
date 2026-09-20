@@ -35,7 +35,6 @@ import json
 import os
 import shutil
 import sys
-import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +42,7 @@ from typing import Any, Final
 
 import tomli_w
 
+from datacron.core.durability import atomic_durable_write
 from datacron.core.logger import get_logger
 from datacron.installers.claude_desktop import config_path_for_platform
 
@@ -562,13 +562,20 @@ def _load_toml(path: Path) -> dict[str, Any]:
 
 
 def _atomic_write(path: Path, payload: bytes) -> None:
+    """Replace a client config durably, keeping a copy of what was there.
+
+    These files belong to the user's editor, not to Datacron. Rewriting one
+    reserializes it, which drops every comment the user wrote: the TOML and JSON
+    writers emit data, not documents, so a Codex ``config.toml`` came back with
+    its commentary gone and nothing to restore it from. The write also reached
+    none of the durability the product applies to its own files.
+
+    The copy is the answer rather than a comment-preserving writer, which would
+    add a dependency for one file format and still not cover JSON. It is taken
+    before every replacement, so the last known-good version of a foreign config
+    is always one file away.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(payload)
-        os.replace(tmp_path, path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    if path.exists():
+        shutil.copy2(path, path.with_name(f"{path.name}.datacron-backup"))
+    atomic_durable_write(path, payload)

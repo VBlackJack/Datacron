@@ -1902,6 +1902,33 @@ def _render_machine_write_env(result: SetupResult) -> None:
         _print(f"  user env:   {env_result.action} -> {env_result.effective_value}")
 
 
+def _unapplied_suffix(result: SetupResult) -> str:
+    """Mark the settings a run chose and then had nowhere to put.
+
+    Write paths, read-only and durability reach the server through a client's env
+    block. With no client config written, `datacron setup --client none` chose
+    them and discarded them, while reporting them as configured: the operator left
+    believing a writable vault was set up, and the first write was refused with
+    nothing connecting the two.
+    """
+    applied = (
+        result.client_config_path is not None
+        or result.stdio_config is not None
+        or any(outcome.installed for outcome in result.client_installs)
+    )
+    return "" if applied else "  (requested; no client config was written)"
+
+
+def _render_unapplied_action(result: SetupResult, suffix: str) -> None:
+    """Say what to do when the run had nowhere to put the settings it chose."""
+    if not suffix or not (result.write_paths or result.read_only):
+        return
+    _print(
+        "  action:     set DATACRON_WRITE_PATHS, DATACRON_READ_ONLY and "
+        "DATACRON_DURABILITY yourself, or rerun with a client"
+    )
+
+
 def _render_setup_result(result: SetupResult) -> None:
     _print("")
     _print("Datacron setup complete.")
@@ -1917,15 +1944,18 @@ def _render_setup_result(result: SetupResult) -> None:
         _print("  action:     run `datacron index` when indexing is available")
     else:
         _print("  index:      skipped (--no-index)")
+    suffix = _unapplied_suffix(result)
     if result.write_paths:
         _print(
-            f"  writing:    enabled -> {os.pathsep.join(str(path) for path in result.write_paths)}"
+            f"  writing:    enabled -> "
+            f"{os.pathsep.join(str(path) for path in result.write_paths)}{suffix}"
         )
     else:
         _print("  writing:    disabled")
     _render_machine_write_env(result)
-    _print(f"  durability: {result.durability}")
-    _print(f"  read-only:  {'yes' if result.read_only else 'no'}")
+    _print(f"  durability: {result.durability}{suffix}")
+    _print(f"  read-only:  {'yes' if result.read_only else 'no'}{suffix}")
+    _render_unapplied_action(result, suffix)
     if result.client_config_path is not None:
         _print(f"  client:     {result.client_config_path}")
         _print("Restart Claude Desktop for the change to take effect.")
@@ -2160,6 +2190,17 @@ def _resolve_protocol_scopes(
     project_dir = None
     if SCOPE_PROJECT in scopes:
         project_dir = (project or Path.cwd()).expanduser().resolve()
+        if project_dir == Path.home().expanduser().resolve():
+            # --project defaults to the working directory and nothing requires it
+            # to be a project, so running this from the home directory writes a
+            # project rule to the exact path a user-scope rule uses. Cursor then
+            # has one file playing both parts, and the next user-scope install
+            # treats it as a leftover to strip.
+            _print(
+                "  warning:    project scope resolved to your home directory; "
+                "a project rule written there collides with the user-scope one. "
+                "Pass --project <path> to the code project you mean."
+            )
     return scopes, project_dir
 
 

@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import codecs
 import os
-import tempfile
+import shutil
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, TypeAlias
 
+from datacron.core.durability import atomic_durable_write
 from datacron.core.logger import get_logger
 from datacron.core.memory_protocol import (
     PROTOCOL_BLOCK,
@@ -105,6 +107,9 @@ _WINDSURF_GLOBAL_RULE_MAX_CHARS: Final[int] = 6000
 
 _Operation: TypeAlias = Literal["install", "uninstall"]
 _Scope: TypeAlias = Literal["user", "project"]
+
+
+_FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = 0x0400
 
 
 class ProtocolInstallError(RuntimeError):
@@ -323,6 +328,17 @@ def _project_scope_skip(client_id: str, display_name: str) -> ProtocolInstallOut
     )
 
 
+def _is_project_rule_installed_at_home(path: Path) -> bool:
+    """Report a project-scope Cursor rule sitting where a user-scope block would."""
+    if path != Path.home() / _CURSOR_RULE_RELATIVE_PATH or not path.is_file():
+        return False
+    try:
+        text, _has_bom = _read_text(path)
+    except (OSError, UnicodeError):
+        return False
+    return text == _CURSOR_RULE_CONTENT
+
+
 def _install_cursor_protocol(display_name: str) -> ProtocolInstallOutcome:
     """Remove obsolete Cursor blocks and return manual global-rule instructions."""
     paths = _cursor_instruction_paths()
@@ -337,6 +353,15 @@ def _install_cursor_protocol(display_name: str) -> ProtocolInstallOutcome:
                 _find_protocol_span(text)
 
         for current_path in paths:
+            if _is_project_rule_installed_at_home(current_path):
+                # A project-scope rule that landed in the home directory, because
+                # --project defaults to the working directory and nothing requires
+                # that directory to be a project. It occupies the exact path a
+                # legacy user-scope block used, so stripping it leaves an orphan
+                # frontmatter file that is non-blank and therefore not deleted -
+                # and Cursor then applies an empty rule with alwaysApply: true. It
+                # is left alone: it is a rule this product wrote, not a leftover.
+                continue
             changed = _remove_protocol_block(current_path, delete_if_empty=True) or changed
     except (OSError, UnicodeError, ProtocolInstallError) as exc:
         _LOGGER.warning("Protocol install failed for %s: %s", display_name, exc)
@@ -621,8 +646,17 @@ def _install_block(path: Path, *, max_chars: int | None = None) -> bool:
         start, end = span
         updated = f"{text[:start]}{rendered}{text[end:]}"
     if max_chars is not None and len(updated) > max_chars:
+        # Say how far over, and by whose bytes. The protocol block alone is within
+        # 100 characters of this client's whole budget, so for most users the
+        # answer is not "shorten your rules" but "this client cannot hold both",
+        # and a bare limit message sent them looking for their own text to cut.
         raise ProtocolInstallError(
-            f"{path} would exceed the client limit of {max_chars} characters"
+            f"{path} would be {len(updated)} characters against a client limit of "
+            f"{max_chars}. The Datacron block is {len(rendered)} of them, and your "
+            f"existing rules are {len(text)}. This client's budget cannot hold both; "
+            "keep the protocol in a project-scope rule file, or shorten the global "
+            "rules by at least "
+            f"{len(updated) - max_chars} characters."
         )
     if updated == text:
         return False
@@ -681,17 +715,46 @@ def _detect_newline(text: str) -> str:
     return "\r\n" if "\r\n" in text else "\n"
 
 
+def _assert_not_a_link(path: Path) -> None:
+    """Refuse to replace an instruction file that is a link to somewhere else.
+
+    ``os.replace`` onto a symlink or a junction writes a regular file over the
+    link, which silently detaches the user's dotfiles repository from the file
+    they thought they were editing: the content Datacron wrote is the only copy,
+    and the repository still holds the old one with nothing pointing at it. These
+    are files the product does not own, so the answer is to refuse and say what
+    the link points at, not to guess which side the user meant.
+    """
+    try:
+        status = os.lstat(path)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ProtocolInstallError(f"cannot inspect {path}: {exc}") from exc
+    attributes = getattr(status, "st_file_attributes", 0)
+    if stat.S_ISLNK(status.st_mode) or bool(attributes & _FILE_ATTRIBUTE_REPARSE_POINT):
+        target = os.readlink(path) if stat.S_ISLNK(status.st_mode) else "a reparse point"
+        raise ProtocolInstallError(
+            f"{path} is a link to {target}; Datacron will not replace a link with a "
+            "regular file. Edit the target directly, or remove the link first."
+        )
+
+
 def _atomic_write_text(path: Path, text: str, *, has_bom: bool) -> None:
+    """Replace an instruction file durably, keeping the bytes it had.
+
+    These files belong to the user's editor, not to Datacron, and the previous
+    write reached none of the guarantees the product applies to its own: no
+    fsync, no directory flush, and no copy of what was there. A crash between the
+    replace and the flush left an empty or truncated rules file, and a bad write
+    left nothing to go back to.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+    _assert_not_a_link(path)
     payload = text.encode("utf-8")
     if has_bom:
         payload = codecs.BOM_UTF8 + payload
-    fd, tmp_name = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=str(path.parent))
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(payload)
-        os.replace(tmp_path, path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    if path.exists():
+        backup = path.with_name(f"{path.name}.datacron-backup")
+        shutil.copy2(path, backup)
+    atomic_durable_write(path, payload)
