@@ -132,6 +132,16 @@ hébergée ne représente pas une image Windows commerciale vierge : interface
 interactive, accessibilité et démarrage sur image réellement vierge restent à
 valider séparément. Ajouter le workflow ne prouve pas une exécution distante réussie.
 
+Il exécute sept scénarios, chacun dans sa propre installation, et écrit une entrée
+par scénario dans le rapport. Six existent parce qu'une installation par défaut
+n'atteint jamais l'état qui casse : un chemin de vault portant une esperluette, un
+chemin donné avec une barre oblique inverse finale, un chemin contenant un guillemet
+double, une entrée de PATH écrite à la main par l'utilisateur, un vault remplacé dont
+la désinscription échoue, et une installation silencieuse sans `/VAULT=`. Pour un
+sous-ensemble, répéter `--only <scenario>`. Le rapport indique ce qu'il n'a pas
+couvert : choisir "Garder ma configuration actuelle" après avoir passé `/RESETCONFIG`
+est une interaction avec l'assistant et demande encore une personne.
+
 Pour une image Windows Sandbox vierge, utilise l'installateur candidat et le
 vérificateur autonome de l'artefact `windows-sandbox-inputs` du workflow :
 

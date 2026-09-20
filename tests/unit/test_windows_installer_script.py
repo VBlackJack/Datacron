@@ -26,12 +26,16 @@ is that, on a machine that opted in.
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Final
 
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 _INSTALLER: Final[Path] = _REPO_ROOT / "packaging" / "windows" / "datacron-installer.iss"
+_VALIDATOR: Final[Path] = _REPO_ROOT / "scripts" / "verify_windows_install.py"
 
 
 _ROUTINE: Final[re.Pattern[str]] = re.compile(r"^(?:function|procedure)\s+([A-Za-z_]\w*)", re.M)
@@ -154,3 +158,40 @@ def test_a_stale_unregister_is_a_warning_and_not_a_failed_install() -> None:
     ]
     assert "SetupFailed := True" not in warning, "a warning must not set the failure flag"
     assert "CustomMessage('SetupFailed')" not in warning
+
+
+def _validator_module() -> ModuleType:
+    """Load the disposable-machine validator without installing anything.
+
+    Importing it runs no scenario: every one of them is behind ``main``, which
+    is behind ``installation_guard``.
+    """
+    spec = importlib.util.spec_from_file_location("verify_windows_install", _VALIDATOR)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_each_installer_finding_has_a_scenario_that_would_catch_it() -> None:
+    """The four defects above are answered by a run, not only by the guards here.
+
+    Each needs a vault path or a machine state a default install never reaches,
+    which is how all four survived every install anyone had done. Naming them
+    here keeps the claim and the script from drifting apart, and keeps the one
+    step that stays manual visible instead of quietly dropped.
+    """
+    module = _validator_module()
+    names = {name for name, _run in module._SCENARIOS}
+
+    assert {
+        "ampersand_vault_path",
+        "trailing_backslash_vault_path",
+        "quote_in_vault_path_refused",
+        "user_path_entry_preserved",
+        "superseded_unregistration_warns",
+        "silent_without_vault_refused",
+    } <= names
+    assert "RESETCONFIG" in module._MANUAL_STEP, "the wizard step is still owed and must say so"
