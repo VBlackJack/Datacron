@@ -212,10 +212,46 @@ def _uninstall(context: Context, destination: Path) -> int:
     return completed.returncode
 
 
+def _footprint(destination: Path) -> dict[str, Any]:
+    """Describe what an installation left behind, for evidence and for refusals.
+
+    A refusal that names only "something was installed" cannot be acted on: the
+    executable and the registry entry are written at different moments by
+    different code, and only one of them says which.
+    """
+    return {
+        "executable": (destination / "datacron.exe").is_file(),
+        "recorded_vault": _registry_value(_STATE_KEY, _VAULT_VALUE),
+        "path_receipt": _registry_value(_STATE_KEY, _PATH_RECEIPT_VALUE),
+    }
+
+
 def _installed_anything(destination: Path) -> bool:
-    if (destination / "datacron.exe").is_file():
-        return True
-    return _registry_value(_STATE_KEY, _VAULT_VALUE) is not None
+    footprint = _footprint(destination)
+    return bool(footprint["executable"]) or footprint["recorded_vault"] is not None
+
+
+def _forget_installer_state() -> dict[str, Any]:
+    """Drop leftover installer state so each scenario starts from a known machine.
+
+    HKCU is the one thing the scenarios share. A scenario that fails mid-way, or
+    an uninstall that does not reach its last step, otherwise decides the verdict
+    of every scenario after it. What was there is returned rather than discarded.
+    """
+    before: dict[str, Any] = {
+        "recorded_vault": _registry_value(_STATE_KEY, _VAULT_VALUE),
+        "path_receipt": _registry_value(_STATE_KEY, _PATH_RECEIPT_VALUE),
+    }
+    if sys.platform == "win32":
+        import winreg  # noqa: PLC0415
+
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, _STATE_KEY)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            before["could_not_be_removed"] = True
+    return before
 
 
 def _expected_shortcut_arguments(destination: Path, subcommand: str, vault: str) -> str:
@@ -236,6 +272,15 @@ def _status_through_the_shortcut(context: Context, arguments: str) -> str:
         creationflags=_CREATION_FLAGS,
     )
     return completed.stdout + completed.stderr
+
+
+def _reported_vault_root(output: str) -> str | None:
+    """Return the vault root ``datacron status`` printed, if it printed one."""
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("vault_root:"):
+            return stripped.split(":", 1)[1].strip()
+    return None
 
 
 def scenario_ampersand_vault(context: Context) -> dict[str, Any]:
@@ -264,9 +309,16 @@ def scenario_ampersand_vault(context: Context) -> dict[str, Any]:
         output = _status_through_the_shortcut(
             context, _expected_shortcut_arguments(destination, "status", str(vault))
         )
-        if f"vault_root: {vault}" not in output:
-            raise ScenarioError("the shortcut command line did not reach the whole vault path")
-        evidence["status_named_the_whole_path"] = True
+        reached = _reported_vault_root(output)
+        evidence["status_reported_vault_root"] = reached
+        if reached is None:
+            raise ScenarioError(f"the shortcut command line produced no status: {output[:400]!r}")
+        # The temporary directory can be handed to the installer in its 8.3 form,
+        # and the binary prints the resolved path, so the two spellings differ on
+        # everything but the part this measures: whether the name survived the
+        # ampersand, or cmd cut the command line there and ran the rest.
+        if not reached.casefold().endswith(vault.name.casefold()):
+            raise ScenarioError(f"the vault reached the binary as {reached!r}, not {vault.name!r}")
     finally:
         evidence["uninstall_exit_code"] = _uninstall(context, destination)
     return evidence
@@ -299,20 +351,50 @@ def scenario_trailing_backslash(context: Context) -> dict[str, Any]:
 
 
 def scenario_quote_in_vault_path(context: Context) -> dict[str, Any]:
-    """A path carrying a double quote cannot be quoted safely and is refused."""
-    destination = context.root / "app-quoted"
-    installed = _install(
-        context,
-        destination=destination,
-        vault_argument='/VAULT="C:\\data\\qu""ote"',
-    )
-    if installed.returncode == 0:
-        _uninstall(context, destination)
-        raise ScenarioError("the installer accepted a vault path containing a double quote")
-    if _installed_anything(destination):
-        _uninstall(context, destination)
-        raise ScenarioError("the refusal left an installation behind")
-    return {"exit_code": installed.returncode, "installed_nothing": True}
+    """A path carrying a double quote cannot be quoted safely and is refused.
+
+    Delivering one is the hard part, and the reason the refusal exists at all:
+    a quote is what the Windows command line uses to delimit, so the three
+    spellings below may each be consumed before the installer sees anything. An
+    attempt that arrives without its quote proves nothing either way, and says
+    so rather than passing; the wizard's directory box remains the way a user
+    reaches this, and that stays manual.
+    """
+    attempts: list[dict[str, Any]] = []
+    for index, spelling in enumerate(
+        (
+            '/VAULT="C:\\data\\qu""ote"',
+            '/VAULT=C:\\data\\qu\\"ote',
+            '/VAULT="C:\\data\\qu\\"ote"',
+        )
+    ):
+        destination = context.root / f"app-quoted-{index}"
+        installed = _install(context, destination=destination, vault_argument=spelling)
+        footprint = _footprint(destination)
+        recorded = footprint["recorded_vault"]
+        delivered = recorded is not None and '"' in recorded
+        attempts.append(
+            {
+                "argument": spelling,
+                "exit_code": installed.returncode,
+                "footprint": footprint,
+                "quote_reached_the_installer": delivered,
+            }
+        )
+        if installed.returncode == 0 or footprint["executable"]:
+            _uninstall(context, destination)
+        _forget_installer_state()
+        if delivered:
+            if installed.returncode == 0:
+                raise ScenarioError(
+                    f"the installer accepted the vault path {recorded!r}: {attempts[-1]}"
+                )
+            return {"refused": True, "attempts": attempts}
+    return {
+        "refused": None,
+        "attempts": attempts,
+        "note": "no command line spelling delivered a double quote; this stays manual",
+    }
 
 
 def scenario_user_path_entry_is_preserved(context: Context) -> dict[str, Any]:
@@ -392,13 +474,18 @@ def scenario_silent_without_vault(context: Context) -> dict[str, Any]:
         env=context.env,
         creationflags=_CREATION_FLAGS,
     )
+    footprint = _footprint(destination)
     if completed.returncode == 0:
         _uninstall(context, destination)
         raise ScenarioError("a silent install without /VAULT reported success")
-    if _installed_anything(destination):
+    if footprint["executable"]:
         _uninstall(context, destination)
-        raise ScenarioError("the refusal left an installation behind")
-    return {"exit_code": completed.returncode, "returned_within_timeout": True}
+        raise ScenarioError(f"the refusal installed the application: {footprint}")
+    return {
+        "exit_code": completed.returncode,
+        "returned_within_timeout": True,
+        "footprint": footprint,
+    }
 
 
 async def smoke(executable: Path, vault: Path, env: dict[str, str]) -> dict[str, Any]:
@@ -536,10 +623,13 @@ def main() -> int:
                 env=environment,
                 timeout=arguments.timeout,
             )
+            leftover = _forget_installer_state()
             try:
                 results[name] = {"passed": True, "evidence": run(context)}
             except (ScenarioError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
                 results[name] = {"passed": False, "error": f"{type(exc).__name__}: {exc}"}
+            if any(value is not None and value is not False for value in leftover.values()):
+                results[name]["state_left_by_an_earlier_scenario"] = leftover
                 failures.append(name)
 
     report = {
