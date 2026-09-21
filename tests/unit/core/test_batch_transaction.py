@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -3215,3 +3217,26 @@ async def test_recovery_reclassifies_every_batch_it_rolls_forward(tmp_path: Path
         "recovery reused a classification instead of judging the vault as its own "
         f"writes left it: {handed}"
     )
+
+
+def test_an_unreachable_volume_refuses_instead_of_spinning(tmp_path: Path) -> None:
+    """The ancestor walk had no termination guard and the anchor is its own parent.
+
+    Path.exists() swallows every OSError and answers False, so a removed drive
+    letter or a dropped SMB mount made the leaf and every ancestor look
+    missing, the anchor included. The loop then appended the same path forever
+    at full CPU until the list exhausted memory. Four batch write paths reach
+    this, and the confinement check upstream does not stop it: it breaks out of
+    its own walk on the first missing component and returns normally.
+    """
+    unreachable = Path("Q:/datacron/stage") if sys.platform == "win32" else Path("/proc/x/y/z")
+    anchor = unreachable
+    while anchor.parent != anchor:
+        anchor = anchor.parent
+    assert not anchor.exists() or sys.platform != "win32"
+
+    started = time.monotonic()
+    with pytest.raises(OperationLogError, match="unreachable up to the filesystem root"):
+        batch_transaction._ensure_directory_durable(unreachable)
+
+    assert time.monotonic() - started < 5.0, "the guard must answer, not grind"

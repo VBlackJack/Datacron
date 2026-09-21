@@ -43,6 +43,7 @@ _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
 _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
 _BACKLOG_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"BL-[0-9]{4,}")
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+_ATX_CLOSING_SEQUENCE: Final[re.Pattern[str]] = re.compile(r"[ \t]#+$")
 _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
 # Markdown ATX headings run from one to six hash marks; every heading selector shares it.
 MAX_HEADING_LEVEL: Final[int] = 6
@@ -401,6 +402,16 @@ def _validate_rename_note_section_request(
         raise ValueError("new_heading must be a single line")
     if cleaned_new_heading.startswith("#"):
         raise ValueError("new_heading must contain text only, without Markdown heading markers")
+    if _ATX_CLOSING_SEQUENCE.search(cleaned_new_heading):
+        # A space then hashes at the end is an ATX closing sequence, which the
+        # parser removes: "Section #" was stored verbatim and read back as
+        # "Section". The tool reported the requested title, so the client
+        # believed the note held it, the next rename by that title failed with
+        # heading_not_found, and any stored selector built from it was dead.
+        raise ValueError(
+            "new_heading must not end with a closing sequence of '#'; Markdown drops it "
+            "and the stored heading would differ from the requested title"
+        )
     if heading_level is not None and heading_level not in HEADING_LEVELS:
         raise ValueError("heading_level must be between 1 and 6")
     if heading_level == 1:

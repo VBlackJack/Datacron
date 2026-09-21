@@ -431,7 +431,6 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         supersedes: list[str] | None = None,
         rejected: list[str] | None = None,
         last_verified: str | None = None,
-        expected_hash: str | None = None,
         request_id: str | None = None,
     ) -> CreateNoteOutput:
         return cast(
@@ -447,7 +446,6 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 supersedes=supersedes,
                 rejected=rejected,
                 last_verified=last_verified,
-                expected_hash=expected_hash,
                 actor=app.identity_provider.identify(ctx).actor,
                 request_id=request_id,
             ),

@@ -239,7 +239,6 @@ async def _create_note_ai_impl(
     supersedes: list[str] | None = None,
     rejected: list[str] | None = None,
     last_verified: str | None = None,
-    expected_hash: str | None = None,
     actor: str = "direct-call",
     request_id: str | None = None,
 ) -> dict[str, Any]:
@@ -256,7 +255,6 @@ async def _create_note_ai_impl(
             confidence=confidence,
             tags=tags,
         )
-        cleaned_expected_hash = _validate_expected_hash(expected_hash)
         cleaned_rejected = _validate_rejected_entries(rejected) if rejected is not None else None
         _enforce_tag_policy(app, cleaned["rel_path"], cleaned["tags"], body)
         now = datetime.now(tz=UTC)
@@ -283,7 +281,7 @@ async def _create_note_ai_impl(
                     cleaned["rel_path"],
                     content,
                     overwrite=False,
-                    expected_hash=cleaned_expected_hash,
+                    expected_hash=None,
                     note_id=note_id,
                     operation=OperationContext(
                         op="create",

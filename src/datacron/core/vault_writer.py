@@ -546,10 +546,20 @@ class FilesystemVaultWriter:
         if note_id is not None and not _ULID_PATTERN.fullmatch(note_id):
             raise ValueError("note_id must be a canonical 26-character ULID")
 
+        if expected_hash is not None and not overwrite:
+            # A creation has nothing to match: the note is absent, so the hash is
+            # compared against None and can only mismatch. The MCP tool no longer
+            # advertises the parameter; this refuses it by name for any other
+            # caller rather than reporting that a path which never existed
+            # "changed since read".
+            raise ValueError("a creation takes no expected_hash; there is nothing to match")
+
         identity_lock = self._advisory_lock("identity") if note_id is not None else nullcontext()
         with identity_lock, self._advisory_lock(f"note:{self._lock_key(target)}"):
             current_bytes = target.read_bytes() if target.exists() else None
-            self._check_request_replay(safe_rel_path, current_bytes, expected_hash)
+            self._check_request_replay(
+                safe_rel_path, current_bytes, expected_hash, expected_hash_accepted=overwrite
+            )
             _check_expected_hash(expected_hash, current_bytes)
             if current_bytes is not None and not overwrite:
                 raise FileExistsError(f"{safe_rel_path} already exists.")
@@ -690,6 +700,8 @@ class FilesystemVaultWriter:
         safe_rel_path: Path,
         current_bytes: bytes | None,
         expected_hash: str | None,
+        *,
+        expected_hash_accepted: bool = True,
     ) -> None:
         """Check durable receipts under the mutation lock, after recovery and confinement.
 
@@ -732,6 +744,16 @@ class FilesystemVaultWriter:
         current_hash = sha256_bytes(current_bytes) if current_bytes is not None else None
         if current_hash != record.after_hash:
             if expected_hash is None:
+                if not expected_hash_accepted:
+                    # Telling a creation to retry with an exact expected_hash sent
+                    # it somewhere it cannot go: the hash is then matched against
+                    # an absent note and refused in turn. Reverting a note and
+                    # recreating it under the same derived request id was
+                    # unrecoverable, and prepare_follow_up derives that id by design.
+                    raise WriteConflictError(
+                        "request_id was already committed and the note is no longer what it "
+                        "wrote; creating it again needs a new request_id"
+                    )
                 raise WriteConflictError(
                     "request_id was already committed and the note has changed since; "
                     "re-read and retry with an exact expected_hash"

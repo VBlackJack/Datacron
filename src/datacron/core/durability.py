@@ -199,9 +199,45 @@ def _flush_directory_or_false(path: Path) -> bool:
 
 
 def _fsync_file(path: Path) -> None:
-    # Windows requires a writable handle for os.fsync/FlushFileBuffers.
-    with path.open("r+b") as file_handle:
-        os.fsync(file_handle.fileno())
+    """Flush a file's own contents, absorbing the same Windows window as its twins.
+
+    This is the third participant in the race the two helpers above already
+    handle: it opens a path this process replaced microseconds earlier. The
+    fallback runs precisely on the backends where a directory flush is
+    impossible - a FAT or exFAT volume, an SMB share - and there an indexer, a
+    scrubber, an editor or a virus scanner holding the path makes the open fail
+    with winerror 32. The replace is already committed at that point, so
+    raising turns a durable, successful write into a caller-visible error and,
+    in the writer, aborts before the operation is journalled.
+    """
+    sleep_seconds = _REPLACE_RETRY_INITIAL_SLEEP_SECONDS
+    for attempt in range(1, _REPLACE_RETRY_MAX_ATTEMPTS + 1):
+        try:
+            # Windows requires a writable handle for os.fsync/FlushFileBuffers.
+            with path.open("r+b") as file_handle:
+                os.fsync(file_handle.fileno())
+        except OSError as exc:
+            winerror = getattr(exc, "winerror", None)
+            should_retry = (
+                sys.platform == "win32"
+                and winerror in _WINDOWS_TRANSIENT_SHARING_ERRORS
+                and attempt < _REPLACE_RETRY_MAX_ATTEMPTS
+            )
+            if not should_retry:
+                raise
+            _LOGGER.debug(
+                "Retrying degraded file fsync path=%s winerror=%s failed_attempt=%d/%d "
+                "delay_seconds=%.3f",
+                path,
+                winerror,
+                attempt,
+                _REPLACE_RETRY_MAX_ATTEMPTS,
+                sleep_seconds,
+            )
+            time.sleep(sleep_seconds)
+            sleep_seconds = min(sleep_seconds * 2, _REPLACE_RETRY_MAX_SLEEP_SECONDS)
+        else:
+            return
 
 
 def _inject(fault_injector: FaultInjector | None, point: str) -> None:

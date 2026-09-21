@@ -3877,11 +3877,25 @@ def _inject(fault_injector: BatchFaultInjector | None, point: str) -> None:
 
 
 def _ensure_directory_durable(path: Path) -> None:
+    """Create ``path`` and flush every directory the creation brought into being.
+
+    The walk stops at the filesystem anchor, which is its own parent:
+    ``Path('Q:/').parent == Path('Q:/')`` and the same holds for a UNC share.
+    ``Path.exists()`` swallows every OSError and answers False, so a removed
+    drive letter, a dropped SMB mount or a not-ready device made the leaf and
+    every ancestor look missing, including the anchor. The loop then appended
+    the same path forever, at full CPU, until the list exhausted memory.
+    """
     missing: list[Path] = []
     current = path
     while not current.exists():
         missing.append(current)
-        current = current.parent
+        parent = current.parent
+        if parent == current:
+            raise OperationLogError(
+                f"batch directory is unreachable up to the filesystem root: {path}"
+            )
+        current = parent
     if not current.is_dir():
         raise OperationLogError(f"batch directory parent is not a directory: {current}")
     path.mkdir(parents=True, exist_ok=True)

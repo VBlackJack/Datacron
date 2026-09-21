@@ -347,6 +347,27 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- A batch write against an unreachable volume refuses instead of spinning. The ancestor walk
+  in `_ensure_directory_durable` had no termination guard, and a filesystem anchor is its own
+  parent; `Path.exists()` swallows every OSError and answers False, so a removed drive letter
+  or a dropped SMB mount made the leaf and every ancestor look missing, the anchor included.
+  The loop then appended the same path forever at full CPU until memory ran out. Four batch
+  write paths reach it, and the confinement check upstream does not stop it.
+- The degraded file fsync absorbs the same Windows window as the replace and the read beside
+  it. It is the third participant in that race and had no retry, on exactly the backends where
+  it runs - FAT, exFAT, SMB - so a held handle turned an already committed write into an error
+  that aborted before the operation was journalled.
+- `rename_note_section` refuses a title ending in a closing sequence of `#`. Markdown drops it,
+  so "Section #" was stored and read back as "Section" while the tool reported the requested
+  title: the next rename by that title failed with `heading_not_found`, and any stored selector
+  built from it was dead. A `#` inside the words, as in "C# et F#", is untouched.
+- `create_note_ai` no longer advertises an `expected_hash` it could never honour. With the note
+  absent the hash was matched against nothing and refused as "changed since read" for a path
+  that had never existed; with the note present the next line raised anyway. The writer refuses
+  one by name for any other caller. The replay conflict on that path also stopped telling a
+  creation to retry with an exact hash, which is advice it cannot follow: reverting a note and
+  recreating it under the same derived request id was unrecoverable, and `prepare_follow_up`
+  derives that id by design.
 - Content before the first Markdown block a note emits is indexed. Every chunk range is
   derived from a block's line number, so lines mistletoe consumes without emitting a token
   belonged to no chunk when they sat before the first one. A link reference definition at the

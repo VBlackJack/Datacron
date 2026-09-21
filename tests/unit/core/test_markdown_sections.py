@@ -18,7 +18,13 @@ from __future__ import annotations
 import pytest
 
 from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
-from datacron.core.markdown_sections import find_section_span, heading_ancestry
+from datacron.core.markdown_sections import (
+    find_section_span,
+    heading_ancestry,
+    parse_heading_line,
+    rename_atx_heading_line,
+)
+from datacron.mcp.tools.write_validation import _validate_rename_note_section_request
 
 
 def test_patch_note_preamble_replaces_and_normalizes_before_preserved_suffix() -> None:
@@ -270,3 +276,40 @@ class TestHeadingsInsideHtmlComments:
         headings = markdown_headings(body.splitlines(keepends=True))
 
         assert [item.text for item in headings] == ["A", "B"]
+
+
+def test_a_new_heading_ending_in_hashes_is_refused() -> None:
+    """A trailing closing sequence is dropped by the parser, silently.
+
+    rename_atx_heading_line stored "## Section #" verbatim and mistletoe read
+    it back as "Section": the tool reported the requested title, so the client
+    believed the note held it, the next rename by that title failed with
+    heading_not_found, and any stored selector built from it was dead. The
+    reverse case is safe, because a line that already carried closing hashes
+    has them restored.
+    """
+    for title in ("Section #", "Sprint ##", "Trailing\t#"):
+        with pytest.raises(ValueError, match="closing sequence"):
+            _validate_rename_note_section_request(
+                rel_path="note.md",
+                heading="Old",
+                new_heading=title,
+                expected_hash=None,
+                heading_level=None,
+                heading_occurrence=None,
+            )
+
+
+def test_a_hash_that_is_part_of_the_words_is_left_alone() -> None:
+    """The refusal must not reach a language name or a numbered tag."""
+    for title in ("C# et F#", "Tag#1", "Plain"):
+        cleaned = _validate_rename_note_section_request(
+            rel_path="note.md",
+            heading="Old",
+            new_heading=title,
+            expected_hash=None,
+            heading_level=None,
+            heading_occurrence=None,
+        )
+        line = rename_atx_heading_line("## Old\n", cleaned[2])
+        assert parse_heading_line(line) == (2, title)

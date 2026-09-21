@@ -1081,3 +1081,27 @@ async def test_lock_contention_is_not_reported_as_recovery_required(
 
     with pytest.raises(VaultLockBusyError):
         await writer.write_note_atomic("note.md", "new\n", overwrite=False)
+
+
+async def test_a_creation_refuses_an_expected_hash_by_name(tmp_path: Path) -> None:
+    """Any expected_hash on a creation could only ever fail, and lied about why.
+
+    With the note absent the hash is compared against None and never matches,
+    so the caller was told the note "changed since read" for a path that had
+    never existed, and the remedy in that message loops forever. With the note
+    present the very next line raises FileExistsError instead. The MCP tool no
+    longer advertises the parameter; this is the layer that still accepts one.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    writer = _writer(vault)
+
+    with pytest.raises(ValueError, match="creation takes no expected_hash"):
+        await writer.write_note_atomic(
+            "note.md",
+            "# Note\n",
+            overwrite=False,
+            expected_hash="0" * 64,
+        )
+
+    assert not (vault / "note.md").exists()

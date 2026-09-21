@@ -20,6 +20,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -299,3 +300,70 @@ def test_write_policy_reports_independent_and_effective_gates(
     assert policy.writes_allowed is expected_policy_allowed
     assert policy.write_paths_configured is write_paths_configured
     assert policy.effective_writes_enabled is expected_effective
+
+
+def _sharing_error(message: str, winerror: int) -> OSError:
+    """Build an OSError carrying a Windows error code on any platform.
+
+    The attribute only exists on Windows builds of OSError, and the retry
+    helpers read it with getattr, so the tests must be able to set it while
+    running on Linux too.
+    """
+    error = OSError(message)
+    cast("Any", error).winerror = winerror
+    return error
+
+
+class TestDegradedFsyncRetryP3:
+    """The degraded fallback is the third participant in the Windows replace race."""
+
+    def test_a_transient_sharing_error_is_absorbed_like_the_other_two(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Raising here loses a write that is already committed on disk.
+
+        The fallback runs exactly where a directory flush is impossible - FAT,
+        exFAT, SMB - and opens a path this process replaced microseconds
+        earlier. An indexer or a scanner holding it made the open fail with
+        winerror 32, after os.replace had committed, and the writer aborted
+        before journalling the operation it had already performed.
+        """
+        target = tmp_path / "note.md"
+        target.write_bytes(b"seed")
+        attempts: list[int] = []
+        real_open = Path.open
+
+        def flaky_open(self: Path, *args: object, **kwargs: object) -> object:
+            if self == target and args and args[0] == "r+b":
+                attempts.append(1)
+                if len(attempts) < 3:
+                    raise _sharing_error("busy", 32)
+            return cast("Any", real_open)(self, *args, **kwargs)
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(Path, "open", flaky_open)
+        monkeypatch.setattr(durability, "_REPLACE_RETRY_INITIAL_SLEEP_SECONDS", 0.001)
+
+        durability._fsync_file(target)
+
+        assert len(attempts) == 3, "the transient window must be retried, not raised through"
+
+    def test_a_durable_failure_is_still_raised_on_the_first_attempt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A genuinely unwritable file must not look like a slow one."""
+        target = tmp_path / "note.md"
+        target.write_bytes(b"seed")
+        attempts: list[int] = []
+
+        def refuse(self: Path, *args: object, **kwargs: object) -> object:
+            attempts.append(1)
+            raise _sharing_error("gone", 2)
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(Path, "open", refuse)
+
+        with pytest.raises(OSError, match="gone"):
+            durability._fsync_file(target)
+
+        assert attempts == [1]
