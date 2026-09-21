@@ -662,6 +662,26 @@ ORDER BY rowid;
 
 
 _EMPTY_JSON_LIST: Final[str] = "[]"
+_FTS5_MODULE_MISSING: Final[str] = "no such module: fts5"
+_FTS5_UNAVAILABLE_MESSAGE: Final[str] = (
+    "This Python's SQLite was built without the FTS5 extension, which Datacron's "
+    "index requires. Nothing in the package metadata can express a SQLite compile "
+    "flag, so it is checked here. Use a Python whose sqlite3 reports ENABLE_FTS5 "
+    "in pragma_compile_options: the python.org and Windows Store builds do, and so "
+    "do the official Docker images; a self-compiled interpreter needs "
+    "-DSQLITE_ENABLE_FTS5."
+)
+
+
+class Fts5UnavailableError(RuntimeError):
+    """Raised when the interpreter's SQLite cannot create an FTS5 table.
+
+    FTS5 is a compile-time SQLite option, so it is a real requirement of this
+    distribution that no Python metadata can declare. Without this, the install
+    succeeded, the server started, and the first search failed with a bare
+    ``no such module: fts5`` through an MCP tool response, which nothing
+    connects to a missing build flag.
+    """
 
 
 @dataclass(frozen=True)
@@ -1310,7 +1330,12 @@ class SQLiteFTS5Store:
 
     async def _ensure_schema(self, connection: aiosqlite.Connection) -> None:
         await connection.execute(_CREATE_NOTES_SQL)
-        await connection.execute(_CREATE_CHUNKS_FTS_SQL)
+        try:
+            await connection.execute(_CREATE_CHUNKS_FTS_SQL)
+        except sqlite3.OperationalError as error:
+            if _FTS5_MODULE_MISSING not in str(error).casefold():
+                raise
+            raise Fts5UnavailableError(_FTS5_UNAVAILABLE_MESSAGE) from error
         await connection.execute(_CREATE_ULID_PATHS_SQL)
         await connection.execute(_CREATE_INDEX_META_SQL)
         await connection.execute(_CREATE_NOTE_FRONTMATTER_SQL)

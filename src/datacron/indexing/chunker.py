@@ -34,6 +34,10 @@ from datacron.indexing.wikilinks import extract_wikilink_targets
 _NON_ALPHANUMERIC_PATTERN = re.compile(r"[^a-z0-9]+")
 _REPEATED_DASH_PATTERN = re.compile(r"-+")
 _HEADING_SEPARATOR: Final[str] = " / "
+# How far back a cut may move to avoid slicing a wikilink in half. A target is
+# a note name, not a paragraph, so this is generous; the bound is what keeps an
+# adversarial line of nothing but "[[" from turning the scan quadratic.
+_WIKILINK_SCAN_WINDOW: Final[int] = 256
 
 __all__ = ["MarkdownChunker", "content_line_offset"]
 
@@ -108,6 +112,31 @@ class MarkdownChunker:
         )
         chunk_headings: list[str] = []
         ordinal_counters: dict[str, int] = {}
+
+        # Every range below is derived from a block's line number, so a source
+        # line mistletoe consumes without emitting a token is covered only when
+        # some block starts before it. A link reference definition at the top of
+        # a note emits nothing and is consumed into doc.footnotes: its lines
+        # belonged to no chunk, so the URL was absent from the index and a
+        # search for it returned a clean empty result. Lines consumed in the
+        # middle of a note are already covered by the previous block's end.
+        leading_end = max(int(getattr(blocks[0], "line_number", 1)), 1) - 1
+        leading_lines = source_lines[:leading_end]
+        if any(line.strip() for line in leading_lines):
+            for content, rel_start, rel_end in _segment_block_content(
+                leading_lines, ChunkType.NARRATIVE, self._max_chars
+            ):
+                chunks.append(
+                    self._build_chunk(
+                        note=note,
+                        headings=chunk_headings,
+                        chunk_type=ChunkType.NARRATIVE,
+                        content=content,
+                        line_start=1 + rel_start + line_offset,
+                        line_end=1 + rel_end + line_offset,
+                        ordinal_counters=ordinal_counters,
+                    )
+                )
 
         for index, token in enumerate(blocks):
             block_start, block_end = _block_line_range(source_lines, blocks, index)
@@ -266,11 +295,39 @@ def _is_fence_line(line: str) -> bool:
     return line.lstrip().startswith(("```", "~~~"))
 
 
+def _cut_before_open_wikilink(text: str, start: int, end: int) -> int:
+    """Pull a cut back before a ``[[`` whose ``]]`` lies past it.
+
+    A cut at a fixed offset can land inside a wikilink, and the two halves then
+    match nothing: ``extract_wikilink_targets`` runs per segment, so the link is
+    absent from both and the note disappears from its own backlinks. Moving the
+    cut to just before the ``[[`` keeps the span whole in the next piece. The
+    scan back is bounded, and a link longer than a whole piece is left alone
+    rather than made to loop.
+    """
+    window_start = max(start, end - _WIKILINK_SCAN_WINDOW)
+    opening = text.rfind("[[", window_start, end)
+    if opening <= start:
+        return end
+    if text.find("]]", opening, end) != -1:
+        return end
+    return opening
+
+
 def _brute_split_line(text: str, max_chars: int) -> list[str]:
     """Split a single over-long line into ``<= max_chars`` pieces (deterministic)."""
     if len(text) <= max_chars:
         return [text]
-    return [text[index : index + max_chars] for index in range(0, len(text), max_chars)]
+    pieces: list[str] = []
+    start = 0
+    length = len(text)
+    while start < length:
+        end = min(start + max_chars, length)
+        if end < length:
+            end = _cut_before_open_wikilink(text, start, end)
+        pieces.append(text[start:end])
+        start = end
+    return pieces
 
 
 def _segment_generic(raw_lines: list[str], max_chars: int) -> list[tuple[str, int, int]]:
@@ -300,25 +357,44 @@ def _segment_generic(raw_lines: list[str], max_chars: int) -> list[tuple[str, in
 
 
 def _segment_table(raw_lines: list[str], max_chars: int) -> list[tuple[str, int, int]]:
-    """Split a GFM table by data-row groups, repeating the header + separator."""
+    """Split a GFM table by data-row groups, repeating the header + separator.
+
+    A single data row too long for the budget is brute-split the way
+    ``_segment_code`` splits an over-long code line. Without that the first row
+    of every group was emitted whatever its size, so one pasted cell produced a
+    chunk half again over the budget the class docstring promises and every
+    downstream consumer is sized against.
+    """
     if len(raw_lines) < 3:
-        return [(_join_without_outer_blank_lines(raw_lines), 0, len(raw_lines) - 1)]
+        # Header and separator alone, with no data row to group by. There is
+        # nothing table-shaped left to preserve, so fall back rather than
+        # return a segment that ignores the budget.
+        return _segment_generic(raw_lines, max_chars)
     prefix = f"{raw_lines[0].rstrip(chr(10))}\n{raw_lines[1].rstrip(chr(10))}"
     body = raw_lines[2:]
+    row_budget = max(max_chars - len(prefix) - 1, 1)
     segments: list[tuple[str, int, int]] = []
     i = 0
     m = len(body)
     while i < m:
+        # First group covers the real header + separator lines; later groups
+        # carry a synthetic header copy that does not widen their line range.
+        rel_start = 0 if i == 0 else i + 2
+        row = body[i].rstrip("\n")
+        if len(row) > row_budget:
+            for piece in _brute_split_line(row, row_budget):
+                segments.append((f"{prefix}\n{piece}", rel_start, i + 2))
+            i += 1
+            continue
         j = i
         while j + 1 < m:
+            if len(body[j + 1].rstrip("\n")) > row_budget:
+                break
             candidate = f"{prefix}\n{_join_without_outer_blank_lines(body[i : j + 2])}"
             if len(candidate) > max_chars:
                 break
             j += 1
         content = f"{prefix}\n{_join_without_outer_blank_lines(body[i : j + 1])}"
-        # First group covers the real header + separator lines; later groups
-        # carry a synthetic header copy that does not widen their line range.
-        rel_start = 0 if i == 0 else i + 2
         segments.append((content, rel_start, j + 2))
         i = j + 1
     return segments

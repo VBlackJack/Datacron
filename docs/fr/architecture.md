@@ -340,6 +340,13 @@ minifié, base64, mono-ligne géant). Clôt l'item backlog P3 chunker.
 Écarté : offsets caractère sub-ligne dans le modèle `Chunk` (frozen), disproportionné pour un
 edge rare.
 
+"Intégralement indexé et correct" était vrai du texte et faux du graphe de liens. Les wikilinks
+sont extraits par segment, donc un `[[cible]]` à cheval sur une coupe ne correspondait à rien
+dans aucune des deux pièces, et la note disparaissait de ses propres backlinks sans erreur nulle
+part. Une coupe recule désormais avant un `[[` non fermé, dans une fenêtre bornée, ce qui garde
+le lien entier dans la pièce suivante. Un lien plus long qu'une pièce entière reste coupé, car
+reculer davantage ne terminerait pas ; ce cas reste dans la limite acceptée ci-dessus.
+
 ### ADR-017 - Installeur autonome (.exe) en complément de PyPI/pipx
 Révise ADR-011. En plus de la distribution PyPI/pipx (canal principal et recommandé pour les
 environnements Python), Datacron fournit un **exécutable autonome** construit avec PyInstaller
