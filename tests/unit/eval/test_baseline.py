@@ -149,7 +149,14 @@ def test_compare_detects_manually_inflated_baseline_regression(tmp_path: Path) -
     )
 
     assert comparison.passed is False
-    assert comparison.regressions == ["note_recall_at_5", "ndcg_at_10"]
+    # The config hash was changed here on purpose, so the comparison is also
+    # invalid on its own terms and says so: it used to print a prose warning
+    # and exit zero, telling a gate that incomparable numbers were safe.
+    assert comparison.regressions == [
+        "note_recall_at_5",
+        "ndcg_at_10",
+        "config_hash_mismatch",
+    ]
     assert comparison.deltas["note_recall_at_5"] < -0.02
     assert comparison.deltas["ndcg_at_10"] < -0.02
     assert comparison.config_hash_matches is False
@@ -189,3 +196,31 @@ def test_eval_config_hash_covers_what_changes_the_answers(tmp_path: Path) -> Non
 
     assert archived != default_hash
     assert narrowed != default_hash
+
+
+def test_an_incomparable_baseline_fails_instead_of_warning(tmp_path: Path) -> None:
+    """A comparison the code knows is invalid must not exit zero.
+
+    The two pipelines do not return the same results and the two transports do
+    not measure the same payload, so the deltas between them are deltas of
+    nothing. Both facts were recorded and printed as prose, while the exit code
+    told a gate the change was safe.
+    """
+    settings = Settings()
+    report = EvalReport(summary=_summary(recall_5=0.90, ndcg=0.86), results=[])
+    save_baseline(report, tmp_path, settings, VaultConfig())
+    baseline = load_baseline(tmp_path)
+
+    comparison = compare_with_baseline(
+        report,
+        baseline,
+        tolerance=0.02,
+        config_hash="a-different-retrieval-config",
+    )
+
+    assert comparison.config_hash_matches is False
+    assert "config_hash_mismatch" in comparison.regressions
+    assert comparison.passed is False
+    assert not [metric for metric, delta in comparison.deltas.items() if delta < -0.02], (
+        "no metric regressed; the failure is the comparison itself"
+    )

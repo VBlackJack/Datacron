@@ -21,6 +21,7 @@ import os
 import re
 import sqlite3
 import statistics
+import sys
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -85,7 +86,11 @@ def main() -> int:
     )
     root = args.vault_root.expanduser().resolve()
     config = load_vault_config(sidecar_vault_config(root)) or VaultConfig()
-    indexed = _indexed_paths(sidecar_index_db(root))
+    try:
+        indexed = _indexed_paths(sidecar_index_db(root))
+    except AuditInputError as exc:
+        print(f"[audit] {exc}", file=sys.stderr)
+        return 2
     scan = scan_vault_read_only(root)
     all_paths = {rel_path for rel_path, _content_hash in scan.content_hashes}
     excluded = sorted(all_paths - indexed)
@@ -115,12 +120,37 @@ def _parse_args() -> argparse.Namespace:
     return args
 
 
+class AuditInputError(RuntimeError):
+    """Raised when the vault or its index cannot answer the question asked."""
+
+
 def _indexed_paths(db_path: Path) -> set[str]:
+    """Read the indexed paths, naming what to do when the index cannot answer.
+
+    This command is published copy-pasteable in the scrubber documentation. On
+    a vault that was never indexed the read-only URI cannot create the file and
+    sqlite raises "unable to open database file"; on an index older than the
+    notes table it raises "no such table". Neither message mentions indexing,
+    which is the whole of the remedy. The module this script imports already
+    wraps the identical connect.
+    """
+    if not db_path.is_file():
+        raise AuditInputError(
+            f"no index at {db_path}; run `datacron index --vault {db_path.parents[2]}` first"
+        )
     uri = f"{db_path.resolve().as_uri()}?mode=ro"
-    connection = sqlite3.connect(uri, uri=True)
+    try:
+        connection = sqlite3.connect(uri, uri=True)
+    except sqlite3.Error as exc:
+        raise AuditInputError(f"cannot open the index at {db_path} read-only: {exc}") from exc
     try:
         connection.execute("PRAGMA query_only = ON;")
         return {str(row[0]) for row in connection.execute("SELECT rel_path FROM notes")}
+    except sqlite3.Error as exc:
+        raise AuditInputError(
+            f"the index at {db_path} predates this audit and has no notes table "
+            f"({exc}); rebuild it with `datacron index --rebuild`"
+        ) from exc
     finally:
         connection.close()
 

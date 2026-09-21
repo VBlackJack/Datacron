@@ -21,6 +21,8 @@ from datacron.core.config import Settings, get_settings
 from datacron.core.frontmatter import parse, serialize
 from datacron.core.hashing import hash_text
 from datacron.core.models import Note
+from datacron.core.scope import SingleTenantVaultScope
+from datacron.organization import library_workbench
 from datacron.organization.library import (
     audit_library,
     build_link_index,
@@ -33,8 +35,11 @@ from datacron.organization.library import (
     resolve_link,
 )
 from datacron.organization.library_models import (
+    PREVIEW_DIRECTORY,
     EditorialNote,
     EditorialRecipe,
+    Finding,
+    LibraryAudit,
     LibraryOptions,
     SourceReference,
 )
@@ -853,3 +858,64 @@ def test_both_rendering_languages_declare_the_same_keys() -> None:
     """
     assert set(TEXT["en"]) == set(TEXT["fr"])
     assert all(TEXT["en"][key] and TEXT["fr"][key] for key in TEXT["en"])
+
+
+def test_one_attachment_shared_by_two_notes_is_counted_once(tmp_path: Path) -> None:
+    """Dedup ran on the raw link text, accounting ran on the resolved path.
+
+    A wiki-style link is rewritten relative to the note holding it, so two
+    notes at different depths write the same file two different ways:
+    "img/logo.png" from notes/first.md and "logo.png" from notes/img/deep.md
+    both resolve to notes/img/logo.png. The guard compared the details, missed,
+    and the bytes were added to the running total twice before the write guard
+    suppressed the duplicate copy. A bundle that fits was then refused, after
+    the output directory had already been written.
+
+    The accounting is what this measures, so it calls the copier directly: the
+    export bound covers the notes as well, and their size would decide the
+    outcome instead.
+    """
+    vault = tmp_path / "vault"
+    (vault / "notes" / "img").mkdir(parents=True)
+    payload = b"x" * 4096
+    (vault / "notes" / "img" / "logo.png").write_bytes(payload)
+    audit = LibraryAudit(
+        scope="notes",
+        notes=2,
+        source_hashes={},
+        findings=[
+            Finding(
+                code="LOCAL_UNRESOLVED",
+                path="notes/first.md",
+                detail="img/logo.png",
+                link_style="wiki",
+            ),
+            Finding(
+                code="LOCAL_UNRESOLVED",
+                path="notes/img/deep.md",
+                detail="logo.png",
+                link_style="wiki",
+            ),
+        ],
+    )
+    settings = Settings(read_paths=[vault], write_paths=[vault], vault_root=vault)
+    scope = SingleTenantVaultScope(vault, settings)
+    # Room for the attachment once, and not twice.
+    options = LibraryOptions(
+        scope="notes",
+        home="notes/accueil.md",
+        tags=["memory/fact"],
+        max_export_bytes=len(payload) + 1,
+    )
+
+    attachments = library_workbench._copy_attachments(
+        vault,
+        tmp_path / "review",
+        options,
+        audit,
+        scope,
+        0,
+    )
+
+    assert list(attachments) == ["notes/img/logo.png"]
+    assert (tmp_path / "review" / PREVIEW_DIRECTORY / "notes/img/logo.png").read_bytes() == payload

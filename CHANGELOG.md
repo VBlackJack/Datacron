@@ -347,6 +347,28 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- `datacron eval --compare` fails on a comparison the code knows is invalid. A differing
+  config hash, pipeline or transport was recorded, printed as a prose warning and then given
+  exit 0: the two pipelines do not return the same results and the two transports do not
+  measure the same payload, so those deltas are deltas of nothing, and a gate reading the exit
+  code was told the change was safe.
+- `tokens_returned` counts what a client receives. The impl transport asks the tool for a
+  timings block that the production registration never requests and the e2e transport never
+  sees, and it was being charged to every question, so the same vault and the same questions
+  reported different payload sizes depending on how they were measured.
+- An attachment two notes share is counted once. The duplicate guard compared the raw link
+  text while the write and the accounting used the rewritten path, so a file referenced as
+  `img/logo.png` from one note and `logo.png` from another was read twice and counted twice
+  toward `max_export_bytes`; a bundle that fits was refused after the output directory had
+  already been written.
+- `scripts/audit_excluded_notes.py`, published copy-pasteable in the scrubber documentation,
+  says what to do instead of raising a bare sqlite traceback: neither "unable to open database
+  file" on a vault that was never indexed nor "no such table" on an older index mentions
+  indexing, which is the whole of the remedy.
+- `scripts/evaluate_conversation_trace.py` names the file and the line it could not read. The
+  trace is hand-assembled from a client export, as the documentation instructs, and the model
+  forbids extra fields, so any provider metadata an exporter adds ended in a pydantic stack
+  trace pointing at no line in a file that can hold hundreds.
 - `datacron setup` and `datacron unregister` survive a platform Claude Desktop does not
   support. The client detection table is built whole on every lookup, so detecting Cursor ran
   the Claude Desktop path resolver, which raises outside darwin, win32 and linux, and on

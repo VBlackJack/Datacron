@@ -178,13 +178,23 @@ def compare_with_baseline(
         regressions.append("empty_accuracy_missing")
     if previous.forbidden_violation_rate is not None and current.forbidden_violation_rate is None:
         regressions.append("forbidden_violation_rate_missing")
+    config_hash_matches = baseline.config_hash == config_hash
+    mode_matches = previous.pipeline is current.pipeline and previous.transport is current.transport
+    # A comparison the code knows is invalid used to print a prose warning and
+    # exit zero. The two pipelines do not return the same results and the two
+    # transports do not measure the same payload, so the deltas below are not
+    # deltas of anything: a gate reading the exit code was told the change is
+    # safe. An incomparable baseline is a failure of the comparison, not a
+    # regression, and it is named separately.
+    if not config_hash_matches:
+        regressions.append("config_hash_mismatch")
+    if not mode_matches:
+        regressions.append("pipeline_or_transport_mismatch")
     return BaselineComparison(
         baseline_version=baseline.datacron_version,
         current_version=__version__,
-        config_hash_matches=baseline.config_hash == config_hash,
-        mode_matches=(
-            previous.pipeline is current.pipeline and previous.transport is current.transport
-        ),
+        config_hash_matches=config_hash_matches,
+        mode_matches=mode_matches,
         tolerance=tolerance,
         deltas=deltas,
         regressions=regressions,

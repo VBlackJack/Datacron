@@ -151,7 +151,12 @@ async def test_tool_mode_calls_impl_and_never_direct_store_branch(
     assert result.ndcg_at_10 == 1.0
     assert result.citation_precision == 0.5
     assert result.forbidden_violation is True
-    assert result.tokens_returned == payload_token_estimate(payload)
+    # The timings block is asked for by the harness and reaches no client, so
+    # counting it charged every question about 27 tokens the e2e transport
+    # never sees and made the two transports disagree on the same run.
+    billable = {key: value for key, value in payload.items() if key != "timings_ms"}
+    assert result.tokens_returned == payload_token_estimate(billable)
+    assert result.tokens_returned < payload_token_estimate(payload)
     assert result.stage_timings_ms["repair"] == 10.0
     assert report.summary.forbidden_violation_rate == 1.0
     assert report.summary.stage_latency_ms["repair"].p50_ms == 10.0

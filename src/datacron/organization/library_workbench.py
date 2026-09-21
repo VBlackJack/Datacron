@@ -271,8 +271,6 @@ def _copy_attachments(
     for finding in audit.findings:
         if finding.code != "LOCAL_UNRESOLVED":
             continue
-        if finding.detail in attachments:
-            continue
         relative = PurePosixPath(finding.detail)
         if relative.is_absolute() or ".." in relative.parts or relative.suffix.lower() == ".md":
             continue
@@ -293,6 +291,14 @@ def _copy_attachments(
             or not attachment_path.is_file()
         ):
             continue
+        # Dedup on the path this loop settled on, not on the raw detail. A
+        # wiki-style link is rewritten relative to the note that holds it, so
+        # two notes in different folders referencing the same attachment gave
+        # two different details and one identical path: the file was read
+        # twice, counted twice toward max_export_bytes, and a bundle that fits
+        # was refused after the output directory had already been written.
+        if relative.as_posix() in attachments:
+            continue
         if attachment_path.stat().st_size > options.max_attachment_bytes:
             continue
         data = attachment_path.read_bytes()
@@ -301,9 +307,8 @@ def _copy_attachments(
         total += len(data)
         if total > options.max_export_bytes:
             raise ValueError("Attachments exceed max_export_bytes")
-        if relative.as_posix() not in attachments:
-            _write_new(output / PREVIEW_DIRECTORY / relative, data)
-            attachments[relative.as_posix()] = sha256_bytes(data)
+        _write_new(output / PREVIEW_DIRECTORY / relative, data)
+        attachments[relative.as_posix()] = sha256_bytes(data)
     return attachments
 
 
