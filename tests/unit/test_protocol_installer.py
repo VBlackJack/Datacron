@@ -27,7 +27,7 @@ from datacron import setup_wizard
 from datacron.cli import app
 from datacron.core.memory_protocol import SESSION_START_INSTRUCTION
 from datacron.installers import mcp_clients, protocol
-from datacron.installers.claude_desktop import MCPServerInvocation
+from datacron.installers.claude_desktop import ClaudeDesktopConfigError, MCPServerInvocation
 from datacron.installers.protocol import (
     _WINDSURF_GLOBAL_RULE_MAX_CHARS,
     PROTOCOL_ALL,
@@ -863,3 +863,74 @@ def test_an_instruction_file_keeps_a_copy_of_what_it_replaced(fake_home: Path) -
     assert path.read_text(encoding="utf-8") == "# Replaced" + chr(10)
     backup = path.with_name(path.name + ".datacron-backup")
     assert backup.read_text(encoding="utf-8") == original
+
+
+class TestInstallerRecoveryP3:
+    """Two ways the installers refused work they should have done."""
+
+    def test_an_empty_rule_file_is_written_rather_than_refused(self, fake_home: Path) -> None:
+        """Zero bytes have no foreign content to protect.
+
+        The guard exists to keep a user's own rules from being overwritten, and
+        it fired on a file with nothing in it: a killed run, a crash between
+        metadata and data, a New-Item or a placeholder committed to a
+        repository all leave zero bytes, and the install was then permanently
+        stuck on a message about content the file does not have.
+        """
+        path = fake_home / ".codex" / "AGENTS.md"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"")
+
+        outcomes = protocol.install_memory_protocol("codex-cli")
+
+        assert outcomes[0].successful is True
+        assert PROTOCOL_MARKER_BEGIN in path.read_text(encoding="utf-8")
+
+    def test_a_file_holding_only_whitespace_is_also_written(self, fake_home: Path) -> None:
+        """Blank lines are not content either, and read the same to a person."""
+        path = fake_home / ".codex" / "AGENTS.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("\n\n  \n", encoding="utf-8")
+
+        outcomes = protocol.install_memory_protocol("codex-cli")
+
+        assert outcomes[0].successful is True
+
+    def test_real_foreign_content_is_still_refused(self, fake_home: Path) -> None:
+        """The guard must keep doing the job it was written for."""
+        path = fake_home / ".codex" / "AGENTS.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("# My own rules\n", encoding="utf-8")
+
+        outcomes = protocol.install_memory_protocol("codex-cli")
+
+        assert outcomes[0].successful is True
+        assert "# My own rules" in path.read_text(encoding="utf-8")
+
+    def test_client_detection_survives_a_platform_without_claude_desktop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One entry of the detection table decided the fate of the whole call.
+
+        The table is built whole on every lookup, so detecting Cursor ran the
+        Claude Desktop path resolver, which raises on any platform outside
+        darwin, win32 and linux, and on Windows with APPDATA unset. The error
+        subclasses RuntimeError and no caller catches it, so `datacron setup`
+        aborted with a traceback after the reset had already removed the config
+        and the index.
+        """
+        monkeypatch.setattr(
+            mcp_clients,
+            "config_path_for_platform",
+            _raise_unsupported_platform,
+        )
+
+        assert mcp_clients._is_present(mcp_clients.CLAUDE_DESKTOP) is False
+        assert mcp_clients._user_config_path(mcp_clients.CLAUDE_DESKTOP) is None
+        # The question that used to fail was about a different client entirely.
+        assert mcp_clients._user_config_path(mcp_clients.CURSOR) is not None
+        assert isinstance(mcp_clients._is_present(mcp_clients.CURSOR), bool)
+
+
+def _raise_unsupported_platform(*_args: object, **_kwargs: object) -> Path:
+    raise ClaudeDesktopConfigError("unsupported platform: freebsd14")

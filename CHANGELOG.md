@@ -347,6 +347,16 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- `datacron setup` and `datacron unregister` survive a platform Claude Desktop does not
+  support. The client detection table is built whole on every lookup, so detecting Cursor ran
+  the Claude Desktop path resolver, which raises outside darwin, win32 and linux, and on
+  Windows when `APPDATA` is unset. Nothing caught it, so setup aborted with a traceback after
+  the reset had already removed the config and the index, for a user who never installed that
+  client.
+- An empty rule file no longer blocks `datacron protocol install` for good. The guard that
+  protects a user's own rules fired on a file with nothing in it - what a killed run, a crash
+  between metadata and data, or a placeholder committed to a repository leaves - and refused
+  with a message about content the file does not have. Real foreign content is still refused.
 - `set_frontmatter` publishes the same enums for `origin` and `confidence` that its handler
   enforces. They were declared as free-form strings while the call ran the identical check
   `create_note_ai` declares, so a model told "a fact's lifecycle changed: verified today"
