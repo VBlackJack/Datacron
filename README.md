@@ -10,7 +10,7 @@
 [![MCP: local stdio](https://img.shields.io/badge/MCP-local_stdio-purple)](#mcp-tools)
 [![CI](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml/badge.svg)](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml)
 
-**English** | [Français](README.fr.md)
+**English** | [Français](https://github.com/VBlackJack/Datacron/blob/main/README.fr.md)
 
 ## What can you do with Datacron?
 
@@ -21,8 +21,8 @@ remain usable independently of the client you choose.
 **Offline library:** build a browsable Markdown
 library for Obsidian or another local reader, with a home page and topic indexes.
 Review proposed rewrites, splits and archives before changing the source vault.
-See the [offline library guide](docs/en/human-library.md) and the
-[2026.0913.02 release notes](docs/en/offline-library-release-notes.md).
+See the [offline library guide](https://github.com/VBlackJack/Datacron/blob/main/docs/en/human-library.md) and the
+[2026.0913.02 release notes](https://github.com/VBlackJack/Datacron/blob/main/docs/en/offline-library-release-notes.md).
 
 | Need | Example request to your assistant |
 |---|---|
@@ -35,10 +35,10 @@ See the [offline library guide](docs/en/human-library.md) and the
 The assistant orchestrates these requests using the available tools and granted permissions.
 A shared protocol guides reading, people updates, and write verification. Ambiguous identities
 require clarification; storing a deadline does not schedule a reminder.
-[Explore daily follow-up](docs/en/memory-discipline.md).
+[Explore daily follow-up](https://github.com/VBlackJack/Datacron/blob/main/docs/en/memory-discipline.md).
 
 **Start here:** [install](#installation) · [first session](#first-session) ·
-[user guide](docs/en/user-guide.md) · [MCP reference](#mcp-tools) ·
+[user guide](https://github.com/VBlackJack/Datacron/blob/main/docs/en/user-guide.md) · [MCP reference](#mcp-tools) ·
 [privacy](#privacy-and-security).
 
 ## Installation
@@ -49,7 +49,7 @@ The easiest way on Windows: download `Datacron-Setup.exe` from the
 [latest Release](https://github.com/VBlackJack/datacron/releases/latest), double-click it,
 and pick your vault. No Python, no terminal, no administrator rights; Datacron registers
 itself with your AI clients automatically. Full guide:
-[Windows installation](docs/en/installation-windows.md).
+[Windows installation](https://github.com/VBlackJack/Datacron/blob/main/docs/en/installation-windows.md).
 
 ### Python: from PyPI
 
@@ -84,7 +84,7 @@ Runtime prerequisites:
 1. Choose your notes folder with the installer or `datacron setup`.
 2. Reconnect Datacron in your MCP client to load the tools and instructions. The Claude
    Desktop chat does not present the server instructions: paste the session start line
-   printed by setup into your Claude preferences (see [setup](docs/en/setup.md)).
+   printed by setup into your Claude preferences (see [setup](https://github.com/VBlackJack/Datacron/blob/main/docs/en/setup.md)).
 3. Ask: "Find the notes for my project and summarize its status with sources."
 
 For memory sessions, `session_context` returns bounded context and the shared protocol.
@@ -96,7 +96,7 @@ The server operates locally. Your client may send returned excerpts to its model
 see [privacy and security](#privacy-and-security).
 
 For cached session contracts, archive ranking, resumable write tracking and
-conversation evaluation, see [daily workflow improvements](docs/en/daily-workflows.md).
+conversation evaluation, see [daily workflow improvements](https://github.com/VBlackJack/Datacron/blob/main/docs/en/daily-workflows.md).
 
 ## Quick start
 
@@ -107,7 +107,7 @@ registers Datacron everywhere:
 datacron setup            # interactive; add --yes for all defaults
 ```
 
-See the [installation guide](docs/en/setup.md) for options (`--client`, `--scope`, writing,
+See the [installation guide](https://github.com/VBlackJack/Datacron/blob/main/docs/en/setup.md) for options (`--client`, `--scope`, writing,
 durability). Or step by step:
 
 ```bash
@@ -199,7 +199,7 @@ Useful environment variables:
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | token budget for search results |
 | `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | minimum interval between repair-on-read sweeps; `0` = every read |
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | budget for `get_note(format="full")` |
-| `DATACRON_SESSION_CONTEXT_SECTIONS` | `{}` (no section selected) | JSON mapping of note paths to heading paths for bounded [orientation excerpts](docs/en/note-sections.md) |
+| `DATACRON_SESSION_CONTEXT_SECTIONS` | `{}` (no section selected) | JSON mapping of note paths to heading paths for bounded [orientation excerpts](https://github.com/VBlackJack/Datacron/blob/main/docs/en/note-sections.md) |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | target maximum chunk size |
 | `DATACRON_RIPGREP_PATH` | `rg` | ripgrep binary |
 
@@ -221,7 +221,7 @@ datacron mcp serve --vault C:\Notes
 
 `datacron setup` can also apply the allowlist machine-wide (user environment
 variable, opt-in) so every MCP client inherits it; default: `_memory`, `_drafts`,
-`_journal`. See the [setup guide](docs/en/setup.md).
+`_journal`. See the [setup guide](https://github.com/VBlackJack/Datacron/blob/main/docs/en/setup.md).
 
 Available write tools:
 
@@ -451,27 +451,27 @@ datacron protocol uninstall --client all
 
 ## Documentation
 
-Full index: [docs/en/index.md](docs/en/index.md) | [Index français](docs/fr/index.md).
+Full index: [docs/en/index.md](https://github.com/VBlackJack/Datacron/blob/main/docs/en/index.md) | [Index français](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/index.md).
 
 To get started:
 
-- [Installation and configuration guide](docs/en/setup.md)
-- [Use Datacron with Ollama](docs/en/ollama.md)
-- [Frequently asked questions](docs/en/faq.md)
-- [User guide](docs/en/user-guide.md)
-- [Offline library and note consolidation](docs/en/human-library.md)
-- [Daily memory, people, and commitments](docs/en/memory-discipline.md)
+- [Installation and configuration guide](https://github.com/VBlackJack/Datacron/blob/main/docs/en/setup.md)
+- [Use Datacron with Ollama](https://github.com/VBlackJack/Datacron/blob/main/docs/en/ollama.md)
+- [Frequently asked questions](https://github.com/VBlackJack/Datacron/blob/main/docs/en/faq.md)
+- [User guide](https://github.com/VBlackJack/Datacron/blob/main/docs/en/user-guide.md)
+- [Offline library and note consolidation](https://github.com/VBlackJack/Datacron/blob/main/docs/en/human-library.md)
+- [Daily memory, people, and commitments](https://github.com/VBlackJack/Datacron/blob/main/docs/en/memory-discipline.md)
 
 Technical references:
 
-- [Vault conventions (SPEC)](docs/en/spec.md)
-- [Vault organization](docs/en/organization.md)
-- [Read and reorganize note sections](docs/en/note-sections.md)
-- [Architecture and public surface](docs/en/architecture.md)
-- [Security boundary](docs/en/security-boundary.md)
-- [Integrity scrubber](docs/en/integrity-scrubber.md)
-- [Operational health and durability](docs/en/operational-health.md)
-- [Freshness contract](docs/en/freshness-contract-v1.md)
+- [Vault conventions (SPEC)](https://github.com/VBlackJack/Datacron/blob/main/docs/en/spec.md)
+- [Vault organization](https://github.com/VBlackJack/Datacron/blob/main/docs/en/organization.md)
+- [Read and reorganize note sections](https://github.com/VBlackJack/Datacron/blob/main/docs/en/note-sections.md)
+- [Architecture and public surface](https://github.com/VBlackJack/Datacron/blob/main/docs/en/architecture.md)
+- [Security boundary](https://github.com/VBlackJack/Datacron/blob/main/docs/en/security-boundary.md)
+- [Integrity scrubber](https://github.com/VBlackJack/Datacron/blob/main/docs/en/integrity-scrubber.md)
+- [Operational health and durability](https://github.com/VBlackJack/Datacron/blob/main/docs/en/operational-health.md)
+- [Freshness contract](https://github.com/VBlackJack/Datacron/blob/main/docs/en/freshness-contract-v1.md)
 
 ## Development
 
@@ -489,6 +489,6 @@ pytest
 
 Copyright 2026 Julien Bombled.
 
-Licensed under the [Apache License, Version 2.0](LICENSE).
+Licensed under the [Apache License, Version 2.0](https://github.com/VBlackJack/Datacron/blob/main/LICENSE).
 
-[Reliable writes and quality gates](docs/en/improvements.md)
+[Reliable writes and quality gates](https://github.com/VBlackJack/Datacron/blob/main/docs/en/improvements.md)

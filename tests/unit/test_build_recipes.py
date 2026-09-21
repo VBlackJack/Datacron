@@ -34,6 +34,7 @@ _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 _POSIX_SCRIPT: Final[Path] = _REPO_ROOT / "scripts" / "build_installer.sh"
 _WINDOWS_SCRIPT: Final[Path] = _REPO_ROOT / "scripts" / "build_installer.ps1"
 _RELEASE_WORKFLOW: Final[Path] = _REPO_ROOT / ".github" / "workflows" / "release.yml"
+_RUNTIME_WORKFLOW: Final[Path] = _REPO_ROOT / ".github" / "workflows" / "runtime-validation.yml"
 
 _BUNDLING_FLAGS: Final[tuple[str, ...]] = (
     "--noconfirm",
@@ -53,10 +54,25 @@ def _recipe(path: Path) -> set[tuple[str, str]]:
     return {(match["flag"], match["value"]) for match in _COLLECTED.finditer(text)}
 
 
+def _candidate_recipe(path: Path) -> set[tuple[str, str]]:
+    """Return the pairs of the step that builds the datacron binary itself.
+
+    A workflow can build more than one bundle - runtime-validation.yml also
+    freezes the sandbox validator, with its own flags - so the whole file is
+    the wrong unit to compare.
+    """
+    text = path.read_text(encoding="utf-8")
+    steps = text.split("- name:")
+    candidates = [step for step in steps if "--name datacron " in step]
+    assert len(candidates) == 1, f"{path.name} has {len(candidates)} datacron build steps"
+    return {(match["flag"], match["value"]) for match in _COLLECTED.finditer(candidates[0])}
+
+
 def test_every_recipe_declares_the_same_bundled_modules() -> None:
     posix = _recipe(_POSIX_SCRIPT)
     windows = _recipe(_WINDOWS_SCRIPT)
     workflow = _recipe(_RELEASE_WORKFLOW)
+    runtime = _candidate_recipe(_RUNTIME_WORKFLOW)
 
     assert posix, "the POSIX build script declares no bundled modules"
     assert posix == windows, (
@@ -65,6 +81,13 @@ def test_every_recipe_declares_the_same_bundled_modules() -> None:
     assert posix == workflow, (
         "the release workflow and the build scripts disagree, so the published "
         f"binary is not the one the scripts build: {sorted(posix ^ workflow)}"
+    )
+    # The fourth copy. It builds the candidate that the disposable-machine
+    # validation installs, so drift here means validating a binary that is not
+    # the one being published.
+    assert posix == runtime, (
+        "runtime-validation.yml builds a different bundle from the one the release "
+        f"publishes: {sorted(posix ^ runtime)}"
     )
 
 

@@ -809,13 +809,13 @@ class TestMcpE2E:
             await _close_session(session, streams)
 
 
-def _ensure_python_runtime_compatible() -> None:
-    """Skip integration tests on Python builds that lack stdio readiness."""
-    if sys.platform == "win32" and sys.version_info < (3, 11):
-        pytest.skip("Windows + Python < 3.11 has flaky stdio piping")
-
-
-_ensure_python_runtime_compatible()
+# There was a module-level guard here skipping Windows on Python below 3.11.
+# requires-python is >=3.11 and the matrix runs 3.11, 3.12 and 3.13, so the
+# branch was unreachable - and pytest.skip outside a test, without
+# allow_module_level, raises rather than skips, so the one day it fired this
+# module would have errored during collection instead of skipping its tests.
+# What it left behind was a reader believing this file supports interpreters
+# the package does not.
 
 
 async def test_get_note_section_stdio_contract(vault: Path, tmp_path: Path) -> None:

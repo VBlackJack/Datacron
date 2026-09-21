@@ -535,7 +535,6 @@ async def test_committed_batch_reports_reconcile_failure_as_committed(
         ),
         cast("Any", bundle),
         result,
-        None,
         started=0.0,
         mode="apply",
     )
@@ -591,7 +590,6 @@ async def test_committed_batch_reports_final_planner_mismatch_as_committed(
         ),
         cast("Any", bundle),
         result,
-        None,
         started=0.0,
         mode="apply",
     )
@@ -664,6 +662,20 @@ async def test_validate_refuses_unrepresentable_receipt_before_returning_token(
     assert "confirmation_token" not in response
 
 
+def _published_enum(property_schema: dict[str, Any]) -> set[str]:
+    """Return the values a schema admits, whether or not the field is optional.
+
+    An optional Literal is published as anyOf[{enum: [...]}, {type: null}], so
+    reading a top-level "enum" would miss the constraint that is in fact there.
+    """
+    if "enum" in property_schema:
+        return set(property_schema["enum"])
+    for branch in property_schema.get("anyOf", []):
+        if "enum" in branch:
+            return set(branch["enum"])
+    raise AssertionError(f"no enum published for {property_schema}")
+
+
 @pytest.mark.asyncio
 async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compatible(
     tmp_path: Path,
@@ -715,6 +727,18 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         "needs_verification",
     }
     assert "rejected" in create_properties
+    # The handler runs the same enum check on both tools, so publishing a bare
+    # string here told a model any value was acceptable and made it lose a round
+    # trip to a ValueError the schema could have prevented.
+    assert _published_enum(set_frontmatter_properties["origin"]) == {"ai", "human", "merged"}
+    assert _published_enum(set_frontmatter_properties["confidence"]) == {
+        "high",
+        "medium",
+        "low",
+        "needs_verification",
+    }
+    # A creation has nothing for a hash to match, so any value could only fail.
+    assert "expected_hash" not in create_properties
     assert "rejected" in set_frontmatter_properties
     assert "archived" in set_frontmatter_properties
     assert set_frontmatter_properties["archived"]["default"] is None

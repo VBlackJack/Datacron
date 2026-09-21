@@ -228,6 +228,10 @@ class FTS5Store(Protocol):
         """Return ``rel_path -> (note_id, content_hash)`` for index freshness checks."""
         ...
 
+    async def indexed_note(self, rel_path: str) -> tuple[str, str] | None:
+        """Return ``(note_id, content_hash)`` for one indexed note, or None."""
+        ...
+
     async def list_indexed_notes_with_mtime(self) -> dict[str, tuple[str, str, int | None]]:
         """Return ``rel_path -> (note_id, content_hash, fs_mtime_ns)`` for the index.
 

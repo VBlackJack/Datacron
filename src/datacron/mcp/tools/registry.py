@@ -431,7 +431,6 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         supersedes: list[str] | None = None,
         rejected: list[str] | None = None,
         last_verified: str | None = None,
-        expected_hash: str | None = None,
         request_id: str | None = None,
     ) -> CreateNoteOutput:
         return cast(
@@ -447,7 +446,6 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
                 supersedes=supersedes,
                 rejected=rejected,
                 last_verified=last_verified,
-                expected_hash=expected_hash,
                 actor=app.identity_provider.identify(ctx).actor,
                 request_id=request_id,
             ),
@@ -497,7 +495,8 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
             "discarded options so a future agent does not propose them again. Update "
             "frontmatter fields on an existing memory note. This write operation only "
             "changes origin, confidence, last_verified, supersedes, rejected, valid_from, "
-            "invalid_at, invalidated_by, last_id, and the automatic updated timestamp. "
+            "invalid_at, invalidated_by, last_id, archived, and the automatic updated "
+            "timestamp. "
             "last_id requires expected_hash, accepts BL- plus at least four ASCII digits, "
             "and cannot decrease an existing valid counter. The Markdown "
             "body is preserved."
@@ -507,11 +506,16 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
     async def set_frontmatter(
         rel_path: str,
         ctx: Context[Any, Any],
-        confidence: str | None = None,
+        # The handler runs the same enum check create_note_ai declares, so a bare
+        # str published an input schema that accepts what the call then refuses.
+        # A model told "a fact's lifecycle changed: verified today" guesses
+        # confidence="verified" and loses a round trip to a ValueError the schema
+        # could have prevented.
+        confidence: MemoryConfidence | None = None,
         last_verified: str | None = None,
         supersedes: list[str] | None = None,
         rejected: list[str] | None = None,
-        origin: str | None = None,
+        origin: MemoryOrigin | None = None,
         valid_from: str | None = None,
         invalid_at: str | None = None,
         invalidated_by: str | None = None,

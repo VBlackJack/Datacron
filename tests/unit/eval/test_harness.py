@@ -151,7 +151,12 @@ async def test_tool_mode_calls_impl_and_never_direct_store_branch(
     assert result.ndcg_at_10 == 1.0
     assert result.citation_precision == 0.5
     assert result.forbidden_violation is True
-    assert result.tokens_returned == payload_token_estimate(payload)
+    # The timings block is asked for by the harness and reaches no client, so
+    # counting it charged every question about 27 tokens the e2e transport
+    # never sees and made the two transports disagree on the same run.
+    billable = {key: value for key, value in payload.items() if key != "timings_ms"}
+    assert result.tokens_returned == payload_token_estimate(billable)
+    assert result.tokens_returned < payload_token_estimate(payload)
     assert result.stage_timings_ms["repair"] == 10.0
     assert report.summary.forbidden_violation_rate == 1.0
     assert report.summary.stage_latency_ms["repair"].p50_ms == 10.0
@@ -256,3 +261,52 @@ def test_load_eval_questions_rejects_non_list_yaml(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="must be a list"):
         load_eval_questions(path)
+
+
+@pytest.mark.asyncio
+async def test_one_unanswerable_question_does_not_discard_the_rest() -> None:
+    """A single error used to abort the run and throw away every measurement.
+
+    The search layer answers with an error dict rather than raising, from four
+    paths including a question that is the empty string, which a YAML file
+    validates happily. One typo therefore cost a two hundred question run. The
+    run keeps its measurements, records what failed, and the CLI still refuses
+    to report success.
+    """
+    calls: list[str] = []
+
+    async def tool_search(query: str, limit: int) -> dict[str, Any]:
+        calls.append(query)
+        if not query.strip():
+            return {"error": {"code": "invalid_query", "message": "query must not be blank"}}
+        return {
+            "query": query,
+            "results": [
+                {
+                    "chunk_id": "note::0000",
+                    "note_rel_path": "note.md",
+                    "score": 1.0,
+                    "snippet": "body",
+                    "token_count": 2,
+                }
+            ],
+            "returned": 1,
+            "limit_applied": limit,
+        }
+
+    questions = [
+        EvalQuestion(id="q1", question="a real question", expected_paths=["note.md"]),
+        EvalQuestion(id="q2", question="", expected_paths=["note.md"]),
+        EvalQuestion(id="q3", question="another real one", expected_paths=["note.md"]),
+    ]
+
+    report = await _silent_harness(tool_search=tool_search).run(
+        questions,
+        _app(_FailingStore()),
+        transport=EvalTransport.E2E,
+    )
+
+    assert calls == ["a real question", "", "another real one"]
+    assert [result.question_id for result in report.results] == ["q1", "q3"]
+    assert len(report.failures) == 1
+    assert report.failures[0].startswith("q2: ")

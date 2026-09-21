@@ -410,7 +410,7 @@ def _install_cursor_project_rule(
     path = _cursor_project_rule_path(project_dir)
     try:
         text, has_bom = _read_text(path)
-        if path.exists() and _find_protocol_span(text) is None:
+        if path.exists() and text.strip() and _find_protocol_span(text) is None:
             raise ProtocolInstallError(
                 f"{path} has no Datacron protocol markers; refusing to overwrite"
             )
@@ -584,7 +584,12 @@ def _apply_owned_rule_file(
     try:
         if operation == "install":
             text, has_bom = _read_text(path)
-            if path.exists() and _find_protocol_span(text) is None:
+            # An empty file has no foreign content to protect, and refusing it
+            # left the install permanently stuck on nothing: a killed run, a
+            # crash between metadata and data, a New-Item or a placeholder
+            # committed to a repository all produce zero bytes, and the message
+            # spoke of content the file does not have.
+            if path.exists() and text.strip() and _find_protocol_span(text) is None:
                 raise ProtocolInstallError(
                     f"{path} has no Datacron protocol markers; refusing to overwrite"
                 )

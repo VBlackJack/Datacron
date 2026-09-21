@@ -144,6 +144,14 @@ async def get_follow_up(
                 records.append(
                     {
                         "record": safe,
+                        # The only path inside the record is target_path, stored
+                        # verbatim from whoever prepared it and never re-checked
+                        # against the note it was found on: records are matched by
+                        # target_id. After a rename that preserves the ULID, which
+                        # apply_organization_manifest performs by design, that
+                        # stored path names a file that no longer exists. This is
+                        # where the note actually is, now.
+                        "note_rel_path": note.rel_path,
                         "note_content_hash": note.content_hash,
                         "source_freshness": "not_revalidated",
                     }

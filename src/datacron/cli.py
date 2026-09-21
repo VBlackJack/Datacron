@@ -41,6 +41,7 @@ from rich.progress import Progress, TaskID, TextColumn
 
 from datacron import __version__
 from datacron.bootstrap import initialize_vault
+from datacron.cli_help import VAULT_ROOT_HELP
 from datacron.cli_library import app as library_app
 from datacron.core.config import (
     DEFAULT_DURABILITY_MODE,
@@ -115,9 +116,6 @@ if TYPE_CHECKING:
 __all__ = ["app", "mcp_entry"]
 
 _LOGGER = get_logger(__name__)
-_VAULT_ROOT_HELP: Final[str] = (
-    "Vault root. Fallback: DATACRON_VAULT_ROOT, then cwd containing VAULT.yaml under .datacron."
-)
 
 # Index states reported by `datacron status`. Each names the remedy that applies to it and
 # only to it: a rebuild repairs damaged bytes, and nothing about a rebuild frees a lock.
@@ -395,7 +393,7 @@ def status(
         None,
         "--vault",
         "-v",
-        help=_VAULT_ROOT_HELP,
+        help=VAULT_ROOT_HELP,
     ),
 ) -> None:
     """Print vault metadata, note count, and index freshness."""
@@ -469,7 +467,7 @@ def ops_inspect(
         None,
         "--vault",
         "-v",
-        help=_VAULT_ROOT_HELP,
+        help=VAULT_ROOT_HELP,
     ),
 ) -> None:
     """Inspect blocked operation manifests without changing durable state."""
@@ -520,7 +518,7 @@ def ops_repair(
         None,
         "--vault",
         "-v",
-        help=_VAULT_ROOT_HELP,
+        help=VAULT_ROOT_HELP,
     ),
 ) -> None:
     """Repair one blocked operation under exact ID and disk-hash confirmation."""
@@ -644,7 +642,7 @@ def ops_inspect_id(
         None,
         "--vault",
         "-v",
-        help=_VAULT_ROOT_HELP,
+        help=VAULT_ROOT_HELP,
     ),
 ) -> None:
     """Inspect note-identity divergences without changing durable state."""
@@ -695,7 +693,7 @@ def ops_repair_id(
         None,
         "--vault",
         "-v",
-        help=_VAULT_ROOT_HELP,
+        help=VAULT_ROOT_HELP,
     ),
 ) -> None:
     """Repair one divergent note identity under exact path and hash confirmation."""
@@ -1092,7 +1090,7 @@ async def _index_status_label(db_path: Path) -> str:
 
 @app.command()
 def index(
-    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
 ) -> None:
     """Build or refresh the FTS5 index for the vault."""
     settings = get_settings()
@@ -1102,7 +1100,7 @@ def index(
 
 @app.command()
 def reindex(
-    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
 ) -> None:
     """Build, validate, and atomically publish a complete FTS5 replacement."""
     settings = get_settings()
@@ -1129,11 +1127,15 @@ _REORGANIZE_BAD_VAULT: Final[str] = "Vault root is not a readable directory: {va
 _REORGANIZE_BAD_CONFIG: Final[str] = "Invalid organization configuration: {detail}"
 _EXIT_DEVIATIONS_FOUND: Final[int] = 1
 _EXIT_CONFIGURATION_ERROR: Final[int] = 2
+# The scrub reports anomalies with the same code, in a different command
+# and for a different reason; it was written as a bare 2 two lines from
+# where these constants are used.
+_EXIT_SCRUB_ANOMALIES: Final[int] = 2
 
 
 @app.command()
 def reorganize(
-    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
     dry_run: bool = typer.Option(False, "--dry-run", help=_REORGANIZE_DRY_RUN_HELP),
     as_json: bool = typer.Option(False, "--json", help=_REORGANIZE_JSON_HELP),
     kind: str | None = typer.Option(None, "--kind", help=_REORGANIZE_KIND_HELP),
@@ -1230,7 +1232,7 @@ def reorganize(
 
 @app.command(name="scrub-init")
 def scrub_init(
-    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
 ) -> None:
     """Explicitly create configured integrity canaries without overwriting any."""
     base_settings = get_settings()
@@ -1250,7 +1252,7 @@ def scrub_init(
 
 @app.command()
 def scrub(
-    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
 ) -> None:
     """Run one configured, resumable, alert-only integrity scrub window."""
     base_settings = get_settings()
@@ -1263,7 +1265,7 @@ def scrub(
         f"{len(state.anomalies)} anomalies, pass {state.pass_id}"
     )
     if state.anomalies:
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=_EXIT_SCRUB_ANOMALIES)
 
 
 async def _run_scrub(vault_root: Path, settings: Settings) -> ScrubState:
@@ -1373,7 +1375,7 @@ def eval_(
         exists=True,
         help="Path to an eval-questions YAML file.",
     ),
-    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
     pipeline: EvalPipeline = typer.Option(
         EvalPipeline.TOOL,
         "--pipeline",
@@ -1505,6 +1507,18 @@ async def _run_eval(  # noqa: PLR0912 -- command orchestration covers optional o
             tolerance=settings.eval_regression_tolerance,
             config_hash=eval_config_hash(settings, config),
         )
+    if report.failures:
+        # Keeping the completed measurements is not the same as passing: a run
+        # with a question the search layer could not answer is not a clean
+        # evaluation, and saving it as a baseline would gate every later run
+        # against a partial one.
+        for failure in report.failures:
+            _print(f"Eval question failed: {failure}")
+        _print(
+            f"{len(report.failures)} question(s) failed; "
+            f"{len(report.results)} measured. Refusing to report success."
+        )
+        return 1
     if report.summary.question_count == 0:
         # An empty question set is not a passing run. Saved as a baseline it is
         # worse than useless: every metric is zero, so no later run can regress
@@ -1996,7 +2010,7 @@ def unregister(
         None,
         "--vault",
         "-v",
-        help=_VAULT_ROOT_HELP,
+        help=VAULT_ROOT_HELP,
     ),
     assume_yes: bool = typer.Option(
         False,
@@ -2268,7 +2282,7 @@ def _render_protocol_outcomes(
 
 @mcp_app.command("serve")
 def mcp_serve(
-    vault: Path | None = typer.Option(None, "--vault", "-v", help=_VAULT_ROOT_HELP),
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
 ) -> None:
     """Run the MCPServer stdio server.
 
@@ -2306,7 +2320,7 @@ def mcp_install(
         None,
         "--vault",
         "-v",
-        help=_VAULT_ROOT_HELP,
+        help=VAULT_ROOT_HELP,
     ),
     config_path: Path | None = typer.Option(
         None,

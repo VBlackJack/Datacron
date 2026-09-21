@@ -22,6 +22,7 @@ from typing import Annotated, Final
 
 import typer
 
+from datacron.cli_help import VAULT_ROOT_HELP
 from datacron.core.config import Settings, get_settings
 from datacron.core.frontmatter import FrontmatterError
 from datacron.organization.library import audit_library, read_library
@@ -29,9 +30,6 @@ from datacron.organization.library_models import EditorialRecipe, LibraryOptions
 from datacron.organization.library_workbench import check_library, prepare_library, propose_split
 
 _EXIT_INPUT_ERROR: Final[int] = 2
-_VAULT_HELP: Final[str] = (
-    "Vault root. Fallback: DATACRON_VAULT_ROOT, then cwd containing VAULT.yaml under .datacron."
-)
 _OPTIONS_HELP: Final[str] = (
     "JSON file with the library options: scope, home, tags, language, areas and limits."
 )
@@ -41,7 +39,7 @@ _SOURCE_HELP: Final[str] = "Vault-relative path of the note to split into H2 sec
 
 app = typer.Typer(help="Prepare readable offline navigation and sourced consolidation reviews.")
 VaultArgument = Annotated[
-    Path | None, typer.Option("--vault", exists=True, file_okay=False, help=_VAULT_HELP)
+    Path | None, typer.Option("--vault", exists=True, file_okay=False, help=VAULT_ROOT_HELP)
 ]
 OptionsArgument = Annotated[
     Path, typer.Option("--options", exists=True, dir_okay=False, help=_OPTIONS_HELP)

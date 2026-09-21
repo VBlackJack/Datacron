@@ -117,7 +117,8 @@ class _PendingStderr:
         self.finished = False
         self.task: asyncio.Task[Any] | None = None
 
-    async def read(self) -> bytes:
+    async def read(self, limit: int = -1) -> bytes:
+        _ = limit
         self.task = asyncio.current_task()
         self.started.set()
         never: asyncio.Future[bytes] = asyncio.Future()
@@ -247,17 +248,13 @@ def _install_process(
 
 
 def test_build_command_inserts_separator_before_dash_pattern() -> None:
-    vault_root = Path("/v")
-
-    command = _build_command("rg", "-foo", vault_root, glob=None, limit=20)
+    command = _build_command("rg", "-foo", glob=None)
 
     assert command == ["rg", "--json", "--", "-foo", "."]
 
 
 def test_build_command_places_separator_after_glob_options() -> None:
-    vault_root = Path("/v")
-
-    command = _build_command("rg", "-foo", vault_root, glob="*.md", limit=20)
+    command = _build_command("rg", "-foo", glob="*.md")
     separator_index = command.index("--")
 
     assert command[separator_index - 2 : separator_index] == ["--glob", "*.md"]

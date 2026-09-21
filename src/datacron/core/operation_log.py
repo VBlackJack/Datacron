@@ -804,6 +804,19 @@ class OperationJournal:
         *,
         preserve_hashes: set[str] | None = None,
     ) -> list[str]:
+        """Delete history blobs outside the retention window, keeping the named ones.
+
+        ``preserve_hashes`` protects bytes stored microseconds earlier by the
+        caller, which the retention scan cannot see because the record naming
+        them is not in the journal. Exactly one code path passes it, the
+        unlogged write in ``_write_without_operation_sync``, and nothing
+        shipped reaches that path: every write tool supplies an
+        ``OperationContext``, and ``operation=None`` appears only in this
+        project's own tests. It is kept, and named here rather than left to be
+        rediscovered, because the guarantee it encodes is real - a blob stored
+        outside the journal is invisible to retention - and any future unlogged
+        writer needs it. What it is not is a protection the logged path enjoys.
+        """
         purge_at = (now or datetime.now(tz=UTC)).astimezone(UTC)
         if not self.history_enabled:
             # ``redacted`` means this vault stores no new prior bytes. It has never

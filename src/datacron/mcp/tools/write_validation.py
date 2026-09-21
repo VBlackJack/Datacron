@@ -43,6 +43,8 @@ _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
 _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
 _BACKLOG_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"BL-[0-9]{4,}")
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+_ATX_CLOSING_SEQUENCE: Final[re.Pattern[str]] = re.compile(r"[ \t]#+$")
+_MARKDOWN_SUFFIX: Final[str] = ".md"
 _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
 # Markdown ATX headings run from one to six hash marks; every heading selector shares it.
 MAX_HEADING_LEVEL: Final[int] = 6
@@ -82,8 +84,7 @@ def _validate_memory_frontmatter(
     cleaned_confidence = _validate_memory_confidence(confidence)
     cleaned_tags = _clean_string_list(tags)
 
-    if not cleaned_rel_path.endswith(".md"):
-        raise ValueError("rel_path must end with .md")
+    _assert_markdown_rel_path(cleaned_rel_path)
     if not cleaned_title:
         raise ValueError("title must not be empty")
     if not body.strip():
@@ -122,8 +123,7 @@ def _validate_append_journal_request(
 ) -> tuple[str, str, str]:
     cleaned_rel_path = rel_path.strip()
     cleaned_heading = heading.strip()
-    if not cleaned_rel_path.endswith(".md"):
-        raise ValueError("rel_path must end with .md")
+    _assert_markdown_rel_path(cleaned_rel_path)
     if not cleaned_heading:
         raise ValueError("heading must not be empty")
     if "\n" in cleaned_heading or "\r" in cleaned_heading:
@@ -181,8 +181,7 @@ def _validate_set_frontmatter_request(
         )
     ):
         raise ValueError("nothing to update")
-    if not cleaned_rel_path.endswith(".md"):
-        raise ValueError("rel_path must end with .md")
+    _assert_markdown_rel_path(cleaned_rel_path)
 
     cleaned_confidence = _validate_memory_confidence(confidence) if confidence is not None else None
     cleaned_last_verified = (
@@ -296,8 +295,7 @@ def _validate_patch_note_section_request(
     cleaned_heading = heading.strip()
     cleaned_expected_hash = _validate_expected_hash(expected_hash)
 
-    if not cleaned_rel_path.endswith(".md"):
-        raise ValueError("rel_path must end with .md")
+    _assert_markdown_rel_path(cleaned_rel_path)
     if not cleaned_heading:
         raise ValueError("heading must not be empty")
     if not new_content.strip():
@@ -330,8 +328,7 @@ def _validate_patch_note_preamble_request(
     cleaned_rel_path = rel_path.strip()
     cleaned_expected_hash = _validate_expected_hash(expected_hash)
 
-    if not cleaned_rel_path.endswith(".md"):
-        raise ValueError("rel_path must end with .md")
+    _assert_markdown_rel_path(cleaned_rel_path)
     if cleaned_expected_hash is None:
         raise ValueError("expected_hash is required")
 
@@ -353,8 +350,7 @@ def _validate_delete_note_section_request(
     cleaned_heading = heading.strip()
     cleaned_expected_hash = _validate_expected_hash(expected_hash)
 
-    if not cleaned_rel_path.endswith(".md"):
-        raise ValueError("rel_path must end with .md")
+    _assert_markdown_rel_path(cleaned_rel_path)
     if not cleaned_heading:
         raise ValueError("heading must not be empty")
     if heading_level is not None and heading_level not in HEADING_LEVELS:
@@ -391,8 +387,7 @@ def _validate_rename_note_section_request(
     cleaned_new_heading = new_heading.strip()
     cleaned_expected_hash = _validate_expected_hash(expected_hash)
 
-    if not cleaned_rel_path.endswith(".md"):
-        raise ValueError("rel_path must end with .md")
+    _assert_markdown_rel_path(cleaned_rel_path)
     if not cleaned_heading:
         raise ValueError("heading must not be empty")
     if not cleaned_new_heading:
@@ -401,6 +396,16 @@ def _validate_rename_note_section_request(
         raise ValueError("new_heading must be a single line")
     if cleaned_new_heading.startswith("#"):
         raise ValueError("new_heading must contain text only, without Markdown heading markers")
+    if _ATX_CLOSING_SEQUENCE.search(cleaned_new_heading):
+        # A space then hashes at the end is an ATX closing sequence, which the
+        # parser removes: "Section #" was stored verbatim and read back as
+        # "Section". The tool reported the requested title, so the client
+        # believed the note held it, the next rename by that title failed with
+        # heading_not_found, and any stored selector built from it was dead.
+        raise ValueError(
+            "new_heading must not end with a closing sequence of '#'; Markdown drops it "
+            "and the stored heading would differ from the requested title"
+        )
     if heading_level is not None and heading_level not in HEADING_LEVELS:
         raise ValueError("heading_level must be between 1 and 6")
     if heading_level == 1:
@@ -437,6 +442,17 @@ def _validate_heading_occurrence(
     if expected_hash is None:
         raise ValueError("heading_occurrence requires expected_hash")
     return heading_occurrence
+
+
+def _assert_markdown_rel_path(cleaned_rel_path: str) -> None:
+    """Refuse a path that is not a Markdown note.
+
+    The test and its message were written out at each of the seven call sites,
+    so the suffix this server accepts was stated in eight places across two
+    modules and could drift in any one of them.
+    """
+    if not cleaned_rel_path.endswith(_MARKDOWN_SUFFIX):
+        raise ValueError(f"rel_path must end with {_MARKDOWN_SUFFIX}")
 
 
 def _validate_expected_hash(expected_hash: str | None) -> str | None:

@@ -99,22 +99,32 @@ class LocalEvalHarness:
         if pipeline is EvalPipeline.TOOL:
             limit = max(limit, app.settings.max_result_count)
         results: list[EvalResult] = []
+        failures: list[str] = []
         for question in eval_questions:
             started = perf_counter()
             payload = await self._search(app, question.question, limit, pipeline)
             latency_ms = (perf_counter() - started) * 1000.0
-            results.append(
-                _evaluate_payload(
-                    question,
-                    payload,
-                    latency_ms=latency_ms,
-                    k_values=k_values,
+            try:
+                results.append(
+                    _evaluate_payload(
+                        question,
+                        payload,
+                        latency_ms=latency_ms,
+                        k_values=k_values,
+                    )
                 )
-            )
+            except (RuntimeError, TypeError) as error:
+                # The search layer answers with an error dict rather than
+                # raising, from four paths including a question that is the
+                # empty string, which a YAML file validates happily. Aborting
+                # here threw away every measurement already taken, so a typo in
+                # one entry cost the whole run.
+                failures.append(f"{question.id}: {error}")
 
         report = EvalReport(
             summary=_summarize(results, k_values, pipeline=pipeline, transport=transport),
             results=results,
+            failures=failures,
         )
         if render:
             self._print_summary(report)
@@ -262,7 +272,7 @@ def _evaluate_payload(
         forbidden_evaluated=bool(question.forbidden_paths),
         latency_ms=latency_ms,
         stage_timings_ms=_stage_timings(payload, question.id),
-        tokens_returned=payload_token_estimate(payload),
+        tokens_returned=payload_token_estimate(_billable_payload(payload)),
         trust_label=None,
     )
 
@@ -340,6 +350,20 @@ def _summarize(
         total_tokens_returned=sum(result.tokens_returned for result in results),
         avg_tokens_returned=_average([float(result.tokens_returned) for result in results]),
     )
+
+
+def _billable_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop what the harness asked for and no client ever receives.
+
+    The impl transport calls the tool with include_timings=True, which appends
+    six stage floats - about 27 tokens - that the production registration never
+    requests and the e2e transport, calling with only a query and a limit,
+    never sees. Counting them made the same vault and the same questions report
+    different payload sizes depending on how they were measured.
+    """
+    if "timings_ms" not in payload:
+        return payload
+    return {key: value for key, value in payload.items() if key != "timings_ms"}
 
 
 def _stage_timings(payload: dict[str, Any], question_id: str) -> dict[str, float]:

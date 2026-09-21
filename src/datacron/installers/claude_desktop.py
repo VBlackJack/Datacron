@@ -32,11 +32,11 @@ import json
 import os
 import shutil
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from datacron.core.durability import atomic_durable_write
 from datacron.core.logger import get_logger
 
 __all__ = [
@@ -285,20 +285,18 @@ def _load_existing_config(path: Path) -> dict[str, Any]:
 
 
 def _write_atomically(path: Path, payload: dict[str, Any]) -> None:
+    """Replace this client's config durably, keeping a copy of what was there.
+
+    The rename kept the existing config intact if the process died mid-write,
+    but neither the file nor its directory was flushed: after a power loss or a
+    hard kill the entry can come back as a zero-length file. That is the
+    classic rename-without-fsync shape, and the product ships the durable
+    writer used here precisely to close it for its own sidecar. The sibling
+    installer module takes a copy before replacing a file it does not own; this
+    one does the same, for the same reason.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     serialized = json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    # Write to a sibling temp file, then atomically rename. This keeps
-    # the existing config intact if the process dies mid-write.
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=path.name + ".",
-        suffix=".tmp",
-        dir=str(path.parent),
-    )
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as tmp:
-            tmp.write(serialized)
-        os.replace(tmp_path, path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    if path.exists():
+        shutil.copy2(path, path.with_name(f"{path.name}.datacron-backup"))
+    atomic_durable_write(path, serialized.encode("utf-8"))

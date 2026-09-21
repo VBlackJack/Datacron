@@ -55,6 +55,10 @@ __all__ = ["RegexFallbackError", "RipgrepError", "RipgrepWrapper", "ripgrep_avai
 _LOGGER = get_logger(__name__)
 _RIPGREP_PATH_ENV: Final[str] = "DATACRON_RIPGREP_PATH"
 _NO_MATCH_RETURN_CODE: Final[int] = 1
+# Diagnostic text, not a payload: enough to name a bad pattern or a
+# permission problem, and far short of one line per file in the vault.
+_MAX_STDERR_BYTES: Final[int] = 8192
+_STDERR_TRUNCATION_MARKER: Final[str] = "\n... (ripgrep diagnostics truncated)"
 _RISKY_REPETITION_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"\([^)]*(?:\||[+*])[^)]*\)(?:[+*]|\{)"
 )
@@ -151,7 +155,7 @@ class RipgrepWrapper:
             return []
 
         resolved_rg_path = _resolve_ripgrep_path(rg_path)
-        command = _build_command(resolved_rg_path, pattern, vault_root, glob, limit)
+        command = _build_command(resolved_rg_path, pattern, glob)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *command, stdout=PIPE, stderr=PIPE, cwd=vault_root
@@ -186,7 +190,7 @@ class RipgrepWrapper:
         if proc.stdout is None or proc.stderr is None:
             raise RuntimeError("ripgrep subprocess was not created with stdout/stderr pipes")
 
-        stderr_task = asyncio.create_task(proc.stderr.read())
+        stderr_task = asyncio.create_task(proc.stderr.read(_MAX_STDERR_BYTES))
         killed_for_limit = False
         stderr = ""
 
@@ -410,13 +414,17 @@ def _resolve_ripgrep_path(rg_path: str | None) -> str:
     return from_environment or DEFAULT_RIPGREP_PATH
 
 
-def _build_command(
-    rg_path: str,
-    pattern: str,
-    vault_root: Path,
-    glob: str | None,
-    limit: int,
-) -> list[str]:
+def _build_command(rg_path: str, pattern: str, glob: str | None) -> list[str]:
+    """Build the ripgrep argument list for one search.
+
+    It took a vault root and a limit and used neither, so the signature
+    promised a subprocess rooted at the vault and bounded by the caller's
+    limit while the search root is the literal "." and there is no
+    --max-count. Both promises are kept elsewhere and differently: the root by
+    the cwd the caller passes to create_subprocess_exec, and the limit by the
+    collection loop, which stops reading and kills the process. --max-count
+    would not express it anyway, being per file rather than per search.
+    """
     command = [rg_path, "--json"]
     if glob:
         command.extend(["--glob", glob])
@@ -634,8 +642,19 @@ def _highlight_submatches(line: str, submatches: list[object]) -> str:
 
 
 async def _read_stderr(stderr_task: asyncio.Task[bytes]) -> str:
+    """Decode the bounded diagnostic text ripgrep wrote, and say when it was cut.
+
+    This string is returned verbatim in the caller-visible error message, so it
+    is the one payload in the server with no bound: stdout beside it is capped
+    and every other payload is sized against max_result_tokens. A pattern that
+    makes ripgrep complain once per file turns an error response into a
+    transcript of the vault.
+    """
     stderr = await stderr_task
-    return stderr.decode("utf-8", errors="replace")
+    text = stderr.decode("utf-8", errors="replace")
+    if len(stderr) >= _MAX_STDERR_BYTES:
+        return text + _STDERR_TRUNCATION_MARKER
+    return text
 
 
 from datacron.core.protocols import RipgrepWrapper as _RipgrepWrapperProtocol  # noqa: E402

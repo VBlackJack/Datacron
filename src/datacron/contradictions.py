@@ -71,6 +71,10 @@ _STATEMENT_CHAR_LIMIT: Final[int] = 240
 _ELLIPSIS: Final[str] = "..."
 _MIN_LEXICAL_SCORE: Final[float] = 0.25
 _MIN_MARKED_SCORE: Final[float] = 0.15
+# Added to the lexical score when both sides carry a date, which is a weak
+# signal that one may supersede the other. Both thresholds above it are
+# named; this was the only number in the scoring left to be read raw.
+_TEMPORAL_SIGNAL_BONUS: Final[float] = 0.05
 _HEADING_SEPARATOR: Final[str] = " / "
 
 _STOPWORDS: Final[frozenset[str]] = frozenset(
@@ -528,7 +532,8 @@ def _classify_pair(left: SectionAssertion, right: SectionAssertion) -> Candidate
 
     target, source = _ordered_sides(left, right, left_date=left_date, right_date=right_date)
     classification, rationale = _classification(source.content)
-    score = round(min(1.0, lexical_score + (0.05 if has_temporal_signal else 0.0)), 6)
+    bonus = _TEMPORAL_SIGNAL_BONUS if has_temporal_signal else 0.0
+    score = round(min(1.0, lexical_score + bonus), 6)
     return Candidate(
         target=target,
         source=source,

@@ -44,7 +44,10 @@ import tomli_w
 
 from datacron.core.durability import atomic_durable_write
 from datacron.core.logger import get_logger
-from datacron.installers.claude_desktop import config_path_for_platform
+from datacron.installers.claude_desktop import (
+    ClaudeDesktopConfigError,
+    config_path_for_platform,
+)
 
 __all__ = [
     "ALL_CLIENT_IDS",
@@ -192,10 +195,15 @@ def _vscode_user_dir() -> Path:
 
 
 def _user_config_path(client_id: str) -> Path | None:
-    """Return the user-scope config path for ``client_id`` (``None`` if N/A)."""
+    """Return the user-scope config path for ``client_id`` (``None`` if N/A).
+
+    The table is built whole on every call, so asking for Cursor's path used to
+    raise on any platform where Claude Desktop has none. A client with no path
+    here is exactly what ``None`` means.
+    """
     home = Path.home()
+    claude_desktop_config = _claude_desktop_config_path()
     paths: dict[str, Path] = {
-        CLAUDE_DESKTOP: config_path_for_platform(),
         CLAUDE_CODE: home / ".claude.json",
         CURSOR: home / ".cursor" / "mcp.json",
         GEMINI_CLI: home / ".gemini" / "settings.json",
@@ -205,6 +213,8 @@ def _user_config_path(client_id: str) -> Path | None:
         WINDSURF: home / ".codeium" / "windsurf" / "mcp_config.json",
         VS_CODE: _vscode_user_dir() / "mcp.json",
     }
+    if claude_desktop_config is not None:
+        paths[CLAUDE_DESKTOP] = claude_desktop_config
     return paths.get(client_id)
 
 
@@ -231,11 +241,36 @@ def _client_format(client_id: str) -> str:
     return _FMT_JSON_MCPSERVERS
 
 
+def _claude_desktop_config_path() -> Path | None:
+    """Return the Claude Desktop config path, or None where it has none.
+
+    Every entry of the detection table is evaluated on each lookup, including
+    when the caller is detecting Cursor or Codex, so this call decided the fate
+    of the whole function. It raises on any platform outside darwin, win32 and
+    linux - freebsd, openbsd, aix, cygwin - and on Windows when APPDATA is
+    unset, which is the case for service accounts and minimal containers. The
+    error subclasses RuntimeError and no caller catches it, so `datacron setup`
+    aborted with a traceback after the reset had already removed the config and
+    the index, for a user who never installed Claude Desktop. The VS Code
+    sibling handles the identical question with a fallback.
+    """
+    try:
+        return config_path_for_platform()
+    except ClaudeDesktopConfigError:
+        return None
+
+
+def _claude_desktop_dirs() -> tuple[Path, ...]:
+    """Return the directory to look in, or nothing on a platform without one."""
+    config = _claude_desktop_config_path()
+    return () if config is None else (config.parent,)
+
+
 def _is_present(client_id: str) -> bool:
     """Best-effort detection of an installed client via config dir or binary."""
     home = Path.home()
     checks: dict[str, tuple[tuple[Path, ...], tuple[str, ...]]] = {
-        CLAUDE_DESKTOP: ((config_path_for_platform().parent,), ()),
+        CLAUDE_DESKTOP: (_claude_desktop_dirs(), ()),
         CLAUDE_CODE: ((home / ".claude.json", home / ".claude"), ("claude",)),
         CURSOR: ((home / ".cursor",), ("cursor",)),
         GEMINI_CLI: ((home / ".gemini",), ("gemini",)),

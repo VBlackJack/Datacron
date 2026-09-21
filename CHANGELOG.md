@@ -9,6 +9,14 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Security
+
+- A section heading is vault-controlled metadata, and `contradiction_scan` returned it
+  unescaped. `header_path` on a candidate's source and target was the one metadata string in
+  that payload that did not go through the sanitizer, so a hostile heading reached the client
+  verbatim. Fixed on 2026-09-15 and recorded here now: a security fix that is not in the
+  changelog is one nobody downstream can act on.
+
 ### Added
 
 - `apply_organization_manifest` reports the progress of its post-commit reindex as MCP
@@ -347,6 +355,164 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- The documentation link guard checks every internal link, not only the ones with an anchor.
+  Anchorless links are the majority - 266 of them went unverified - so a renamed page broke
+  every plain link to it while the guard stayed green. It also resolves the absolute GitHub
+  URLs the READMEs now use, and skips any URI scheme rather than a fixed list of three.
+- The READMEs link absolutely. `README.md` is the PyPI long description and PyPI does not
+  rewrite relative targets, so 29 links per language resolved under `pypi.org/project/...`
+  and returned 404 on the page most new users see first.
+- Nine shipped modules had lost the warranty disclaimer from their licence header, and three
+  of those had lost the blank comment lines that separate its paragraphs. The whole block is
+  now compared, so the next paragraph cannot go the same way.
+- `datacron status` is documented as it prints: the log filename uses an underscore, as the
+  code has always produced, and the `regex:` line the command always emits is no longer
+  missing from the sample.
+- A wrapped line beginning with "+ " turned the middle of ADR-017 into a bullet list on
+  GitHub. Every page was scanned for the same trap; this was the only one.
+- The changelog no longer documents `datacron index --full`, a flag the CLI has never had,
+  and now records the 2026-09-15 fix that escapes a hostile section heading in
+  `contradiction_scan` candidate references. A security fix absent from the changelog is one
+  nobody downstream can act on.
+- `set_frontmatter` lists `archived` among the fields it changes, which it does change.
+- The `--vault` help sentence lives in one place. Both command groups mount into the same
+  CLI, so one command's help could drift away from itself.
+- The baseline's schema version is read back. It was stamped on every saved baseline and never
+  checked, so a format change would have been absorbed by the model's defaults: a baseline
+  written under a different shape loads with empty metrics, and no later run can regress
+  against empty metrics.
+- The drift guard on the PyInstaller recipe covers the fourth copy. Three were compared; the
+  fourth builds the candidate the disposable-machine validation installs, so drift there means
+  validating a binary that is not the one being published.
+- `_build_command` no longer takes a vault root and a limit it never used. The signature
+  promised a subprocess rooted at the vault and bounded by the caller's limit while neither is
+  expressed there: the root is the working directory the caller sets, and the limit is the
+  collection loop, which stops reading and kills the process.
+- The apply receipt no longer threads a preview through two functions that never read it.
+- `httpx` is gone from the dev dependencies. Nothing in the repository imports it, and it is
+  not what `mcp` depends on; the lock now carries three fewer packages.
+- `preserve_hashes` says which caller reaches it and which do not. It protects bytes stored
+  microseconds earlier from a retention sweep that cannot see them, and exactly one code path
+  passes it - the unlogged write, which nothing shipped reaches, because every write tool
+  supplies an operation context. A reader could take it for a protection the logged path has.
+- `get_note` on a `chunk_id` reads one row instead of the whole notes table. Following a
+  search hit into its section is the documented way an agent reads a chunk, and it built a
+  dictionary of the entire vault to take exactly one key out of it.
+- `list_notes` runs its selection once. The first call asked for a single row purely to learn
+  the total and the second then asked for that many, so every listing selected twice - and on
+  an index predating the frontmatter pair table, where the filter runs in Python, that means
+  parsing the frontmatter of every note twice.
+- The organization apply no longer runs its whole-scope filesystem scan on the event loop.
+  `plan_organization` authorizes every directory and every candidate file, at least two stat
+  calls each, and every other tool call waited on it.
+- The sidecar identity check builds its index once per bundle rather than once per operation.
+  A bundle at the schema maximum rebuilt the normalized mapping 512 times and scanned it end
+  to end each time, over inputs that do not change during the loop.
+- ripgrep's diagnostic output is bounded. It is returned verbatim in the caller-visible error
+  message and was the one payload in the server with no cap, while stdout beside it is capped
+  and every other payload is sized against `max_result_tokens`.
+- The CI matrix is read from the classifiers rather than written out a second time. Adding an
+  interpreter means editing the published metadata, which a support request is checked
+  against; the matrix would have stayed where it was and the new version would have been
+  advertised without ever being run.
+- `scripts/reliability_scan.py --enforce` refuses a scan that found no notes. The scan only
+  rejects a path that is not a directory, so an unmounted network vault whose placeholder
+  folder exists, a fresh directory or a path mistyped one level off all came back clean: no
+  notes, no violations and a green enforcement that measured nothing.
+- Claude Desktop's config is replaced durably and with a copy of what was there, like every
+  other third-party config this product writes. The rename kept the old file if the process
+  died mid-write, but nothing flushed the file or its directory, which is the shape that
+  leaves a zero-length config after a power loss.
+- A refused review bundle no longer blocks every retry. Validation reads the manifest from the
+  output directory, so it necessarily runs after that directory exists, and a refusal left
+  `payloads/` and `manifest.json` behind while the guard above refuses to reuse an existing
+  output directory. The directory this call created is removed when it fails.
+- A dead Python-version guard is gone from the MCP e2e module. The branch was unreachable
+  under `requires-python`, and `pytest.skip` outside a test raises rather than skips, so the
+  one day it fired the module would have errored during collection instead of skipping.
+- The auditability properties draw 12 examples instead of one or two. They were advertised as
+  properties and behaved as randomly-seeded fixtures, while the durable-write properties
+  beside them use 5 to 20.
+- The build backend that produces the published wheel has a ceiling. Every other moving part
+  of the release is pinned - uv, every Action by SHA, the publisher by version and hash, all
+  runtime packages in the lock - while the one component that writes the bytes uploaded to
+  PyPI was resolved fresh at release time with no bound. `uv` now enforces the same bound
+  during the build.
+- `vault/info` sanitizes the two error strings that skipped the sanitizer. `stats()` parses a
+  column of a database that lives inside the vault, which is the untrusted surface the
+  sandbox exists for, and a tampered value reached the model's context verbatim, in the only
+  strings of that resource with no envelope around them.
+- One unanswerable question no longer discards a whole eval run. The search layer answers with
+  an error dict rather than raising, from four paths including a question that is the empty
+  string, so a typo in one YAML entry cost every measurement already taken. The run keeps them,
+  records what failed, and still refuses to report success or save a baseline.
+- Three magic values are named: the scrub's exit code, written as a bare 2 two lines from the
+  module's own exit-code constants; the temporal-signal bonus in contradiction scoring, the
+  only unnamed number among named thresholds; and the vault-map tag ellipsis, which repeated
+  the limit's value instead of the limit. The `.md` check and its message, written out at
+  seven call sites, is one function.
+- `datacron eval --compare` fails on a comparison the code knows is invalid. A differing
+  config hash, pipeline or transport was recorded, printed as a prose warning and then given
+  exit 0: the two pipelines do not return the same results and the two transports do not
+  measure the same payload, so those deltas are deltas of nothing, and a gate reading the exit
+  code was told the change was safe.
+- `tokens_returned` counts what a client receives. The impl transport asks the tool for a
+  timings block that the production registration never requests and the e2e transport never
+  sees, and it was being charged to every question, so the same vault and the same questions
+  reported different payload sizes depending on how they were measured.
+- An attachment two notes share is counted once. The duplicate guard compared the raw link
+  text while the write and the accounting used the rewritten path, so a file referenced as
+  `img/logo.png` from one note and `logo.png` from another was read twice and counted twice
+  toward `max_export_bytes`; a bundle that fits was refused after the output directory had
+  already been written.
+- `scripts/audit_excluded_notes.py`, published copy-pasteable in the scrubber documentation,
+  says what to do instead of raising a bare sqlite traceback: neither "unable to open database
+  file" on a vault that was never indexed nor "no such table" on an older index mentions
+  indexing, which is the whole of the remedy.
+- `scripts/evaluate_conversation_trace.py` names the file and the line it could not read. The
+  trace is hand-assembled from a client export, as the documentation instructs, and the model
+  forbids extra fields, so any provider metadata an exporter adds ended in a pydantic stack
+  trace pointing at no line in a file that can hold hundreds.
+- `datacron setup` and `datacron unregister` survive a platform Claude Desktop does not
+  support. The client detection table is built whole on every lookup, so detecting Cursor ran
+  the Claude Desktop path resolver, which raises outside darwin, win32 and linux, and on
+  Windows when `APPDATA` is unset. Nothing caught it, so setup aborted with a traceback after
+  the reset had already removed the config and the index, for a user who never installed that
+  client.
+- An empty rule file no longer blocks `datacron protocol install` for good. The guard that
+  protects a user's own rules fired on a file with nothing in it - what a killed run, a crash
+  between metadata and data, or a placeholder committed to a repository leaves - and refused
+  with a message about content the file does not have. Real foreign content is still refused.
+- `set_frontmatter` publishes the same enums for `origin` and `confidence` that its handler
+  enforces. They were declared as free-form strings while the call ran the identical check
+  `create_note_ai` declares, so a model told "a fact's lifecycle changed: verified today"
+  guessed `confidence="verified"` and lost a round trip to a refusal the schema could have
+  prevented.
+- Every `get_follow_up` row names the note it was found on. Records are matched by identity,
+  and the only path inside one is `target_path`, stored verbatim from whoever prepared it and
+  never re-checked; a rename that preserves the ULID, which `apply_organization_manifest`
+  performs by design, left every record pointing at a file that no longer exists.
+- A batch write against an unreachable volume refuses instead of spinning. The ancestor walk
+  in `_ensure_directory_durable` had no termination guard, and a filesystem anchor is its own
+  parent; `Path.exists()` swallows every OSError and answers False, so a removed drive letter
+  or a dropped SMB mount made the leaf and every ancestor look missing, the anchor included.
+  The loop then appended the same path forever at full CPU until memory ran out. Four batch
+  write paths reach it, and the confinement check upstream does not stop it.
+- The degraded file fsync absorbs the same Windows window as the replace and the read beside
+  it. It is the third participant in that race and had no retry, on exactly the backends where
+  it runs - FAT, exFAT, SMB - so a held handle turned an already committed write into an error
+  that aborted before the operation was journalled.
+- `rename_note_section` refuses a title ending in a closing sequence of `#`. Markdown drops it,
+  so "Section #" was stored and read back as "Section" while the tool reported the requested
+  title: the next rename by that title failed with `heading_not_found`, and any stored selector
+  built from it was dead. A `#` inside the words, as in "C# et F#", is untouched.
+- `create_note_ai` no longer advertises an `expected_hash` it could never honour. With the note
+  absent the hash was matched against nothing and refused as "changed since read" for a path
+  that had never existed; with the note present the next line raised anyway. The writer refuses
+  one by name for any other caller. The replay conflict on that path also stopped telling a
+  creation to retry with an exact hash, which is advice it cannot follow: reverting a note and
+  recreating it under the same derived request id was unrecoverable, and `prepare_follow_up`
+  derives that id by design.
 - Content before the first Markdown block a note emits is indexed. Every chunk range is
   derived from a block's line number, so lines mistletoe consumes without emitting a token
   belonged to no chunk when they sat before the first one. A link reference definition at the
@@ -715,7 +881,7 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 ### Changed
 
 - The index reconcile pre-pass keeps only the identity and content hash of each note it
-  reads, then reads a changed note again when it commits it, so `datacron index --full` and
+  reads, then reads a changed note again when it commits it, so `datacron index` and
   `apply_organization_manifest` no longer hold every note of the vault in memory (a full pass
   over 2000 synthetic notes peaks at 2.4 MiB of traced allocations instead of 14.6 MiB, for
   about six percent more time). The progress counter now also advances during that

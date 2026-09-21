@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import re
@@ -436,7 +437,6 @@ def _apply_payload(
     bundle: OrganizationBundle,
     result: BatchApplyResult,
     final_report_sha256: str | None,
-    preview: _OrganizationPreview | None,
     *,
     status: Literal["applied"] | OrganizationCommittedStatus = "applied",
     indexed: bool = True,
@@ -482,7 +482,6 @@ async def _finalize_committed_batch(
     app: DatacronApp,
     bundle: OrganizationBundle,
     result: BatchApplyResult,
-    preview: _OrganizationPreview | None,
     *,
     started: float,
     mode: OrganizationManifestMode,
@@ -501,7 +500,6 @@ async def _finalize_committed_batch(
             bundle,
             result,
             None,
-            preview,
             status="committed_index_incomplete",
             indexed=False,
             committed_error_code="organization_committed_index_incomplete",
@@ -521,7 +519,12 @@ async def _finalize_committed_batch(
         )
         return payload, None, None
     try:
-        final_report_sha256 = _current_report_hash(app)
+        # plan_organization walks the whole scope and authorizes every directory
+        # and every candidate file, which is at least two stat calls each: a
+        # synchronous scan of the entire vault, run on the event loop, so every
+        # other tool call waited on it. It is the same work either way; it just
+        # does not have to happen here.
+        final_report_sha256 = await asyncio.to_thread(_current_report_hash, app)
     except Exception:
         final_report_sha256 = None
     if final_report_sha256 is None or not hmac.compare_digest(
@@ -537,7 +540,6 @@ async def _finalize_committed_batch(
             bundle,
             result,
             final_report_sha256,
-            preview,
             status="committed_report_mismatch",
             indexed=True,
             committed_error_code="organization_committed_report_mismatch",
@@ -675,7 +677,6 @@ async def _apply_organization_manifest_impl(
                 app,
                 bundle,
                 result,
-                preview,
                 started=started,
                 mode=cleaned_mode,
                 ctx=ctx,
@@ -684,7 +685,7 @@ async def _apply_organization_manifest_impl(
             return incomplete
         if index_stats is None or final_report_sha256 is None:
             raise AssertionError("successful organization finalization lacks verified evidence")
-        payload = _apply_payload(bundle, result, final_report_sha256, preview)
+        payload = _apply_payload(bundle, result, final_report_sha256)
         _audit(
             "apply_organization_manifest",
             started,

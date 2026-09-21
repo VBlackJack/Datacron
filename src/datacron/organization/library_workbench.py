@@ -1,6 +1,16 @@
 # Copyright 2026 Julien Bombled
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
-# http://www.apache.org/licenses/LICENSE-2.0
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Prepare external review bundles and offline previews without mutating a vault."""
 
 from __future__ import annotations
@@ -8,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import json
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -271,8 +282,6 @@ def _copy_attachments(
     for finding in audit.findings:
         if finding.code != "LOCAL_UNRESOLVED":
             continue
-        if finding.detail in attachments:
-            continue
         relative = PurePosixPath(finding.detail)
         if relative.is_absolute() or ".." in relative.parts or relative.suffix.lower() == ".md":
             continue
@@ -293,6 +302,14 @@ def _copy_attachments(
             or not attachment_path.is_file()
         ):
             continue
+        # Dedup on the path this loop settled on, not on the raw detail. A
+        # wiki-style link is rewritten relative to the note that holds it, so
+        # two notes in different folders referencing the same attachment gave
+        # two different details and one identical path: the file was read
+        # twice, counted twice toward max_export_bytes, and a bundle that fits
+        # was refused after the output directory had already been written.
+        if relative.as_posix() in attachments:
+            continue
         if attachment_path.stat().st_size > options.max_attachment_bytes:
             continue
         data = attachment_path.read_bytes()
@@ -301,9 +318,8 @@ def _copy_attachments(
         total += len(data)
         if total > options.max_export_bytes:
             raise ValueError("Attachments exceed max_export_bytes")
-        if relative.as_posix() not in attachments:
-            _write_new(output / PREVIEW_DIRECTORY / relative, data)
-            attachments[relative.as_posix()] = sha256_bytes(data)
+        _write_new(output / PREVIEW_DIRECTORY / relative, data)
+        attachments[relative.as_posix()] = sha256_bytes(data)
     return attachments
 
 
@@ -334,6 +350,47 @@ def _write_workbench(
     if total > options.max_export_bytes:
         raise ValueError("Preview exceeds max_export_bytes")
     output.mkdir(parents=True, exist_ok=False)
+    try:
+        return _write_bundle_contents(
+            vault=vault,
+            output=output,
+            options=options,
+            settings=settings,
+            notes=notes,
+            changes=changes,
+            manifest=manifest,
+            audit=audit,
+            before=before,
+            projected=projected,
+            total=total,
+            recipe=recipe,
+        )
+    except BaseException:
+        # Validation runs after the manifest exists, because it reads it from
+        # there. A refusal used to leave payloads/ and manifest.json behind,
+        # and the guard above refuses to reuse an existing output directory, so
+        # every retry was blocked until someone deleted a half-written bundle
+        # by hand. This directory was created here, one line above.
+        shutil.rmtree(output, ignore_errors=True)
+        raise
+
+
+def _write_bundle_contents(
+    *,
+    vault: Path,
+    output: Path,
+    options: LibraryOptions,
+    settings: Settings,
+    notes: list[Note],
+    changes: dict[str, str],
+    manifest: dict[str, Any],
+    audit: LibraryAudit,
+    before: dict[str, str],
+    projected: dict[str, str],
+    total: int,
+    recipe: EditorialRecipe | None,
+) -> dict[str, Any]:
+    """Write every file of the review bundle into an output directory that exists."""
     for raw in set(changes.values()):
         data = raw.encode("utf-8")
         _write_new(output / PAYLOADS_DIRECTORY / (sha256_bytes(data) + ".md"), data)

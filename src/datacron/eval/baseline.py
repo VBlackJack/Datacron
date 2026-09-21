@@ -147,9 +147,22 @@ def save_baseline(
 
 
 def load_baseline(vault_root: Path) -> EvalBaseline:
-    """Load and validate the vault-local baseline."""
+    """Load and validate the vault-local baseline, refusing a version it cannot read.
+
+    The version was stamped on every baseline and never read back, so a format
+    change would have been absorbed by the model's defaults rather than
+    reported: a baseline written under a different shape loads with empty
+    metrics, and empty metrics are what no later run can regress against.
+    """
     target = baseline_path(vault_root)
-    return EvalBaseline.model_validate_json(target.read_text(encoding=_ENCODING_UTF8))
+    baseline = EvalBaseline.model_validate_json(target.read_text(encoding=_ENCODING_UTF8))
+    if baseline.schema_version != _BASELINE_SCHEMA_VERSION:
+        raise ValueError(
+            f"{target} was written with baseline schema version "
+            f"{baseline.schema_version}; this build reads version "
+            f"{_BASELINE_SCHEMA_VERSION}. Re-save the baseline with --save-baseline."
+        )
+    return baseline
 
 
 def compare_with_baseline(
@@ -178,13 +191,23 @@ def compare_with_baseline(
         regressions.append("empty_accuracy_missing")
     if previous.forbidden_violation_rate is not None and current.forbidden_violation_rate is None:
         regressions.append("forbidden_violation_rate_missing")
+    config_hash_matches = baseline.config_hash == config_hash
+    mode_matches = previous.pipeline is current.pipeline and previous.transport is current.transport
+    # A comparison the code knows is invalid used to print a prose warning and
+    # exit zero. The two pipelines do not return the same results and the two
+    # transports do not measure the same payload, so the deltas below are not
+    # deltas of anything: a gate reading the exit code was told the change is
+    # safe. An incomparable baseline is a failure of the comparison, not a
+    # regression, and it is named separately.
+    if not config_hash_matches:
+        regressions.append("config_hash_mismatch")
+    if not mode_matches:
+        regressions.append("pipeline_or_transport_mismatch")
     return BaselineComparison(
         baseline_version=baseline.datacron_version,
         current_version=__version__,
-        config_hash_matches=baseline.config_hash == config_hash,
-        mode_matches=(
-            previous.pipeline is current.pipeline and previous.transport is current.transport
-        ),
+        config_hash_matches=config_hash_matches,
+        mode_matches=mode_matches,
         tolerance=tolerance,
         deltas=deltas,
         regressions=regressions,
