@@ -137,6 +137,20 @@ no `/VAULT=`. Run a subset with `--only <scenario>`, repeated. The report lists
 what it did not cover: choosing "Keep my current configuration" after passing
 `/RESETCONFIG` is a wizard interaction and still needs a person.
 
+Both wizard-only checks were run by hand in Windows Sandbox on 2026-09-21, against
+the installer built from `ec25335`.
+
+- `/RESETCONFIG`, then "Keep my current Datacron configuration" on the reinstall
+  page: the page opens with Reset pre-selected, which is the switch seeding the
+  choice rather than making it, and `VAULT.yaml` came out byte for byte identical
+  (`88f8f004...`, before and after).
+- A vault path containing a double quote, delivered through the recorded vault of a
+  previous installation because no command line can carry the character: the
+  directory page refuses it before Datacron's own check runs, with Inno Setup's
+  message naming every character a folder name cannot hold. Nothing was installed.
+  Datacron's `VaultQuoteRejected` is therefore a backstop for a path that never
+  passes through that page, and no route observed so far reaches it.
+
 For a clean Windows Sandbox image, use the candidate installer and standalone
 validator from the workflow's `windows-sandbox-inputs` artifact:
 

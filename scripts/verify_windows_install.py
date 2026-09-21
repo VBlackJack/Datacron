@@ -16,7 +16,10 @@ its own installation, so the answer is a receipt rather than a recollection.
 
 One step of the plan is not here. Choosing "Keep my current configuration" on
 the reinstall page after passing ``/RESETCONFIG`` is a wizard interaction, and
-this script only drives silent installs; it is listed in the report as owed.
+this script only drives silent installs; it is listed in the report as owed. It
+was run by hand in Windows Sandbox on 2026-09-21, together with the double quote
+the command line cannot carry, and both results are recorded in
+``docs/en/daily-workflows.md``.
 """
 
 from __future__ import annotations
@@ -57,7 +60,8 @@ _WINDOWS_ONLY: Final[str] = "Installer validation requires Windows"
 _UNINSTALL_SETTLE_SECONDS: Final[int] = 60
 _MANUAL_STEP: Final[str] = (
     "/RESETCONFIG followed by choosing Keep my current configuration on the reinstall "
-    "page: a wizard interaction, not covered by this script"
+    "page: a wizard interaction, not covered by this script. Run by hand in Windows "
+    "Sandbox on 2026-09-21: the configuration was byte for byte unchanged"
 )
 if sys.platform == "win32":
     _CREATION_FLAGS = subprocess.CREATE_NO_WINDOW
@@ -416,7 +420,10 @@ def scenario_quote_in_vault_path(context: Context) -> dict[str, Any]:
         "refused": None,
         "inconclusive": True,
         "attempts": attempts,
-        "note": "no command line spelling delivered a double quote; this stays manual",
+        "note": (
+            "no command line spelling delivers a double quote; the wizard route was run by "
+            "hand on 2026-09-21 and Inno's own directory page refuses the character first"
+        ),
     }
 
 

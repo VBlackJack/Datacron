@@ -142,6 +142,21 @@ sous-ensemble, répéter `--only <scenario>`. Le rapport indique ce qu'il n'a pa
 couvert : choisir "Garder ma configuration actuelle" après avoir passé `/RESETCONFIG`
 est une interaction avec l'assistant et demande encore une personne.
 
+Les deux vérifications qui passent par l'assistant ont été exécutées à la main dans
+Windows Sandbox le 2026-09-21, sur l'installeur construit depuis `ec25335`.
+
+- `/RESETCONFIG`, puis "Garder ma configuration Datacron actuelle" sur la page de
+  réinstallation : la page s'ouvre avec Réinitialiser présélectionné, ce qui est bien
+  le switch qui amorce le choix sans le faire, et `VAULT.yaml` est ressorti identique
+  au bit près (`88f8f004...`, avant et après).
+- Un chemin de vault contenant un guillemet double, livré par le vault enregistré
+  d'une installation précédente faute de pouvoir passer par une ligne de commande :
+  la page de sélection de dossier le refuse avant que le contrôle propre à Datacron
+  ne s'exécute, avec le message d'Inno Setup qui énumère les caractères interdits
+  dans un nom de dossier. Rien n'a été installé. Le `VaultQuoteRejected` de Datacron
+  est donc un filet pour un chemin qui ne passe pas par cette page, et aucune voie
+  observée jusqu'ici ne l'atteint.
+
 Pour une image Windows Sandbox vierge, utilise l'installateur candidat et le
 vérificateur autonome de l'artefact `windows-sandbox-inputs` du workflow :
 
