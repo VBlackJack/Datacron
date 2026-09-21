@@ -505,11 +505,16 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
     async def set_frontmatter(
         rel_path: str,
         ctx: Context[Any, Any],
-        confidence: str | None = None,
+        # The handler runs the same enum check create_note_ai declares, so a bare
+        # str published an input schema that accepts what the call then refuses.
+        # A model told "a fact's lifecycle changed: verified today" guesses
+        # confidence="verified" and loses a round trip to a ValueError the schema
+        # could have prevented.
+        confidence: MemoryConfidence | None = None,
         last_verified: str | None = None,
         supersedes: list[str] | None = None,
         rejected: list[str] | None = None,
-        origin: str | None = None,
+        origin: MemoryOrigin | None = None,
         valid_from: str | None = None,
         invalid_at: str | None = None,
         invalidated_by: str | None = None,

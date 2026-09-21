@@ -635,3 +635,31 @@ async def test_follow_up_refuses_invalid_offsets_with_a_typed_error(
     assert str(offset) in result["error"]["message"]
     assert "offset" in result["error"]["message"]
     assert result["error"]["next_action"]
+
+
+async def test_a_record_names_the_note_it_was_found_on(memory_app: DatacronApp) -> None:
+    """The only path inside a record is the one whoever prepared it typed.
+
+    Records are matched by target_id, and target_path is stored verbatim and
+    never re-checked, so a rename that preserves the ULID - which
+    apply_organization_manifest performs by design - leaves every record
+    pointing at a file that no longer exists. A caller acting on target_path
+    then writes to a path that is gone, or reports a commitment against the
+    wrong note.
+    """
+    app = memory_app
+    prepared = await _call(app, "prepare_follow_up", records=[_record(app)])
+    written = await _call(app, "append_journal", **prepared["plans"][0]["arguments"])
+    assert written["indexed"]
+
+    renamed = app.vault_root / "person-renamed.md"
+    (app.vault_root / "person.md").rename(renamed)
+
+    state = await _call(app, "get_follow_up", note_paths=["person-renamed.md"])
+
+    assert state["returned"] == 1
+    row = state["records"][0]
+    assert row["note_rel_path"] == "person-renamed.md"
+    assert row["record"]["target_path"] == "person.md", (
+        "the stored path is what it was; the point is that the row also says where the note is"
+    )

@@ -347,6 +347,15 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- `set_frontmatter` publishes the same enums for `origin` and `confidence` that its handler
+  enforces. They were declared as free-form strings while the call ran the identical check
+  `create_note_ai` declares, so a model told "a fact's lifecycle changed: verified today"
+  guessed `confidence="verified"` and lost a round trip to a refusal the schema could have
+  prevented.
+- Every `get_follow_up` row names the note it was found on. Records are matched by identity,
+  and the only path inside one is `target_path`, stored verbatim from whoever prepared it and
+  never re-checked; a rename that preserves the ULID, which `apply_organization_manifest`
+  performs by design, left every record pointing at a file that no longer exists.
 - A batch write against an unreachable volume refuses instead of spinning. The ancestor walk
   in `_ensure_directory_durable` had no termination guard, and a filesystem anchor is its own
   parent; `Path.exists()` swallows every OSError and answers False, so a removed drive letter
