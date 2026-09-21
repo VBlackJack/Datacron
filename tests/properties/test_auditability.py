@@ -19,6 +19,7 @@ import json
 import tempfile
 from itertools import pairwise
 from pathlib import Path
+from typing import Final
 
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -55,6 +56,13 @@ _INLINE_TEXT = st.text(
     max_size=32,
 ).filter(lambda value: bool(value.strip()))
 _SUPPRESS_FIXTURE_CHECK = [HealthCheck.function_scoped_fixture]
+# These three ran one or two draws each, so they were advertised as
+# properties and behaved as randomly-seeded fixtures: a content shape that
+# breaks the journal had a couple of chances to appear. The neighbouring
+# durable-write properties use 5 to 20. The fault-point one is parametrized
+# over every injection point, so its budget multiplies by that many runs.
+_EXAMPLES: Final[int] = 12
+_FAULT_EXAMPLES: Final[int] = 4
 
 
 def _fresh_vault(tmp_path: Path) -> Path:
@@ -88,7 +96,7 @@ async def _open_app(vault: Path) -> tuple[DatacronApp, SQLiteFTS5Store]:
     return build_app(settings=app_settings, vault_root=vault, store=store), store
 
 
-@settings(max_examples=2, deadline=None, suppress_health_check=_SUPPRESS_FIXTURE_CHECK)
+@settings(max_examples=_EXAMPLES, deadline=None, suppress_health_check=_SUPPRESS_FIXTURE_CHECK)
 @given(initial=_INLINE_TEXT, replacement=_INLINE_TEXT, journal_entry=_INLINE_TEXT)
 async def test_prop_oplog_completeness(
     tmp_path: Path,
@@ -209,7 +217,7 @@ async def test_prop_oplog_completeness(
     assert all(json.loads(line) for line in raw_log.splitlines())
 
 
-@settings(max_examples=2, deadline=None, suppress_health_check=_SUPPRESS_FIXTURE_CHECK)
+@settings(max_examples=_EXAMPLES, deadline=None, suppress_health_check=_SUPPRESS_FIXTURE_CHECK)
 @given(entry=_INLINE_TEXT)
 async def test_prop_revert_correctness(tmp_path: Path, entry: str) -> None:
     """Revert restores exact historical bytes and journals a reversible revert."""
@@ -276,7 +284,9 @@ async def test_prop_revert_correctness(tmp_path: Path, entry: str) -> None:
 
 
 @pytest.mark.parametrize("fault_point", list(OPERATION_FAULT_POINTS))
-@settings(max_examples=1, deadline=None, suppress_health_check=_SUPPRESS_FIXTURE_CHECK)
+@settings(
+    max_examples=_FAULT_EXAMPLES, deadline=None, suppress_health_check=_SUPPRESS_FIXTURE_CHECK
+)
 @given(old_suffix=_INLINE_TEXT, new_suffix=_INLINE_TEXT)
 async def test_prop_oplog_durability(
     tmp_path: Path,

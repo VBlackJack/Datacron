@@ -19,9 +19,32 @@ from pathlib import Path
 
 _DOC_FILES = frozenset({"README.md", "README.fr.md", "CHANGELOG.md"})
 _DOC_ROOTS = ("docs/fr/", "docs/en/")
+_CLASSIFIER_PREFIX = "Programming Language :: Python :: 3."
+_PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
+
+
+def supported_python_versions() -> list[str]:
+    """Read the interpreters this package claims to support from its own metadata.
+
+    The list was written out a second time here, and this script is what the
+    workflow actually tests with. Adding an interpreter means editing the
+    classifiers, which is the published-metadata side a support request is
+    checked against; the matrix would have stayed where it was, and the new
+    version would be advertised without ever being run.
+    """
+    versions: list[str] = []
+    for line in _PYPROJECT.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip().strip(",").strip('"')
+        if stripped.startswith(_CLASSIFIER_PREFIX):
+            versions.append(stripped.removeprefix("Programming Language :: Python :: "))
+    if not versions:
+        raise RuntimeError(f"no Python classifiers found in {_PYPROJECT}")
+    return versions
+
+
 _FULL_MATRIX = {
     "os": ["ubuntu-latest", "windows-latest"],
-    "python-version": ["3.11", "3.12", "3.13"],
+    "python-version": supported_python_versions(),
 }
 _DOC_MATRIX = {"os": ["ubuntu-latest"], "python-version": ["3.12"]}
 

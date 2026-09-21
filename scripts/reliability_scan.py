@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -70,6 +71,18 @@ def main() -> int:
                 mode="enforced",
             )
         )
+        if scan.notes_count == 0:
+            # The scan only refuses a path that is not a directory, so an
+            # unmounted network vault whose placeholder folder exists, a fresh
+            # directory or a path mistyped one level off all scan clean: no
+            # notes, no violations, and a green enforcement that measured
+            # nothing. A gate cannot tell that from a vault in good order.
+            print(
+                f"No notes were scanned under {args.vault_root}; "
+                "refusing to enforce against an empty scan.",
+                file=sys.stderr,
+            )
+            return 1
         return 0 if comparison.passed and not scan.parse_errors else 1
     finally:
         shutdown_logging()

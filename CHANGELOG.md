@@ -347,6 +347,28 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- The CI matrix is read from the classifiers rather than written out a second time. Adding an
+  interpreter means editing the published metadata, which a support request is checked
+  against; the matrix would have stayed where it was and the new version would have been
+  advertised without ever being run.
+- `scripts/reliability_scan.py --enforce` refuses a scan that found no notes. The scan only
+  rejects a path that is not a directory, so an unmounted network vault whose placeholder
+  folder exists, a fresh directory or a path mistyped one level off all came back clean: no
+  notes, no violations and a green enforcement that measured nothing.
+- Claude Desktop's config is replaced durably and with a copy of what was there, like every
+  other third-party config this product writes. The rename kept the old file if the process
+  died mid-write, but nothing flushed the file or its directory, which is the shape that
+  leaves a zero-length config after a power loss.
+- A refused review bundle no longer blocks every retry. Validation reads the manifest from the
+  output directory, so it necessarily runs after that directory exists, and a refusal left
+  `payloads/` and `manifest.json` behind while the guard above refuses to reuse an existing
+  output directory. The directory this call created is removed when it fails.
+- A dead Python-version guard is gone from the MCP e2e module. The branch was unreachable
+  under `requires-python`, and `pytest.skip` outside a test raises rather than skips, so the
+  one day it fired the module would have errored during collection instead of skipping.
+- The auditability properties draw 12 examples instead of one or two. They were advertised as
+  properties and behaved as randomly-seeded fixtures, while the durable-write properties
+  beside them use 5 to 20.
 - The build backend that produces the published wheel has a ceiling. Every other moving part
   of the release is pinned - uv, every Action by SHA, the publisher by version and hash, all
   runtime packages in the lock - while the one component that writes the bytes uploaded to

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import json
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -339,6 +340,47 @@ def _write_workbench(
     if total > options.max_export_bytes:
         raise ValueError("Preview exceeds max_export_bytes")
     output.mkdir(parents=True, exist_ok=False)
+    try:
+        return _write_bundle_contents(
+            vault=vault,
+            output=output,
+            options=options,
+            settings=settings,
+            notes=notes,
+            changes=changes,
+            manifest=manifest,
+            audit=audit,
+            before=before,
+            projected=projected,
+            total=total,
+            recipe=recipe,
+        )
+    except BaseException:
+        # Validation runs after the manifest exists, because it reads it from
+        # there. A refusal used to leave payloads/ and manifest.json behind,
+        # and the guard above refuses to reuse an existing output directory, so
+        # every retry was blocked until someone deleted a half-written bundle
+        # by hand. This directory was created here, one line above.
+        shutil.rmtree(output, ignore_errors=True)
+        raise
+
+
+def _write_bundle_contents(
+    *,
+    vault: Path,
+    output: Path,
+    options: LibraryOptions,
+    settings: Settings,
+    notes: list[Note],
+    changes: dict[str, str],
+    manifest: dict[str, Any],
+    audit: LibraryAudit,
+    before: dict[str, str],
+    projected: dict[str, str],
+    total: int,
+    recipe: EditorialRecipe | None,
+) -> dict[str, Any]:
+    """Write every file of the review bundle into an output directory that exists."""
     for raw in set(changes.values()):
         data = raw.encode("utf-8")
         _write_new(output / PAYLOADS_DIRECTORY / (sha256_bytes(data) + ".md"), data)
