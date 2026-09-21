@@ -416,3 +416,75 @@ def test_code_split_preserves_fence_and_language() -> None:
     for chunk in chunks:
         assert chunk.content.startswith("```python\n")
         assert chunk.content.endswith("\n```")
+
+
+class TestChunkerCoverageP3:
+    """Three audit findings where content or a link left the index in silence."""
+
+    def test_every_non_blank_source_line_belongs_to_a_chunk(self) -> None:
+        """A line mistletoe consumes without emitting a block must still be indexed.
+
+        A link reference definition at the top of a note is swallowed into
+        doc.footnotes and emits no token, so the first block started at line 3
+        and lines 1 and 2 belonged to no chunk at all. The URL was absent from
+        the index, and a search for it returned a clean empty result: exactly
+        the false absence the memory protocol tells an agent not to report.
+        """
+        content = "[tracker]: https://example.com/issues\n\n# Title\n\nBody.\n"
+        chunks = _budget_chunks(content, max_tokens=1024)
+
+        covered: set[int] = set()
+        for chunk in chunks:
+            covered.update(range(chunk.line_start, chunk.line_end + 1))
+        expected = {
+            number for number, line in enumerate(content.splitlines(), start=1) if line.strip()
+        }
+
+        assert expected <= covered
+        assert any("example.com/issues" in chunk.content for chunk in chunks)
+
+    def test_a_wikilink_survives_the_cut_of_an_over_long_line(self) -> None:
+        """Extraction runs per segment, so a link split in half matches nothing.
+
+        Neither piece holds a complete ``[[...]]``, no Wikilink row is written,
+        and the note is missing from the backlinks of a note it does link to.
+        Nothing reports an error.
+        """
+        content = "x" * 60 + "[[Projet Atlas]]" + " tail\n"
+        chunks = _budget_chunks(content, max_tokens=16)  # 64-char budget
+
+        assert len(chunks) > 1, "the line must actually be split for this to measure anything"
+        assert [target for chunk in chunks for target in chunk.wikilinks_out] == ["Projet Atlas"]
+
+    def test_a_link_longer_than_a_whole_piece_still_terminates(self) -> None:
+        """The cut cannot move back past the start of its own piece.
+
+        ADR-016 keeps this case as an accepted limit; what matters here is that
+        it splits rather than looping forever.
+        """
+        content = "[[" + "a" * 300 + "]]\n"
+        chunks = _budget_chunks(content, max_tokens=16)  # 64-char budget
+
+        assert len(chunks) > 1
+        assert all(len(chunk.content) <= 64 for chunk in chunks)
+
+    def test_an_over_long_table_row_stays_inside_the_budget(self) -> None:
+        """One pasted cell must not produce a chunk the whole pipeline is not sized for.
+
+        Code blocks brute-split an over-long body line; tables did not, so the
+        first row of a group was emitted whatever its size.
+        """
+        row = "| a | " + "y" * 300 + " |"
+        content = f"| h1 | h2 |\n| --- | --- |\n{row}\n"
+        chunks = _budget_chunks(content, max_tokens=16)  # 64-char budget
+
+        assert len(chunks) > 1
+        assert all(len(chunk.content) <= 64 for chunk in chunks)
+        assert all(chunk.content.startswith("| h1 | h2 |\n| --- | --- |") for chunk in chunks)
+
+    def test_a_header_only_table_over_the_budget_is_split(self) -> None:
+        """Two lines and no data row used to return unsplit whatever their size."""
+        content = "| " + "h" * 200 + " |\n| --- |\n"
+        chunks = _budget_chunks(content, max_tokens=16)  # 64-char budget
+
+        assert all(len(chunk.content) <= 64 for chunk in chunks)

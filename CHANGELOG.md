@@ -347,6 +347,32 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- Content before the first Markdown block a note emits is indexed. Every chunk range is
+  derived from a block's line number, so lines mistletoe consumes without emitting a token
+  belonged to no chunk when they sat before the first one. A link reference definition at the
+  top of a note is exactly that: the URL was absent from the index, and a search for it
+  returned a clean empty result rather than an error - the false absence the memory protocol
+  tells an agent not to report. Lines consumed in the middle of a note were already covered.
+- A wikilink is no longer destroyed by the cut of an over-long line. Targets are extracted per
+  segment, so a `[[target]]` straddling a brute-split boundary matched nothing in either half,
+  no link row was written, and the note vanished from the backlinks of a note it does link to,
+  silently. A cut now moves back before an unclosed `[[` inside a bounded window. ADR-016 said
+  the content stays "fully indexed and correct", which was true of the text and false of the
+  link graph; it now records the consequence and the one case still outside it.
+- An over-long table row respects the chunk budget. Code blocks brute-split an over-long body
+  line and tables did not, so one pasted cell produced a chunk half again over the budget every
+  downstream consumer is sized against, against a class docstring promising the opposite. A
+  header and separator with no data row is split too, instead of being returned whole.
+- The atomic reindex refuses to run over a rollback journal. Nothing sets a journal mode, so
+  the store runs in SQLite's default delete mode and writes `<db>-journal`; the offline guard
+  looked for `-wal` and `-shm`, which this configuration never creates. It could only ever see
+  files that do not exist, so a concurrent writer and a hot journal left by a crashed one both
+  passed, and a brand new database was published beside a journal from an unrelated
+  transaction for the next open to replay into it.
+- A SQLite built without FTS5 is named instead of leaking. FTS5 is a compile-time option, so it
+  is a real requirement of this distribution that no package metadata can declare and nothing
+  checked: the install succeeded, the server started, and the first search failed with a bare
+  `no such module: fts5` through a tool response, which nothing connects to a build flag.
 - The Windows installer compiles again. Inno Setup's Pascal Script has no implicit forward
   declaration, and moving the vault-path normalization into `PrepareToInstall` left it calling
   `NormalizePathEntry` before that function was declared, so the compiler answered

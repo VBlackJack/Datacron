@@ -330,6 +330,13 @@ chunker backlog item.
 Rejected: sub-line character offsets in the frozen `Chunk` model (disproportionate for a rare
 edge case).
 
+"Fully indexed and correct" was true of the text and false of the link graph. Wikilinks are
+extracted per segment, so a `[[target]]` straddling a cut matched nothing in either piece and
+the note vanished from its own backlinks with no error anywhere. A cut now moves back before an
+unclosed `[[` within a bounded window, which keeps the span whole in the next piece. A link
+longer than a whole piece is still cut, because moving the cut further would not terminate;
+that case remains inside the accepted limit above.
+
 ### ADR-017 - Standalone installer (.exe) alongside PyPI/pipx
 Revises ADR-011. In addition to PyPI/pipx distribution (the primary channel, still recommended
 for Python environments), Datacron ships a **standalone executable** built with PyInstaller

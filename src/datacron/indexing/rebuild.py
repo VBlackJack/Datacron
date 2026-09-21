@@ -318,20 +318,31 @@ def _assert_no_sqlite_sidecars(db_path: Path) -> None:
     if active:
         rendered = ", ".join(path.name for path in active)
         raise IndexRebuildError(
-            f"atomic reindex requires an offline index without WAL/SHM sidecars; found {rendered}"
+            f"atomic reindex requires an offline index without sidecars; found {rendered}"
         )
 
 
-def _sqlite_sidecars(db_path: Path) -> tuple[Path, Path]:
+def _sqlite_sidecars(db_path: Path) -> tuple[Path, ...]:
+    """Every file SQLite may keep beside the database, whatever the journal mode.
+
+    The guard used to list only ``-wal`` and ``-shm``, which nothing here
+    creates: no PRAGMA sets a journal mode, so the store runs in the default
+    delete mode and writes ``-journal`` for the length of each transaction. The
+    check could therefore only ever see files this configuration does not
+    produce, and passed over a concurrent writer and over a hot rollback
+    journal left by a crashed one - after which a brand new database is put in
+    place beside a journal belonging to an unrelated transaction.
+    """
     return (
         db_path.with_name(f"{db_path.name}-wal"),
         db_path.with_name(f"{db_path.name}-shm"),
+        db_path.with_name(f"{db_path.name}-journal"),
     )
 
 
 def _cleanup_sqlite_family(db_path: Path) -> None:
     db_path.unlink(missing_ok=True)
-    for sidecar in (*_sqlite_sidecars(db_path), db_path.with_name(f"{db_path.name}-journal")):
+    for sidecar in _sqlite_sidecars(db_path):
         sidecar.unlink(missing_ok=True)
 
 

@@ -412,3 +412,29 @@ async def test_note_paths_does_not_stat_the_files_it_enumerates(
     )
 
     assert len(await reader.note_paths()) == 5
+
+
+async def test_a_rollback_journal_blocks_the_atomic_rebuild(tmp_path: Path) -> None:
+    """The offline guard listed the sidecars this configuration never creates.
+
+    Nothing sets a journal mode, so the store runs in SQLite's default delete
+    mode: a write transaction writes ``<db>-journal`` and no ``-wal`` or
+    ``-shm`` ever appears. The guard could therefore only ever see files that
+    do not exist here, and passed over both a concurrent writer and a hot
+    rollback journal left by a crashed one - after which a brand new database
+    is published beside a journal belonging to an unrelated transaction, and
+    the next open replays those pages into it.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "note.md").write_bytes(_serialized(_NOTE_A, "Note", "# Note\n\nBody.\n").encode())
+    await rebuild_index_atomic(vault, _settings(vault), VaultConfig())
+
+    db_path = sidecar_index_db(vault)
+    journal = db_path.with_name(f"{db_path.name}-journal")
+    journal.write_bytes(b"not a real journal, but the guard must not step over it")
+
+    with pytest.raises(IndexRebuildError, match="offline index"):
+        await rebuild_index_atomic(vault, _settings(vault), VaultConfig())
+
+    assert journal.exists(), "refusing must not delete the evidence it refused on"

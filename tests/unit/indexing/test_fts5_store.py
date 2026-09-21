@@ -32,6 +32,7 @@ from datacron.core.temporal import TemporalMeta
 from datacron.indexing.fts5_store import (
     _DELETE_NOTE_FRONTMATTER_SQL,
     _DELETE_SUPERSEDED_FRONTMATTER_SQL,
+    Fts5UnavailableError,
     SQLiteFTS5Store,
 )
 
@@ -2084,3 +2085,49 @@ class TestWikilinkSourceStreaming:
             assert set(fetched) == {whole[0].chunk_id}
         finally:
             await store.close()
+
+
+class TestFts5RequirementP3:
+    """FTS5 is a compile-time SQLite option, so the package cannot declare it."""
+
+    async def test_a_sqlite_without_fts5_is_named_rather_than_leaked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The raw OperationalError told the user nothing they could act on.
+
+        It surfaced through an MCP tool response as ``no such module: fts5``,
+        with nothing connecting it to a build flag. README and setup.md present
+        FTS5 as a feature, never as something to check.
+        """
+        store = SQLiteFTS5Store()
+        original = aiosqlite.Connection.execute
+
+        async def refuse_fts5(self: aiosqlite.Connection, sql: str, *args: object) -> object:
+            if "USING fts5" in sql:
+                raise sqlite3.OperationalError("no such module: fts5")
+            return await original(self, sql, *args)
+
+        monkeypatch.setattr(aiosqlite.Connection, "execute", refuse_fts5)
+
+        with pytest.raises(Fts5UnavailableError) as caught:
+            await store.open(tmp_path / "index.db")
+
+        assert "ENABLE_FTS5" in str(caught.value)
+        assert isinstance(caught.value.__cause__, sqlite3.OperationalError)
+
+    async def test_any_other_operational_error_is_left_alone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Translating every failure here would hide the real one."""
+        store = SQLiteFTS5Store()
+        original = aiosqlite.Connection.execute
+
+        async def refuse_differently(self: aiosqlite.Connection, sql: str, *args: object) -> object:
+            if "USING fts5" in sql:
+                raise sqlite3.OperationalError("database or disk is full")
+            return await original(self, sql, *args)
+
+        monkeypatch.setattr(aiosqlite.Connection, "execute", refuse_differently)
+
+        with pytest.raises(sqlite3.OperationalError, match="disk is full"):
+            await store.open(tmp_path / "index.db")
