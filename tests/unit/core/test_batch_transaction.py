@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -3219,7 +3218,9 @@ async def test_recovery_reclassifies_every_batch_it_rolls_forward(tmp_path: Path
     )
 
 
-def test_an_unreachable_volume_refuses_instead_of_spinning(tmp_path: Path) -> None:
+def test_an_unreachable_volume_refuses_instead_of_spinning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The ancestor walk had no termination guard and the anchor is its own parent.
 
     Path.exists() swallows every OSError and answers False, so a removed drive
@@ -3228,12 +3229,17 @@ def test_an_unreachable_volume_refuses_instead_of_spinning(tmp_path: Path) -> No
     at full CPU until the list exhausted memory. Four batch write paths reach
     this, and the confinement check upstream does not stop it: it breaks out of
     its own walk on the first missing component and returns normally.
+
+    The condition is what a dropped volume produces, not a path that happens to
+    be absent: exists() answering False for the leaf and for every ancestor,
+    the anchor included. A removed drive letter does exactly that on Windows;
+    on Linux the root always exists, so the state is reached here by making
+    exists() answer the way a dropped mount makes it answer. A first version of
+    this test picked a Linux path it expected to be missing, which walked up to
+    a /proc that does exist and failed there instead.
     """
-    unreachable = Path("Q:/datacron/stage") if sys.platform == "win32" else Path("/proc/x/y/z")
-    anchor = unreachable
-    while anchor.parent != anchor:
-        anchor = anchor.parent
-    assert not anchor.exists() or sys.platform != "win32"
+    monkeypatch.setattr(Path, "exists", lambda _self: False)
+    unreachable = tmp_path / "datacron" / "stage"
 
     started = time.monotonic()
     with pytest.raises(OperationLogError, match="unreachable up to the filesystem root"):
