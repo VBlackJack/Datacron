@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0921.00] - 2026-09-21
+
 ### Security
 
 - A section heading is vault-controlled metadata, and `contradiction_scan` returned it
@@ -16,6 +18,12 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   that payload that did not go through the sanitizer, so a hostile heading reached the client
   verbatim. Fixed on 2026-09-15 and recorded here now: a security fix that is not in the
   changelog is one nobody downstream can act on.
+- The locked `anyio` moves from 4.14.1 to 4.14.2, the release named as fixed by
+  CVE-2026-63374, CVE-2026-64847 and CVE-2026-63349. It is a transitive dependency, so only
+  the lockfile changes and it moves to the exact version the advisories name rather than to
+  the newest release, which keeps an urgent fix separable from a deliberate dependency
+  refresh. The dependency scan went from green to red between two runs on unchanged code,
+  because the advisories were published in between.
 
 ### Added
 
