@@ -340,9 +340,9 @@ that case remains inside the accepted limit above.
 ### ADR-017 - Standalone installer (.exe) alongside PyPI/pipx
 Revises ADR-011. In addition to PyPI/pipx distribution (the primary channel, still recommended
 for Python environments), Datacron ships a **standalone executable** built with PyInstaller
-(`--onefile`) for users without Python. The `datacron setup` command (guided path: init + index
-+ client config, with location choices) stays the installation entry point; the binary bundles
-it. Reproducible build via `scripts/build_installer.ps1` (Windows) and `scripts/build_installer.sh`
+(`--onefile`) for users without Python. The `datacron setup` command (guided path: init,
+index and client config, with location choices) stays the installation entry point; the
+binary bundles it. Reproducible build via `scripts/build_installer.ps1` (Windows) and `scripts/build_installer.sh`
 (Unix), behind the optional `[build]` dependency. Packaged reliability evidence
 (`reliability_evidence.json`) is included via `--collect-data`.
 Accepted cost: multi-OS builds and size (~22 MB). `dist/` and `build/` stay out of version

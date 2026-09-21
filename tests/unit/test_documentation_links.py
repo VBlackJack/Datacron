@@ -85,22 +85,52 @@ def _markdown_files() -> Iterator[Path]:
             yield from sorted(root.rglob("*.md"))
 
 
-def _anchor_links(path: Path) -> Iterator[tuple[int, str, str]]:
+_URI_SCHEME: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+_BLOB_BASE: Final[str] = "https://github.com/VBlackJack/Datacron/blob/main/"
+
+
+def _internal_links(path: Path) -> Iterator[tuple[int, str, str]]:
+    """Yield every internal link, whether or not it carries an anchor.
+
+    Discarding the anchorless ones left 266 published links unchecked, which is
+    most of them: a renamed or moved page broke every plain link to it and the
+    guard stayed green.
+    """
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         for target in _MARKDOWN_LINK.findall(line):
-            if target.startswith(("http://", "https://", "mailto:")) or "#" not in target:
+            # The READMEs are rendered verbatim as the PyPI project page, which
+            # does not rewrite relative targets, so their links are absolute
+            # GitHub URLs. They are still repository paths and still checked.
+            if target.startswith(_BLOB_BASE):
+                page, _, anchor = target[len(_BLOB_BASE) :].partition("#")
+                yield number, _from_repo_root(path, page), anchor
+                continue
+            # Any other URI scheme, not a fixed list: the install instructions
+            # carry lmstudio:// deep links, and a new client brings its own.
+            if target.startswith("#") or _URI_SCHEME.match(target):
                 continue
             page, _, anchor = target.partition("#")
             yield number, page, anchor
 
 
+def _from_repo_root(path: Path, page: str) -> str:
+    """Express a repository-root-relative page as one relative to ``path``."""
+    if not page:
+        return ""
+    import os
+
+    return os.path.relpath(_REPO_ROOT / page, path.parent).replace("\\", "/")
+
+
 def _dead_anchors(path: Path) -> list[str]:
     findings: list[str] = []
     relative = path.relative_to(_REPO_ROOT).as_posix()
-    for number, page, anchor in _anchor_links(path):
+    for number, page, anchor in _internal_links(path):
         target = path if not page else (path.parent / page).resolve()
         if not target.is_file():
             findings.append(f"{relative}:{number}: {page} does not exist")
+            continue
+        if not anchor:
             continue
         if anchor not in heading_anchors(target.read_text(encoding="utf-8")):
             findings.append(
@@ -141,7 +171,11 @@ def test_link_scan_reaches_both_languages_and_the_readmes() -> None:
     assert any(path.parent == _REPO_ROOT / "docs" / "fr" for path in scanned)
     assert any(path.parent == _REPO_ROOT / "docs" / "en" for path in scanned)
     assert _REPO_ROOT / "README.fr.md" in scanned
-    assert any(list(_anchor_links(path)) for path in scanned), "no anchor link was scanned"
+    links = [link for path in scanned for link in _internal_links(path)]
+    assert any(anchor for _number, _page, anchor in links), "no anchor link was scanned"
+    assert sum(1 for _number, _page, anchor in links if not anchor) > 100, (
+        "the anchorless links are the majority and must be reached"
+    )
 
 
 def test_every_internal_anchor_targets_an_existing_heading() -> None:
@@ -159,3 +193,37 @@ def test_every_documentation_page_is_listed_by_its_index(directory: Path) -> Non
         if page.name != _INDEX_PAGE and page.name not in listed
     )
     assert not orphans, f"docs/{directory.name}/index.md does not list: {orphans}"
+
+
+_LICENCE_HEADER: Final[tuple[str, ...]] = (
+    "# Copyright 2026 Julien Bombled",
+    "#",
+    '# Licensed under the Apache License, Version 2.0 (the "License");',
+    "# you may not use this file except in compliance with the License.",
+    "# You may obtain a copy of the License at",
+    "#",
+    "#     http://www.apache.org/licenses/LICENSE-2.0",
+    "#",
+    "# Unless required by applicable law or agreed to in writing, software",
+    '# distributed under the License is distributed on an "AS IS" BASIS,',
+    "# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.",
+    "# See the License for the specific language governing permissions and",
+    "# limitations under the License.",
+)
+
+
+def test_every_shipped_module_carries_the_whole_licence_header() -> None:
+    """Nine files stopped after the licence URL, dropping the disclaimer.
+
+    The header is the one legal statement the package makes about itself, and
+    it drifted silently because nothing compared it: three files had lost the
+    blank comment lines as well, so the copyright, the grant and the URL had
+    been run together. Comparing the whole block rather than looking for one
+    phrase is what keeps the next paragraph from going the same way.
+    """
+    offenders: list[str] = []
+    for path in sorted((_REPO_ROOT / "src").rglob("*.py")):
+        lines = path.read_text(encoding="utf-8").splitlines()[: len(_LICENCE_HEADER)]
+        if tuple(lines) != _LICENCE_HEADER:
+            offenders.append(path.relative_to(_REPO_ROOT).as_posix())
+    assert not offenders, "incomplete or altered licence header:\n" + "\n".join(offenders)

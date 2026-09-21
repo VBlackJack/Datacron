@@ -8,7 +8,7 @@
 [![MCP: local stdio](https://img.shields.io/badge/MCP-local_stdio-purple)](#mcp-tools)
 [![CI](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml/badge.svg)](https://github.com/VBlackJack/datacron/actions/workflows/ci.yml)
 
-**Français** | [English](README.md)
+**Français** | [English](https://github.com/VBlackJack/Datacron/blob/main/README.md)
 
 ## À quoi sert Datacron ?
 
@@ -19,8 +19,8 @@ Les notes restent utilisables indépendamment du client choisi.
 **Bibliothèque hors ligne :** préparez une
 bibliothèque Markdown consultable dans Obsidian ou un lecteur local, avec accueil et
 index thématiques. Révisez les réécritures, découpages et archives proposés avant de
-modifier le vault source. Voir le [guide hors ligne](docs/fr/human-library.md) et les
-[notes de version 2026.0913.02](docs/fr/offline-library-release-notes.md).
+modifier le vault source. Voir le [guide hors ligne](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/human-library.md) et les
+[notes de version 2026.0913.02](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/offline-library-release-notes.md).
 
 | Besoin | Exemple de demande à ton assistant |
 |---|---|
@@ -33,10 +33,10 @@ modifier le vault source. Voir le [guide hors ligne](docs/fr/human-library.md) e
 L'assistant orchestre ces demandes avec les outils disponibles et les droits accordés.
 Le protocole commun guide la lecture, l'enrichissement des fiches personnes et la vérification
 des écritures. Une identité ambiguë demande clarification ; une échéance enregistrée ne programme
-pas de rappel. [Découvrir le suivi quotidien](docs/fr/memory-discipline.md).
+pas de rappel. [Découvrir le suivi quotidien](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/memory-discipline.md).
 
 **Commencer :** [installer](#installation) · [première session](#première-session) ·
-[guide utilisateur](docs/fr/user-guide.md) · [référence MCP](#mcp-tools) ·
+[guide utilisateur](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/user-guide.md) · [référence MCP](#mcp-tools) ·
 [vie privée](#vie-privée-et-sécurité).
 
 ## Installation
@@ -47,7 +47,7 @@ Le plus simple sous Windows : télécharge `Datacron-Setup.exe` depuis la
 [dernière Release](https://github.com/VBlackJack/datacron/releases/latest), double-clique,
 et choisis ton vault. Aucun Python, aucun terminal, aucun droit administrateur ; Datacron
 s'enregistre automatiquement dans tes clients IA. Guide détaillé :
-[Installation sous Windows](docs/fr/installation-windows.md).
+[Installation sous Windows](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/installation-windows.md).
 
 ### Python : depuis PyPI
 
@@ -83,7 +83,7 @@ Prérequis runtime :
 2. Reconnecte Datacron dans ton client MCP pour charger les outils et les instructions. Le
    chat de Claude Desktop ne présente pas les instructions du serveur : colle la ligne de
    démarrage de session affichée par l'installation dans tes préférences Claude (voir
-   [setup](docs/fr/setup.md)).
+   [setup](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/setup.md)).
 3. Demande : "Retrouve les notes de mon projet et résume son état avec les sources."
 
 Pour les sessions de mémoire, `session_context` fournit un contexte borné et le protocole
@@ -95,7 +95,7 @@ Le serveur travaille localement. Ton client peut transmettre les extraits retour
 fournisseur de modèle : voir [vie privée et sécurité](#vie-privée-et-sécurité).
 
 Pour le contexte de session, les archives, la reprise des écritures et les évaluations,
-consulte [les parcours quotidiens](docs/fr/daily-workflows.md).
+consulte [les parcours quotidiens](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/daily-workflows.md).
 
 ## Démarrage rapide
 
@@ -106,7 +106,7 @@ enregistre Datacron partout :
 datacron setup            # interactif ; ajoute --yes pour tout par défaut
 ```
 
-Voir le [guide d'installation](docs/fr/setup.md) pour les options (`--client`, `--scope`,
+Voir le [guide d'installation](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/setup.md) pour les options (`--client`, `--scope`,
 écriture, durabilité). Ou étape par étape :
 
 ```bash
@@ -199,7 +199,7 @@ Variables d'environnement utiles :
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | budget token des résultats de recherche |
 | `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | intervalle minimal entre les sweeps repair-on-read ; `0` = chaque lecture |
 | `DATACRON_GET_NOTE_MAX_TOKENS` | `25000` | budget de `get_note(format="full")` |
-| `DATACRON_SESSION_CONTEXT_SECTIONS` | `{}` (aucune section) | objet JSON associant les notes aux chemins de titres des [extraits d'orientation](docs/fr/note-sections.md) |
+| `DATACRON_SESSION_CONTEXT_SECTIONS` | `{}` (aucune section) | objet JSON associant les notes aux chemins de titres des [extraits d'orientation](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/note-sections.md) |
 | `DATACRON_CHUNK_MAX_TOKENS` | `1024` | taille cible max des chunks |
 | `DATACRON_RIPGREP_PATH` | `rg` | binaire ripgrep |
 
@@ -221,7 +221,7 @@ datacron mcp serve --vault C:\Notes
 
 `datacron setup` peut aussi poser l'allowlist au niveau du poste (variable
 d'environnement utilisateur, opt-in) pour que tous les clients MCP en héritent ;
-défaut : `_memory`, `_drafts`, `_journal`. Voir le [guide d'installation](docs/fr/setup.md).
+défaut : `_memory`, `_drafts`, `_journal`. Voir le [guide d'installation](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/setup.md).
 
 Tools d'écriture disponibles :
 
@@ -451,27 +451,27 @@ datacron protocol uninstall --client all
 
 ## Documentation
 
-Sommaire complet : [docs/fr/index.md](docs/fr/index.md) | [English index](docs/en/index.md).
+Sommaire complet : [docs/fr/index.md](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/index.md) | [English index](https://github.com/VBlackJack/Datacron/blob/main/docs/en/index.md).
 
 Pour démarrer :
 
-- [Guide d'installation et de configuration](docs/fr/setup.md)
-- [Utiliser Datacron avec Ollama](docs/fr/ollama.md)
-- [Questions fréquentes](docs/fr/faq.md)
-- [Guide utilisateur](docs/fr/user-guide.md)
-- [Bibliothèque hors ligne et consolidation des notes](docs/fr/human-library.md)
-- [Mémoire quotidienne, personnes et engagements](docs/fr/memory-discipline.md)
+- [Guide d'installation et de configuration](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/setup.md)
+- [Utiliser Datacron avec Ollama](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/ollama.md)
+- [Questions fréquentes](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/faq.md)
+- [Guide utilisateur](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/user-guide.md)
+- [Bibliothèque hors ligne et consolidation des notes](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/human-library.md)
+- [Mémoire quotidienne, personnes et engagements](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/memory-discipline.md)
 
 Références techniques :
 
-- [Conventions du vault (SPEC)](docs/fr/spec.md)
-- [Organisation du vault](docs/fr/organization.md)
-- [Lire et réorganiser les sections](docs/fr/note-sections.md)
-- [Architecture et surface publique](docs/fr/architecture.md)
-- [Frontière de sécurité](docs/fr/security-boundary.md)
-- [Scrubber d'intégrité](docs/fr/integrity-scrubber.md)
-- [Santé opérationnelle et durabilité](docs/fr/operational-health.md)
-- [Contrat de fraîcheur](docs/fr/freshness-contract-v1.md)
+- [Conventions du vault (SPEC)](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/spec.md)
+- [Organisation du vault](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/organization.md)
+- [Lire et réorganiser les sections](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/note-sections.md)
+- [Architecture et surface publique](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/architecture.md)
+- [Frontière de sécurité](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/security-boundary.md)
+- [Scrubber d'intégrité](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/integrity-scrubber.md)
+- [Santé opérationnelle et durabilité](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/operational-health.md)
+- [Contrat de fraîcheur](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/freshness-contract-v1.md)
 
 ## Développement
 
@@ -489,6 +489,6 @@ pytest
 
 Copyright 2026 Julien Bombled.
 
-Licensed under the [Apache License, Version 2.0](LICENSE).
+Licensed under the [Apache License, Version 2.0](https://github.com/VBlackJack/Datacron/blob/main/LICENSE).
 
-[Écritures fiables et contrôles qualité](docs/fr/improvements.md)
+[Écritures fiables et contrôles qualité](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/improvements.md)

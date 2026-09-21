@@ -150,7 +150,8 @@ Datacron 2026.0714.00
   created:    2026-07-14T...
   notes:      312
   index:      built (312 notes, 1450 chunks)
-  log file:   /chemin/vers/vault/.datacron/logs/datacron-20260714.log
+  regex:      ripgrep (rg)
+  log file:   /chemin/vers/vault/.datacron/logs/datacron_20260714.log
 ```
 
 Si `initialized: no` apparaît, relance `datacron init`. Si `index: not built` ou `empty`,

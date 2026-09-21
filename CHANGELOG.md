@@ -9,6 +9,14 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Security
+
+- A section heading is vault-controlled metadata, and `contradiction_scan` returned it
+  unescaped. `header_path` on a candidate's source and target was the one metadata string in
+  that payload that did not go through the sanitizer, so a hostile heading reached the client
+  verbatim. Fixed on 2026-09-15 and recorded here now: a security fix that is not in the
+  changelog is one nobody downstream can act on.
+
 ### Added
 
 - `apply_organization_manifest` reports the progress of its post-commit reindex as MCP
@@ -347,6 +355,28 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- The documentation link guard checks every internal link, not only the ones with an anchor.
+  Anchorless links are the majority - 266 of them went unverified - so a renamed page broke
+  every plain link to it while the guard stayed green. It also resolves the absolute GitHub
+  URLs the READMEs now use, and skips any URI scheme rather than a fixed list of three.
+- The READMEs link absolutely. `README.md` is the PyPI long description and PyPI does not
+  rewrite relative targets, so 29 links per language resolved under `pypi.org/project/...`
+  and returned 404 on the page most new users see first.
+- Nine shipped modules had lost the warranty disclaimer from their licence header, and three
+  of those had lost the blank comment lines that separate its paragraphs. The whole block is
+  now compared, so the next paragraph cannot go the same way.
+- `datacron status` is documented as it prints: the log filename uses an underscore, as the
+  code has always produced, and the `regex:` line the command always emits is no longer
+  missing from the sample.
+- A wrapped line beginning with "+ " turned the middle of ADR-017 into a bullet list on
+  GitHub. Every page was scanned for the same trap; this was the only one.
+- The changelog no longer documents `datacron index --full`, a flag the CLI has never had,
+  and now records the 2026-09-15 fix that escapes a hostile section heading in
+  `contradiction_scan` candidate references. A security fix absent from the changelog is one
+  nobody downstream can act on.
+- `set_frontmatter` lists `archived` among the fields it changes, which it does change.
+- The `--vault` help sentence lives in one place. Both command groups mount into the same
+  CLI, so one command's help could drift away from itself.
 - The baseline's schema version is read back. It was stamped on every saved baseline and never
   checked, so a format change would have been absorbed by the model's defaults: a baseline
   written under a different shape loads with empty metrics, and no later run can regress
@@ -851,7 +881,7 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 ### Changed
 
 - The index reconcile pre-pass keeps only the identity and content hash of each note it
-  reads, then reads a changed note again when it commits it, so `datacron index --full` and
+  reads, then reads a changed note again when it commits it, so `datacron index` and
   `apply_organization_manifest` no longer hold every note of the vault in memory (a full pass
   over 2000 synthetic notes peaks at 2.4 MiB of traced allocations instead of 14.6 MiB, for
   about six percent more time). The progress counter now also advances during that
