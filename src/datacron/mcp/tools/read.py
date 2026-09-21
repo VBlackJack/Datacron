@@ -60,6 +60,10 @@ _VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map", "chunk"})
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
 _CHUNK_ID_SEPARATOR: Final[str] = "::"
+# Every admitted path is needed before the page can be cut, because
+# admission is decided in Python after the query. SQLite takes this as
+# its maximum row count.
+_ALL_NOTE_PATHS: Final[int] = 2**31 - 1
 _MAX_HEADING_PATH_DEPTH: Final[int] = 6
 
 
@@ -203,22 +207,18 @@ async def _list_notes_from_index(
     normalized_folder = None if relative_folder.name == "" else relative_folder.as_posix()
     try:
         repair = await _repair_index_on_read(app)
-        _, indexed_total = await app.store.list_note_paths(
+        # One call, not two. The first asked for a single row purely to learn
+        # the total and the second then asked for that many, so every listing
+        # ran the selection twice - and on an index predating the frontmatter
+        # pair table, where the filter is applied in Python, that means parsing
+        # the frontmatter of every note in the vault twice.
+        rel_paths, _indexed_total = await app.store.list_note_paths(
             folder=normalized_folder,
             tags=tags or [],
             frontmatter=frontmatter,
-            limit=1,
+            limit=_ALL_NOTE_PATHS,
             offset=0,
         )
-        rel_paths: list[str] = []
-        if indexed_total:
-            rel_paths, _ = await app.store.list_note_paths(
-                folder=normalized_folder,
-                tags=tags or [],
-                frontmatter=frontmatter,
-                limit=indexed_total,
-                offset=0,
-            )
     except RuntimeError:
         return None
 
@@ -617,8 +617,7 @@ async def _resolve_chunk_payload(app: DatacronApp, id_or_path: str) -> dict[str,
         )
 
     note = await _read_note_by_rel_path(app, chunk.note_rel_path)
-    indexed_notes = await app.store.list_indexed_notes()
-    indexed_note = indexed_notes.get(chunk.note_rel_path)
+    indexed_note = await app.store.indexed_note(chunk.note_rel_path)
     if (
         indexed_note is None
         or indexed_note[0] != chunk.note_id

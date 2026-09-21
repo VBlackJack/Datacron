@@ -347,6 +347,22 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- `get_note` on a `chunk_id` reads one row instead of the whole notes table. Following a
+  search hit into its section is the documented way an agent reads a chunk, and it built a
+  dictionary of the entire vault to take exactly one key out of it.
+- `list_notes` runs its selection once. The first call asked for a single row purely to learn
+  the total and the second then asked for that many, so every listing selected twice - and on
+  an index predating the frontmatter pair table, where the filter runs in Python, that means
+  parsing the frontmatter of every note twice.
+- The organization apply no longer runs its whole-scope filesystem scan on the event loop.
+  `plan_organization` authorizes every directory and every candidate file, at least two stat
+  calls each, and every other tool call waited on it.
+- The sidecar identity check builds its index once per bundle rather than once per operation.
+  A bundle at the schema maximum rebuilt the normalized mapping 512 times and scanned it end
+  to end each time, over inputs that do not change during the loop.
+- ripgrep's diagnostic output is bounded. It is returned verbatim in the caller-visible error
+  message and was the one payload in the server with no cap, while stdout beside it is capped
+  and every other payload is sized against `max_result_tokens`.
 - The CI matrix is read from the classifiers rather than written out a second time. Adding an
   interpreter means editing the published metadata, which a support request is checked
   against; the matrix would have stayed where it was and the new version would have been

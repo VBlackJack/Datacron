@@ -558,6 +558,12 @@ FROM notes
 ORDER BY indexed_at ASC;
 """
 
+_INDEXED_NOTE_SQL: Final[str] = """
+SELECT note_id, content_hash
+FROM notes
+WHERE rel_path = ?;
+"""
+
 _GET_NOTE_REL_PATH_SQL: Final[str] = """
 SELECT rel_path
 FROM ulid_paths
@@ -1225,6 +1231,21 @@ class SQLiteFTS5Store:
         return {
             str(row["rel_path"]): (str(row["note_id"]), str(row["content_hash"])) for row in rows
         }
+
+    async def indexed_note(self, rel_path: str) -> tuple[str, str] | None:
+        """Return ``(note_id, content_hash)`` for one indexed note, or None.
+
+        Following a search hit into its section is the documented way an agent
+        reads a chunk, and it needed one row: the whole notes table was read
+        and turned into a dictionary of the entire vault so that exactly one
+        key could be taken out of it.
+        """
+        connection = self._require_connection()
+        async with connection.execute(_INDEXED_NOTE_SQL, (rel_path,)) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        return str(row["note_id"]), str(row["content_hash"])
 
     async def list_indexed_notes_with_mtime(self) -> dict[str, tuple[str, str, int | None]]:
         """Return ``rel_path -> (note_id, content_hash, fs_mtime_ns)`` for the index.

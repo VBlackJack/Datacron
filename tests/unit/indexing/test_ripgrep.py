@@ -117,7 +117,8 @@ class _PendingStderr:
         self.finished = False
         self.task: asyncio.Task[Any] | None = None
 
-    async def read(self) -> bytes:
+    async def read(self, limit: int = -1) -> bytes:
+        _ = limit
         self.task = asyncio.current_task()
         self.started.set()
         never: asyncio.Future[bytes] = asyncio.Future()

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import re
@@ -521,7 +522,12 @@ async def _finalize_committed_batch(
         )
         return payload, None, None
     try:
-        final_report_sha256 = _current_report_hash(app)
+        # plan_organization walks the whole scope and authorizes every directory
+        # and every candidate file, which is at least two stat calls each: a
+        # synchronous scan of the entire vault, run on the event loop, so every
+        # other tool call waited on it. It is the same work either way; it just
+        # does not have to happen here.
+        final_report_sha256 = await asyncio.to_thread(_current_report_hash, app)
     except Exception:
         final_report_sha256 = None
     if final_report_sha256 is None or not hmac.compare_digest(

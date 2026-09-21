@@ -1694,12 +1694,34 @@ def _derive_identity_sidecar_update(
     )
 
 
+def _sidecar_ids_by_note_id(
+    normalized: Mapping[str, tuple[str, str]],
+) -> dict[str, tuple[str, str]]:
+    """Index the sidecar by note id so a collision is a lookup, not a scan.
+
+    Two entries can carry the same id only if the sidecar is already
+    inconsistent; the first wins here, and the caller reports the path it
+    names, which is what the scan it replaces also did.
+    """
+    index: dict[str, tuple[str, str]] = {}
+    for mapped_key, (mapped_path, mapped_id) in normalized.items():
+        index.setdefault(mapped_id.casefold(), (mapped_key, mapped_path))
+    return index
+
+
 def _validate_sidecar_operation_identity(
     operation: OrganizationOperation,
-    sidecar_ids: Mapping[str, str],
+    normalized: Mapping[str, tuple[str, str]],
+    by_note_id: Mapping[str, tuple[str, str]],
 ) -> None:
-    """Prevent stale sidecar moves and vault-wide sidecar ID reuse."""
-    normalized = _normalized_sidecar_mappings(sidecar_ids)
+    """Prevent stale sidecar moves and vault-wide sidecar ID reuse.
+
+    The normalized mapping is built once for the whole bundle and the id index
+    with it. Each call used to rebuild the mapping from the sidecar and then
+    scan it end to end looking for a colliding id, so a bundle at the schema
+    maximum of 512 operations did both 512 times over every entry of the
+    vault's sidecar, for work whose inputs never change during the loop.
+    """
     target_key = _filesystem_path_key(PurePosixPath(operation.target).as_posix())
     if isinstance(operation, (CreateExactOperation, MoveReplaceExactOperation)) and (
         target_key in normalized
@@ -1713,18 +1735,18 @@ def _validate_sidecar_operation_identity(
         if isinstance(operation, MoveReplaceExactOperation)
         else None
     )
-    for mapped_key, (mapped_path, mapped_id) in normalized.items():
-        if mapped_id.casefold() != operation.result.id.casefold():
-            continue
-        if isinstance(operation, ReplaceExactOperation) and mapped_key == target_key:
-            continue
-        if isinstance(operation, MoveReplaceExactOperation) and mapped_key == source_key:
-            continue
-        raise OrganizationManifestError(
-            "result_id_collision",
-            f"Projected note id {operation.result.id!r} is reserved by sidecar path "
-            f"{mapped_path!r}",
-        )
+    reserved = by_note_id.get(operation.result.id.casefold())
+    if reserved is not None:
+        mapped_key, mapped_path = reserved
+        replaced_in_place = (
+            isinstance(operation, ReplaceExactOperation) and mapped_key == target_key
+        ) or (isinstance(operation, MoveReplaceExactOperation) and mapped_key == source_key)
+        if not replaced_in_place:
+            raise OrganizationManifestError(
+                "result_id_collision",
+                f"Projected note id {operation.result.id!r} is reserved by sidecar path "
+                f"{mapped_path!r}",
+            )
 
 
 def _validate_projected_identities(
@@ -1733,10 +1755,12 @@ def _validate_projected_identities(
     sidecar_ids: Mapping[str, str],
 ) -> dict[str, _ProjectedIdentity]:
     projected = dict(live)
+    normalized = _normalized_sidecar_mappings(sidecar_ids)
+    by_note_id = _sidecar_ids_by_note_id(normalized)
     result_items: list[_ProjectedIdentity] = []
     for resolved in operations:
         operation = resolved.operation
-        _validate_sidecar_operation_identity(operation, sidecar_ids)
+        _validate_sidecar_operation_identity(operation, normalized, by_note_id)
         normalized_target = normalize_vault_rel_path(operation.target)
         if isinstance(operation, (CreateExactOperation, MoveReplaceExactOperation)) and (
             normalized_target in projected
