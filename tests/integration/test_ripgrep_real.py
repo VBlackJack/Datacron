@@ -40,7 +40,7 @@ def test_real_rg_retains_default_hidden_directory_policy(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("needle\n", encoding="utf-8")
     result = subprocess.run(
-        _build_command(rg_path, "needle", tmp_path, glob, 20),
+        _build_command(rg_path, "needle", glob),
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -61,7 +61,7 @@ def test_real_rg_retains_default_ignore_policy(tmp_path: Path, rg_path: str) -> 
     (tmp_path / "ignored/probe.md").write_text("needle\n", encoding="utf-8")
     (tmp_path / "visible.md").write_text("needle\n", encoding="utf-8")
     result = subprocess.run(
-        _build_command(rg_path, "needle", tmp_path, None, 20),
+        _build_command(rg_path, "needle", None),
         cwd=tmp_path,
         capture_output=True,
         text=True,

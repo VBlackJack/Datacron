@@ -66,7 +66,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "httpx>=0.28,<1",
     "ruff>=0.13.2",
     "mypy>=1.11",
     "packaging>=24.0",

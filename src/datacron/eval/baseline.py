@@ -147,9 +147,22 @@ def save_baseline(
 
 
 def load_baseline(vault_root: Path) -> EvalBaseline:
-    """Load and validate the vault-local baseline."""
+    """Load and validate the vault-local baseline, refusing a version it cannot read.
+
+    The version was stamped on every baseline and never read back, so a format
+    change would have been absorbed by the model's defaults rather than
+    reported: a baseline written under a different shape loads with empty
+    metrics, and empty metrics are what no later run can regress against.
+    """
     target = baseline_path(vault_root)
-    return EvalBaseline.model_validate_json(target.read_text(encoding=_ENCODING_UTF8))
+    baseline = EvalBaseline.model_validate_json(target.read_text(encoding=_ENCODING_UTF8))
+    if baseline.schema_version != _BASELINE_SCHEMA_VERSION:
+        raise ValueError(
+            f"{target} was written with baseline schema version "
+            f"{baseline.schema_version}; this build reads version "
+            f"{_BASELINE_SCHEMA_VERSION}. Re-save the baseline with --save-baseline."
+        )
+    return baseline
 
 
 def compare_with_baseline(

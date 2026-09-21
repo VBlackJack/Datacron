@@ -535,7 +535,6 @@ async def test_committed_batch_reports_reconcile_failure_as_committed(
         ),
         cast("Any", bundle),
         result,
-        None,
         started=0.0,
         mode="apply",
     )
@@ -591,7 +590,6 @@ async def test_committed_batch_reports_final_planner_mismatch_as_committed(
         ),
         cast("Any", bundle),
         result,
-        None,
         started=0.0,
         mode="apply",
     )

@@ -155,7 +155,7 @@ class RipgrepWrapper:
             return []
 
         resolved_rg_path = _resolve_ripgrep_path(rg_path)
-        command = _build_command(resolved_rg_path, pattern, vault_root, glob, limit)
+        command = _build_command(resolved_rg_path, pattern, glob)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *command, stdout=PIPE, stderr=PIPE, cwd=vault_root
@@ -414,13 +414,17 @@ def _resolve_ripgrep_path(rg_path: str | None) -> str:
     return from_environment or DEFAULT_RIPGREP_PATH
 
 
-def _build_command(
-    rg_path: str,
-    pattern: str,
-    vault_root: Path,
-    glob: str | None,
-    limit: int,
-) -> list[str]:
+def _build_command(rg_path: str, pattern: str, glob: str | None) -> list[str]:
+    """Build the ripgrep argument list for one search.
+
+    It took a vault root and a limit and used neither, so the signature
+    promised a subprocess rooted at the vault and bounded by the caller's
+    limit while the search root is the literal "." and there is no
+    --max-count. Both promises are kept elsewhere and differently: the root by
+    the cwd the caller passes to create_subprocess_exec, and the limit by the
+    collection loop, which stops reading and kills the process. --max-count
+    would not express it anyway, being per file rather than per search.
+    """
     command = [rg_path, "--json"]
     if glob:
         command.extend(["--glob", glob])

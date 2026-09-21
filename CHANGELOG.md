@@ -347,6 +347,24 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- The baseline's schema version is read back. It was stamped on every saved baseline and never
+  checked, so a format change would have been absorbed by the model's defaults: a baseline
+  written under a different shape loads with empty metrics, and no later run can regress
+  against empty metrics.
+- The drift guard on the PyInstaller recipe covers the fourth copy. Three were compared; the
+  fourth builds the candidate the disposable-machine validation installs, so drift there means
+  validating a binary that is not the one being published.
+- `_build_command` no longer takes a vault root and a limit it never used. The signature
+  promised a subprocess rooted at the vault and bounded by the caller's limit while neither is
+  expressed there: the root is the working directory the caller sets, and the limit is the
+  collection loop, which stops reading and kills the process.
+- The apply receipt no longer threads a preview through two functions that never read it.
+- `httpx` is gone from the dev dependencies. Nothing in the repository imports it, and it is
+  not what `mcp` depends on; the lock now carries three fewer packages.
+- `preserve_hashes` says which caller reaches it and which do not. It protects bytes stored
+  microseconds earlier from a retention sweep that cannot see them, and exactly one code path
+  passes it - the unlogged write, which nothing shipped reaches, because every write tool
+  supplies an operation context. A reader could take it for a protection the logged path has.
 - `get_note` on a `chunk_id` reads one row instead of the whole notes table. Following a
   search hit into its section is the documented way an agent reads a chunk, and it built a
   dictionary of the entire vault to take exactly one key out of it.

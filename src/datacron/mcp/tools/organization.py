@@ -437,7 +437,6 @@ def _apply_payload(
     bundle: OrganizationBundle,
     result: BatchApplyResult,
     final_report_sha256: str | None,
-    preview: _OrganizationPreview | None,
     *,
     status: Literal["applied"] | OrganizationCommittedStatus = "applied",
     indexed: bool = True,
@@ -483,7 +482,6 @@ async def _finalize_committed_batch(
     app: DatacronApp,
     bundle: OrganizationBundle,
     result: BatchApplyResult,
-    preview: _OrganizationPreview | None,
     *,
     started: float,
     mode: OrganizationManifestMode,
@@ -502,7 +500,6 @@ async def _finalize_committed_batch(
             bundle,
             result,
             None,
-            preview,
             status="committed_index_incomplete",
             indexed=False,
             committed_error_code="organization_committed_index_incomplete",
@@ -543,7 +540,6 @@ async def _finalize_committed_batch(
             bundle,
             result,
             final_report_sha256,
-            preview,
             status="committed_report_mismatch",
             indexed=True,
             committed_error_code="organization_committed_report_mismatch",
@@ -681,7 +677,6 @@ async def _apply_organization_manifest_impl(
                 app,
                 bundle,
                 result,
-                preview,
                 started=started,
                 mode=cleaned_mode,
                 ctx=ctx,
@@ -690,7 +685,7 @@ async def _apply_organization_manifest_impl(
             return incomplete
         if index_stats is None or final_report_sha256 is None:
             raise AssertionError("successful organization finalization lacks verified evidence")
-        payload = _apply_payload(bundle, result, final_report_sha256, preview)
+        payload = _apply_payload(bundle, result, final_report_sha256)
         _audit(
             "apply_organization_manifest",
             started,
