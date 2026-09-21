@@ -143,10 +143,16 @@ async def _build_vault_info(app: DatacronApp) -> str:
             "max_result_tokens": app.settings.max_result_tokens,
         },
     }
+    # These two are the only strings in this resource that did not pass through
+    # the sanitizer, and they carry exception text. stats() parses the
+    # indexed_at column of a database that lives inside the vault, which is the
+    # untrusted surface the sandbox exists for: a tampered value arrives as
+    # "Invalid isoformat string: <attacker text>" straight into the model's
+    # context, in a resource with no vault_content envelope around it.
     if list_error is not None:
-        info["list_error"] = list_error
+        info["list_error"] = _sanitize_retrieval_metadata(app, list_error)
     if stats_error is not None:
-        info["index"]["stats_error"] = stats_error
+        info["index"]["stats_error"] = _sanitize_retrieval_metadata(app, stats_error)
     return json.dumps(info, indent=2, sort_keys=True)
 
 
@@ -228,7 +234,10 @@ def _format_note_line(app: DatacronApp, note: Note) -> str:
     tag_suffix = ""
     if note.tags:
         tags = [_sanitize_retrieval_metadata(app, tag) for tag in note.tags[:_VAULT_MAP_TAG_LIMIT]]
-        tag_suffix = f"  [{', '.join(tags)}{', ...' if len(note.tags) > 5 else ''}]"
+        # The literal 5 was the constant's value, not the constant: raising the
+        # limit would have shown six tags and no ellipsis after the sixth.
+        elided = ", ..." if len(note.tags) > _VAULT_MAP_TAG_LIMIT else ""
+        tag_suffix = f"  [{', '.join(tags)}{elided}]"
     return f"- `{filename}` - {title}{important_marker}{tag_suffix}"
 
 

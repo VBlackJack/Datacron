@@ -7,8 +7,17 @@
 #     http://www.apache.org/licenses/LICENSE-2.0
 
 [build-system]
-requires = ["hatchling>=1.27"]
+# The component that actually produces the bytes uploaded to PyPI was the one
+# moving part of the release with no ceiling: uv, every GitHub Action, the
+# publisher and all 74 runtime packages are pinned, while the build backend was
+# resolved fresh at release time. The ceiling is a major version, not an exact
+# pin, so a patch release is still picked up; uv enforces the same bound during
+# the build below.
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+build-constraint-dependencies = ["hatchling>=1.27,<2"]
 
 [project]
 name = "datacron"

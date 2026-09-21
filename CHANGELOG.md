@@ -347,6 +347,24 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- The build backend that produces the published wheel has a ceiling. Every other moving part
+  of the release is pinned - uv, every Action by SHA, the publisher by version and hash, all
+  runtime packages in the lock - while the one component that writes the bytes uploaded to
+  PyPI was resolved fresh at release time with no bound. `uv` now enforces the same bound
+  during the build.
+- `vault/info` sanitizes the two error strings that skipped the sanitizer. `stats()` parses a
+  column of a database that lives inside the vault, which is the untrusted surface the
+  sandbox exists for, and a tampered value reached the model's context verbatim, in the only
+  strings of that resource with no envelope around them.
+- One unanswerable question no longer discards a whole eval run. The search layer answers with
+  an error dict rather than raising, from four paths including a question that is the empty
+  string, so a typo in one YAML entry cost every measurement already taken. The run keeps them,
+  records what failed, and still refuses to report success or save a baseline.
+- Three magic values are named: the scrub's exit code, written as a bare 2 two lines from the
+  module's own exit-code constants; the temporal-signal bonus in contradiction scoring, the
+  only unnamed number among named thresholds; and the vault-map tag ellipsis, which repeated
+  the limit's value instead of the limit. The `.md` check and its message, written out at
+  seven call sites, is one function.
 - `datacron eval --compare` fails on a comparison the code knows is invalid. A differing
   config hash, pipeline or transport was recorded, printed as a prose warning and then given
   exit 0: the two pipelines do not return the same results and the two transports do not

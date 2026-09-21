@@ -1129,6 +1129,10 @@ _REORGANIZE_BAD_VAULT: Final[str] = "Vault root is not a readable directory: {va
 _REORGANIZE_BAD_CONFIG: Final[str] = "Invalid organization configuration: {detail}"
 _EXIT_DEVIATIONS_FOUND: Final[int] = 1
 _EXIT_CONFIGURATION_ERROR: Final[int] = 2
+# The scrub reports anomalies with the same code, in a different command
+# and for a different reason; it was written as a bare 2 two lines from
+# where these constants are used.
+_EXIT_SCRUB_ANOMALIES: Final[int] = 2
 
 
 @app.command()
@@ -1263,7 +1267,7 @@ def scrub(
         f"{len(state.anomalies)} anomalies, pass {state.pass_id}"
     )
     if state.anomalies:
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=_EXIT_SCRUB_ANOMALIES)
 
 
 async def _run_scrub(vault_root: Path, settings: Settings) -> ScrubState:
@@ -1505,6 +1509,18 @@ async def _run_eval(  # noqa: PLR0912 -- command orchestration covers optional o
             tolerance=settings.eval_regression_tolerance,
             config_hash=eval_config_hash(settings, config),
         )
+    if report.failures:
+        # Keeping the completed measurements is not the same as passing: a run
+        # with a question the search layer could not answer is not a clean
+        # evaluation, and saving it as a baseline would gate every later run
+        # against a partial one.
+        for failure in report.failures:
+            _print(f"Eval question failed: {failure}")
+        _print(
+            f"{len(report.failures)} question(s) failed; "
+            f"{len(report.results)} measured. Refusing to report success."
+        )
+        return 1
     if report.summary.question_count == 0:
         # An empty question set is not a passing run. Saved as a baseline it is
         # worse than useless: every metric is zero, so no later run can regress

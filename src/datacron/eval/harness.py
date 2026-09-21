@@ -99,22 +99,32 @@ class LocalEvalHarness:
         if pipeline is EvalPipeline.TOOL:
             limit = max(limit, app.settings.max_result_count)
         results: list[EvalResult] = []
+        failures: list[str] = []
         for question in eval_questions:
             started = perf_counter()
             payload = await self._search(app, question.question, limit, pipeline)
             latency_ms = (perf_counter() - started) * 1000.0
-            results.append(
-                _evaluate_payload(
-                    question,
-                    payload,
-                    latency_ms=latency_ms,
-                    k_values=k_values,
+            try:
+                results.append(
+                    _evaluate_payload(
+                        question,
+                        payload,
+                        latency_ms=latency_ms,
+                        k_values=k_values,
+                    )
                 )
-            )
+            except (RuntimeError, TypeError) as error:
+                # The search layer answers with an error dict rather than
+                # raising, from four paths including a question that is the
+                # empty string, which a YAML file validates happily. Aborting
+                # here threw away every measurement already taken, so a typo in
+                # one entry cost the whole run.
+                failures.append(f"{question.id}: {error}")
 
         report = EvalReport(
             summary=_summarize(results, k_values, pipeline=pipeline, transport=transport),
             results=results,
+            failures=failures,
         )
         if render:
             self._print_summary(report)

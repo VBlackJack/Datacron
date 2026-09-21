@@ -365,3 +365,9 @@ class EvalReport(BaseModel):
 
     summary: EvalSummary
     results: list[EvalResult]
+    # One question whose search came back as an error used to abort the run and
+    # discard every measurement already taken. The search layer returns an
+    # error dict rather than raising, from four paths including a blank
+    # question a YAML file can hold, so this is reachable from a typo. The run
+    # keeps going and still fails, naming what failed.
+    failures: list[str] = Field(default_factory=list)
