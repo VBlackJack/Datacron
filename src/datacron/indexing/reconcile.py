@@ -122,7 +122,7 @@ async def reconcile(
     counts = _PassCounts()
     try:
         async with reader.defer_identity_writes():
-            prepared, owners, unreadable = await _prepare_live_identities(
+            prepared, owners, unreadable, undecodable = await _prepare_live_identities(
                 reader, live, indexed, gated=gated, on_settled=advance
             )
             async with store.bulk_writes():
@@ -130,7 +130,12 @@ async def reconcile(
                     store,
                     reader,
                     chunker,
-                    live=live,
+                    # An undecodable note is treated as gone, so its rows are purged.
+                    live={
+                        rel_path: entry
+                        for rel_path, entry in live.items()
+                        if rel_path not in undecodable
+                    },
                     indexed=indexed,
                     prepared=prepared,
                     gated=gated,
@@ -156,6 +161,12 @@ async def reconcile(
         _LOGGER.warning(
             "reconcile skipped %d unreadable note(s); each one was logged with its path above",
             len(unreadable),
+        )
+    if undecodable:
+        _LOGGER.warning(
+            "reconcile dropped %d undecodable note(s) from the index; "
+            "each one was logged with its path above",
+            len(undecodable),
         )
 
     if reindexed or deleted:
@@ -311,7 +322,7 @@ async def _prepare_live_identities(
     *,
     gated: frozenset[str],
     on_settled: Callable[[], Awaitable[None]],
-) -> tuple[dict[str, tuple[str, str]], dict[str, str], frozenset[str]]:
+) -> tuple[dict[str, tuple[str, str]], dict[str, str], frozenset[str], frozenset[str]]:
     """Validate projected identities before deleting or replacing any index rows.
 
     Gated notes keep the existing mtime fast path and are never read. Every other
@@ -319,20 +330,34 @@ async def _prepare_live_identities(
     the commit loop reads a changed note again instead of holding every ``Note`` of
     a large vault at once. ``on_settled`` reports each note whose content matches the
     index, so the progress callback advances during a long pre-pass.
-    Returns the pairs by path and the owner path of every live identity.
+    Returns the pairs by path, the owner path of every live identity, the notes
+    that could not be read, and the notes whose bytes could not be decoded.
+
+    The last two are kept apart because they call for opposite index states. A
+    read error is transient (a Windows share lock, an antivirus scan), so the
+    rows of the last good read are kept. A decoding error is a property of the
+    bytes on disk, and keeping the rows kept serving content the file no longer
+    holds: every later list or search then re-read that note for redaction or
+    paging, hit the same error and failed as a whole, and no pass ever healed it.
     """
     prepared: dict[str, tuple[str, str]] = {}
     owners: dict[str, str] = {}
     unreadable: set[str] = set()
+    undecodable: set[str] = set()
     for rel_path, (path, _mtime) in live.items():
         if rel_path in gated:
             note_id = indexed[rel_path][0]
         else:
             try:
                 note = await reader.read_note(path)
-            except (OSError, ValueError) as exc:
+            except OSError as exc:
                 _LOGGER.warning("Skipping unreadable note %s: %s", path, exc)
                 unreadable.add(rel_path)
+                await on_settled()
+                continue
+            except ValueError as exc:
+                _LOGGER.warning("Dropping undecodable note %s from the index: %s", path, exc)
+                undecodable.add(rel_path)
                 await on_settled()
                 continue
             prepared[rel_path] = (note.id, note.content_hash)
@@ -345,4 +370,4 @@ async def _prepare_live_identities(
         if note_id in owners:
             raise DuplicateNoteIdentityError(note_id, owners[note_id], rel_path)
         owners[note_id] = rel_path
-    return prepared, owners, frozenset(unreadable)
+    return prepared, owners, frozenset(unreadable), frozenset(undecodable)

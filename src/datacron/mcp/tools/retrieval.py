@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.hashing import hash_text
+from datacron.core.logger import get_logger
 from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
 from datacron.core.markdown_sections import heading_ancestry
 from datacron.core.models import Chunk, Note, SearchResult
@@ -30,6 +31,8 @@ from datacron.mcp.sandbox import VAULT_CONTENT_CLOSE
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
+
+_LOGGER = get_logger(__name__)
 
 # '@' cannot occur in a heading slug, keeping aliases disjoint from stored IDs.
 OPAQUE_CHUNK_PATTERN = re.compile(r"^([0-9A-HJKMNP-TV-Z]{26})::@redacted-[0-9a-f]{64}::0000$")
@@ -125,14 +128,26 @@ async def protect_results(app: DatacronApp, results: list[SearchResult]) -> list
     parents: dict[str, Note] = {}
     live_chunks: dict[str, dict[str, Chunk]] = {}
     safe_chunks: dict[str, dict[str, Chunk]] = {}
+    undecodable: set[str] = set()
     protected = []
     for result in results:
         chunk = result.chunk
         path = chunk.note_rel_path
+        if path in undecodable:
+            continue
         if path not in parents:
-            parents[path] = await app.vault_reader.read_note(
-                app.scope.authorize_note_rel_path(path)
-            )
+            try:
+                parents[path] = await app.vault_reader.read_note(
+                    app.scope.authorize_note_rel_path(path)
+                )
+            except UnicodeDecodeError as exc:
+                # The note was re-saved in a legacy encoding after it was indexed.
+                # Its chunks describe bytes the file no longer holds, so they are
+                # dropped rather than failing the whole search until the next
+                # sweep removes them from the index.
+                _LOGGER.warning("Dropping search results of undecodable note %s: %s", path, exc)
+                undecodable.add(path)
+                continue
             live_chunks[path] = {item.chunk_id: item for item in app.chunker.chunk(parents[path])}
             originals = list(live_chunks[path].values())
             safe_chunks[path] = dict(
