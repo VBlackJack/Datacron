@@ -5642,3 +5642,50 @@ class TestWritePathP2Fixes:
         assert result["error"]["type"] == "ValueError", result
         assert "block list" in result["error"]["message"]
         assert (vault / rel_path).read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "tool",
+    ["append_journal", "patch_note_section", "delete_note_section", "rename_note_section"],
+)
+async def test_a_bare_cr_frontmatter_is_refused_rather_than_dropped(
+    writable_app: DatacronApp, tmp_vault: Path, tool: str
+) -> None:
+    """A note saved with classic Mac line endings must keep its id, title and tags.
+
+    python-frontmatter saw no block there while the exact-body splitter cut one
+    off, so the next body edit wrote the note back with an empty frontmatter.
+    """
+    from datacron.mcp.tools import (
+        _append_journal_impl,
+        _delete_note_section_impl,
+        _patch_note_section_impl,
+        _rename_note_section_impl,
+    )
+
+    rel_path = "_memory/facts/classic-mac.md"
+    target = tmp_vault / rel_path
+    before = (
+        b"---\rid: 01J00000000000000000000141\rtitle: Old Mac note\rtags: [keep]\r---\r"
+        b"# Old Mac note\r\r## Log\r\rentry\r\r## Other\r\rkept\r"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(before)
+
+    if tool == "append_journal":
+        result = await _append_journal_impl(
+            writable_app, rel_path=rel_path, heading="Log", entry="new"
+        )
+    elif tool == "patch_note_section":
+        result = await _patch_note_section_impl(
+            writable_app, rel_path=rel_path, heading="Log", new_content="replaced"
+        )
+    elif tool == "delete_note_section":
+        result = await _delete_note_section_impl(writable_app, rel_path=rel_path, heading="Log")
+    else:
+        result = await _rename_note_section_impl(
+            writable_app, rel_path=rel_path, heading="Log", new_heading="Journal"
+        )
+
+    assert "error" in result, result
+    assert target.read_bytes() == before

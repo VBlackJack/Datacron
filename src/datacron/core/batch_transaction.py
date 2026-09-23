@@ -65,6 +65,7 @@ from datacron.core.vault import (
     NoteAdmissionPolicy,
 )
 from datacron.organization.manifest import (
+    MAX_INVENTORY_NOTE_BYTES,
     MAX_MANIFEST_BYTES,
     MAX_OPERATION_COUNT,
     MAX_PAYLOAD_BYTES,
@@ -568,6 +569,7 @@ class OrganizationBatchTransaction:
             try:
                 self._stage_payloads(pending, payloads, fault_injector)
                 self._store_before_history(pending, fault_injector)
+                self._refuse_invalid_stage_before_publication(pending)
                 self._write_pending(pending)
                 _inject(fault_injector, "after_pending_write")
                 classified = self._classify_blocked(pending)
@@ -1042,6 +1044,21 @@ class OrganizationBatchTransaction:
                 pre_mutation()
             self._delete_file_durable(self._absolute_path(source_rel_path))
             _inject(fault_injector, "after_source_delete")
+
+    def _refuse_invalid_stage_before_publication(self, pending: _PendingBatch) -> None:
+        """Run the classifier's stage checks while nothing is published.
+
+        Run only after the receipt was written, a refusal the manifest validator
+        had not foreseen (a large note outside the scope, a stale sidecar entry
+        for an untouched note) left a published receipt that the rollback refused
+        on the same check: the vault bytes were unchanged, yet every later write
+        was refused and startup recovery stayed blocked with no online way out.
+        """
+        stage_error = self._stage_error(pending)
+        if stage_error is not None:
+            raise BatchConflictError(
+                f"organization batch refused before publication: {stage_error}"
+            )
 
     def _rollback_exact(self, pending: _PendingBatch) -> None:
         blocked = self._classify_blocked(pending)
@@ -1717,7 +1734,7 @@ class OrganizationBatchTransaction:
                 rel_path,
                 _read_bounded_file(
                     path,
-                    limit=MAX_PAYLOAD_BYTES,
+                    limit=MAX_INVENTORY_NOTE_BYTES,
                     label=f"admitted note {rel_path}",
                 ),
                 id_mappings=sidecar_mappings,
@@ -1919,7 +1936,7 @@ class OrganizationBatchTransaction:
                 rel_path,
                 _read_bounded_file(
                     path,
-                    limit=MAX_PAYLOAD_BYTES,
+                    limit=MAX_INVENTORY_NOTE_BYTES,
                     label=f"admitted note {rel_path}",
                 ),
                 id_mappings={},

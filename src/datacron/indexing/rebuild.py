@@ -102,10 +102,18 @@ async def _live_note_identities(reader: VaultReader) -> dict[str, tuple[str, str
     with the same exclusions, that ``reconcile`` and ``stat_notes`` use, so the three
     agree on which notes exist; the mtimes ``stat_notes`` collects are what this pass
     does not need, and paying for them cost a second sweep of the whole vault.
+
+    A note that cannot be read or decoded is left out, as ``reconcile`` leaves it
+    out of the temp index: comparing it here made one legacy-encoded file fail
+    every rebuild, the one command meant to repair the index.
     """
     identities: dict[str, tuple[str, str]] = {}
     for rel_path, path in (await reader.note_paths()).items():
-        note = await reader.read_note(path)
+        try:
+            note = await reader.read_note(path)
+        except (OSError, ValueError) as exc:
+            _LOGGER.warning("Rebuild check skips unreadable note %s: %s", path, exc)
+            continue
         identities[rel_path] = (note.id, note.content_hash)
         del note
     return identities
