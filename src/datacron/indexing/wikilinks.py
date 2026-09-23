@@ -17,11 +17,20 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
-from typing import Final, final
+from typing import Final, TypeAlias, final
 
 from datacron.core.models import Chunk, ChunkType, Wikilink
 
-__all__ = ["RegexWikilinksExtractor", "extract_wikilink_anchors", "extract_wikilink_targets"]
+__all__ = [
+    "OpenFence",
+    "RegexWikilinksExtractor",
+    "extract_wikilink_anchors",
+    "extract_wikilink_targets",
+    "open_fence_after",
+]
+
+OpenFence: TypeAlias = tuple[str, int]
+"""A fence open at a given point: its marker character and its length."""
 
 _WIKILINK_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?<!\\)\[\["
@@ -39,7 +48,12 @@ _ANCHOR_ONLY_PATTERN: Final[re.Pattern[str]] = re.compile(
     re.MULTILINE,
 )
 _WHITESPACE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\s+")
-_FENCE_OPEN_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})")
+# A fence may open after a list marker ("- ```bash"): the closing line inside the
+# item is then indented, and reading only indentation made that closer look like an
+# opener, so the rest of the chunk was treated as code and its links were dropped.
+_FENCE_OPEN_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^(?:[ \t]{0,3}|[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)(?P<fence>`{3,}|~{3,})"
+)
 _INLINE_CODE_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?P<ticks>`+)[^\n]*?(?P=ticks)")
 _BASH_OPERATOR_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?:^|\s)(?:-[A-Za-z]|==|!=|=~|<=|>=|<|>|-nt|-ot|-ef|-n|-z)(?:\s|$)"
@@ -96,21 +110,28 @@ def extract_wikilink_anchors(content: str, chunk_type: ChunkType) -> list[tuple[
     return [(target, header) for _, target, header in references]
 
 
-def extract_wikilink_targets(content: str, chunk_type: ChunkType) -> list[str]:
-    """Return normalized target aliases from searchable Markdown regions."""
+def extract_wikilink_targets(
+    content: str, chunk_type: ChunkType, *, open_fence: OpenFence | None = None
+) -> list[str]:
+    """Return normalized target aliases from searchable Markdown regions.
+
+    ``open_fence`` names a fence already open where ``content`` starts, as
+    :func:`open_fence_after` reports it for the text before a segment.
+    """
     return [
         _normalize_part(match.group("target"))
-        for match in _iter_wikilink_matches(content, chunk_type)
+        for match in _iter_wikilink_matches(content, chunk_type, open_fence)
     ]
 
 
 def _iter_wikilink_matches(
     content: str,
     chunk_type: ChunkType,
+    open_fence: OpenFence | None = None,
 ) -> Iterator[re.Match[str]]:
     if chunk_type is ChunkType.CODE:
         return
-    excluded = _excluded_code_ranges(content)
+    excluded = _excluded_code_ranges(content, open_fence)
     for match in _WIKILINK_PATTERN.finditer(content):
         if _inside(match.start(), excluded):
             continue
@@ -119,9 +140,11 @@ def _iter_wikilink_matches(
         yield match
 
 
-def _excluded_code_ranges(content: str) -> list[tuple[int, int]]:
+def _excluded_code_ranges(
+    content: str, open_fence: OpenFence | None = None
+) -> list[tuple[int, int]]:
     frontmatter = _frontmatter_range(content)
-    fences = _fence_ranges(content, frontmatter)
+    fences, _still_open = _fence_ranges(content, frontmatter, open_fence)
     structural = [*([] if frontmatter is None else [frontmatter]), *fences]
     inline = [
         match.span()
@@ -144,13 +167,29 @@ def _frontmatter_range(content: str) -> tuple[int, int] | None:
     return None
 
 
+def open_fence_after(text: str) -> OpenFence | None:
+    """Return the fence still open at the end of ``text``, as ``(marker, length)``.
+
+    The chunker cuts a long block into segments and links are extracted per
+    segment. A segment that starts inside a fence then begins with that fence's
+    closing line, which reads as an opener, and everything after it was taken for
+    code: its links vanished from the backlinks. The chunker asks this for the
+    text before each segment and passes the answer to the extractor.
+    """
+    _ranges, still_open = _fence_ranges(text, None, None)
+    return None if still_open is None else (still_open[0], still_open[1])
+
+
 def _fence_ranges(
     content: str,
     frontmatter: tuple[int, int] | None,
-) -> list[tuple[int, int]]:
+    open_fence: OpenFence | None,
+) -> tuple[list[tuple[int, int]], tuple[str, int, int] | None]:
     ranges: list[tuple[int, int]] = []
     position = 0
-    opening: tuple[str, int, int] | None = None
+    opening: tuple[str, int, int] | None = (
+        None if open_fence is None else (open_fence[0], open_fence[1], 0)
+    )
     for line in content.splitlines(keepends=True):
         start = position
         end = position + len(line)
@@ -171,7 +210,7 @@ def _fence_ranges(
             opening = None
     if opening is not None:
         ranges.append((opening[2], len(content)))
-    return ranges
+    return ranges, opening
 
 
 def _inside(position: int, ranges: list[tuple[int, int]]) -> bool:
