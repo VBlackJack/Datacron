@@ -364,3 +364,19 @@ class TestHasAmbiguousLeadingDelimiterBlock:
     )
     def test_accepts_a_real_block_an_empty_block_and_no_block(self, raw: str) -> None:
         assert has_ambiguous_leading_delimiter_block(raw) is False
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "---\rid: 01J5S0C0000000000000000001\r---\r# Title\r",
+            "---\nid: 01J5S0C0000000000000000001\r---\r# Title\r",
+        ],
+        ids=["bare-cr", "bare-cr-closing"],
+    )
+    def test_reports_a_block_whose_delimiters_the_parser_cannot_see(self, raw: str) -> None:
+        """python-frontmatter needs a newline after each delimiter; the span finder does not."""
+        assert has_ambiguous_leading_delimiter_block(raw) is True
+
+    def test_accepts_crlf_delimiters(self) -> None:
+        raw = "---\r\nid: 01J5S0C0000000000000000001\r\n---\r\n# Title\r\n"
+        assert has_ambiguous_leading_delimiter_block(raw) is False
