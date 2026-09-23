@@ -37,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 from datacron.core.config import OrganizationConfig, VaultConfig
+from datacron.core.error_text import describe_validation_error, describe_yaml_error
 from datacron.core.frontmatter import (
     FrontmatterError,
     build_tiered_alias_index,
@@ -729,7 +730,7 @@ def parse_organization_note_strict(text: str) -> tuple[dict[str, object], str]:
         try:
             _assert_unique_yaml_mapping_keys(block)
         except yaml.YAMLError as exc:
-            raise FrontmatterError(str(exc)) from exc
+            raise FrontmatterError(describe_yaml_error(exc)) from exc
     metadata, body = parse(text)
     return dict(metadata), body
 
@@ -847,7 +848,17 @@ def parse_organization_config_document(
         document = {key: value for key, value in parsed.items() if isinstance(key, str)}
         _validate_raw_organization_paths(document)
         return document, VaultConfig.model_validate(document)
-    except (ValidationError, ValueError, yaml.YAMLError) as exc:
+    except ValidationError as exc:
+        raise OrganizationManifestError(
+            "config_payload_invalid",
+            f"Invalid {label}: {describe_validation_error(exc)}",
+        ) from exc
+    except yaml.YAMLError as exc:
+        raise OrganizationManifestError(
+            "config_payload_invalid",
+            f"Invalid {label}: {describe_yaml_error(exc)}",
+        ) from exc
+    except ValueError as exc:
         raise OrganizationManifestError(
             "config_payload_invalid",
             f"Invalid {label}: {exc}",
@@ -916,7 +927,13 @@ def _parse_manifest(manifest_bytes: bytes) -> OrganizationManifest:
             parse_constant=reject_nonfinite_json_constant,
         )
         return OrganizationManifest.model_validate_json(manifest_text)
-    except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+    except ValidationError as exc:
+        raise OrganizationManifestError(
+            "manifest_invalid",
+            f"Manifest does not satisfy {ORGANIZATION_MANIFEST_SCHEMA}: "
+            f"{describe_validation_error(exc)}",
+        ) from exc
+    except (json.JSONDecodeError, ValueError) as exc:
         raise OrganizationManifestError(
             "manifest_invalid",
             f"Manifest does not satisfy {ORGANIZATION_MANIFEST_SCHEMA}: {exc}",

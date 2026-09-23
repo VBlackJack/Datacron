@@ -93,7 +93,8 @@ class _FakeProcess:
     ) -> None:
         self.stdout = _AsyncBytes(stdout_lines)
         self.stderr = MagicMock()
-        self.stderr.read = AsyncMock(return_value=stderr)
+        # A real pipe returns b"" at end of stream, and stderr is now drained to it.
+        self.stderr.read = AsyncMock(side_effect=[stderr, b""] if stderr else [b""])
         self._final_returncode = returncode
         self.returncode: int | None = None
         self.killed = False
@@ -250,7 +251,7 @@ def _install_process(
 def test_build_command_inserts_separator_before_dash_pattern() -> None:
     command = _build_command("rg", "-foo", glob=None)
 
-    assert command == ["rg", "--json", "--", "-foo", "."]
+    assert command == ["rg", "--json", "--crlf", "--", "-foo", "."]
 
 
 def test_build_command_places_separator_after_glob_options() -> None:
@@ -357,6 +358,23 @@ async def test_frame_refusal_terminates_child(
         )
     process.kill.assert_called_once()
     process.wait.assert_awaited_once()
+
+
+async def test_stderr_is_drained_to_its_end_but_kept_bounded() -> None:
+    """A full stderr pipe must never be left unread.
+
+    One bounded read stopped consuming the pipe, so a ripgrep that reported
+    more unreadable files than that blocked on stderr, never closed stdout, and
+    the search never returned.
+    """
+    stream = asyncio.StreamReader()
+    stream.feed_data(b"x" * (ripgrep_module._MAX_STDERR_BYTES * 20))
+    stream.feed_eof()
+
+    kept = await ripgrep_module._drain_stderr(stream, ripgrep_module._MAX_STDERR_BYTES)
+
+    assert len(kept) == ripgrep_module._MAX_STDERR_BYTES
+    assert stream.at_eof()
 
 
 async def test_process_and_stderr_task_are_cleaned_up_when_collection_raises(
@@ -618,8 +636,8 @@ async def test_glob_filter_is_passed_to_subprocess(
     )
 
     command = calls[0][0]
-    assert command[:5] == ("rg", "--json", "--glob", "*.md", "--")
-    assert command[5:] == ("kafka", ".")
+    assert command[:6] == ("rg", "--json", "--crlf", "--glob", "*.md", "--")
+    assert command[6:] == ("kafka", ".")
     assert calls[0][1]["cwd"] == indexed.vault_root
 
 

@@ -58,6 +58,7 @@ _NO_MATCH_RETURN_CODE: Final[int] = 1
 # Diagnostic text, not a payload: enough to name a bad pattern or a
 # permission problem, and far short of one line per file in the vault.
 _MAX_STDERR_BYTES: Final[int] = 8192
+_STDERR_READ_CHUNK_BYTES: Final[int] = 65536
 _STDERR_TRUNCATION_MARKER: Final[str] = "\n... (ripgrep diagnostics truncated)"
 _RISKY_REPETITION_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"\([^)]*(?:\||[+*])[^)]*\)(?:[+*]|\{)"
@@ -190,7 +191,7 @@ class RipgrepWrapper:
         if proc.stdout is None or proc.stderr is None:
             raise RuntimeError("ripgrep subprocess was not created with stdout/stderr pipes")
 
-        stderr_task = asyncio.create_task(proc.stderr.read(_MAX_STDERR_BYTES))
+        stderr_task = asyncio.create_task(_drain_stderr(proc.stderr, _MAX_STDERR_BYTES))
         killed_for_limit = False
         stderr = ""
 
@@ -425,7 +426,7 @@ def _build_command(rg_path: str, pattern: str, glob: str | None) -> list[str]:
     collection loop, which stops reading and kills the process. --max-count
     would not express it anyway, being per file rather than per search.
     """
-    command = [rg_path, "--json"]
+    command = [rg_path, "--json", "--crlf"]
     if glob:
         command.extend(["--glob", glob])
     command.extend(["--", pattern, "."])
@@ -639,6 +640,22 @@ def _highlight_submatches(line: str, submatches: list[object]) -> str:
         cursor = clamped_end
     rendered.extend(line_bytes[cursor:])
     return bytes(rendered).decode("utf-8", errors="replace").rstrip("\r\n")
+
+
+async def _drain_stderr(stream: asyncio.StreamReader, limit: int) -> bytes:
+    """Read ripgrep's stderr to its end, keeping only the first ``limit`` bytes.
+
+    A single bounded ``read`` stopped consuming the pipe once it returned. When
+    ripgrep reported more unreadable files than that (routine on Windows: notes
+    held by an editor, placeholders that do not hydrate), it blocked writing to a
+    full stderr pipe, never closed stdout, and ``search_regex`` never returned.
+    The whole stream is drained; only what is kept is bounded.
+    """
+    kept = bytearray()
+    while chunk := await stream.read(_STDERR_READ_CHUNK_BYTES):
+        if len(kept) < limit:
+            kept += chunk[: limit - len(kept)]
+    return bytes(kept)
 
 
 async def _read_stderr(stderr_task: asyncio.Task[bytes]) -> str:

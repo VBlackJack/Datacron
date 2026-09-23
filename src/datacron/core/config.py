@@ -71,6 +71,10 @@ DEFAULT_CONTRADICTION_PROVENANCE_LABELS: Final[dict[str, str]] = {
 DEFAULT_CONTRADICTION_SOURCE_CONNECTOR: Final[str] = "Voir"
 TOKEN_ESTIMATE_CHARS_PER_TOKEN: Final[int] = 4
 TEMPORAL_OVERFETCH_FACTOR: Final[int] = 3
+# group_by_note widens its window by this factor until it holds enough distinct notes,
+# and never past this many chunks, so one hub note cannot hide every other match.
+GROUPED_OVERFETCH_GROWTH: Final[int] = 4
+GROUPED_OVERFETCH_MAX_CHUNKS: Final[int] = 4000
 # The one place that names the archive tags and the state-note namespace. A vault
 # overrides the archive tags in its organization tag policy; the index, the library
 # and the planner read them from here or from that policy, never from a local copy.
