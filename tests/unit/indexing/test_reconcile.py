@@ -225,6 +225,47 @@ async def test_deleted_file_is_removed(
     assert "welcome.md" not in await store.list_indexed_notes_with_mtime()
 
 
+async def test_an_undecodable_note_is_dropped_from_the_index(
+    store: SQLiteFTS5Store, reader: FilesystemVaultReader, chunker: MarkdownChunker, tmp_vault: Path
+) -> None:
+    """Rows of a note re-saved in a legacy encoding describe bytes that are gone.
+
+    They used to be kept like those of a transiently locked file, so every later
+    listing or search re-read the note, hit the same decoding error and failed as
+    a whole, and no pass ever removed them.
+    """
+    await reconcile(store, reader, chunker, mtime_gate=True)
+    assert "welcome.md" in await store.list_indexed_notes_with_mtime()
+
+    (tmp_vault / "welcome.md").write_bytes("# Café crème\n".encode("cp1252"))
+    stats = await reconcile(store, reader, chunker, mtime_gate=True)
+
+    assert stats["deleted_notes"] == 1
+    assert "welcome.md" not in await store.list_indexed_notes_with_mtime()
+
+
+async def test_a_transiently_unreadable_note_keeps_its_rows(
+    store: SQLiteFTS5Store,
+    reader: FilesystemVaultReader,
+    chunker: MarkdownChunker,
+    tmp_vault: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await reconcile(store, reader, chunker, mtime_gate=True)
+    original = reader.read_note
+
+    async def locked(path: Path) -> Note:
+        if path.name == "welcome.md":
+            raise PermissionError("sharing violation")
+        return await original(path)
+
+    monkeypatch.setattr(reader, "read_note", locked)
+    stats = await reconcile(store, reader, chunker, mtime_gate=False)
+
+    assert stats["deleted_notes"] == 0
+    assert "welcome.md" in await store.list_indexed_notes_with_mtime()
+
+
 async def test_moved_note_keeps_index_without_stale_path(
     store: SQLiteFTS5Store,
     chunker: MarkdownChunker,

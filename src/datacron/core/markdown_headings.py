@@ -30,7 +30,7 @@ parser and this module disagree about what a heading is, and the search for the
 underline of a heading mistletoe had already built then found nothing at all.
 """
 _FENCE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})")
-_COMMENT_OPEN = "<!--"
+_COMMENT_BLOCK_START = re.compile(r" {0,3}<!--")
 _COMMENT_CLOSE = "-->"
 
 
@@ -51,6 +51,15 @@ def _html_comment_lines(lines: list[str]) -> frozenset[int]:
     the end of the file, and patching that section replaced everything under it.
     Lines are therefore held back until the closing marker is actually found, and
     a span still open at the end of the file is discarded.
+
+    Only an opener at the start of a line counts, as in CommonMark's HTML block
+    (up to three spaces of indentation). An opener anywhere in the line used to
+    count, so ``<!--`` quoted in inline code or prose paired with the next ``-->``
+    of any kind, a prose arrow or a mermaid ``A --> B``, and every heading in
+    between vanished: patching or deleting the section above then replaced the
+    sections it had swallowed. Once a block is open, the first ``-->`` closes it
+    wherever it sits in the line, and the rest of that line belongs to the block
+    and opens nothing.
     """
     inside_comment = False
     fence: str | None = None
@@ -69,23 +78,18 @@ def _html_comment_lines(lines: list[str]) -> frozenset[int]:
                 continue
             if fence is not None:
                 continue
-        position = 0
-        while True:
-            if inside_comment:
-                pending.add(index)
-                close_at = line.find(_COMMENT_CLOSE, position)
-                if close_at < 0:
-                    break
-                inside_comment = False
-                masked |= pending
-                pending.clear()
-                position = close_at + len(_COMMENT_CLOSE)
+            opener = _COMMENT_BLOCK_START.match(line)
+            if opener is None:
                 continue
-            open_at = line.find(_COMMENT_OPEN, position)
-            if open_at < 0:
-                break
             inside_comment = True
-            position = open_at + len(_COMMENT_OPEN)
+            search_from = opener.end()
+        else:
+            search_from = 0
+        pending.add(index)
+        if line.find(_COMMENT_CLOSE, search_from) >= 0:
+            inside_comment = False
+            masked |= pending
+            pending.clear()
     return frozenset(masked)
 
 
