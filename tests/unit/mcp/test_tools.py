@@ -4292,6 +4292,53 @@ class TestRenameNoteSection:
         assert new_body == "# Root\n\n##### Parent\n\n###### Renamed tail\n\nTail body."
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("new_heading", ["Use `rg` flags", "The *important* part", "Q&A"])
+    async def test_rename_note_section_accepts_a_title_with_inline_markup(
+        self, writable_app: DatacronApp, tmp_vault: Path, new_heading: str
+    ) -> None:
+        """The parser reads ``Use `rg` flags`` back as ``Use rg flags``, which is the same title."""
+        from datacron.mcp.tools import _rename_note_section_impl
+
+        rel_path = "_memory/facts/rename-markup.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Root\n\n## Old\n\nBody.\n"
+        )
+
+        result = await _rename_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Old",
+            new_heading=new_heading,
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert "error" not in result, result
+        assert f"## {new_heading}\n" in target.read_text(encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_append_journal_reaches_a_heading_that_starts_with_a_hash(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        """``## #1 Priorities`` has the text ``#1 Priorities``, which is not a level marker."""
+        from datacron.mcp.tools import _append_journal_impl
+
+        rel_path = "_memory/facts/hash-heading.md"
+        target, _original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Root\n\n## #1 Priorities\n\n- ship\n"
+        )
+
+        result = await _append_journal_impl(
+            writable_app, rel_path=rel_path, heading="#1 Priorities", entry="- test"
+        )
+        refused = await _append_journal_impl(
+            writable_app, rel_path=rel_path, heading="## Log", entry="- test"
+        )
+
+        assert "error" not in result, result
+        assert target.read_text(encoding="utf-8").count("## #1 Priorities") == 1
+        assert "must not start with '#'" in refused["error"]["message"]
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("heading_level", [1, None])
     async def test_rename_note_section_rejects_h1_without_durable_mutation(
         self,

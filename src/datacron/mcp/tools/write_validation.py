@@ -44,6 +44,7 @@ _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_H
 _BACKLOG_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"BL-[0-9]{4,}")
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _ATX_CLOSING_SEQUENCE: Final[re.Pattern[str]] = re.compile(r"[ \t]#+$")
+_ATX_LEVEL_MARKER: Final[re.Pattern[str]] = re.compile(r"#{1,6}(?:[ \t]|$)")
 _MARKDOWN_SUFFIX: Final[str] = ".md"
 _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
 # Markdown ATX headings run from one to six hash marks; every heading selector shares it.
@@ -133,7 +134,10 @@ def _validate_append_journal_request(
         # grew one more duplicate heading, without bound, until patching any of
         # them became ambiguous. rename_note_section already refuses this.
         raise ValueError("heading must be a single line")
-    if cleaned_heading.startswith("#"):
+    if _ATX_LEVEL_MARKER.match(cleaned_heading):
+        # Only a real ATX marker ("## Log") is refused. "#1 Priorities" and a
+        # leading Obsidian tag are ordinary heading text, and refusing every
+        # leading "#" made those existing sections unreachable by this tool.
         raise ValueError("heading must not start with '#'; the tool supplies the level")
     if not entry.strip():
         raise ValueError("entry must not be empty")

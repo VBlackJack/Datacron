@@ -313,3 +313,32 @@ def test_a_hash_that_is_part_of_the_words_is_left_alone() -> None:
         )
         line = rename_atx_heading_line("## Old\n", cleaned[2])
         assert parse_heading_line(line) == (2, title)
+
+
+class TestHeadingsWrittenWithInlineMarkup:
+    """A caller may pass a heading as written in the note, markup included.
+
+    Selectors compare parsed text, which drops inline markup, so the raw form
+    matched nothing: append_journal created the section again on every call
+    until the heading became ambiguous, and a rename to such a title was refused.
+    """
+
+    @pytest.mark.parametrize("requested", ["Releases of `datacron`", "Releases of datacron"])
+    def test_append_reuses_the_section_whichever_form_is_passed(self, requested: str) -> None:
+        from datacron.core.markdown_sections import append_entry_to_heading
+
+        body = "# Log\n\n## Releases of `datacron`\n\n- first\n"
+
+        once = append_entry_to_heading(body, requested, "- second")
+        twice = append_entry_to_heading(once, requested, "- third")
+
+        assert twice.count("## Releases of") == 1
+        assert twice.endswith("- first\n\n- second\n\n- third\n")
+
+    def test_a_created_section_is_found_again_by_the_same_string(self) -> None:
+        from datacron.core.markdown_sections import append_entry_to_heading
+
+        once = append_entry_to_heading("# Log\n", "Use **rg** flags", "- a")
+        twice = append_entry_to_heading(once, "Use **rg** flags", "- b")
+
+        assert twice.count("## Use **rg** flags") == 1

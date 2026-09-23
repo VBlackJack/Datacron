@@ -34,7 +34,7 @@ from datacron.core.frontmatter import (
     has_ambiguous_leading_delimiter_block,
     serialize,
 )
-from datacron.core.markdown_headings import heading_before, markdown_headings
+from datacron.core.markdown_headings import heading_before, heading_identity, markdown_headings
 from datacron.core.markdown_sections import (
     HEADING_SUGGESTION_MAX_CHARS,
     HeadingNotFoundError,
@@ -889,7 +889,10 @@ def _assert_renamed_heading_survives(
     """
     headings = markdown_headings(lines)
     renamed = next((item for item in headings if item.start == heading_index), None)
-    if renamed is None or renamed.level != level or renamed.text != new_heading:
+    # The parser drops inline markup, so ``Use `rg` flags`` reads back as
+    # ``Use rg flags``. Comparing with the raw string refused every such title;
+    # comparing with its parsed identity keeps both refusals above working.
+    if renamed is None or renamed.level != level or renamed.text != heading_identity(new_heading):
         raise ValueError(
             "new_heading does not survive as a level-"
             f"{level} heading; refusing an edit that would drop the section"
