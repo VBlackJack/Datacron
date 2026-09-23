@@ -482,17 +482,16 @@ def replace_frontmatter_id(raw: str, note_id: str) -> str:
     exact-body parser is deliberate, since the plain one strips the trailing
     newline and would turn an identity repair into a silent rewrite of the note.
 
-    The frontmatter itself is re-serialized in canonical key order, so a
-    hand-written frontmatter can come back with more changed lines than ``id``
-    alone -- a flow-style list is re-emitted in block style, and a ``T``-separated
-    timestamp comes back with a space.
+    Only the ``id`` and ``updated`` values are edited in the frontmatter text;
+    the rest of the block, comments included, is kept as written unless that
+    edit cannot be verified, in which case the block is re-serialized.
     """
     metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
     if not metadata:
         raise ValueError("note has no frontmatter")
     metadata["id"] = note_id
     metadata["updated"] = datetime.now(tz=UTC).isoformat()
-    return _serialize_preserving_bom(metadata, body, has_bom=has_bom)
+    return _serialize_preserving_frontmatter(raw, metadata, body, has_bom=has_bom)
 
 
 def _clean_string_list(values: list[str]) -> list[str]:
@@ -531,6 +530,35 @@ def _patch_frontmatter_fields(raw: str, metadata: dict[str, Any], fields: list[s
     if parsed != metadata:
         raise ValueError("last_id metadata preservation validation failed")
     return result
+
+
+def _serialize_preserving_frontmatter(
+    raw: str,
+    metadata: dict[str, Any],
+    body: str,
+    *,
+    has_bom: bool,
+) -> str:
+    """Write ``body`` under the note's own frontmatter text, edited key by key.
+
+    Re-dumping the whole block through PyYAML is lossy on hand-written notes:
+    every comment went, key order and flow style changed, and YAML 1.1 turned
+    values back into other values (``14:30`` into ``870``, ``1.10`` into ``1.1``,
+    ``01234`` into ``668``, ``NO`` into ``false``) that Obsidian had displayed as
+    written. Only the keys whose value changed are replaced or appended, through
+    the same verified span edit as ``last_id``; every other byte of the block is
+    kept. When that edit cannot be trusted (a removed key, a changed block list,
+    anchors, a flow mapping) the whole block is re-serialized as before.
+    """
+    original, original_body, _had_bom = _parse_preserving_bom_and_body_eols(raw)
+    if original and raw.endswith(original_body) and all(key in metadata for key in original):
+        head = raw[: len(raw) - len(original_body)]
+        changed = [key for key in metadata if key not in original or original[key] != metadata[key]]
+        try:
+            return _patch_frontmatter_fields(head, metadata, changed) + body
+        except (ValueError, yaml.YAMLError):
+            pass
+    return _serialize_preserving_bom(metadata, body, has_bom=has_bom)
 
 
 def _frontmatter_header_span(raw: str) -> tuple[int, int, str]:

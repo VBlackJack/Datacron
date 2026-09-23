@@ -196,10 +196,11 @@ journalisé ordinaire. Quand le frontmatter porte déjà cet ID, la note n'est p
 les sources sidecar/index divergentes sont réalignées. Pour une note réécrite, le BOM et les octets
 du corps sont préservés quand les fins de ligne sont uniformes. Une note qui mélange CRLF et LF est
 au contraire normalisée vers son EOL dominant, exactement comme n'importe quelle autre écriture
-structurée de note la normalise. Le frontmatter est re-sérialisé dans l'ordre de clés canonique :
-un frontmatter écrit à la main peut donc revenir avec plus de lignes modifiées que le seul `id` -
-une liste en style flow est réémise en style bloc, et un horodatage séparé par `T` revient avec une
-espace.
+structurée de note la normalise. Dans le frontmatter, seules les valeurs `id` et `updated` sont
+modifiées ; toutes les autres lignes, commentaires compris, sont conservées telles qu'écrites.
+Quand cette modification ne peut pas être vérifiée (une ancre YAML, un mapping en style flow), le
+bloc est re-sérialisé dans l'ordre de clés canonique, comme le fait toute écriture structurée dans
+ce cas.
 
 `--action adopt-frontmatter` promeut l'ID propre à la note au rang de canonique et réaligne le
 sidecar et l'index à la place. Il ne touche pas à la note, et il est refusé quand l'ID du

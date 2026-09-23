@@ -73,7 +73,7 @@ from datacron.mcp.tools.write_validation import (
     _map_write_path_error,
     _parse_preserving_bom_and_body_eols,
     _patch_frontmatter_fields,
-    _serialize_preserving_bom,
+    _serialize_preserving_frontmatter,
     _validate_append_journal_request,
     _validate_backlog_last_id,
     _validate_delete_note_section_request,
@@ -380,7 +380,7 @@ async def _append_journal_impl(
                 cleaned_entry,
             )
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
-            return _serialize_preserving_bom(metadata, new_body, has_bom=has_bom)
+            return _serialize_preserving_frontmatter(raw, metadata, new_body, has_bom=has_bom)
 
         content_hash = await app.vault_writer.mutate_note_atomic(
             cleaned_rel_path,
@@ -560,7 +560,7 @@ async def _set_frontmatter_impl(
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
             if cleaned_last_id is not None:
                 return _patch_frontmatter_fields(raw, metadata, changed_fields)
-            return _serialize_preserving_bom(metadata, body, has_bom=has_bom)
+            return _serialize_preserving_frontmatter(raw, metadata, body, has_bom=has_bom)
 
         content_hash = await app.vault_writer.mutate_note_atomic(
             cleaned_rel_path,
@@ -682,7 +682,7 @@ async def _patch_note_preamble_impl(
                 raise ValueError(_AMBIGUOUS_LEADING_BLOCK_MESSAGE)
             new_body = patch_note_preamble(body, cleaned_new_content)
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
-            return _serialize_preserving_bom(metadata, new_body, has_bom=has_bom)
+            return _serialize_preserving_frontmatter(raw, metadata, new_body, has_bom=has_bom)
 
         content_hash = await app.vault_writer.mutate_note_atomic(
             cleaned_rel_path,
@@ -792,7 +792,7 @@ async def _patch_note_section_impl(
                 f"{suffix}"
             )
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
-            return _serialize_preserving_bom(metadata, new_body, has_bom=has_bom)
+            return _serialize_preserving_frontmatter(raw, metadata, new_body, has_bom=has_bom)
 
         operation_parameters: dict[str, Any] = {
             "heading": cleaned_heading,
@@ -1002,7 +1002,7 @@ async def _rename_note_section_impl(
                 heading_level=matched_level,
             )
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
-            return _serialize_preserving_bom(metadata, "".join(lines), has_bom=has_bom)
+            return _serialize_preserving_frontmatter(raw, metadata, "".join(lines), has_bom=has_bom)
 
         content_hash = await app.vault_writer.mutate_note_atomic(
             cleaned_rel_path,
@@ -1115,7 +1115,7 @@ async def _delete_note_section_impl(
             suffix = "".join(lines[content_end:])
             new_body = f"{prefix}{suffix}"
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
-            return _serialize_preserving_bom(metadata, new_body, has_bom=has_bom)
+            return _serialize_preserving_frontmatter(raw, metadata, new_body, has_bom=has_bom)
 
         operation_parameters: dict[str, Any] = {
             "heading": cleaned_heading,
