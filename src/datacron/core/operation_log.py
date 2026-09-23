@@ -429,8 +429,17 @@ class OperationJournal:
         return target
 
     def next_timestamp(self, now: datetime | None = None) -> str:
+        """Return a timestamp past the journal tail as it is on disk now.
+
+        The tail used to come from a per-process cache. With two servers on one
+        vault and the clock stepped back (NTP, resume from hibernate), the cache
+        missed the other process's newer record, so the timestamp fell behind it
+        and ``append_record``, which does re-read the tail, refused the record
+        after the note had already been replaced. The caller holds the journal
+        lock, so the tail read here is the one the append will see.
+        """
         candidate = (now or datetime.now(tz=UTC)).astimezone(UTC)
-        self._ensure_tail_state()
+        self._load_tail_state()
         if self._tail_record is not None:
             previous = datetime.fromisoformat(self._tail_record.timestamp).astimezone(UTC)
             if candidate <= previous:
@@ -540,6 +549,23 @@ class OperationJournal:
 
     def pending_path(self, operation_id: str) -> Path:
         return self._guard_pending_target(self._pending_dir / f"{operation_id}.json")
+
+    def restamped_past_tail(self, record: OperationRecord) -> OperationRecord:
+        """Return ``record`` with a timestamp that does not precede the tail.
+
+        A pending record keeps the timestamp it was prepared with, and recovery
+        re-appends it. If the tail moved past that timestamp meanwhile, the append
+        was refused on every later recovery and every write in the vault stayed
+        blocked, with nothing for ``inspect`` or ``repair`` to act on. Moving the
+        time forward keeps the journal ordered, which is what the check protects.
+        """
+        self._load_tail_state()
+        if self._tail_record is None:
+            return record
+        recorded = datetime.fromisoformat(record.timestamp)
+        if recorded >= datetime.fromisoformat(self._tail_record.timestamp):
+            return record
+        return replace(record, timestamp=self.next_timestamp())
 
     def append_record(self, record: OperationRecord) -> bool:
         """Durably append one chained record; return ``False`` if the tail already is it.

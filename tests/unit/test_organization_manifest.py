@@ -1418,3 +1418,62 @@ class TestOrganizationCaseAndSizeP2:
 
         assert caught.value.code == "admitted_note_too_large"
         assert "notes/journal.md" in str(caught.value)
+
+
+def _replace_created_payload(
+    case: _BundleCase, content: bytes, *, target: str | None = None
+) -> None:
+    """Swap the create operation's payload (and optionally its target) in a built bundle."""
+    digest = sha256_bytes(content)
+    payloads = case.manifest_path.parent / "payloads"
+    operations = cast("list[dict[str, object]]", case.manifest["operations"])
+    create = next(item for item in operations if item["kind"] == "create_exact")
+    (payloads / f"{create['payload_sha256']}.md").unlink()
+    (payloads / f"{digest}.md").write_bytes(content)
+    create["payload_sha256"] = digest
+    if target is not None:
+        create["target"] = target
+    case.manifest_path.write_text(
+        json.dumps(case.manifest, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+    )
+
+
+def test_a_created_note_cannot_take_over_the_link_of_an_untouched_note(tmp_path: Path) -> None:
+    """A title outranks a stem, so "unrelated" would move [[unrelated]] to the new note.
+
+    The same takeover through an alias was refused; through a title or a stem it
+    passed validation and silently moved the untouched note's backlinks.
+    """
+    case = _build_case(tmp_path)
+    _replace_created_payload(case, _note(_CREATE_ID, "unrelated", ("created-alias",), "created"))
+
+    with pytest.raises(OrganizationManifestError) as caught:
+        _load_and_validate(case)
+
+    assert caught.value.code == "result_steals_link"
+
+
+def test_a_target_folder_spelled_unlike_the_disk_is_refused(tmp_path: Path) -> None:
+    """On a case-insensitive filesystem the note lands in the folder as spelled on disk.
+
+    The projected report used the manifest's spelling and the live report the
+    disk's, so the batch committed and then reported committed_report_mismatch on
+    every retry.
+    """
+    probe = tmp_path / "CaseProbe"
+    probe.mkdir()
+    if not (tmp_path / "caseprobe").exists():
+        pytest.skip("case-sensitive filesystem: memory/sub and memory/Sub are two folders")
+    case = _build_case(tmp_path / "case")
+    (case.vault / "memory" / "Sub").mkdir()
+    _replace_created_payload(
+        case,
+        _note(_CREATE_ID, "created-title", ("created-alias",), "created"),
+        target="memory/sub/created.md",
+    )
+
+    with pytest.raises(OrganizationManifestError) as caught:
+        _load_and_validate(case)
+
+    assert caught.value.code == "target_case_mismatch"
+    assert "'Sub'" in str(caught.value)

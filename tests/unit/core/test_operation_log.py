@@ -1292,3 +1292,70 @@ def test_a_partly_written_record_is_rolled_back_not_left_torn(
         _record("third", now + timedelta(minutes=2), sha256_bytes(b"e"), sha256_bytes(b"f"))
     )
     assert [item.operation_id for item in reopened.read_records()] == ["first", "third"]
+
+
+class _SteppedClock(datetime):
+    """The journal's clock, which a test can step forward and back."""
+
+    offset = timedelta(0)
+
+    @classmethod
+    def now(cls, tz: Any = None) -> Any:
+        return datetime.now(tz) + cls.offset
+
+
+async def test_a_clock_stepped_back_between_two_writers_does_not_wedge_the_vault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two servers on one vault, and the clock stepped back between their writes.
+
+    The second writer took its timestamp from a tail it had cached, behind the
+    other writer's newer record, so the append was refused after the note had
+    been replaced; the pending record kept that timestamp and every later write
+    and recovery was refused too.
+    """
+    monkeypatch.setattr(operation_log, "datetime", _SteppedClock)
+    monkeypatch.setattr(_SteppedClock, "offset", timedelta(0))
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    settings = Settings(read_paths=[vault], write_paths=[vault], vault_root=vault)
+    first = FilesystemVaultWriter(vault, settings)
+    second = FilesystemVaultWriter(vault, settings)
+    (vault / "n.md").write_bytes(b"# N\n")
+
+    def context(index: int) -> OperationContext:
+        return OperationContext(
+            op="append", tool="append_journal", actor="test", parameters={"n": index}
+        )
+
+    content_hash = await first.mutate_note_atomic(
+        "n.md", lambda text: text + "a1\n", operation=context(1)
+    )
+    monkeypatch.setattr(_SteppedClock, "offset", timedelta(minutes=1))
+    content_hash = await second.mutate_note_atomic(
+        "n.md", lambda text: text + "b1\n", expected_hash=content_hash, operation=context(2)
+    )
+    monkeypatch.setattr(_SteppedClock, "offset", timedelta(0))
+
+    await first.mutate_note_atomic(
+        "n.md", lambda text: text + "a2\n", expected_hash=content_hash, operation=context(3)
+    )
+    await second.mutate_note_atomic("n.md", lambda text: text + "b2\n", operation=context(4))
+
+    assert (vault / "n.md").read_bytes() == b"# N\na1\nb1\na2\nb2\n"
+    assert not list((vault / ".datacron" / "oplog" / "pending").glob("*.json"))
+
+
+def test_a_pending_record_behind_the_tail_is_restamped_on_recovery(tmp_path: Path) -> None:
+    journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
+    now = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
+    journal.append_record(
+        _record("ahead", now + timedelta(minutes=1), sha256_bytes(b"z"), sha256_bytes(b"a"))
+    )
+    stale = _record("stale", now, sha256_bytes(b"a"), sha256_bytes(b"b"))
+
+    restamped = journal.restamped_past_tail(stale)
+
+    assert restamped.operation_id == "stale"
+    assert datetime.fromisoformat(restamped.timestamp) > now + timedelta(minutes=1)
+    assert journal.append_record(restamped) is True

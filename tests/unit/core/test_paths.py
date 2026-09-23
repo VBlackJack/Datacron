@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -178,18 +179,35 @@ class TestAssertVaultRelPath:
             ("../outside.md", "traverse directories"),
             ("folder/../../outside.md", "traverse directories"),
             ("folder/../outside.md", "traverse directories"),
-            ("facts /note.md", "end with a dot or a space"),
-            ("facts./note.md", "end with a dot or a space"),
-            ("folder/trailing /note.md", "end with a dot or a space"),
             ("note\x00.md", "control characters"),
             ("note\n.md", "control characters"),
         ],
     )
-    def test_refuses_an_escape_or_a_windows_rewritten_component(
-        self, rel_path: str, fragment: str
-    ) -> None:
+    def test_refuses_an_escape(self, rel_path: str, fragment: str) -> None:
         with pytest.raises(PathConfinementError, match=fragment):
             assert_vault_rel_path(rel_path)
+
+    @pytest.mark.parametrize(
+        "rel_path", ["facts /note.md", "facts./note.md", "folder/trailing /note.md"]
+    )
+    def test_refuses_a_component_windows_would_rewrite(
+        self, rel_path: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        with pytest.raises(PathConfinementError, match="end with a dot or a space"):
+            assert_vault_rel_path(rel_path)
+
+    @pytest.mark.parametrize("platform", ["linux", "darwin"])
+    def test_a_trailing_dot_is_an_ordinary_name_elsewhere(
+        self, platform: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Applied everywhere, the Win32 rule dropped "Clients/Acme Inc./" from every listing."""
+        monkeypatch.setattr(sys, "platform", platform)
+
+        assert assert_vault_rel_path("Clients/Acme Inc./meeting.md") == (
+            "Clients/Acme Inc./meeting.md"
+        )
 
 
 class TestStripExtendedLengthPrefix:
