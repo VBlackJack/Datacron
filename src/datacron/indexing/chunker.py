@@ -29,7 +29,7 @@ from datacron.core.logger import get_logger
 from datacron.core.markdown_headings import token_text
 from datacron.core.markdown_sections import heading_ancestry
 from datacron.core.models import Chunk, ChunkType, Note
-from datacron.indexing.wikilinks import extract_wikilink_targets
+from datacron.indexing.wikilinks import OpenFence, extract_wikilink_targets, open_fence_after
 
 _NON_ALPHANUMERIC_PATTERN = re.compile(r"[^a-z0-9]+")
 _REPEATED_DASH_PATTERN = re.compile(r"-+")
@@ -158,6 +158,11 @@ class MarkdownChunker:
                     line_end=block_start + rel_end + line_offset,
                     ordinal_counters=ordinal_counters,
                     lang=lang,
+                    open_fence=(
+                        open_fence_after("".join(raw_lines[:rel_start]))
+                        if rel_start and chunk_type is not ChunkType.CODE
+                        else None
+                    ),
                 )
                 chunks.append(chunk)
 
@@ -173,6 +178,7 @@ class MarkdownChunker:
         line_end: int,
         ordinal_counters: dict[str, int] | None = None,
         lang: str | None = None,
+        open_fence: OpenFence | None = None,
     ) -> Chunk:
         header_path = _header_path(headings)
         slug_path = _slug_header_path(headings)
@@ -190,7 +196,7 @@ class MarkdownChunker:
             token_count=len(content) // TOKEN_ESTIMATE_CHARS_PER_TOKEN,
             line_start=line_start,
             line_end=line_end,
-            wikilinks_out=extract_wikilink_targets(content, chunk_type),
+            wikilinks_out=extract_wikilink_targets(content, chunk_type, open_fence=open_fence),
             lang=lang,
         )
 

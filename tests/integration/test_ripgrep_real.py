@@ -31,6 +31,29 @@ from datacron.indexing.ripgrep import RipgrepWrapper, _build_command
 pytestmark = pytest.mark.integration
 
 
+def test_real_rg_anchors_end_of_line_in_crlf_notes(tmp_path: Path, rg_path: str) -> None:
+    """``$`` must match before CRLF, as it does in the Python fallback.
+
+    Without ``--crlf`` ripgrep treats the ``\\r`` as part of the line, so an
+    anchored pattern silently missed every note saved by a Windows editor.
+    """
+    (tmp_path / "crlf.md").write_bytes(b"status: done\r\n")
+    (tmp_path / "lf.md").write_bytes(b"status: done\n")
+    result = subprocess.run(
+        _build_command(rg_path, "^status: done$", None),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    matches = [json.loads(line) for line in result.stdout.splitlines()]
+    assert {
+        Path(event["data"]["path"]["text"]).as_posix()
+        for event in matches
+        if event["type"] == "match"
+    } == {"crlf.md", "lf.md"}
+
+
 @pytest.mark.parametrize("glob", [None, "*.md", "_memory/**/*.md"])
 def test_real_rg_retains_default_hidden_directory_policy(
     tmp_path: Path, rg_path: str, glob: str | None

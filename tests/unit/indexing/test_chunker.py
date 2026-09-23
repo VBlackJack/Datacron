@@ -344,6 +344,40 @@ def _budget_chunks(content: str, max_tokens: int) -> list[Chunk]:
     return MarkdownChunker(max_tokens=max_tokens).chunk(_make_note("budget.md", content))
 
 
+def test_a_fence_opened_on_a_list_marker_does_not_swallow_later_links() -> None:
+    """``- ```bash`` opens a fence; its indented closer must not read as an opener."""
+    content = "- ```bash\n  make\n  ```\n- Step two, see [[Target]]\n"
+
+    chunks = _budget_chunks(content, max_tokens=1000)
+
+    assert [target for chunk in chunks for target in chunk.wikilinks_out] == ["Target"]
+
+
+def test_a_split_inside_a_nested_fence_keeps_the_links_after_it() -> None:
+    """A segment that starts inside a fence begins with that fence's closing line.
+
+    Read alone, the closer looked like an opener and the rest of the segment was
+    taken for code, so the link below vanished from the backlinks while the text
+    still held it.
+    """
+    items = [
+        f"- item {index} lorem ipsum dolor sit amet consectetur {index}\n" for index in range(60)
+    ]
+    items.insert(
+        55,
+        "  ```text\n"
+        + "".join(f"  code line {line} {'x' * 40}\n" for line in range(10))
+        + "  ```\n",
+    )
+    items.append("- final item links [[Target]]\n")
+
+    chunks = _budget_chunks("".join(items), max_tokens=800)  # cuts inside the fence
+
+    assert len(chunks) > 1
+    holder = next(chunk for chunk in chunks if "[[Target]]" in chunk.content)
+    assert holder.wikilinks_out == ["Target"]
+
+
 def test_default_max_tokens_is_noarg_constructible() -> None:
     # The structural conformance check constructs MarkdownChunker() with no args;
     # a small note must stay a single chunk under the generous default budget.
