@@ -129,7 +129,9 @@ def _copy_permission_bits(original: Path, replacement: Path) -> None:
     Windows is left alone: its mode bits only carry the read-only flag, which
     already refuses the replace, and ACLs are inherited from the directory.
     """
-    if sys.platform == "win32":
+    # A local ``str`` keeps mypy from reading the rest as dead code on Windows.
+    platform = sys.platform
+    if platform == "win32":
         return
     try:
         mode = stat.S_IMODE(original.stat().st_mode)
