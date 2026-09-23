@@ -31,6 +31,27 @@ from datacron.indexing.ripgrep import RipgrepWrapper, _build_command
 pytestmark = pytest.mark.integration
 
 
+def test_real_rg_reads_a_note_with_a_nul_byte_and_skips_other_files(
+    tmp_path: Path, rg_path: str
+) -> None:
+    """A stray NUL made ripgrep treat the note as binary and report nothing in it."""
+    (tmp_path / "nul.md").write_bytes(b"before\x00 needle\n")
+    (tmp_path / "attachment.bin").write_bytes(b"\x00needle\n")
+    result = subprocess.run(
+        _build_command(rg_path, "needle", None),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    matches = [json.loads(line) for line in result.stdout.splitlines()]
+    assert {
+        Path(event["data"]["path"]["text"]).as_posix()
+        for event in matches
+        if event["type"] == "match"
+    } == {"nul.md"}
+
+
 def test_real_rg_anchors_end_of_line_in_crlf_notes(tmp_path: Path, rg_path: str) -> None:
     """``$`` must match before CRLF, as it does in the Python fallback.
 
