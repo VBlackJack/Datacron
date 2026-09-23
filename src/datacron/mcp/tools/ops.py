@@ -29,6 +29,7 @@ from datacron.mcp.tools.payloads import (
     _bounded_count,
     _error_response,
     _internal_error_response,
+    _redact_retrieval_text,
 )
 
 if TYPE_CHECKING:
@@ -112,7 +113,7 @@ async def _get_note_history_impl(
         return _internal_error_response("get_note_history", started, note=cleaned_note)
     payload = {
         "note": cleaned_note,
-        "operations": [_restore_point_payload(record, present) for record in returned],
+        "operations": [_restore_point_payload(app, record, present) for record in returned],
         "total": len(matching),
         "returned": len(returned),
         "limit_applied": bounded_limit,
@@ -172,7 +173,7 @@ async def _audit_query_impl(
             "tool": cleaned_tool,
             "note": cleaned_note,
         },
-        "operations": [_operation_payload(record) for record in returned],
+        "operations": [_operation_payload(app, record) for record in returned],
         "total": len(matching),
         "returned": len(returned),
         "limit_applied": bounded_limit,
@@ -189,11 +190,20 @@ async def _audit_query_impl(
     return payload
 
 
-def _operation_payload(record: OperationRecord) -> dict[str, object]:
-    return record.to_dict()
+def _operation_payload(app: DatacronApp, record: OperationRecord) -> dict[str, object]:
+    """Render one journal record, with its note path redacted like every retrieval.
+
+    Search and backlinks redact a note path that carries a secret-shaped name, and
+    the journal readers returned the same path in full, so the secret the other
+    tools concealed was one audit_query away.
+    """
+    payload = record.to_dict()
+    payload["rel_path"] = _redact_retrieval_text(app, record.rel_path)
+    return payload
 
 
 def _restore_point_payload(
+    app: DatacronApp,
     record: OperationRecord,
     present_hashes: set[str],
 ) -> dict[str, object]:
@@ -206,7 +216,7 @@ def _restore_point_payload(
     that fails, which on a vault resumed after a long pause is the common case rather
     than the rare one.
     """
-    payload = record.to_dict()
+    payload = _operation_payload(app, record)
     payload["restore_available"] = record.before_hash in present_hashes
     return payload
 

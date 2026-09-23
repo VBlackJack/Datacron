@@ -421,7 +421,10 @@ def status(
 
     db_path = sidecar_index_db(vault_root)
     index_status = asyncio.run(_index_status_label(db_path))
-    log_dir = sidecar_dir(vault_root) / "logs"
+    # The logger writes to settings.log_dir (~/.datacron/logs by default); the
+    # vault's sidecar holds no logs, and pointing there sent the operator to a
+    # file that never existed.
+    log_dir = settings.log_dir
     today_log = LOG_FILENAME_PATTERN.format(date=datetime.now().strftime("%Y%m%d"))
 
     _print(f"Datacron {__version__}")
@@ -1705,12 +1708,18 @@ def setup(
         reset=reset,
     )
 
+    from datacron.installers.claude_desktop import ClaudeDesktopConfigError  # noqa: PLC0415
+
     try:
         result = asyncio.run(run_setup(plan))
     except (ResetGuardError, ResetExecutionError) as exc:
         _error(str(exc))
     except (ValueError, NotADirectoryError) as exc:
         _error(str(exc))
+    except ClaudeDesktopConfigError as exc:
+        # Raised when datacron-mcp cannot be located for the claude-code snippet,
+        # after the vault was already initialized; it used to end in a traceback.
+        _error(f"Could not resolve the datacron-mcp command: {exc}")
 
     _render_setup_result(result)
     protocol_failed = False
