@@ -19,6 +19,11 @@ on:
   pull_request:
     branches: [main]
 
+# Read-only by default: no job here writes to the repository, and a push run
+# otherwise received the repository's default token scope.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-quality-${{ github.ref }}
   cancel-in-progress: true

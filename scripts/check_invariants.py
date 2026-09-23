@@ -30,9 +30,9 @@ from datacron.core.versioning import normalize_calver
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[1]
 _SERVER_JSON_PATH: Final[Path] = _REPO_ROOT / "server.json"
 _COMMANDS: Final[tuple[tuple[str, ...], ...]] = (
-    (sys.executable, "-m", "ruff", "check", "src", "tests", "scripts"),
-    (sys.executable, "-m", "ruff", "format", "--check", "src", "tests", "scripts"),
-    (sys.executable, "-m", "mypy", "--strict", "src", "tests", "scripts"),
+    (sys.executable, "-m", "ruff", "check", "src", "tests", "scripts", "packaging"),
+    (sys.executable, "-m", "ruff", "format", "--check", "src", "tests", "scripts", "packaging"),
+    (sys.executable, "-m", "mypy", "--strict", "src", "tests", "scripts", "packaging"),
     (sys.executable, "-m", "pytest", "-m", "invariants"),
 )
 

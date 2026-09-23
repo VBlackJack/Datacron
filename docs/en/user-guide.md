@@ -137,6 +137,10 @@ affected chunk IDs change, so retrieve fresh IDs before using saved chunk refere
   - `confidence: low` and `confidence: needs_verification` receive a light penalty;
   - `include_superseded=true` brings superseded or invalidated history back up.
 
+`search_text` matches whole words. Accents are folded (`cafe` finds `café`), but a text
+written without spaces between words, as Chinese and Japanese usually are, is one long word:
+`東京` does not find `東京都に住む`. Use `search_regex` for a substring in such text.
+
 `search_regex` stays **literal**: no query expansion, no temporal re-ranking. Use it when you
 are after an exact string (an identifier, a path, a snippet of code).
 

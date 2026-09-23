@@ -144,6 +144,11 @@ un simple "match de mots" :
   - `confidence: low` et `confidence: needs_verification` reçoivent une pénalité légère ;
   - `include_superseded=true` permet de faire remonter les notes supersédées ou invalidées.
 
+`search_text` trouve des mots entiers. Les accents sont ignorés (`cafe` trouve `café`), mais un
+texte écrit sans espace entre les mots, comme le chinois ou le japonais le sont en général, forme
+un seul long mot : `東京` ne trouve pas `東京都に住む`. Pour une sous-chaîne dans un tel texte,
+utilise `search_regex`.
+
 `search_regex` reste **littéral** : ni query-expansion, ni re-rank temporel. Utilise-le
 quand tu cherches une chaîne exacte (un identifiant, un chemin, un bout de code).
 
