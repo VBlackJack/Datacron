@@ -277,6 +277,51 @@ class TestHeadingsInsideHtmlComments:
 
         assert [item.text for item in headings] == ["A", "B"]
 
+    def test_an_opener_quoted_inside_a_line_hides_nothing(self) -> None:
+        """Only a line-leading opener starts a comment, as in CommonMark.
+
+        An opener anywhere in the line used to count, and the next ``-->`` of any
+        kind closed it: here a mermaid arrow inside a fence. Both headings in
+        between were hidden, so the section "Tips" ran to the end of the note and
+        patching or deleting it replaced "Journal" and "Flow" with it.
+        """
+        body = (
+            "## Tips\n\nOpen a comment with `<!--`.\n\n## Journal\n\nentry\n\n"
+            "## Flow\n\n```mermaid\nA --> B\n```\n"
+        )
+
+        headings = markdown_headings(body.splitlines(keepends=True))
+
+        assert [item.text for item in headings] == ["Tips", "Journal", "Flow"]
+
+    def test_an_opener_in_prose_does_not_pair_with_a_prose_arrow(self) -> None:
+        body = (
+            "## Draft\n\nPut a <!-- before a block.\n\n## Published\n\nkeep\n\n"
+            "## Syntax\n\nx --> y\n"
+        )
+
+        headings = markdown_headings(body.splitlines(keepends=True))
+
+        assert [item.text for item in headings] == ["Draft", "Published", "Syntax"]
+
+    def test_an_indented_line_leading_opener_still_hides(self) -> None:
+        """Up to three spaces of indentation still start an HTML block."""
+        body = "## A\n\n   <!--\n## Hidden\n-->\n\n## B\n"
+
+        headings = markdown_headings(body.splitlines(keepends=True))
+
+        assert [item.text for item in headings] == ["A", "B"]
+
+    def test_patching_the_section_above_a_quoted_opener_keeps_the_rest(self) -> None:
+        lines = (
+            "## Draft\n\nPut a `<!--` before a block.\n\n## Published\n\n"
+            "Important published content.\n\n## Syntax\n\nClose it with `-->`.\n"
+        ).splitlines(keepends=True)
+
+        _, end = find_section_span(lines, "Draft", 2)
+
+        assert "".join(lines[end:]).startswith("## Published")
+
 
 def test_a_new_heading_ending_in_hashes_is_refused() -> None:
     """A trailing closing sequence is dropped by the parser, silently.

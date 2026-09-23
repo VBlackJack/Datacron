@@ -364,6 +364,30 @@ async def test_rebuild_validation_sees_a_note_edited_while_it_ran(tmp_path: Path
     assert before["notes/edited.md"] != after["notes/edited.md"]
 
 
+async def test_rebuild_publishes_despite_an_undecodable_note(tmp_path: Path) -> None:
+    """The index build skips a legacy-encoded note, so the check must skip it too.
+
+    The check read every note without handling errors, and one file saved in
+    cp1252 failed every rebuild with UnicodeDecodeError: the command meant to
+    repair the index could not run while the vault held such a note.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "good.md").write_text(_serialized(_NOTE_A, "Good", "# Good\n\nbody\n"), "utf-8")
+    (vault / "legacy.md").write_bytes("# Café\n\ncrème\n".encode("cp1252"))
+
+    rebuilt = await rebuild_index_atomic(vault, _settings(vault), VaultConfig())
+
+    assert rebuilt["checked_notes"] == 2
+    store = SQLiteFTS5Store()
+    await store.open(sidecar_index_db(vault), read_only=True)
+    try:
+        indexed = await store.list_indexed_notes()
+    finally:
+        await store.close()
+    assert set(indexed) == {"good.md"}
+
+
 async def test_note_paths_enumerates_exactly_what_stat_notes_does(tmp_path: Path) -> None:
     """Three enumerations of the same vault must agree on which notes exist.
 

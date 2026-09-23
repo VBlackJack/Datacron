@@ -585,16 +585,16 @@ class TestOpsRepairId:
         assert not scan_vault_read_only(vault).id_violations
         assert _indexed_note_ids(vault)["note.md"] == _CANONICAL_ID
 
-    def test_adopt_index_preserves_the_body_but_reserializes_the_frontmatter(
+    def test_adopt_index_preserves_the_body_and_the_hand_written_frontmatter(
         self,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        """Body bytes are exact; identity repair canonicalizes the frontmatter.
+        """Body bytes are exact; only ``id`` and ``updated`` change in the frontmatter.
 
         The other byte-preservation test starts from a `serialize`-produced note, which is
-        already canonical, so it cannot see this. A hand-written frontmatter comes back with
-        more changed lines than `id` alone, and the documentation says so.
+        already canonical, so it cannot see this. Identity repair used to re-dump the whole
+        block, re-emitting a flow list in block style and a ``T`` timestamp with a space.
         """
         handwritten = (
             "---\n"
@@ -620,8 +620,8 @@ class TestOpsRepairId:
         after = target.read_bytes()
         assert after.split(b"---\n", 2)[2] == before.split(b"---\n", 2)[2]
         assert f"id: {_CANONICAL_ID}\n".encode() in after
-        assert b"tags:\n- alpha\n" in after
-        assert b"created: 2026-06-16 18:00:00+02:00\n" in after
+        assert b"tags: [alpha, beta, gamma]\n" in after
+        assert b"created: 2026-06-16T18:00:00+02:00\n" in after
 
     def test_adopt_index_journals_the_repair(
         self,
