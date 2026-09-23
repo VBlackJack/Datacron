@@ -45,12 +45,12 @@ _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_H
 _BACKLOG_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"BL-[0-9]{4,}")
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _ATX_CLOSING_SEQUENCE: Final[re.Pattern[str]] = re.compile(r"[ \t]#+$")
+_MARKDOWN_SUFFIX: Final[str] = ".md"
 _WINDOWS_RESERVED_NAMES: Final[frozenset[str]] = frozenset(
     {"CON", "PRN", "AUX", "NUL"}
     | {f"COM{index}" for index in range(1, 10)}
     | {f"LPT{index}" for index in range(1, 10)}
 )
-_MARKDOWN_SUFFIX: Final[str] = ".md"
 _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
 # Markdown ATX headings run from one to six hash marks; every heading selector shares it.
 MAX_HEADING_LEVEL: Final[int] = 6
