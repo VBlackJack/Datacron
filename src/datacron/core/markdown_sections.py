@@ -21,7 +21,12 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Final, Literal, Protocol, TypedDict, TypeVar
 
-from datacron.core.markdown_headings import MarkdownHeading, heading_before, markdown_headings
+from datacron.core.markdown_headings import (
+    MarkdownHeading,
+    heading_before,
+    heading_identity,
+    markdown_headings,
+)
 
 __all__ = [
     "HEADING_SUGGESTION_MAX_CHARS",
@@ -354,10 +359,11 @@ def section_replacement_block(new_content: str, *, prefix: str, suffix: str) -> 
 
 
 def _find_heading_section(lines: list[str], heading: str) -> tuple[int, int, int] | None:
-    matches = [item for item in markdown_headings(lines) if item.text == heading]
+    identity = heading_identity(heading)
+    matches = [item for item in markdown_headings(lines) if item.text == identity]
     if not matches:
         return None
-    start, end = find_section_span(lines, heading, None)
+    start, end = find_section_span(lines, identity, None)
     selected = matches[0]
     return selected.start, selected.level, _trim_trailing_blank_lines(lines, start, end)
 

@@ -103,6 +103,19 @@ class MarkdownHeading:
     text: str
 
 
+def heading_identity(raw_heading: str) -> str:
+    """Return the identity the parser gives a heading written as ``raw_heading``.
+
+    Selectors compare parsed text, which drops inline markup: a heading written
+    ``Use `rg` flags`` is found as ``Use rg flags``. A caller copying the raw line
+    from a note therefore matched nothing, so ``append_journal`` created the
+    section again on every call, and a rename to such a title was refused as not
+    surviving. Rendering the caller's string the same way makes both forms agree.
+    """
+    headings = markdown_headings([f"## {raw_heading.strip()}\n"])
+    return headings[0].text if headings else raw_heading.strip()
+
+
 def token_text(token: Any) -> str:
     """Return the same inline text identity for maps, chunks, and write selectors."""
     children = getattr(token, "children", None) or []
