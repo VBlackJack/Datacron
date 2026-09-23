@@ -738,15 +738,18 @@ def _split_path_list(value: str | list[str | Path] | None) -> list[Path]:
 class Settings(BaseSettings):
     """Datacron runtime settings.
 
-    Loaded from environment variables prefixed ``DATACRON_`` and an optional
-    ``.env`` file in the current working directory. All reserved runtime keys
-    use the ``DATACRON_`` namespace.
+    Loaded from environment variables prefixed ``DATACRON_``. All reserved
+    runtime keys use the ``DATACRON_`` namespace.
+
+    No ``.env`` file is read. One used to be, from the current working
+    directory, which for a stdio server is whatever folder the MCP client
+    opened: a cloned repository's ``.env`` could set
+    ``DATACRON_REDACT_SECRETS=off``, the log directory or the ripgrep binary
+    without anything saying so.
     """
 
     model_config = SettingsConfigDict(
         env_prefix="DATACRON_",
-        env_file=".env",
-        env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
         frozen=True,
