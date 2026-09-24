@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, date, datetime, timedelta
+from pathlib import PureWindowsPath
 from typing import Any, Final
 
 import yaml
@@ -46,6 +47,11 @@ _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _ATX_CLOSING_SEQUENCE: Final[re.Pattern[str]] = re.compile(r"[ \t]#+$")
 _ATX_LEVEL_MARKER: Final[re.Pattern[str]] = re.compile(r"#{1,6}(?:[ \t]|$)")
 _MARKDOWN_SUFFIX: Final[str] = ".md"
+_WINDOWS_RESERVED_NAMES: Final[frozenset[str]] = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{index}" for index in range(1, 10)}
+    | {f"LPT{index}" for index in range(1, 10)}
+)
 _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
 # Markdown ATX headings run from one to six hash marks; every heading selector shares it.
 MAX_HEADING_LEVEL: Final[int] = 6
@@ -457,6 +463,24 @@ def _assert_markdown_rel_path(cleaned_rel_path: str) -> None:
     """
     if not cleaned_rel_path.endswith(_MARKDOWN_SUFFIX):
         raise ValueError(f"rel_path must end with {_MARKDOWN_SUFFIX}")
+    if PureWindowsPath(cleaned_rel_path).drive:
+        # An absolute or drive-qualified path is the confinement check's to refuse,
+        # with its own error type.
+        return
+    for part in cleaned_rel_path.replace("\\", "/").split("/"):
+        if part in {"", ".", ".."}:
+            continue
+        # The reader never admits a hidden folder, so a note written under
+        # .datacron or .obsidian was committed and then refused by every read,
+        # patch and revert, with a recovery hint telling the client to re-read it.
+        if part.startswith("."):
+            raise ValueError("rel_path must not enter a hidden folder")
+        # A colon names an NTFS alternate data stream, and a reserved device name
+        # is not a file on Windows: both failed after a stray temp file was made.
+        if ":" in part:
+            raise ValueError("rel_path must not contain ':'")
+        if part.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:
+            raise ValueError(f"rel_path must not use the reserved device name {part!r}")
 
 
 def _validate_expected_hash(expected_hash: str | None) -> str | None:
