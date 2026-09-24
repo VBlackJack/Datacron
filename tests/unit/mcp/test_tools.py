@@ -4292,6 +4292,53 @@ class TestRenameNoteSection:
         assert new_body == "# Root\n\n##### Parent\n\n###### Renamed tail\n\nTail body."
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("new_heading", ["Use `rg` flags", "The *important* part", "Q&A"])
+    async def test_rename_note_section_accepts_a_title_with_inline_markup(
+        self, writable_app: DatacronApp, tmp_vault: Path, new_heading: str
+    ) -> None:
+        """The parser reads ``Use `rg` flags`` back as ``Use rg flags``, which is the same title."""
+        from datacron.mcp.tools import _rename_note_section_impl
+
+        rel_path = "_memory/facts/rename-markup.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Root\n\n## Old\n\nBody.\n"
+        )
+
+        result = await _rename_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Old",
+            new_heading=new_heading,
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert "error" not in result, result
+        assert f"## {new_heading}\n" in target.read_text(encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_append_journal_reaches_a_heading_that_starts_with_a_hash(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        """``## #1 Priorities`` has the text ``#1 Priorities``, which is not a level marker."""
+        from datacron.mcp.tools import _append_journal_impl
+
+        rel_path = "_memory/facts/hash-heading.md"
+        target, _original_raw = _write_memory_note(
+            tmp_vault, rel_path, "# Root\n\n## #1 Priorities\n\n- ship\n"
+        )
+
+        result = await _append_journal_impl(
+            writable_app, rel_path=rel_path, heading="#1 Priorities", entry="- test"
+        )
+        refused = await _append_journal_impl(
+            writable_app, rel_path=rel_path, heading="## Log", entry="- test"
+        )
+
+        assert "error" not in result, result
+        assert target.read_text(encoding="utf-8").count("## #1 Priorities") == 1
+        assert "must not start with '#'" in refused["error"]["message"]
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("heading_level", [1, None])
     async def test_rename_note_section_rejects_h1_without_durable_mutation(
         self,
@@ -5373,6 +5420,99 @@ class TestBacklogLastId:
             assert target.read_bytes() == committed
 
 
+_HAND_WRITTEN_HEADER = (
+    "---\n"
+    "id: 01J00000000000000000000151\n"
+    "# owner: keep this reviewed every quarter\n"
+    "title: Hand written\n"
+    "meeting_time: 14:30\n"
+    "version: 1.10\n"
+    "postcode: 01234\n"
+    "country: NO\n"
+    "tags: [memory, keep]\n"
+    "updated: '2026-01-01T00:00:00+00:00'\n"
+    "---\n"
+)
+
+
+def _header_lines_except_updated(raw: str) -> list[str]:
+    header = raw.split("---\n")[1]
+    return [line for line in header.splitlines() if not line.startswith("updated:")]
+
+
+@pytest.mark.parametrize(
+    "tool", ["append_journal", "patch_note_section", "set_frontmatter", "rename_note_section"]
+)
+async def test_body_and_field_edits_keep_the_hand_written_frontmatter(
+    writable_app: DatacronApp, tmp_vault: Path, tool: str
+) -> None:
+    """Only the edited keys change; comments, order and YAML 1.1 lookalikes stay as written.
+
+    Every edit re-dumped the whole block through PyYAML: the comment went, and
+    ``14:30`` came back as ``870``, ``1.10`` as ``1.1``, ``01234`` as ``668`` and
+    ``NO`` as ``false``, values Obsidian had displayed as written.
+    """
+    from datacron.mcp.tools import (
+        _append_journal_impl,
+        _patch_note_section_impl,
+        _rename_note_section_impl,
+        _set_frontmatter_impl,
+    )
+
+    rel_path = "_memory/facts/hand-written.md"
+    target = tmp_vault / rel_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    before = _HAND_WRITTEN_HEADER + "# Hand written\n\n## Log\n\nentry\n"
+    target.write_bytes(before.encode("utf-8"))
+
+    if tool == "append_journal":
+        result = await _append_journal_impl(
+            writable_app, rel_path=rel_path, heading="Log", entry="new"
+        )
+    elif tool == "patch_note_section":
+        result = await _patch_note_section_impl(
+            writable_app, rel_path=rel_path, heading="Log", new_content="replaced"
+        )
+    elif tool == "set_frontmatter":
+        result = await _set_frontmatter_impl(writable_app, rel_path=rel_path, confidence="high")
+    else:
+        result = await _rename_note_section_impl(
+            writable_app, rel_path=rel_path, heading="Log", new_heading="Journal"
+        )
+
+    assert "error" not in result, result
+    after = target.read_text(encoding="utf-8")
+    kept = _header_lines_except_updated(after)
+    if tool == "set_frontmatter":
+        assert kept.pop() == "confidence: high"
+    assert kept == _header_lines_except_updated(before)
+    assert "updated: '2026-01-01T00:00:00+00:00'" not in after
+
+
+async def test_an_edit_the_span_patch_cannot_verify_falls_back_to_a_full_rewrite(
+    writable_app: DatacronApp, tmp_vault: Path
+) -> None:
+    """A changed block list cannot be spliced; the note is still written correctly."""
+    from datacron.mcp.tools import _set_frontmatter_impl
+
+    rel_path = "_memory/facts/block-list.md"
+    target = tmp_vault / rel_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "---\nid: 01J00000000000000000000152\nsupersedes:\n  - 01J00000000000000000000153\n"
+        "updated: '2026-01-01T00:00:00+00:00'\n---\n# Block list\n",
+        encoding="utf-8",
+    )
+
+    result = await _set_frontmatter_impl(
+        writable_app, rel_path=rel_path, supersedes=["01J00000000000000000000154"]
+    )
+
+    assert "error" not in result, result
+    metadata, _body = parse(target.read_text(encoding="utf-8"))
+    assert metadata["supersedes"] == ["01J00000000000000000000154"]
+
+
 class TestWritePathP2Fixes:
     """Findings from the 2026-09-17 audit whose failure mode is a lost section."""
 
@@ -5549,3 +5689,50 @@ class TestWritePathP2Fixes:
         assert result["error"]["type"] == "ValueError", result
         assert "block list" in result["error"]["message"]
         assert (vault / rel_path).read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "tool",
+    ["append_journal", "patch_note_section", "delete_note_section", "rename_note_section"],
+)
+async def test_a_bare_cr_frontmatter_is_refused_rather_than_dropped(
+    writable_app: DatacronApp, tmp_vault: Path, tool: str
+) -> None:
+    """A note saved with classic Mac line endings must keep its id, title and tags.
+
+    python-frontmatter saw no block there while the exact-body splitter cut one
+    off, so the next body edit wrote the note back with an empty frontmatter.
+    """
+    from datacron.mcp.tools import (
+        _append_journal_impl,
+        _delete_note_section_impl,
+        _patch_note_section_impl,
+        _rename_note_section_impl,
+    )
+
+    rel_path = "_memory/facts/classic-mac.md"
+    target = tmp_vault / rel_path
+    before = (
+        b"---\rid: 01J00000000000000000000141\rtitle: Old Mac note\rtags: [keep]\r---\r"
+        b"# Old Mac note\r\r## Log\r\rentry\r\r## Other\r\rkept\r"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(before)
+
+    if tool == "append_journal":
+        result = await _append_journal_impl(
+            writable_app, rel_path=rel_path, heading="Log", entry="new"
+        )
+    elif tool == "patch_note_section":
+        result = await _patch_note_section_impl(
+            writable_app, rel_path=rel_path, heading="Log", new_content="replaced"
+        )
+    elif tool == "delete_note_section":
+        result = await _delete_note_section_impl(writable_app, rel_path=rel_path, heading="Log")
+    else:
+        result = await _rename_note_section_impl(
+            writable_app, rel_path=rel_path, heading="Log", new_heading="Journal"
+        )
+
+    assert "error" in result, result
+    assert target.read_bytes() == before

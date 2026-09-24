@@ -64,6 +64,7 @@ __all__ = [
 _LOGGER = get_logger(__name__)
 
 MARKDOWN_GLOB: Final[str] = "*.md"
+_MARKDOWN_SUFFIX: Final[str] = ".md"
 SKIPPED_FOLDERS: Final[frozenset[str]] = frozenset(
     {SIDECAR_DIR_NAME, ".git", ".obsidian", ".hg", ".svn", "node_modules"}
 )
@@ -364,6 +365,7 @@ class FilesystemVaultReader:
             excluded_files=frozenset(excluded_files or ()),
         )
         self._alias_cache: dict[str, str | None] | None = None
+        self._path_link_cache: dict[str, str | None] = {}
         # Survives an alias-cache invalidation on purpose: dropping the resolved index
         # is how a write is noticed, and re-reading the notes that did not move is
         # what made noticing it cost the whole vault.
@@ -499,7 +501,17 @@ class FilesystemVaultReader:
         if not normalized:
             return None
         index = await self._build_alias_index()
-        return index.get(normalized)
+        if normalized in index:
+            return index[normalized]
+        # A wikilink may name its target by vault path or with the .md suffix, which
+        # Obsidian writes whenever two notes share a stem and the documentation
+        # recommends. Those forms reached no tier, so the note vanished from its own
+        # backlinks with truncated=False. They are tried only after every tier has
+        # missed, so the title -> stem -> alias precedence is unchanged.
+        without_suffix = normalized.removesuffix(_MARKDOWN_SUFFIX)
+        if without_suffix in index:
+            return index[without_suffix]
+        return self._path_link_cache.get(without_suffix.lstrip("/"))
 
     async def invalidate_alias_cache(self) -> None:
         async with self._alias_lock:
@@ -528,7 +540,8 @@ class FilesystemVaultReader:
         for current_dir, dirnames, filenames in os.walk(root):
             dirnames[:] = sorted(d for d in dirnames if not self._should_skip_dir(d))
             for filename in sorted(filenames):
-                if filename.lower().endswith(".md") and not self._should_skip_file(filename):
+                is_markdown = filename.lower().endswith(_MARKDOWN_SUFFIX)
+                if is_markdown and not self._should_skip_file(filename):
                     results.append(Path(current_dir) / filename)
         return results
 
@@ -655,6 +668,11 @@ class FilesystemVaultReader:
                 aliases=lambda record: record.aliases,
                 normalize=lambda value: value.strip().lower(),
             )
+            path_links: dict[str, str | None] = {}
+            for record in records:
+                key = record.rel_path.lower().removesuffix(_MARKDOWN_SUFFIX)
+                path_links[key] = None if key in path_links else record.note_id
+            self._path_link_cache = path_links
             for key, value in self._alias_cache.items():
                 if value is None:
                     _LOGGER.warning(

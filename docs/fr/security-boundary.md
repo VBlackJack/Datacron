@@ -85,8 +85,11 @@ durables. L'historique exact des notes n'est pas expurgé car il constitue le ma
 réversible, pas un journal de sortie.
 
 Le détecteur par défaut couvre les mots de passe étiquetés, les tokens, les clés et
-empreintes, les identifiants Bearer, les préfixes de token courants, les clés d'accès AWS, les
-clés privées PEM et les slugs de titre porteurs de secrets. Des expressions régulières
+empreintes (y compris les clés composées ou entre guillemets comme `DB_PASSWORD=`,
+`"api_key":` ou `secret_key:`, et les libellés `mot de passe` et `mdp`), les identifiants
+Bearer et Basic, les mots de passe placés dans une URL, les préfixes de token courants (GitHub,
+GitLab, Slack, Stripe, clés d'API Google, clés de type OpenAI, JWT), les clés d'accès AWS, les
+clés privées PEM et PGP et les slugs de titre porteurs de secrets. Des expressions régulières
 supplémentaires peuvent être fournies sous forme de liste JSON de chaînes dans
 `DATACRON_SECRET_REDACTION_PATTERNS`. Une expression personnalisée peut définir un groupe nommé
 `secret` pour préserver le contexte de la correspondance ; sinon la correspondance complète est

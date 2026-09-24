@@ -71,6 +71,10 @@ DEFAULT_CONTRADICTION_PROVENANCE_LABELS: Final[dict[str, str]] = {
 DEFAULT_CONTRADICTION_SOURCE_CONNECTOR: Final[str] = "Voir"
 TOKEN_ESTIMATE_CHARS_PER_TOKEN: Final[int] = 4
 TEMPORAL_OVERFETCH_FACTOR: Final[int] = 3
+# group_by_note widens its window by this factor until it holds enough distinct notes,
+# and never past this many chunks, so one hub note cannot hide every other match.
+GROUPED_OVERFETCH_GROWTH: Final[int] = 4
+GROUPED_OVERFETCH_MAX_CHUNKS: Final[int] = 4000
 # The one place that names the archive tags and the state-note namespace. A vault
 # overrides the archive tags in its organization tag policy; the index, the library
 # and the planner read them from here or from that policy, never from a local copy.
@@ -738,15 +742,18 @@ def _split_path_list(value: str | list[str | Path] | None) -> list[Path]:
 class Settings(BaseSettings):
     """Datacron runtime settings.
 
-    Loaded from environment variables prefixed ``DATACRON_`` and an optional
-    ``.env`` file in the current working directory. All reserved runtime keys
-    use the ``DATACRON_`` namespace.
+    Loaded from environment variables prefixed ``DATACRON_``. All reserved
+    runtime keys use the ``DATACRON_`` namespace.
+
+    No ``.env`` file is read. One used to be, from the current working
+    directory, which for a stdio server is whatever folder the MCP client
+    opened: a cloned repository's ``.env`` could set
+    ``DATACRON_REDACT_SECRETS=off``, the log directory or the ripgrep binary
+    without anything saying so.
     """
 
     model_config = SettingsConfigDict(
         env_prefix="DATACRON_",
-        env_file=".env",
-        env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
         frozen=True,
