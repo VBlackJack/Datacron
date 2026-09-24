@@ -246,9 +246,25 @@ def has_ambiguous_leading_delimiter_block(raw: str) -> bool:
     break. Only the first may have its block cut off the body; for the second
     there is no way to tell a note's frontmatter from its content, so a mutation
     tool has to refuse rather than guess and write back the wrong span.
+
+    A block whose delimiter lines end in anything but ``\\n`` is ambiguous too.
+    ``python-frontmatter`` only recognises a delimiter followed by ``\\n``, while
+    the span finder here splits on every line break Python knows, a bare ``\\r``
+    included. On a note saved with classic Mac line endings the first saw no
+    frontmatter and the second cut the block off the body, so the next edit
+    wrote the note back without its id, title and tags.
     """
     parseable = raw[1:] if raw.startswith(_BOM) else raw
-    return _frontmatter_block_end(parseable.splitlines(keepends=True)) == _AMBIGUOUS_BLOCK
+    lines = parseable.splitlines(keepends=True)
+    closing = _frontmatter_block_end(lines)
+    if closing == _AMBIGUOUS_BLOCK:
+        return True
+    if closing is None:
+        return False
+    opening = next(index for index, line in enumerate(lines) if line.strip())
+    return any(
+        not lines[index].endswith("\n") for index in (opening, closing) if index < len(lines) - 1
+    )
 
 
 def _frontmatter_block_end(lines: Sequence[str]) -> int | None:

@@ -25,6 +25,7 @@ from functools import partial
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -393,6 +394,24 @@ async def _leave_pending(
 
     with pytest.raises(_SimulatedProcessCrash):
         await _apply(writer, bundle, fault_injector=crash_after_pending)
+
+
+async def _leave_pending_from_a_release_without_the_stage_precheck(
+    writer: FilesystemVaultWriter,
+    bundle: ValidatedOrganizationBundle,
+) -> None:
+    """Leave a pending receipt whose stage the current apply would have refused.
+
+    An apply now runs the stage checks before it publishes its receipt, so it can
+    no longer leave such a receipt itself. A receipt written by an earlier release
+    can still be on disk, and recovery must keep blocking it.
+    """
+    with patch.object(
+        OrganizationBatchTransaction,
+        "_refuse_invalid_stage_before_publication",
+        lambda _self, _pending: None,
+    ):
+        await _leave_pending(writer, bundle)
 
 
 async def test_fresh_vault_creates_batch_directories_and_preserves_exact_bytes(
@@ -848,7 +867,7 @@ async def test_sidecar_recovery_rejects_migrated_target_collision(tmp_path: Path
     migrated_path.write_bytes(_sidecar_bytes({"notes/new.md": _SECOND_ID}))
     bundle = _move_bundle_with_sidecar(vault)
     writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
-    await _leave_pending(writer, bundle)
+    await _leave_pending_from_a_release_without_the_stage_precheck(writer, bundle)
     restarted = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
 
     assert await restarted.recover_operations() == 0
@@ -1042,7 +1061,7 @@ async def test_result_id_cannot_use_hidden_sidecar_reservation(
         identity_sidecar_before_bytes=_sidecar_bytes({".hidden/reserved.md": _FIRST_ID}),
     )
     writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
-    await _leave_pending(writer, bundle)
+    await _leave_pending_from_a_release_without_the_stage_precheck(writer, bundle)
     restarted = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
 
     assert await restarted.recover_operations() == 0
@@ -2446,7 +2465,7 @@ async def test_partial_config_recovery_cannot_change_historical_scope(
         config_payload=payload,
     )
     writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
-    await _leave_pending(writer, bundle)
+    await _leave_pending_from_a_release_without_the_stage_precheck(writer, bundle)
     config_path.write_bytes(after)
     restarted = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
 
@@ -2992,12 +3011,13 @@ async def test_replace_without_frontmatter_id_is_refused_when_the_sidecar_disagr
     writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault / "notes"]))
 
     # The validator refuses such a bundle before any token exists; a bundle that
-    # reaches the batch with a disagreeing baseline fails closed like any other
-    # divergence: nothing is committed and the batch is left for recovery.
-    with pytest.raises(RecoveryRequiredError, match="divergent path"):
+    # reaches the batch with a disagreeing baseline is refused before its receipt
+    # is published: nothing is committed and nothing is left for recovery.
+    with pytest.raises(BatchConflictError, match="refused before publication"):
         await _apply(writer, bundle)
 
     assert (vault / "notes" / "adopt.md").read_bytes() == _note_without_id("Adopt")
+    assert not _pending_path(vault, bundle).exists()
 
 
 async def test_one_apply_walks_the_vault_once_per_validation_pass(tmp_path: Path) -> None:
