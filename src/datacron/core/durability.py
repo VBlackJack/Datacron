@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import platform
+import stat
 import sys
 import time
 from collections.abc import Callable
@@ -102,6 +103,7 @@ def atomic_durable_write(
             os.fsync(temp_file.fileno())
             _inject(fault_injector, "after_temp_fsync")
 
+        _copy_permission_bits(path, temp_path)
         _replace_with_windows_retry(temp_path, path)
         _inject(fault_injector, "after_replace")
         if not _flush_directory_or_false(path.parent):
@@ -114,6 +116,28 @@ def atomic_durable_write(
     finally:
         temp_path.unlink(missing_ok=True)
     return sha256_bytes(data)
+
+
+def _copy_permission_bits(original: Path, replacement: Path) -> None:
+    """Give ``replacement`` the permission bits of the file it is about to replace.
+
+    The temporary file is created with the process umask, so replacing a private
+    file widened it: a 0600 ``~/.claude.json``, which holds account credentials
+    and other servers' tokens, came back 0644 and readable by every local user
+    after ``datacron setup``. A missing original keeps the umask default.
+
+    Windows is left alone: its mode bits only carry the read-only flag, which
+    already refuses the replace, and ACLs are inherited from the directory.
+    """
+    # A local ``str`` keeps mypy from reading the rest as dead code on Windows.
+    platform = sys.platform
+    if platform == "win32":
+        return
+    try:
+        mode = stat.S_IMODE(original.stat().st_mode)
+    except FileNotFoundError:
+        return
+    os.chmod(replacement, mode)
 
 
 def _replace_with_windows_retry(source: Path, destination: Path) -> None:

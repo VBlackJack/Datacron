@@ -37,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 from datacron.core.config import OrganizationConfig, VaultConfig
+from datacron.core.error_text import describe_validation_error, describe_yaml_error
 from datacron.core.frontmatter import (
     FrontmatterError,
     build_tiered_alias_index,
@@ -729,7 +730,7 @@ def parse_organization_note_strict(text: str) -> tuple[dict[str, object], str]:
         try:
             _assert_unique_yaml_mapping_keys(block)
         except yaml.YAMLError as exc:
-            raise FrontmatterError(str(exc)) from exc
+            raise FrontmatterError(describe_yaml_error(exc)) from exc
     metadata, body = parse(text)
     return dict(metadata), body
 
@@ -847,7 +848,17 @@ def parse_organization_config_document(
         document = {key: value for key, value in parsed.items() if isinstance(key, str)}
         _validate_raw_organization_paths(document)
         return document, VaultConfig.model_validate(document)
-    except (ValidationError, ValueError, yaml.YAMLError) as exc:
+    except ValidationError as exc:
+        raise OrganizationManifestError(
+            "config_payload_invalid",
+            f"Invalid {label}: {describe_validation_error(exc)}",
+        ) from exc
+    except yaml.YAMLError as exc:
+        raise OrganizationManifestError(
+            "config_payload_invalid",
+            f"Invalid {label}: {describe_yaml_error(exc)}",
+        ) from exc
+    except ValueError as exc:
         raise OrganizationManifestError(
             "config_payload_invalid",
             f"Invalid {label}: {exc}",
@@ -916,7 +927,13 @@ def _parse_manifest(manifest_bytes: bytes) -> OrganizationManifest:
             parse_constant=reject_nonfinite_json_constant,
         )
         return OrganizationManifest.model_validate_json(manifest_text)
-    except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+    except ValidationError as exc:
+        raise OrganizationManifestError(
+            "manifest_invalid",
+            f"Manifest does not satisfy {ORGANIZATION_MANIFEST_SCHEMA}: "
+            f"{describe_validation_error(exc)}",
+        ) from exc
+    except (json.JSONDecodeError, ValueError) as exc:
         raise OrganizationManifestError(
             "manifest_invalid",
             f"Manifest does not satisfy {ORGANIZATION_MANIFEST_SCHEMA}: {exc}",
@@ -1092,6 +1109,36 @@ def _resolve_scoped_path(
             f"Scope redirected vault path {rel_path!r}",
         )
     return confined
+
+
+def _assert_target_spelling_matches_disk(vault_root: Path, rel_path: str) -> None:
+    """Refuse a target whose existing folders are spelled differently on disk.
+
+    On a case-insensitive filesystem ``memory/sub/moved.md`` lands in the folder
+    that exists as ``memory/Sub``. The projected report was built from the
+    manifest's spelling and the live report from the disk's, so the two never
+    matched: the batch committed and then answered ``committed_report_mismatch``
+    on every retry. Folders that do not exist yet are created as written.
+    """
+    current = vault_root
+    for part in PurePosixPath(rel_path).parts[:-1]:
+        candidate = current / part
+        if not candidate.is_dir():
+            return
+        try:
+            names = [entry.name for entry in current.iterdir()]
+        except OSError as exc:
+            raise OrganizationManifestError(
+                "vault_path_invalid", f"Cannot inspect folder {current}: {exc}"
+            ) from exc
+        if part not in names:
+            on_disk = next((name for name in names if name.casefold() == part.casefold()), part)
+            raise OrganizationManifestError(
+                "target_case_mismatch",
+                f"Target {rel_path!r} names folder {part!r}, which exists on disk as "
+                f"{on_disk!r}; spell it as on disk",
+            )
+        current = candidate
 
 
 def _assert_absent_case_insensitive(path: Path) -> None:
@@ -1317,6 +1364,12 @@ def _scope_excluded_folders(scope: VaultScope) -> frozenset[str]:
     if isinstance(policy, NoteAdmissionPolicy):
         return policy.excluded_folders
     return frozenset()
+
+
+def _assert_target_admitted_as_spelled(scope: VaultScope, vault_root: Path, rel_path: str) -> None:
+    """Reject a target the note policy excludes or whose folders differ from disk."""
+    _assert_target_note_admitted(scope, rel_path)
+    _assert_target_spelling_matches_disk(vault_root, rel_path)
 
 
 def _assert_target_note_admitted(scope: VaultScope, rel_path: str) -> None:
@@ -1806,6 +1859,21 @@ def _validate_projected_identities(
         normalize=lambda value: value.strip().lower(),
     )
     result_paths = {item.rel_path.casefold() for item in result_items}
+    result_ids = {item.note_id for item in result_items}
+    projected_ids = {item.note_id for item in projected_items}
+    # The alias check below only covered aliases. Titles and stems outrank them
+    # in the reader's index, so a created note titled "target" silently took over
+    # [[target]] from an untouched target.md and moved its backlinks, while the
+    # same takeover through an alias was refused.
+    for key, owner in live_alias_index.items():
+        if owner is None or owner in result_ids or owner not in projected_ids:
+            continue
+        if alias_index.get(key) != owner:
+            raise OrganizationManifestError(
+                "result_steals_link",
+                f"Link [[{key}]] resolves to {owner} today and would resolve elsewhere "
+                "after this manifest; give the new note a distinct title",
+            )
     for item in projected_items:
         for alias in item.aliases:
             normalized_alias = alias.strip().lower()
@@ -2140,7 +2208,7 @@ def validate_organization_bundle(
             access="write",
             allow_missing=isinstance(operation, (CreateExactOperation, MoveReplaceExactOperation)),
         )
-        _assert_target_note_admitted(scope, operation.target)
+        _assert_target_admitted_as_spelled(scope, resolved_vault, operation.target)
         if isinstance(operation, CreateExactOperation):
             _assert_absent_case_insensitive(target_path)
             source_path = None

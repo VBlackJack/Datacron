@@ -27,16 +27,33 @@ __all__ = ["REDACTED", "SecretRedactor"]
 
 REDACTED: Final[str] = "[REDACTED]"
 
+# The keyword may carry a prefix joined by "_" or "-" (DB_PASSWORD, GITHUB_TOKEN,
+# AWS_SECRET_ACCESS_KEY) and a "_key" suffix (secret_key), and may be quoted as a
+# JSON or YAML key. A bare word boundary missed all of these, since "_" is a word
+# character, and so did a quote between the key and its colon. "max_tokens" and
+# "token_count" stay out: the keyword must end the key or be followed by "_key".
+_SECRET_KEYWORDS: Final[str] = (
+    r"password|passwd|pwd|passphrase|secret|token|api[_-]?key|access[_-]?key|"
+    r"private[_-]?key|client[_-]?secret|fingerprint|thumbprint|mdp|mot\s+de\s+passe"
+)
+_SECRET_KEY_NAME: Final[str] = (
+    rf"(?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_-])*(?:{_SECRET_KEYWORDS})(?:[_-]key)?(?![A-Za-z0-9])"
+)
 _LABELLED_SECRET: Final[str] = (
-    r"(?i)(?P<prefix>\b(?:password|passwd|pwd|secret|token|api[_-]?key|"
-    r"access[_-]?key|private[_-]?key|client[_-]?secret|fingerprint|thumbprint)"
-    r"\b\s*(?::|=|\bis\b)\s*)"
+    rf"(?i)(?P<prefix>[\"']?{_SECRET_KEY_NAME}[\"']?\s*(?::|=|\bis\b)\s*)"
     r"(?P<secret>\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;]+)"
 )
-_BEARER_SECRET: Final[str] = r"(?i)(?P<prefix>\bBearer\s+)(?P<secret>[A-Za-z0-9._~+/-]{12,}={0,2})"
+_BEARER_SECRET: Final[str] = (
+    r"(?i)(?P<prefix>\b(?:Bearer|Basic)\s+)(?P<secret>[A-Za-z0-9._~+/-]{12,}={0,2})"
+)
 _KNOWN_TOKEN: Final[str] = (
-    r"(?P<secret>\b(?:gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{16,}|"
-    r"AKIA[0-9A-Z]{16})\b)"
+    r"(?P<secret>\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|"
+    r"sk-[A-Za-z0-9_-]{16,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|"
+    r"xox[abprs]-[A-Za-z0-9-]{10,}|glpat-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|"
+    r"eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})\b)"
+)
+_URL_USERINFO_SECRET: Final[str] = (
+    r"(?P<prefix>\b[A-Za-z][A-Za-z0-9+.-]*://[^\s:/@]+:)(?P<secret>[^\s@/]+)(?=@)"
 )
 _SLUGGED_SECRET: Final[str] = (
     r"(?i)(?P<prefix>\b(?:password|passwd|pwd|token|api[_-]?key|access[_-]?key|"
@@ -44,8 +61,8 @@ _SLUGGED_SECRET: Final[str] = (
     r"(?P<secret>[A-Za-z0-9][A-Za-z0-9._-]{3,})"
 )
 _PEM_PRIVATE_KEY: Final[str] = (
-    r"(?s)(?P<secret>-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----.*?"
-    r"-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----)"
+    r"(?s)(?P<secret>-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY(?: BLOCK)?-----.*?"
+    r"-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY(?: BLOCK)?-----)"
 )
 _DEFAULT_PATTERNS: Final[tuple[str, ...]] = (
     _PEM_PRIVATE_KEY,
@@ -53,11 +70,9 @@ _DEFAULT_PATTERNS: Final[tuple[str, ...]] = (
     _SLUGGED_SECRET,
     _BEARER_SECRET,
     _KNOWN_TOKEN,
+    _URL_USERINFO_SECRET,
 )
-_SENSITIVE_KEY: Final[re.Pattern[str]] = re.compile(
-    r"(?i)(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|"
-    r"private[_-]?key|client[_-]?secret|fingerprint|thumbprint)"
-)
+_SENSITIVE_KEY: Final[re.Pattern[str]] = re.compile(rf"(?i){_SECRET_KEY_NAME}")
 
 
 class SecretRedactor:

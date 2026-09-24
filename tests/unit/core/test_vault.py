@@ -541,3 +541,35 @@ class TestAliasIndexRebuildCost:
         await reader.invalidate_alias_cache()
 
         assert await reader.resolve_alias("plain-two") is None
+
+
+async def test_a_symlinked_note_is_walked_once_under_its_real_path(tmp_path: Path) -> None:
+    """Keyed under the link and the target, one identity had two paths.
+
+    reconcile then raised DuplicateNoteIdentityError, which failed every
+    index-backed tool for the whole vault.
+    """
+    vault = tmp_path / "vault"
+    (vault / "Projects").mkdir(parents=True)
+    real = vault / "Projects" / "real.md"
+    real.write_text("---\nid: 01J00000000000000000000161\n---\n# Real\n", encoding="utf-8")
+    try:
+        (vault / "alias.md").symlink_to(real)
+    except OSError:
+        pytest.skip("creating a symlink needs a privilege this host does not grant")
+    reader = FilesystemVaultReader(vault)
+
+    walked = await reader.stat_notes()
+
+    assert set(walked) == {"Projects/real.md"}
+
+
+async def test_the_walk_keeps_os_walk_order_and_exclusions(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    for rel_path in ("b.md", "a.md", "z/y.md", "z/x.md", "c/w.md", ".hidden/v.md", "n.txt"):
+        path = vault / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# T\n", encoding="utf-8")
+    reader = FilesystemVaultReader(vault)
+
+    assert list(await reader.stat_notes()) == ["a.md", "b.md", "c/w.md", "z/x.md", "z/y.md"]

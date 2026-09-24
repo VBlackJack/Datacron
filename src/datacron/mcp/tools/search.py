@@ -20,7 +20,12 @@ import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Final
 
-from datacron.core.config import TEMPORAL_OVERFETCH_FACTOR
+from datacron.core.config import (
+    GROUPED_OVERFETCH_GROWTH,
+    GROUPED_OVERFETCH_MAX_CHUNKS,
+    TEMPORAL_OVERFETCH_FACTOR,
+)
+from datacron.core.frontmatter import normalize_tag_filter
 from datacron.core.models import Chunk, SearchResult
 from datacron.core.paths import PathConfinementError
 from datacron.core.temporal import rerank_temporal
@@ -188,29 +193,45 @@ async def _retrieve_ranked_results(
     timings_ms["repair"] = _elapsed_ms(stage_started)
 
     stage_started = time.perf_counter()
-    hits = await app.store.search(
-        query,
-        limit=bounded_limit * TEMPORAL_OVERFETCH_FACTOR,
-        folder=folder,
-        tags=tags,
-        frontmatter=frontmatter,
-    )
-    timings_ms["fts"] = _elapsed_ms(stage_started)
-
-    stage_started = time.perf_counter()
     temporal_meta = await app.store.list_temporal_metadata()
     timings_ms["temporal_metadata"] = _elapsed_ms(stage_started)
 
-    stage_started = time.perf_counter()
-    ranked = rerank_temporal(
-        _filter_admitted_results(app, hits),
-        temporal_meta,
-        include_superseded=include_superseded,
-    )
-    if group_by_note:
-        ranked = _collapse_by_note(ranked)
+    # The window is counted in chunks, and grouping collapses chunks into notes, so a
+    # hub note with many matching sections could fill the whole window and leave the
+    # caller one note where several matched, with nothing saying so. A grouped search
+    # widens the window until it holds enough notes or the index has no more hits.
+    fetch_limit = bounded_limit * TEMPORAL_OVERFETCH_FACTOR
+    timings_ms["fts"] = 0.0
+    timings_ms["rerank"] = 0.0
+    while True:
+        stage_started = time.perf_counter()
+        hits = await app.store.search(
+            query,
+            limit=fetch_limit,
+            folder=folder,
+            tags=tags,
+            frontmatter=frontmatter,
+        )
+        timings_ms["fts"] += _elapsed_ms(stage_started)
+
+        stage_started = time.perf_counter()
+        ranked = rerank_temporal(
+            _filter_admitted_results(app, hits),
+            temporal_meta,
+            include_superseded=include_superseded,
+        )
+        if group_by_note:
+            ranked = _collapse_by_note(ranked)
+        timings_ms["rerank"] += _elapsed_ms(stage_started)
+        if (
+            not group_by_note
+            or len(ranked) >= bounded_limit
+            or len(hits) < fetch_limit
+            or fetch_limit >= GROUPED_OVERFETCH_MAX_CHUNKS
+        ):
+            break
+        fetch_limit = min(fetch_limit * GROUPED_OVERFETCH_GROWTH, GROUPED_OVERFETCH_MAX_CHUNKS)
     results = ranked[:bounded_limit]
-    timings_ms["rerank"] = _elapsed_ms(stage_started)
 
     note_matches: dict[str, int] = {}
     if group_by_note and results:
@@ -257,7 +278,7 @@ def _search_filters(
     filters: dict[str, Any] = {}
     if folder:
         filters["folder"] = folder
-    required_tags = sorted({tag.strip().lower() for tag in (tags or []) if tag.strip()})
+    required_tags = normalize_tag_filter(tags)
     if required_tags:
         filters["tags"] = required_tags
     if frontmatter:

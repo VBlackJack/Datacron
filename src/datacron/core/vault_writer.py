@@ -958,7 +958,9 @@ class FilesystemVaultWriter:
                         )
                         continue
                 elif current_hash == record.after_hash:
-                    self._operation_journal.append_record(record)
+                    self._operation_journal.append_record(
+                        self._operation_journal.restamped_past_tail(record)
+                    )
                     recovered += 1
                     _LOGGER.warning(
                         "recovered committed operation id=%s rel_path=%s after_hash=%s",

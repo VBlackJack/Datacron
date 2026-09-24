@@ -64,6 +64,7 @@ __all__ = [
 _LOGGER = get_logger(__name__)
 
 MARKDOWN_GLOB: Final[str] = "*.md"
+_MARKDOWN_SUFFIX: Final[str] = ".md"
 SKIPPED_FOLDERS: Final[frozenset[str]] = frozenset(
     {SIDECAR_DIR_NAME, ".git", ".obsidian", ".hg", ".svn", "node_modules"}
 )
@@ -364,6 +365,7 @@ class FilesystemVaultReader:
             excluded_files=frozenset(excluded_files or ()),
         )
         self._alias_cache: dict[str, str | None] | None = None
+        self._path_link_cache: dict[str, str | None] = {}
         # Survives an alias-cache invalidation on purpose: dropping the resolved index
         # is how a write is noticed, and re-reading the notes that did not move is
         # what made noticing it cost the whole vault.
@@ -499,7 +501,17 @@ class FilesystemVaultReader:
         if not normalized:
             return None
         index = await self._build_alias_index()
-        return index.get(normalized)
+        if normalized in index:
+            return index[normalized]
+        # A wikilink may name its target by vault path or with the .md suffix, which
+        # Obsidian writes whenever two notes share a stem and the documentation
+        # recommends. Those forms reached no tier, so the note vanished from its own
+        # backlinks with truncated=False. They are tried only after every tier has
+        # missed, so the title -> stem -> alias precedence is unchanged.
+        without_suffix = normalized.removesuffix(_MARKDOWN_SUFFIX)
+        if without_suffix in index:
+            return index[without_suffix]
+        return self._path_link_cache.get(without_suffix.lstrip("/"))
 
     async def invalidate_alias_cache(self) -> None:
         async with self._alias_lock:
@@ -524,13 +536,43 @@ class FilesystemVaultReader:
         return target
 
     def _collect_markdown_paths(self, root: Path) -> list[Path]:
+        """Walk the vault in ``os.walk`` order, skipping symlinked files and folders.
+
+        A symlinked note used to be keyed by its link path and its target path at
+        once, and two keys for one identity made reconcile raise
+        DuplicateNoteIdentityError, which failed every index-backed tool for the
+        whole vault. ``os.walk`` already never descends into a linked folder; the
+        linked file is skipped the same way, and the note is still reached under
+        its real path. ``os.scandir`` gives the link bit with the entry, so this
+        costs no system call per note.
+        """
         results: list[Path] = []
-        for current_dir, dirnames, filenames in os.walk(root):
-            dirnames[:] = sorted(d for d in dirnames if not self._should_skip_dir(d))
-            for filename in sorted(filenames):
-                if filename.lower().endswith(".md") and not self._should_skip_file(filename):
-                    results.append(Path(current_dir) / filename)
+        self._collect_markdown_paths_into(root, results)
         return results
+
+    def _collect_markdown_paths_into(self, directory: Path, results: list[Path]) -> None:
+        try:
+            with os.scandir(directory) as scanned:
+                entries = sorted(scanned, key=lambda entry: entry.name)
+        except OSError:
+            return
+        subdirectories: list[Path] = []
+        for entry in entries:
+            if entry.is_symlink():
+                continue
+            try:
+                is_directory = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            if is_directory:
+                if not self._should_skip_dir(entry.name):
+                    subdirectories.append(Path(entry.path))
+                continue
+            is_markdown = entry.name.lower().endswith(_MARKDOWN_SUFFIX)
+            if is_markdown and not self._should_skip_file(entry.name):
+                results.append(Path(entry.path))
+        for subdirectory in subdirectories:
+            self._collect_markdown_paths_into(subdirectory, results)
 
     def _should_skip_dir(self, name: str) -> bool:
         return name.casefold() in self._admission_policy.excluded_folders or name.startswith(".")
@@ -655,6 +697,11 @@ class FilesystemVaultReader:
                 aliases=lambda record: record.aliases,
                 normalize=lambda value: value.strip().lower(),
             )
+            path_links: dict[str, str | None] = {}
+            for record in records:
+                key = record.rel_path.lower().removesuffix(_MARKDOWN_SUFFIX)
+                path_links[key] = None if key in path_links else record.note_id
+            self._path_link_cache = path_links
             for key, value in self._alias_cache.items():
                 if value is None:
                     _LOGGER.warning(

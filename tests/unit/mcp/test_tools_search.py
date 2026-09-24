@@ -1016,6 +1016,58 @@ async def test_search_text_groups_results_by_note_on_request(tmp_vault: Path) ->
         await store.close()
 
 
+@pytest.mark.asyncio
+async def test_grouping_is_not_starved_by_one_note_with_many_matching_sections(
+    tmp_vault: Path,
+) -> None:
+    """A hub note filling the chunk window must not hide the other matching notes.
+
+    The window is counted in chunks and grouping collapses them into notes, so a
+    note with more matching sections than the window returned one note where
+    three matched, with no truncation flag.
+    """
+    hub_body = "".join(
+        f"## Section {index}\n\n{_GROUP_ANCHOR} {_GROUP_ANCHOR} {_GROUP_ANCHOR}\n\n"
+        for index in range(20)
+    )
+    _write_temporal_note(
+        tmp_vault,
+        rel_path="projects/hub.md",
+        note_id=_GROUP_MULTI_ID,
+        title=f"Hub {_GROUP_ANCHOR}",
+        confidence="high",
+        supersedes=[],
+        body=hub_body,
+    )
+    _write_temporal_note(
+        tmp_vault,
+        rel_path="projects/single.md",
+        note_id=_GROUP_SINGLE_ID,
+        title="Single section",
+        confidence="high",
+        supersedes=[],
+        body=f"A long paragraph of unrelated words that mentions {_GROUP_ANCHOR} once.\n",
+    )
+    settings = Settings(
+        read_paths=[tmp_vault],
+        vault_root=tmp_vault,
+        max_result_count=20,
+        max_result_tokens=8000,
+    )
+    store = SQLiteFTS5Store()
+    await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
+    app = build_app(settings=settings, vault_root=tmp_vault, chunker=MarkdownChunker(), store=store)
+    try:
+        grouped = await _search_text_impl(app, query=_GROUP_ANCHOR, limit=2, group_by_note=True)
+
+        assert {result["note_rel_path"] for result in grouped["results"]} == {
+            "projects/hub.md",
+            "projects/single.md",
+        }
+    finally:
+        await store.close()
+
+
 _LEAK_TITLE_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXG"
 _LEAK_HEADING_ID: Final[str] = "01HQXR7K9YZ8M2N3PQRSTV4WXH"
 _LEAK_MARKER: Final[str] = "Sup3rSecretValue"
@@ -1144,3 +1196,41 @@ async def test_backlink_sources_read_each_parent_note_once(
     assert result["returned"] == 3
     assert {row["source_note_rel_path"] for row in result["results"]} == {"source.md"}
     assert protected_reads == ["source.md"]
+
+
+@pytest.mark.asyncio
+async def test_backlinks_resolve_path_style_and_suffixed_wikilinks(
+    indexed_app: DatacronApp, tmp_vault: Path
+) -> None:
+    """``[[folder/note]]`` and ``[[note.md]]`` name the same note as ``[[note]]``.
+
+    Only titles, stems and aliases were indexed, so a note linked by path, as
+    Obsidian writes when two notes share a stem and the documentation recommends,
+    vanished from its own backlinks with truncated=False.
+    """
+    target = tmp_vault / "projects" / "project-state.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "---\nid: 01J5H0B0000000000000000002\n---\n# State\n\nBody.\n", encoding="utf-8"
+    )
+    sources = {
+        "by-stem.md": "See [[project-state]].",
+        "by-path.md": "See [[projects/project-state|the state]].",
+        "by-suffix.md": "See [[project-state.md]].",
+    }
+    paths = [target]
+    for index, (name, line) in enumerate(sources.items()):
+        path = tmp_vault / name
+        path.write_text(
+            f"---\nid: 01J5S0C000000000000000001{index}\n---\n# {name}\n\n{line}\n",
+            encoding="utf-8",
+        )
+        paths.append(path)
+    for path in paths:
+        note = await indexed_app.vault_reader.read_note(path)
+        await indexed_app.store.upsert_note(note, indexed_app.chunker.chunk(note))
+
+    result = await _get_backlinks_impl(indexed_app, target="projects/project-state", limit=10)
+
+    assert "error" not in result, result
+    assert {row["source_note_rel_path"] for row in result["results"]} == set(sources)

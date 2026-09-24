@@ -421,7 +421,10 @@ def status(
 
     db_path = sidecar_index_db(vault_root)
     index_status = asyncio.run(_index_status_label(db_path))
-    log_dir = sidecar_dir(vault_root) / "logs"
+    # The logger writes to settings.log_dir (~/.datacron/logs by default); the
+    # vault's sidecar holds no logs, and pointing there sent the operator to a
+    # file that never existed.
+    log_dir = settings.log_dir
     today_log = LOG_FILENAME_PATTERN.format(date=datetime.now().strftime("%Y%m%d"))
 
     _print(f"Datacron {__version__}")
@@ -1705,12 +1708,18 @@ def setup(
         reset=reset,
     )
 
+    from datacron.installers.claude_desktop import ClaudeDesktopConfigError  # noqa: PLC0415
+
     try:
         result = asyncio.run(run_setup(plan))
     except (ResetGuardError, ResetExecutionError) as exc:
         _error(str(exc))
     except (ValueError, NotADirectoryError) as exc:
         _error(str(exc))
+    except ClaudeDesktopConfigError as exc:
+        # Raised when datacron-mcp cannot be located for the claude-code snippet,
+        # after the vault was already initialized; it used to end in a traceback.
+        _error(f"Could not resolve the datacron-mcp command: {exc}")
 
     _render_setup_result(result)
     protocol_failed = False
@@ -1722,12 +1731,16 @@ def setup(
         )
         protocol_failed = _render_protocol_outcomes(protocol_outcomes, operation="install")
     _log_completion("setup", started)
-    if protocol_failed:
+    # A client that could not be registered is a failed setup. The run used to exit
+    # 0 with an "[err]" line, and the Windows installer runs setup hidden and trusts
+    # the exit code, so it reported success while no client could reach the vault.
+    clients_failed = any(not outcome.installed for outcome in result.client_installs)
+    if protocol_failed or clients_failed:
         raise typer.Exit(code=1)
 
 
 # Installer reset invocation:
-# datacron.exe setup --reset --yes --client all --scope both --vault "<vault>"
+# datacron.exe setup --reset --yes --client all --scope user --vault "<vault>"
 
 
 def _guard_vault_target(vault_root: Path) -> Path:

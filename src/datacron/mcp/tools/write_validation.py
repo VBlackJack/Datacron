@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, date, datetime, timedelta
+from pathlib import PureWindowsPath
 from typing import Any, Final
 
 import yaml
@@ -44,7 +45,13 @@ _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_H
 _BACKLOG_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"BL-[0-9]{4,}")
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _ATX_CLOSING_SEQUENCE: Final[re.Pattern[str]] = re.compile(r"[ \t]#+$")
+_ATX_LEVEL_MARKER: Final[re.Pattern[str]] = re.compile(r"#{1,6}(?:[ \t]|$)")
 _MARKDOWN_SUFFIX: Final[str] = ".md"
+_WINDOWS_RESERVED_NAMES: Final[frozenset[str]] = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{index}" for index in range(1, 10)}
+    | {f"LPT{index}" for index in range(1, 10)}
+)
 _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
 # Markdown ATX headings run from one to six hash marks; every heading selector shares it.
 MAX_HEADING_LEVEL: Final[int] = 6
@@ -133,7 +140,10 @@ def _validate_append_journal_request(
         # grew one more duplicate heading, without bound, until patching any of
         # them became ambiguous. rename_note_section already refuses this.
         raise ValueError("heading must be a single line")
-    if cleaned_heading.startswith("#"):
+    if _ATX_LEVEL_MARKER.match(cleaned_heading):
+        # Only a real ATX marker ("## Log") is refused. "#1 Priorities" and a
+        # leading Obsidian tag are ordinary heading text, and refusing every
+        # leading "#" made those existing sections unreachable by this tool.
         raise ValueError("heading must not start with '#'; the tool supplies the level")
     if not entry.strip():
         raise ValueError("entry must not be empty")
@@ -453,6 +463,24 @@ def _assert_markdown_rel_path(cleaned_rel_path: str) -> None:
     """
     if not cleaned_rel_path.endswith(_MARKDOWN_SUFFIX):
         raise ValueError(f"rel_path must end with {_MARKDOWN_SUFFIX}")
+    if PureWindowsPath(cleaned_rel_path).drive:
+        # An absolute or drive-qualified path is the confinement check's to refuse,
+        # with its own error type.
+        return
+    for part in cleaned_rel_path.replace("\\", "/").split("/"):
+        if part in {"", ".", ".."}:
+            continue
+        # The reader never admits a hidden folder, so a note written under
+        # .datacron or .obsidian was committed and then refused by every read,
+        # patch and revert, with a recovery hint telling the client to re-read it.
+        if part.startswith("."):
+            raise ValueError("rel_path must not enter a hidden folder")
+        # A colon names an NTFS alternate data stream, and a reserved device name
+        # is not a file on Windows: both failed after a stray temp file was made.
+        if ":" in part:
+            raise ValueError("rel_path must not contain ':'")
+        if part.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:
+            raise ValueError(f"rel_path must not use the reserved device name {part!r}")
 
 
 def _validate_expected_hash(expected_hash: str | None) -> str | None:
@@ -482,17 +510,16 @@ def replace_frontmatter_id(raw: str, note_id: str) -> str:
     exact-body parser is deliberate, since the plain one strips the trailing
     newline and would turn an identity repair into a silent rewrite of the note.
 
-    The frontmatter itself is re-serialized in canonical key order, so a
-    hand-written frontmatter can come back with more changed lines than ``id``
-    alone -- a flow-style list is re-emitted in block style, and a ``T``-separated
-    timestamp comes back with a space.
+    Only the ``id`` and ``updated`` values are edited in the frontmatter text;
+    the rest of the block, comments included, is kept as written unless that
+    edit cannot be verified, in which case the block is re-serialized.
     """
     metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
     if not metadata:
         raise ValueError("note has no frontmatter")
     metadata["id"] = note_id
     metadata["updated"] = datetime.now(tz=UTC).isoformat()
-    return _serialize_preserving_bom(metadata, body, has_bom=has_bom)
+    return _serialize_preserving_frontmatter(raw, metadata, body, has_bom=has_bom)
 
 
 def _clean_string_list(values: list[str]) -> list[str]:
@@ -531,6 +558,35 @@ def _patch_frontmatter_fields(raw: str, metadata: dict[str, Any], fields: list[s
     if parsed != metadata:
         raise ValueError("last_id metadata preservation validation failed")
     return result
+
+
+def _serialize_preserving_frontmatter(
+    raw: str,
+    metadata: dict[str, Any],
+    body: str,
+    *,
+    has_bom: bool,
+) -> str:
+    """Write ``body`` under the note's own frontmatter text, edited key by key.
+
+    Re-dumping the whole block through PyYAML is lossy on hand-written notes:
+    every comment went, key order and flow style changed, and YAML 1.1 turned
+    values back into other values (``14:30`` into ``870``, ``1.10`` into ``1.1``,
+    ``01234`` into ``668``, ``NO`` into ``false``) that Obsidian had displayed as
+    written. Only the keys whose value changed are replaced or appended, through
+    the same verified span edit as ``last_id``; every other byte of the block is
+    kept. When that edit cannot be trusted (a removed key, a changed block list,
+    anchors, a flow mapping) the whole block is re-serialized as before.
+    """
+    original, original_body, _had_bom = _parse_preserving_bom_and_body_eols(raw)
+    if original and raw.endswith(original_body) and all(key in metadata for key in original):
+        head = raw[: len(raw) - len(original_body)]
+        changed = [key for key in metadata if key not in original or original[key] != metadata[key]]
+        try:
+            return _patch_frontmatter_fields(head, metadata, changed) + body
+        except (ValueError, yaml.YAMLError):
+            pass
+    return _serialize_preserving_bom(metadata, body, has_bom=has_bom)
 
 
 def _frontmatter_header_span(raw: str) -> tuple[int, int, str]:
