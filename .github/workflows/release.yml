@@ -177,10 +177,17 @@ jobs:
         env:
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path -LiteralPath $iscc)) {
-            throw "ISCC.exe was not installed at the expected path."
+          # Chocolatey installs the current Inno Setup, whose folder carries its
+          # major version. A hardcoded "Inno Setup 6" broke the first release
+          # after a major bump, so the newest installed ISCC.exe is used.
+          $iscc = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Inno Setup *\ISCC.exe" `
+            -ErrorAction SilentlyContinue |
+            Sort-Object -Property FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $iscc) {
+            throw "ISCC.exe was not found under ${env:ProgramFiles(x86)}\Inno Setup *."
           }
+          Write-Host "Using $iscc"
 
           $arguments = @(
             "--app-version=$env:DATACRON_INSTALLER_VERSION",
