@@ -82,9 +82,12 @@ optional policy. This prevents an audit setting from making clear credentials
 durable. Exact note history is not scrubbed because it is the reversible source
 material, not an output log.
 
-The default detector covers labelled passwords, tokens, keys and fingerprints,
-Bearer credentials, common token prefixes, AWS access keys, PEM private keys, and
-secret-bearing heading slugs. Additional regular expressions can be supplied as a
+The default detector covers labelled passwords, tokens, keys and fingerprints
+(including compound and quoted keys such as `DB_PASSWORD=`, `"api_key":` or
+`secret_key:`, and the French labels `mot de passe` and `mdp`), Bearer and Basic
+credentials, passwords in URL userinfo, common token prefixes (GitHub, GitLab, Slack,
+Stripe, Google API keys, OpenAI-style keys, JWTs), AWS access keys, PEM and PGP private
+keys, and secret-bearing heading slugs. Additional regular expressions can be supplied as a
 JSON string list in `DATACRON_SECRET_REDACTION_PATTERNS`. A custom expression may
 define a named group called `secret` to preserve the surrounding match; otherwise
 the complete match is replaced.

@@ -265,6 +265,54 @@ def test_manifest_rejects_duplicate_json_keys(tmp_path: Path) -> None:
     assert error.value.code == "manifest_invalid"
 
 
+def test_manifest_error_names_the_field_without_echoing_its_value(tmp_path: Path) -> None:
+    """The manifest path may name any JSON file, so a rejection must not quote it.
+
+    pydantic's message carries each rejected input value, and it reached the tool
+    result and the audit log verbatim: pointing manifest_path at a credentials
+    file returned the secret inside "extra inputs are not permitted".
+    """
+    case = _build_case(tmp_path)
+    case.manifest_path.write_text('{"client_secret": "GOCSPX-leaked-value"}', encoding="utf-8")
+
+    with pytest.raises(OrganizationManifestError) as error:
+        load_organization_bundle(case.manifest_path, vault_root=case.vault)
+
+    assert error.value.code == "manifest_invalid"
+    assert "client_secret" in str(error.value)
+    assert "GOCSPX-leaked-value" not in str(error.value)
+
+
+def test_config_error_names_the_field_without_echoing_its_value() -> None:
+    with pytest.raises(OrganizationManifestError) as error:
+        parse_organization_config_document(
+            "organization:\n"
+            "  scope: memory\n"
+            "  rules:\n"
+            "    - tag: memory/fact\n"
+            "      folder: memory\n"
+            "      naming: '{slug}'\n"
+            "      max_kb: 's3cret-token'\n",
+            label="test VAULT.yaml",
+        )
+
+    assert error.value.code == "config_payload_invalid"
+    assert "max_kb" in str(error.value)
+    assert "s3cret-token" not in str(error.value)
+
+
+def test_config_yaml_error_gives_a_position_without_the_line() -> None:
+    with pytest.raises(OrganizationManifestError) as error:
+        parse_organization_config_document(
+            'organization: {scope: memory, rules: []}\npassword: "hunter2\n',
+            label="test VAULT.yaml",
+        )
+
+    assert error.value.code == "config_payload_invalid"
+    assert "line 2" in str(error.value)
+    assert "hunter2" not in str(error.value)
+
+
 @pytest.mark.parametrize("scalar", [".nan", ".inf", "-.inf"])
 def test_config_parser_rejects_nonfinite_yaml_scalars(scalar: str) -> None:
     with pytest.raises(OrganizationManifestError, match="non-finite") as error:

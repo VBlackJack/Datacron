@@ -1731,12 +1731,16 @@ def setup(
         )
         protocol_failed = _render_protocol_outcomes(protocol_outcomes, operation="install")
     _log_completion("setup", started)
-    if protocol_failed:
+    # A client that could not be registered is a failed setup. The run used to exit
+    # 0 with an "[err]" line, and the Windows installer runs setup hidden and trusts
+    # the exit code, so it reported success while no client could reach the vault.
+    clients_failed = any(not outcome.installed for outcome in result.client_installs)
+    if protocol_failed or clients_failed:
         raise typer.Exit(code=1)
 
 
 # Installer reset invocation:
-# datacron.exe setup --reset --yes --client all --scope both --vault "<vault>"
+# datacron.exe setup --reset --yes --client all --scope user --vault "<vault>"
 
 
 def _guard_vault_target(vault_root: Path) -> Path:

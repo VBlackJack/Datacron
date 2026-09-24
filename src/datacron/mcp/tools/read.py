@@ -236,7 +236,9 @@ async def _list_notes_from_index(
     try:
         for rel_path in page_paths:
             notes.append(await _read_note_by_rel_path(app, rel_path))
-    except (FileNotFoundError, NoteAdmissionError):
+    except (FileNotFoundError, NoteAdmissionError, UnicodeDecodeError):
+        # A note re-saved in a legacy encoding between the repair and this read
+        # must not fail the whole listing; the walk below skips it.
         return None
     return notes, total
 
