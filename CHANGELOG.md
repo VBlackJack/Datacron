@@ -9,6 +9,89 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0924.00] - 2026-09-24
+
+This release closes an audit run two days after the previous one. About one finding in five
+had been introduced by the fixes of that previous pass.
+
+### Security
+
+- `apply_organization_manifest` echoed the contents of the file it was pointed at when that
+  file failed validation: the error carried every rejected value, unredacted, into the tool
+  result and the audit log. The manifest path may name any JSON file outside the vault, so a
+  credentials file came back verbatim. Manifest, `VAULT.yaml` payload and strict note parsing
+  errors now report the location and the rule only (#110).
+- The secret detector missed common labelled shapes: a quoted key (`"password": "x"`), a
+  compound key (`DB_PASSWORD=`, `GITHUB_TOKEN=`, `AWS_SECRET_ACCESS_KEY=`, `secret_key:`),
+  the French labels `mot de passe` and `mdp`, Basic credentials, a password in URL userinfo,
+  PGP private key blocks, and GitHub fine-grained, GitLab, Slack, Stripe, Google API and JWT
+  tokens. They are now redacted; ordinary keys such as `max_tokens` are kept (#117).
+- Settings were also read from a `.env` file in the working directory, which for a stdio
+  server is whatever folder the client opened: a cloned repository could turn redaction off
+  or move the log directory. No `.env` file is read any more; set `DATACRON_*` variables in
+  the client configuration instead (#117).
+- `audit_query` and `get_note_history` returned note paths in full while search redacted a
+  secret-shaped path; they redact it too now (#120).
+- Rewriting a client config on Linux or macOS dropped its permission bits, so a private
+  `~/.claude.json` became readable by other local users. The mode of the replaced file is
+  now kept (#118).
+
+### Fixed
+
+- Content loss in section edits: an HTML comment opener quoted in the middle of a line,
+  such as `<!--` in inline code, hid every heading up to the next `-->`, so
+  `patch_note_section` and `delete_note_section` replaced or removed the hidden sections
+  while reporting success. Only a line-leading opener starts a comment now (#109).
+- Frontmatter kept as written: every body or field edit re-serialized the whole block, which
+  dropped comments and let YAML 1.1 rewrite typed values (`14:30` became `870`, `1.10` became
+  `1.1`, `NO` became `false`). Only the keys that change are edited now, and the result is
+  verified by parsing it back (#114).
+- A note with classic Mac line endings (CR only) lost its id, title and tags on its first
+  body edit. Such a frontmatter block is refused like any other ambiguous one (#113).
+- One note re-saved in a legacy encoding broke `list_notes`, search and the index rebuild
+  for the whole vault, and no pass ever healed it. Its index rows are dropped and the other
+  tools carry on (#111).
+- An organization manifest that passed validation could fail after its pending receipt was
+  published, leaving every write in the vault refused until an offline repair. Two ordinary
+  inputs reached it: any note over 2 MB, and a stale `ulids.json` entry. The stage is now
+  checked before anything is published (#112).
+- `search_regex` could hang when ripgrep reported many unreadable files, `$` never matched
+  in CRLF notes, and a note holding a stray NUL byte was invisible to it (#115, #120).
+- `group_by_note` could return a single note when several matched, with no truncation flag
+  (#115).
+- `get_backlinks` missed path-style and `.md` wikilinks (`[[folder/note]]`, `[[note.md]]`),
+  and dropped the links that followed a fence opened on a list item or a chunk cut inside a
+  fence (#115).
+- A heading written with inline Markdown, or one whose text starts with `#` (`#1 Priorities`),
+  was duplicated by `append_journal` on every call or refused by `rename_note_section`
+  (#116).
+- Note write tools accepted paths the reader never admits (`.datacron/`, `.obsidian/`), a
+  colon naming an NTFS stream, and Windows reserved names; the note was then unreadable, or
+  a stray temporary file was left behind (#117).
+- A backward clock step with two servers on one vault made a successful write report a
+  failure and then blocked every write (#119).
+- On Linux and macOS, notes in a folder whose name ends in a dot or a space vanished from
+  every listing, and a symlinked note made every index-backed tool fail for the whole vault
+  (#119).
+- A manifest target whose folder was spelled unlike the disk committed and then reported
+  `committed_report_mismatch` on every retry, and a created note could take over the
+  `[[title]]` link of an untouched note. Both are refused at validation (#119).
+- Re-running setup, as the Windows installer does on every upgrade, removed write access and
+  every other key of the existing Datacron entry; a second run overwrote the backup of the
+  comments the first had dropped; a symlinked client config was replaced by a regular file;
+  a failed client registration still exited 0; and the installer wrote client configs into
+  the vault. All five are fixed (#118).
+- A tag filter written with its leading `#` matched no note, `datacron status` named a log
+  file that is never written, and `setup --client claude-code` ended in a traceback when
+  `datacron-mcp` could not be found (#120).
+
+### Changed
+
+- The Windows installer registers MCP clients at user scope only. Uninstall still removes
+  project-scope entries left by earlier releases (#118).
+- CI runs with a read-only token, the release build finds whichever Inno Setup version is
+  installed, and `packaging/` is linted and type-checked with the rest of the code (#121).
+
 ## [2026.0921.00] - 2026-09-21
 
 ### Security
