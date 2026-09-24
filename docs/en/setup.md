@@ -151,7 +151,7 @@ Datacron 2026.0714.00
   notes:      312
   index:      built (312 notes, 1450 chunks)
   regex:      ripgrep (rg)
-  log file:   /path/to/vault/.datacron/logs/datacron_20260714.log
+  log file:   ~/.datacron/logs/datacron_20260714.log
 ```
 
 If `initialized: no` appears, run `datacron init` again. If `index: not built` or `empty`,

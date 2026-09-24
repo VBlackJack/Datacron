@@ -59,6 +59,8 @@ _NO_MATCH_RETURN_CODE: Final[int] = 1
 # permission problem, and far short of one line per file in the vault.
 _MAX_STDERR_BYTES: Final[int] = 8192
 _STDERR_READ_CHUNK_BYTES: Final[int] = 65536
+_NOTE_TYPE_NAME: Final[str] = "datacronnote"
+_NOTE_TYPE_DEFINITION: Final[str] = f"{_NOTE_TYPE_NAME}:*.md"
 _STDERR_TRUNCATION_MARKER: Final[str] = "\n... (ripgrep diagnostics truncated)"
 _RISKY_REPETITION_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"\([^)]*(?:\||[+*])[^)]*\)(?:[+*]|\{)"
@@ -426,7 +428,20 @@ def _build_command(rg_path: str, pattern: str, glob: str | None) -> list[str]:
     collection loop, which stops reading and kills the process. --max-count
     would not express it anyway, being per file rather than per search.
     """
-    command = [rg_path, "--json", "--crlf"]
+    # Notes only, read as text: ripgrep treats a file holding one NUL byte as
+    # binary and reports nothing in it, so a note with a stray NUL was found by
+    # search_text and missed by search_regex. Restricting the walk to Markdown
+    # keeps --text from ever reading a real binary file of the vault.
+    command = [
+        rg_path,
+        "--json",
+        "--crlf",
+        "--text",
+        "--type-add",
+        _NOTE_TYPE_DEFINITION,
+        "--type",
+        _NOTE_TYPE_NAME,
+    ]
     if glob:
         command.extend(["--glob", glob])
     command.extend(["--", pattern, "."])

@@ -251,7 +251,19 @@ def _install_process(
 def test_build_command_inserts_separator_before_dash_pattern() -> None:
     command = _build_command("rg", "-foo", glob=None)
 
-    assert command == ["rg", "--json", "--crlf", "--", "-foo", "."]
+    assert command == [
+        "rg",
+        "--json",
+        "--crlf",
+        "--text",
+        "--type-add",
+        "datacronnote:*.md",
+        "--type",
+        "datacronnote",
+        "--",
+        "-foo",
+        ".",
+    ]
 
 
 def test_build_command_places_separator_after_glob_options() -> None:
@@ -636,8 +648,20 @@ async def test_glob_filter_is_passed_to_subprocess(
     )
 
     command = calls[0][0]
-    assert command[:6] == ("rg", "--json", "--crlf", "--glob", "*.md", "--")
-    assert command[6:] == ("kafka", ".")
+    assert command[:11] == (
+        "rg",
+        "--json",
+        "--crlf",
+        "--text",
+        "--type-add",
+        "datacronnote:*.md",
+        "--type",
+        "datacronnote",
+        "--glob",
+        "*.md",
+        "--",
+    )
+    assert command[11:] == ("kafka", ".")
     assert calls[0][1]["cwd"] == indexed.vault_root
 
 

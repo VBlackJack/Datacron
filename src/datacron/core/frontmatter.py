@@ -38,6 +38,7 @@ __all__ = [
     "extract_tags",
     "has_ambiguous_leading_delimiter_block",
     "matches_frontmatter_filter",
+    "normalize_tag_filter",
     "parse",
     "parse_preserving_bom",
     "parse_preserving_bom_and_body_eols",
@@ -367,6 +368,17 @@ def _strip_code_spans(body: str) -> str:
 
 def _blank_match(match: re.Match[str]) -> str:
     return "".join("\n" if char == "\n" else " " for char in match.group(0))
+
+
+def normalize_tag_filter(tags: Iterable[str] | None) -> list[str]:
+    """Return the sorted, lowercased tags a filter requires, without a leading ``#``.
+
+    Four callers normalized a tag filter each on their own, and none stripped the
+    ``#`` a caller naturally copies from a note: ``tags=["#kafka"]`` matched no note
+    at all and returned a clean empty result.
+    """
+    cleaned = (tag.strip().lstrip("#").strip().lower() for tag in (tags or ()))
+    return sorted({tag for tag in cleaned if tag})
 
 
 def extract_tags(metadata: dict[str, Any], body: str) -> list[str]:

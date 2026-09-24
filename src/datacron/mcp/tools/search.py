@@ -25,6 +25,7 @@ from datacron.core.config import (
     GROUPED_OVERFETCH_MAX_CHUNKS,
     TEMPORAL_OVERFETCH_FACTOR,
 )
+from datacron.core.frontmatter import normalize_tag_filter
 from datacron.core.models import Chunk, SearchResult
 from datacron.core.paths import PathConfinementError
 from datacron.core.temporal import rerank_temporal
@@ -277,7 +278,7 @@ def _search_filters(
     filters: dict[str, Any] = {}
     if folder:
         filters["folder"] = folder
-    required_tags = sorted({tag.strip().lower() for tag in (tags or []) if tag.strip()})
+    required_tags = normalize_tag_filter(tags)
     if required_tags:
         filters["tags"] = required_tags
     if frontmatter:

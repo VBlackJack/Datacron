@@ -22,7 +22,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
-from datacron.core.frontmatter import matches_frontmatter_filter
+from datacron.core.frontmatter import matches_frontmatter_filter, normalize_tag_filter
 from datacron.core.hashing import FRESHNESS_CONTRACT_ID
 from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
 from datacron.core.markdown_sections import heading_ancestry
@@ -434,7 +434,7 @@ def _validate_list_notes_request(
 def _filter_by_tags(notes: list[Note], tags: list[str] | None) -> list[Note]:
     if not tags:
         return notes
-    required = {t.strip().lower() for t in tags if t.strip()}
+    required = set(normalize_tag_filter(tags))
     if not required:
         return notes
     return [note for note in notes if required.issubset(set(note.tags))]

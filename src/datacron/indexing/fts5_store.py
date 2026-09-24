@@ -40,6 +40,7 @@ from datacron.core.frontmatter import (
     extract_tags,
     frontmatter_filter_pairs,
     matches_frontmatter_filter,
+    normalize_tag_filter,
 )
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, ChunkType, IndexStats, Note, SearchResult, WikilinkSource
@@ -1165,7 +1166,7 @@ class SQLiteFTS5Store:
         if not {"tags_json", "sort_key"} <= columns:
             raise RuntimeError("Indexed note discovery columns are unavailable.")
         normalized_folder = folder.rstrip("/") if folder else None
-        required_tags = sorted({tag.strip().lower() for tag in tags if tag.strip()})
+        required_tags = normalize_tag_filter(tags)
         parameters = (
             normalized_folder,
             normalized_folder,
@@ -1423,7 +1424,7 @@ class SQLiteFTS5Store:
     ) -> _SearchScope | None:
         """Translate list-style filters into bound search parameters, or ``None``."""
         normalized_folder = folder.rstrip("/") if folder else None
-        required_tags = sorted({tag.strip().lower() for tag in (tags or []) if tag.strip()})
+        required_tags = normalize_tag_filter(tags)
         if not normalized_folder and not required_tags and not frontmatter:
             return None
         frontmatter_pairs: tuple[tuple[str, str], ...] = ()
