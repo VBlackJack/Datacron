@@ -606,8 +606,11 @@ begin
   end;
 
   ResetConfiguration := ResetConfigurationRequested;
+  { User scope only: project scope writes five client configs and their backups
+    into the vault root, which the installer promises never to touch. Uninstall
+    still unregisters both scopes, so files left by an earlier release go too. }
   Parameters :=
-    'setup --yes --client all --scope both --vault ' + AddQuotes(VaultPath);
+    'setup --yes --client all --scope user --vault ' + AddQuotes(VaultPath);
   if ResetConfiguration then
     Parameters := Parameters + ' --reset';
   if not ShouldIndexNow then

@@ -16,14 +16,10 @@
 from __future__ import annotations
 
 import codecs
-import os
-import shutil
-import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, TypeAlias
 
-from datacron.core.durability import atomic_durable_write
 from datacron.core.logger import get_logger
 from datacron.core.memory_protocol import (
     PROTOCOL_BLOCK,
@@ -31,6 +27,7 @@ from datacron.core.memory_protocol import (
     PROTOCOL_MARKER_END,
     SESSION_START_INSTRUCTION,
 )
+from datacron.installers.foreign_files import replace_foreign_file
 from datacron.installers.mcp_clients import (
     ALL_CLIENT_IDS,
     ANTIGRAVITY,
@@ -107,9 +104,6 @@ _WINDSURF_GLOBAL_RULE_MAX_CHARS: Final[int] = 6000
 
 _Operation: TypeAlias = Literal["install", "uninstall"]
 _Scope: TypeAlias = Literal["user", "project"]
-
-
-_FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = 0x0400
 
 
 class ProtocolInstallError(RuntimeError):
@@ -720,46 +714,14 @@ def _detect_newline(text: str) -> str:
     return "\r\n" if "\r\n" in text else "\n"
 
 
-def _assert_not_a_link(path: Path) -> None:
-    """Refuse to replace an instruction file that is a link to somewhere else.
-
-    ``os.replace`` onto a symlink or a junction writes a regular file over the
-    link, which silently detaches the user's dotfiles repository from the file
-    they thought they were editing: the content Datacron wrote is the only copy,
-    and the repository still holds the old one with nothing pointing at it. These
-    are files the product does not own, so the answer is to refuse and say what
-    the link points at, not to guess which side the user meant.
-    """
-    try:
-        status = os.lstat(path)
-    except FileNotFoundError:
-        return
-    except OSError as exc:
-        raise ProtocolInstallError(f"cannot inspect {path}: {exc}") from exc
-    attributes = getattr(status, "st_file_attributes", 0)
-    if stat.S_ISLNK(status.st_mode) or bool(attributes & _FILE_ATTRIBUTE_REPARSE_POINT):
-        target = os.readlink(path) if stat.S_ISLNK(status.st_mode) else "a reparse point"
-        raise ProtocolInstallError(
-            f"{path} is a link to {target}; Datacron will not replace a link with a "
-            "regular file. Edit the target directly, or remove the link first."
-        )
-
-
 def _atomic_write_text(path: Path, text: str, *, has_bom: bool) -> None:
     """Replace an instruction file durably, keeping the bytes it had.
 
-    These files belong to the user's editor, not to Datacron, and the previous
-    write reached none of the guarantees the product applies to its own: no
-    fsync, no directory flush, and no copy of what was there. A crash between the
-    replace and the flush left an empty or truncated rules file, and a bad write
-    left nothing to go back to.
+    These files belong to the user's editor, not to Datacron: the shared writer
+    refuses a link, keeps a copy of a file it really changes, and leaves an
+    unchanged file alone.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _assert_not_a_link(path)
     payload = text.encode("utf-8")
     if has_bom:
         payload = codecs.BOM_UTF8 + payload
-    if path.exists():
-        backup = path.with_name(f"{path.name}.datacron-backup")
-        shutil.copy2(path, backup)
-    atomic_durable_write(path, payload)
+    replace_foreign_file(path, payload, error=ProtocolInstallError)

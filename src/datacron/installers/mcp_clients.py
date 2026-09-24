@@ -42,12 +42,12 @@ from typing import Any, Final
 
 import tomli_w
 
-from datacron.core.durability import atomic_durable_write
 from datacron.core.logger import get_logger
 from datacron.installers.claude_desktop import (
     ClaudeDesktopConfigError,
     config_path_for_platform,
 )
+from datacron.installers.foreign_files import replace_foreign_file
 
 __all__ = [
     "ALL_CLIENT_IDS",
@@ -514,6 +514,28 @@ def _stdio_entry(
     return entry
 
 
+def _merged_entry(existing: object, entry: dict[str, Any]) -> dict[str, Any]:
+    """Return ``entry`` laid over the Datacron entry the client already holds.
+
+    The entry was replaced wholesale, so re-running setup, which the Windows
+    installer does on every upgrade with its write box unchecked by default,
+    dropped DATACRON_WRITE_PATHS and turned a writable vault read-only without a
+    word, together with any proxy variable, ``disabled`` flag or ``autoApprove``
+    list the user had added. What this call supplies still wins; every other key
+    and environment variable is kept. The Claude Desktop writer already kept the
+    DATACRON_* variables for the same reason.
+    """
+    if not isinstance(existing, dict):
+        return entry
+    merged: dict[str, Any] = {**existing, **{k: v for k, v in entry.items() if k != "env"}}
+    existing_env = existing.get("env")
+    env = dict(existing_env) if isinstance(existing_env, dict) else {}
+    env.update(entry.get("env", {}))
+    if env:
+        merged["env"] = env
+    return merged
+
+
 def _merge_json(path: Path, servers_key: str, entry: dict[str, Any]) -> None:
     config = _load_json(path)
     servers = config.setdefault(servers_key, {})
@@ -521,7 +543,7 @@ def _merge_json(path: Path, servers_key: str, entry: dict[str, Any]) -> None:
         raise MCPClientError(
             f"{path}: existing {servers_key!r} is not an object; refusing to edit."
         )
-    servers[_SERVER_NAME] = entry
+    servers[_SERVER_NAME] = _merged_entry(servers.get(_SERVER_NAME), entry)
     serialized = json.dumps(config, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     _atomic_write(path, serialized.encode("utf-8"))
 
@@ -534,7 +556,7 @@ def _merge_toml(path: Path, *, command: str, args: list[str], env: dict[str, str
     entry: dict[str, Any] = {"command": command, "args": list(args)}
     if env:
         entry["env"] = dict(env)
-    servers[_SERVER_NAME] = entry
+    servers[_SERVER_NAME] = _merged_entry(servers.get(_SERVER_NAME), entry)
     _atomic_write(path, tomli_w.dumps(config).encode("utf-8"))
 
 
@@ -572,7 +594,7 @@ def _remove_toml_entry(path: Path) -> bool:
 def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    raw = path.read_text(encoding="utf-8")
+    raw = path.read_text(encoding="utf-8-sig")  # an editor may save a BOM
     if not raw.strip():
         return {}
     try:
@@ -597,20 +619,10 @@ def _load_toml(path: Path) -> dict[str, Any]:
 
 
 def _atomic_write(path: Path, payload: bytes) -> None:
-    """Replace a client config durably, keeping a copy of what was there.
+    """Replace a client config through the shared writer for foreign files.
 
-    These files belong to the user's editor, not to Datacron. Rewriting one
-    reserializes it, which drops every comment the user wrote: the TOML and JSON
-    writers emit data, not documents, so a Codex ``config.toml`` came back with
-    its commentary gone and nothing to restore it from. The write also reached
-    none of the durability the product applies to its own files.
-
-    The copy is the answer rather than a comment-preserving writer, which would
-    add a dependency for one file format and still not cover JSON. It is taken
-    before every replacement, so the last known-good version of a foreign config
-    is always one file away.
+    It refuses a link, copies the previous content aside before a real change
+    only, and leaves an unchanged file alone, so a second identical setup run no
+    longer overwrites the backup of a config whose comments the first run dropped.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        shutil.copy2(path, path.with_name(f"{path.name}.datacron-backup"))
-    atomic_durable_write(path, payload)
+    replace_foreign_file(path, payload, error=MCPClientError)

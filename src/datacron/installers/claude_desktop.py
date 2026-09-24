@@ -36,8 +36,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from datacron.core.durability import atomic_durable_write
 from datacron.core.logger import get_logger
+from datacron.installers.foreign_files import replace_foreign_file
 
 __all__ = [
     "DATACRON_SERVER_KEY",
@@ -265,7 +265,7 @@ def _load_existing_config(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = path.read_text(encoding="utf-8-sig")  # an editor may save a BOM
     except OSError as exc:
         raise ClaudeDesktopConfigError(f"Failed to read {path}: {exc}") from exc
     if not raw.strip():
@@ -295,8 +295,5 @@ def _write_atomically(path: Path, payload: dict[str, Any]) -> None:
     installer module takes a copy before replacing a file it does not own; this
     one does the same, for the same reason.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
     serialized = json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    if path.exists():
-        shutil.copy2(path, path.with_name(f"{path.name}.datacron-backup"))
-    atomic_durable_write(path, serialized.encode("utf-8"))
+    replace_foreign_file(path, serialized.encode("utf-8"), error=ClaudeDesktopConfigError)
