@@ -22,6 +22,7 @@ configured roots is rejected before it reaches the filesystem.
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Final, Literal
@@ -109,7 +110,10 @@ def assert_vault_rel_path(rel_path: str) -> str:
             raise PathConfinementError(
                 f"Vault-relative path must not traverse directories: {rel_path!r}"
             )
-        if part.endswith((" ", ".")):
+        # A Win32 rule, and only there: Linux and macOS store "Acme Inc." as
+        # written, and applying the rule everywhere silently dropped the notes
+        # of such a folder from every listing and search.
+        if sys.platform == "win32" and part.endswith((" ", ".")):
             raise PathConfinementError(
                 f"Vault-relative path components must not end with a dot or a space: {rel_path!r}"
             )

@@ -536,14 +536,43 @@ class FilesystemVaultReader:
         return target
 
     def _collect_markdown_paths(self, root: Path) -> list[Path]:
+        """Walk the vault in ``os.walk`` order, skipping symlinked files and folders.
+
+        A symlinked note used to be keyed by its link path and its target path at
+        once, and two keys for one identity made reconcile raise
+        DuplicateNoteIdentityError, which failed every index-backed tool for the
+        whole vault. ``os.walk`` already never descends into a linked folder; the
+        linked file is skipped the same way, and the note is still reached under
+        its real path. ``os.scandir`` gives the link bit with the entry, so this
+        costs no system call per note.
+        """
         results: list[Path] = []
-        for current_dir, dirnames, filenames in os.walk(root):
-            dirnames[:] = sorted(d for d in dirnames if not self._should_skip_dir(d))
-            for filename in sorted(filenames):
-                is_markdown = filename.lower().endswith(_MARKDOWN_SUFFIX)
-                if is_markdown and not self._should_skip_file(filename):
-                    results.append(Path(current_dir) / filename)
+        self._collect_markdown_paths_into(root, results)
         return results
+
+    def _collect_markdown_paths_into(self, directory: Path, results: list[Path]) -> None:
+        try:
+            with os.scandir(directory) as scanned:
+                entries = sorted(scanned, key=lambda entry: entry.name)
+        except OSError:
+            return
+        subdirectories: list[Path] = []
+        for entry in entries:
+            if entry.is_symlink():
+                continue
+            try:
+                is_directory = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            if is_directory:
+                if not self._should_skip_dir(entry.name):
+                    subdirectories.append(Path(entry.path))
+                continue
+            is_markdown = entry.name.lower().endswith(_MARKDOWN_SUFFIX)
+            if is_markdown and not self._should_skip_file(entry.name):
+                results.append(Path(entry.path))
+        for subdirectory in subdirectories:
+            self._collect_markdown_paths_into(subdirectory, results)
 
     def _should_skip_dir(self, name: str) -> bool:
         return name.casefold() in self._admission_policy.excluded_folders or name.startswith(".")
