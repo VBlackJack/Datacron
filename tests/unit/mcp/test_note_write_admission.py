@@ -497,15 +497,33 @@ async def test_the_journal_tools_withhold_excluded_notes_but_keep_other_members(
     ]
 
 
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
+
+
+class _TaggedStat:
+    """A real ``lstat`` result that also carries Windows reparse fields.
+
+    POSIX ``os.stat_result`` refuses the Windows-only field names, so the
+    fields are layered over the real result instead of rebuilt into it.
+    """
+
+    def __init__(self, base: os.stat_result, reparse_tag: int) -> None:
+        self._base = base
+        self.st_file_attributes = _FILE_ATTRIBUTE_REPARSE_POINT
+        self.st_reparse_tag = reparse_tag
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._base, name)
+
+
 def _fake_lstat(monkeypatch: pytest.MonkeyPatch, targets: set[Path], reparse_tag: int) -> None:
     real_lstat = os.lstat
 
-    def lstat(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+    def lstat(path: Any, *args: Any, **kwargs: Any) -> Any:
         result = real_lstat(path, *args, **kwargs)
         if Path(path) not in targets:
             return result
-        extra = {"st_file_attributes": 0x0400, "st_reparse_tag": reparse_tag}
-        return os.stat_result(tuple(result)[:10], extra)
+        return _TaggedStat(result, reparse_tag)
 
     monkeypatch.setattr(os, "lstat", lstat)
 
