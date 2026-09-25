@@ -240,6 +240,18 @@ class BatchConflictError(ValueError):
     """Raised when exact batch preconditions no longer match disk state."""
 
 
+class CommittedBatchDivergedError(BatchConflictError):
+    """Raised when a committed batch's files no longer hold its receipt's bytes.
+
+    The receipt is written only after every member has rolled forward, so a
+    difference found afterwards is a later edit (a note moved back by hand, a
+    rewrite through another tool), not a torn batch. Nothing needs recovering;
+    the manifest simply describes a vault that no longer exists.
+    """
+
+    code: Final[str] = "manifest_already_committed_state_diverged"
+
+
 @dataclass(frozen=True)
 class BatchMemberResult:
     """Committed exact-byte effect for one manifest member."""
@@ -450,16 +462,16 @@ class OrganizationBatchTransaction:
         for member in result.members:
             target_hash = self._disk_hash(member.target_rel_path)
             if target_hash != member.after_hash:
-                raise RecoveryRequiredError(
-                    "Recovery required: committed organization batch target differs from "
-                    f"receipt: {member.target_rel_path}"
+                raise CommittedBatchDivergedError(
+                    "manifest is already committed and its target changed since: "
+                    f"{member.target_rel_path}"
                 )
             if (
                 member.source_rel_path is not None
                 and self._disk_hash(member.source_rel_path) is not None
             ):
-                raise RecoveryRequiredError(
-                    "Recovery required: committed organization batch move source reappeared: "
+                raise CommittedBatchDivergedError(
+                    "manifest is already committed and its move source reappeared since: "
                     f"{member.source_rel_path}"
                 )
 

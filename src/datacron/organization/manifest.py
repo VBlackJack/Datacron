@@ -1111,19 +1111,28 @@ def _resolve_scoped_path(
     return confined
 
 
-def _assert_target_spelling_matches_disk(vault_root: Path, rel_path: str) -> None:
-    """Refuse a target whose existing folders are spelled differently on disk.
+def _assert_target_spelling_matches_disk(
+    vault_root: Path, rel_path: str, *, include_leaf: bool = False
+) -> None:
+    """Refuse a path whose existing folders (and file) are spelled differently on disk.
 
     On a case-insensitive filesystem ``memory/sub/moved.md`` lands in the folder
     that exists as ``memory/Sub``. The projected report was built from the
     manifest's spelling and the live report from the disk's, so the two never
     matched: the batch committed and then answered ``committed_report_mismatch``
     on every retry. Folders that do not exist yet are created as written.
+
+    ``include_leaf`` also compares the file name, for paths that must already
+    exist (a replace target, a move source): ``Item.md`` opens ``item.md`` on
+    such a filesystem and the same report divergence follows.
     """
+    parts = PurePosixPath(rel_path).parts
+    checked = parts if include_leaf else parts[:-1]
     current = vault_root
-    for part in PurePosixPath(rel_path).parts[:-1]:
+    for index, part in enumerate(checked):
         candidate = current / part
-        if not candidate.is_dir():
+        is_leaf = index == len(parts) - 1
+        if not (candidate.exists() if is_leaf else candidate.is_dir()):
             return
         try:
             names = [entry.name for entry in current.iterdir()]
@@ -1133,12 +1142,38 @@ def _assert_target_spelling_matches_disk(vault_root: Path, rel_path: str) -> Non
             ) from exc
         if part not in names:
             on_disk = next((name for name in names if name.casefold() == part.casefold()), part)
+            kind = "file" if is_leaf else "folder"
             raise OrganizationManifestError(
                 "target_case_mismatch",
-                f"Target {rel_path!r} names folder {part!r}, which exists on disk as "
+                f"Path {rel_path!r} names {kind} {part!r}, which exists on disk as "
                 f"{on_disk!r}; spell it as on disk",
             )
         current = candidate
+
+
+def _resolve_move_source(vault_root: Path, rel_path: str, scope: VaultScope) -> Path:
+    """Resolve a move source that must be an admitted note spelled as on disk."""
+    source_path = _resolve_scoped_path(
+        vault_root,
+        rel_path,
+        scope,
+        access="write",
+        allow_missing=False,
+    )
+    try:
+        admitted = scope.authorize_note_rel_path(rel_path)
+    except (NoteAdmissionError, PathConfinementError, RuntimeError) as exc:
+        raise OrganizationManifestError(
+            "source_not_admitted",
+            f"Move source is not an admitted note: {rel_path!r}: {exc}",
+        ) from exc
+    if admitted != source_path:
+        raise OrganizationManifestError(
+            "vault_path_invalid",
+            f"Scope resolved two paths for move source {rel_path!r}",
+        )
+    _assert_target_spelling_matches_disk(vault_root, rel_path, include_leaf=True)
+    return source_path
 
 
 def _assert_absent_case_insensitive(path: Path) -> None:
@@ -2234,6 +2269,9 @@ def validate_organization_bundle(
                     "vault_path_invalid",
                     f"Scope resolved two paths for replace target {operation.target!r}",
                 )
+            _assert_target_spelling_matches_disk(
+                resolved_vault, operation.target, include_leaf=True
+            )
             _read_expected_note(
                 target_path,
                 expected_sha256=operation.expected_sha256,
@@ -2254,25 +2292,7 @@ def validate_organization_bundle(
                 }
             )
         else:
-            source_path = _resolve_scoped_path(
-                resolved_vault,
-                operation.source,
-                scope,
-                access="write",
-                allow_missing=False,
-            )
-            try:
-                admitted = scope.authorize_note_rel_path(operation.source)
-            except (NoteAdmissionError, PathConfinementError, RuntimeError) as exc:
-                raise OrganizationManifestError(
-                    "source_not_admitted",
-                    f"Move source is not an admitted note: {operation.source!r}: {exc}",
-                ) from exc
-            if admitted != source_path:
-                raise OrganizationManifestError(
-                    "vault_path_invalid",
-                    f"Scope resolved two paths for move source {operation.source!r}",
-                )
+            source_path = _resolve_move_source(resolved_vault, operation.source, scope)
             _read_expected_note(
                 source_path,
                 expected_sha256=operation.expected_sha256,

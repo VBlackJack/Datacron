@@ -1292,10 +1292,10 @@ def test_adoption_refuses_a_manifest_target_whose_case_differs_from_the_file(
     with pytest.raises(OrganizationManifestError) as error:
         _load_and_validate(case)
 
-    # Case-insensitive filesystems resolve the file and refuse the identity;
-    # case-sensitive ones do not find the source at all (missing, or two
-    # paths resolved by the scope), which was already refused before.
-    assert error.value.code in {"source_identity_invalid", "source_missing", "vault_path_invalid"}
+    # Case-insensitive filesystems find the file under another spelling and
+    # refuse the name before reading it; case-sensitive ones do not find the
+    # source at all (missing, or two paths resolved by the scope).
+    assert error.value.code in {"target_case_mismatch", "source_missing", "vault_path_invalid"}
 
 
 @pytest.mark.parametrize("raw_id", ["123", "false", "[]", "{}"])
@@ -1525,3 +1525,35 @@ def test_a_target_folder_spelled_unlike_the_disk_is_refused(tmp_path: Path) -> N
 
     assert caught.value.code == "target_case_mismatch"
     assert "'Sub'" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("on_disk", "spelled"),
+    [
+        ("Replace.md", "memory/replace.md"),
+        ("Move.md", "memory/move.md"),
+    ],
+    ids=["replace-target", "move-source"],
+)
+def test_an_existing_file_spelled_unlike_the_disk_is_refused(
+    tmp_path: Path, on_disk: str, spelled: str
+) -> None:
+    """A replace target or move source must name the file exactly as on disk.
+
+    Only the folders were compared: ``memory/replace.md`` opened ``Replace.md``
+    on a case-insensitive filesystem, the batch validated and committed, then
+    answered committed_report_mismatch on every retry with the same token.
+    """
+    probe = tmp_path / "CaseProbe"
+    probe.mkdir()
+    if not (tmp_path / "caseprobe").exists():
+        pytest.skip("case-sensitive filesystem: the lowercase file would simply be missing")
+    case = _build_case(tmp_path / "case")
+    lowercase = case.vault / spelled
+    lowercase.rename(lowercase.with_name(on_disk))
+
+    with pytest.raises(OrganizationManifestError) as caught:
+        _load_and_validate(case)
+
+    assert caught.value.code == "target_case_mismatch"
+    assert f"'{on_disk}'" in str(caught.value)
