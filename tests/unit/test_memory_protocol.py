@@ -66,3 +66,25 @@ def test_status_cli_is_read_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert result.exit_code == 0
     assert json.loads(result.stdout)["clients"][0]["distribution"] == "missing"
     assert not (tmp_path / ".codex").exists()
+
+
+def test_status_reports_duplicated_markers_as_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two protocol blocks in one file make it invalid, not a status traceback.
+
+    The marker scan refuses them with ProtocolInstallError, a RuntimeError the
+    inspection did not catch, so `datacron protocol status` crashed.
+    """
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    target = tmp_path / ".codex" / "AGENTS.md"
+    target.parent.mkdir()
+    target.write_text("Personal instructions\n", encoding="utf-8")
+    install_memory_protocol("codex-cli")
+    block = target.read_text(encoding="utf-8")
+    target.write_text(block + "\n" + block, encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["protocol", "status", "--client", "codex-cli"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["clients"][0]["distribution"] == "invalid"

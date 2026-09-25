@@ -41,6 +41,7 @@ from datacron.organization.manifest import normalize_vault_rel_path
 
 _TASK = re.compile(r"^\[ \]\s+(.+)", re.DOTALL)
 _ANCHOR_SEPARATOR = "#"
+_ALIAS_SEPARATOR = "|"
 _NOTE_SUFFIX = ".md"
 
 # One parsed (links, tasks) pair per note, keyed by content hash so an audit and the
@@ -194,12 +195,28 @@ def _wiki_candidates(index: LinkIndex, key: str) -> list[str]:
     return []
 
 
+def _split_wiki_target(target: str) -> tuple[str, str]:
+    """Split a wikilink into its literal note name and header anchor.
+
+    A wikilink names a note, not a URL. Read through urlsplit, ``[[Project: Alpha]]``
+    became an external link with the scheme ``project``, a broken
+    ``[[Missing: thing]]`` was never reported, and ``[[What is X?]]`` lost its
+    question mark as a query string.
+    """
+    name, _separator, anchor = target.partition(_ANCHOR_SEPARATOR)
+    return name.partition(_ALIAS_SEPARATOR)[0].strip(), anchor.partition(_ALIAS_SEPARATOR)[0]
+
+
 def resolve_link(source: str, target: str, wiki: bool, index: LinkIndex) -> tuple[str, str]:
     """Resolve scoped note links; return external, missing or ambiguous explicitly."""
-    parsed = urlsplit(target)
-    if parsed.scheme or parsed.netloc:
-        return "external", target
-    path = unquote(parsed.path)
+    if wiki:
+        path, fragment = _split_wiki_target(target)
+    else:
+        parsed = urlsplit(target)
+        if parsed.scheme or parsed.netloc:
+            return "external", target
+        path = unquote(parsed.path)
+        fragment = unquote(parsed.fragment)
     if not path:
         candidates = [source]
     elif wiki:
@@ -212,7 +229,6 @@ def resolve_link(source: str, target: str, wiki: bool, index: LinkIndex) -> tupl
     if len(candidates) != 1:
         return ("ambiguous" if candidates else "local_unresolved"), path
     selected = candidates[0]
-    fragment = unquote(parsed.fragment)
     if fragment and fragment.casefold() not in index.anchors(selected):
         return "anchor_unverified", selected + _ANCHOR_SEPARATOR + fragment
     return "note", selected

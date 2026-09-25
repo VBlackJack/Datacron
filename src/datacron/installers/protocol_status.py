@@ -38,6 +38,7 @@ from datacron.installers.mcp_clients import (
 from datacron.installers.protocol import (
     PROTOCOL_ALL,
     PROTOCOL_CLIENT_IDS,
+    ProtocolInstallError,
     _antigravity_project_instruction_path,
     _cursor_project_rule_path,
     _find_protocol_span,
@@ -119,7 +120,10 @@ def _inspect(path: Path) -> dict[str, Any]:
                 "block_hash": sha256(block.encode()).hexdigest(),
             }
         )
-    except (OSError, UnicodeError, ValueError) as exc:
+    # ProtocolInstallError is how the marker scan reports duplicated or unbalanced
+    # markers; it is a RuntimeError, so it used to escape as a traceback from
+    # `datacron protocol status` instead of marking the one file invalid.
+    except (OSError, UnicodeError, ValueError, ProtocolInstallError) as exc:
         _LOGGER.warning("Protocol inspection failed for %s: %s", path, type(exc).__name__)
         row["distribution"] = "invalid"
     return row

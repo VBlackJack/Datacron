@@ -371,6 +371,12 @@ casse.
 réconciliation ou un oracle planner différent retourne respectivement
 `committed_index_incomplete` ou `committed_report_mismatch`, avec `already_committed: true|false`
 selon qu'il s'agit d'un replay ; ce n'est jamais présenté comme une absence de mutation.
+`validate` consulte d'abord le reçu durable : un manifeste déjà commité retourne
+`status: already_committed` avec le `confirmation_token` de son reçu. Quand les notes du reçu ont
+changé depuis (un déplacement défait à la main, une édition ultérieure), les deux modes refusent avec
+le code d'erreur `manifest_already_committed_state_diverged` : rien n'est corrompu et aucune
+récupération n'est nécessaire ; planifie un nouveau manifeste depuis le vault actuel au lieu de
+rejouer celui-ci.
 
 ---
 

@@ -38,6 +38,11 @@ ERROR_ACTIONS: Final[dict[str, str]] = {
     "recovery_required": (
         "Stop writers and inspect recovery. Preserve the operation journal and pending files."
     ),
+    "manifest_already_committed_state_diverged": (
+        "This manifest is already committed and the vault changed since; nothing is corrupt "
+        "and no recovery is needed. Do not replay it: plan a new manifest from the current "
+        "vault state."
+    ),
     "context_budget_too_small": (
         "Retry with required_tokens or read _memory/INIT.md. Reuse a known "
         "contract hash only when its instructions remain in context."

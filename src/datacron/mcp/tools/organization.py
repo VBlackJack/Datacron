@@ -433,6 +433,23 @@ def _validation_payload(preview: _OrganizationPreview) -> dict[str, Any]:
     }
 
 
+def _already_committed_payload(
+    bundle: OrganizationBundle,
+    result: BatchApplyResult,
+) -> dict[str, Any]:
+    """Return a validate receipt for a manifest whose batch is already committed."""
+    payload = _apply_payload(bundle, result, None)
+    payload.update(
+        {
+            "mode": "validate",
+            "status": "already_committed",
+            "already_committed": True,
+            "indexed": None,
+        }
+    )
+    return payload
+
+
 def _apply_payload(
     bundle: OrganizationBundle,
     result: BatchApplyResult,
@@ -593,8 +610,26 @@ async def _apply_organization_manifest_impl(
         )
         bundle = _load_expected_bundle(path, expected, app)
         if cleaned_mode == "validate":
-            validation_preview = _build_preview(app, bundle)
             batch_writer = cast("OrganizationBatchWriter", app.vault_writer)
+            # Validate used to build a fresh preview without looking for a receipt.
+            # After a commit, a vault put back by hand to the pre-state validated
+            # again with the same token, and apply then refused it as a recovery
+            # case. The receipt is the authority on whether this manifest already
+            # ran: an intact one is reported as such, and a diverged one raises
+            # the same typed conflict apply raises.
+            committed = await batch_writer.get_organization_batch_result(bundle.manifest_sha256)
+            if committed is not None:
+                payload = _already_committed_payload(bundle, committed)
+                _audit(
+                    "apply_organization_manifest",
+                    started,
+                    mode=cleaned_mode,
+                    status="already_committed",
+                    manifest_sha256=bundle.manifest_sha256,
+                    batch_id=committed.batch_id,
+                )
+                return payload
+            validation_preview = _build_preview(app, bundle)
             validation_operation = _organization_operation_context(
                 validation_preview,
                 actor=actor,

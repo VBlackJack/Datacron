@@ -9,6 +9,47 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- `datacron setup --no-write` and `--no-read-only` remove an existing write allowlist or
+  read-only mode from the client configs. Without either form, a rerun keeps what each config
+  already holds, as before. In interactive setup, the write and read-only prompts default to
+  the setting this vault's existing client entry holds, so pressing Enter keeps it; only an
+  explicit answer changes it.
+
+### Fixed
+
+- An organization manifest could name a replace target or a move source with a file name
+  spelled in another case than on disk. On a case-insensitive filesystem it validated and
+  committed, then answered `committed_report_mismatch` on every retry. Only the folders were
+  compared; the file name now is too, and the manifest is refused with `target_case_mismatch`.
+- Organization manifests, batches, the planner and the tag-policy scope check folded path
+  case only when running on Windows. The default macOS filesystem is case-insensitive too, so
+  there two spellings of one note were treated as two paths. Whether the vault's volume folds
+  case is now probed on the volume itself, once per vault root.
+- `validate` on an organization manifest never looked at its committed receipt. After the move
+  was undone by hand it validated again with the same token, and `apply` then answered
+  `recovery_required`, telling the operator to stop writers over a vault that was not corrupt.
+  `validate` now reports `already_committed`, and a committed manifest whose notes changed since
+  is refused in both modes with `manifest_already_committed_state_diverged`, which says no
+  recovery is needed.
+- Rerunning `datacron setup` without `--read-only` printed "read-only: no" while the client
+  config kept `DATACRON_READ_ONLY=true`, and the same for the write allowlist: the summary showed
+  what was asked, not what was written. It now shows the merged settings. Setting up another
+  vault also dropped nothing: preserved write paths kept pointing into the old vault, and are
+  now removed when they lie outside the new one.
+- Offline library link checks read wikilinks as URLs: `[[Project: Alpha]]` counted as an
+  external link, a broken `[[Missing: thing]]` was never reported, and `[[What is X?]]` was
+  looked up without its question mark. Wikilink names are now matched literally.
+- `datacron setup` exited 0 with "setup complete" when the Claude Desktop config could not be
+  written, or when the server command could not be resolved for `--client all`. Both now fail
+  the setup with exit code 1.
+- `datacron protocol status` crashed with a traceback on an instruction file holding the
+  protocol markers twice. That file is now reported as `invalid`.
+- `datacron status`, `index` and `reindex` crashed with a raw parser or validation traceback on
+  a malformed `VAULT.yaml`; they now exit 2 with a message that names the problem without
+  echoing the offending value. `datacron setup` refuses such a vault instead of reporting
+  success.
 ### Fixed
 
 - One note edited outside Datacron (Obsidian, a sync client) inside the 30 s repair window
