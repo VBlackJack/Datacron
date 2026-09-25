@@ -160,8 +160,12 @@ def assert_path_chain_without_links(
     return absolute
 
 
+# The documented Win32 tag values. The stat module defines them on every platform,
+# but its type stubs only on Windows, and the check below runs everywhere.
+IO_REPARSE_TAG_SYMLINK: Final[int] = 0xA000000C
+IO_REPARSE_TAG_MOUNT_POINT: Final[int] = 0xA0000003
 _LINK_REPARSE_TAGS: Final[frozenset[int]] = frozenset(
-    {stat.IO_REPARSE_TAG_SYMLINK, stat.IO_REPARSE_TAG_MOUNT_POINT}
+    {IO_REPARSE_TAG_SYMLINK, IO_REPARSE_TAG_MOUNT_POINT}
 )
 
 

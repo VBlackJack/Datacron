@@ -481,11 +481,9 @@ def _assert_markdown_rel_path(cleaned_rel_path: str) -> None:
         # Both are Win32 rules, like the trailing dot and space the path check
         # gates the same way: Linux and macOS store "Con.md" and "10:30 standup.md"
         # as written, and the reader admits them there.
-        if sys.platform != "win32":
-            continue
-        if ":" in part:
+        if sys.platform == "win32" and ":" in part:
             raise ValueError("rel_path must not contain ':'")
-        if part.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:
+        if sys.platform == "win32" and part.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:
             raise ValueError(f"rel_path must not use the reserved device name {part!r}")
 
 

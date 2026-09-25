@@ -23,7 +23,6 @@ journal readers returned the path and headings of excluded notes.
 from __future__ import annotations
 
 import os
-import stat
 import subprocess
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -37,7 +36,11 @@ from datacron.core.config import Settings
 from datacron.core.frontmatter import serialize
 from datacron.core.hashing import sha256_bytes
 from datacron.core.operation_log import OperationRecord
-from datacron.core.scope import ScopedVaultWriter, SingleTenantVaultScope
+from datacron.core.scope import (
+    IO_REPARSE_TAG_MOUNT_POINT,
+    ScopedVaultWriter,
+    SingleTenantVaultScope,
+)
 from datacron.core.security import SecretRedactor
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
@@ -525,7 +528,7 @@ async def test_a_junction_tag_is_refused_whatever_the_platform(
 ) -> None:
     app = await open_app(vault)
     before = (vault / "notes" / "a.md").read_bytes()
-    _fake_lstat(monkeypatch, {vault / "notes"}, stat.IO_REPARSE_TAG_MOUNT_POINT)
+    _fake_lstat(monkeypatch, {vault / "notes"}, IO_REPARSE_TAG_MOUNT_POINT)
 
     result = await _append_journal_impl(app, rel_path="notes/a.md", heading="H", entry="more")
 
