@@ -160,6 +160,46 @@ def assert_path_chain_without_links(
     return absolute
 
 
+_LINK_REPARSE_TAGS: Final[frozenset[int]] = frozenset(
+    {stat.IO_REPARSE_TAG_SYMLINK, stat.IO_REPARSE_TAG_MOUNT_POINT}
+)
+
+
+def _is_link(component_stat: os.stat_result) -> bool:
+    """Return whether one ``lstat`` result is a symlink, a junction or a mount point.
+
+    Only those redirect a path elsewhere. Any reparse point is not: OneDrive
+    Files-On-Demand marks every cloud placeholder with the reparse attribute and a
+    cloud tag, so refusing the attribute alone refused every write to such a vault.
+    """
+    if stat.S_ISLNK(component_stat.st_mode):
+        return True
+    attributes = getattr(component_stat, "st_file_attributes", 0)
+    if not attributes & _FILE_ATTRIBUTE_REPARSE_POINT:
+        return False
+    return getattr(component_stat, "st_reparse_tag", 0) in _LINK_REPARSE_TAGS
+
+
+def _first_link_below(root: Path, parts: tuple[str, ...]) -> Path | None:
+    """Return the first existing component under ``root`` that is a link, if any.
+
+    ``root`` itself is a resolved vault root and is not inspected, and neither is
+    anything above it: a vault kept under a synced or linked folder is served as
+    its resolved path, like every read. The walk stops at the first missing
+    component, since nothing below it exists to redirect a write.
+    """
+    current = root
+    for part in parts:
+        current = current / part
+        try:
+            component_stat = os.lstat(current)
+        except (FileNotFoundError, NotADirectoryError):
+            return None
+        if _is_link(component_stat):
+            return current
+    return None
+
+
 class NoteAdmissionError(Exception):
     """Raised when a path is not an admissible live Markdown note."""
 
@@ -340,7 +380,9 @@ class SingleTenantVaultScope:
         the headings of that note. The note may not exist yet, which is the one
         difference from :meth:`authorize_note_rel_path`.
 
-        A write also refuses any link or reparse point on the way to the note.
+        A write also refuses a symlink or junction below the vault root on the
+        way to the note; other reparse points, such as cloud placeholders, are
+        ordinary files and folders here.
         Resolution would otherwise follow a junction inside the vault to a folder
         the lexical spelling does not name.
 
@@ -359,17 +401,12 @@ class SingleTenantVaultScope:
         assert_vault_rel_path(rel_path)
         lexical_parts = PurePosixPath(rel_path.replace("\\", "/")).parts
         self._assert_admitted_parts(lexical_parts, rel_path=rel_path)
-        try:
-            assert_path_chain_without_links(
-                self._vault_root / rel_path,
-                anchor=self._vault_root,
-                allow_missing=True,
-            )
-        except LinkedPathError as exc:
-            _LOGGER.debug("Refused a write through a linked path %r: %s", rel_path, exc)
+        linked = _first_link_below(self._vault_root, lexical_parts)
+        if linked is not None:
+            _LOGGER.debug("Refused a write through the link %s for %r", linked, rel_path)
             raise PathConfinementError(
-                f"Path {rel_path!r} crosses a link or reparse point; writes do not follow links."
-            ) from exc
+                f"Path {rel_path!r} crosses a symlink or junction; writes do not follow links."
+            )
         return self._authorize_note_location(rel_path, "write")
 
     def _authorize_note_location(self, rel_path: str, access: AccessMode) -> Path:
@@ -687,14 +724,15 @@ class ScopedVaultWriter:
         self._write_policy = write_policy
 
     def _readable_by_rel_path(self, items: Sequence[_HasRelPathT]) -> list[_HasRelPathT]:
-        """Keep the items note admission admits, deciding each path once.
+        """Keep the items this read scope confines, deciding each path once.
 
-        Confinement alone let the record of a write to an excluded note return
-        its path, its heading and whether a restore point exists, although every
-        read of that note is refused. Records are filtered by note admission, and
-        without requiring the note to exist still, since a record outlives a move.
+        This is confinement, not note admission, on purpose: recovery state must
+        stay complete. An organization batch journals sidecars, attachments and
+        notes under excluded folders, and filtering those out made a blocked
+        operation vanish from health while the writer still refused every write.
+        The journal tools apply note admission to what they return instead.
 
-        Admission resolves the candidate and every allowed root on
+        ``allows_rel_path`` resolves the candidate and every allowed root on
         each call, which on Windows is a file-open syscall apiece. These
         sequences come from the operation journal, which holds one record per
         committed write and is never compacted, so the same ``rel_path``
@@ -710,7 +748,7 @@ class ScopedVaultWriter:
         for item in items:
             decision = admitted.get(item.rel_path)
             if decision is None:
-                decision = admits_note_path(self._scope, item.rel_path)
+                decision = self._scope.allows_rel_path(item.rel_path, "read")
                 admitted[item.rel_path] = decision
             if decision:
                 kept.append(item)

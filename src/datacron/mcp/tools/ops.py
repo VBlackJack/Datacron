@@ -17,13 +17,14 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.hashing import hash_text
 from datacron.core.operation_log import (
     OperationLogError,
     OperationRecord,
 )
+from datacron.core.scope import admits_note_path
 from datacron.mcp.tools.payloads import (
     _audit,
     _bounded_count,
@@ -31,6 +32,8 @@ from datacron.mcp.tools.payloads import (
     _internal_error_response,
     _redact_retrieval_text,
 )
+
+_MARKDOWN_SUFFIX: Final[str] = ".md"
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -97,6 +100,7 @@ async def _get_note_history_impl(
         # escape to the SDK, which returns str(exc) to the caller -- errno, host path
         # and user name included.
         return _internal_error_response("get_note_history", started, note=cleaned_note)
+    records = _admitted_records(app, records)
     matching = [record for record in records if cleaned_note in (record.rel_path, record.note_id)]
     if request_id is not None:
         matching = [
@@ -151,6 +155,7 @@ async def _audit_query_impl(
     except Exception:
         return _internal_error_response("audit_query", started)
 
+    records = _admitted_records(app, records)
     cleaned_tool = tool.strip() if tool else None
     cleaned_note = note.strip() if note else None
     matching: list[OperationRecord] = []
@@ -188,6 +193,31 @@ async def _audit_query_impl(
         returned=len(returned),
     )
     return payload
+
+
+def _admitted_records(app: DatacronApp, records: list[OperationRecord]) -> list[OperationRecord]:
+    """Withhold the records of notes that note admission excludes.
+
+    The scoped writer returns every record inside the vault, because recovery and
+    health need all of them. The journal tools only returned what confinement
+    allowed, so a write to an excluded note answered with its path, its heading and
+    whether a restore point exists, although every read of that note is refused.
+    A Markdown record passes note admission here, whether or not the note still
+    exists, since a record outlives a move. Any other record, a sidecar or an
+    attachment an organization batch moved, is not a note and keeps confinement.
+    Each path is decided once: the journal repeats it for every write to a note.
+    """
+    decisions: dict[str, bool] = {}
+    kept: list[OperationRecord] = []
+    for record in records:
+        decision = decisions.get(record.rel_path)
+        if decision is None:
+            is_note = record.rel_path.casefold().endswith(_MARKDOWN_SUFFIX)
+            decision = not is_note or admits_note_path(app.scope, record.rel_path)
+            decisions[record.rel_path] = decision
+        if decision:
+            kept.append(record)
+    return kept
 
 
 def _operation_payload(app: DatacronApp, record: OperationRecord) -> dict[str, object]:

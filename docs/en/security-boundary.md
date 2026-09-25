@@ -62,15 +62,18 @@ Writes are confined to the vault root and, in addition, must fall within an expl
 and not writable, and a path outside note admission is neither. Every note write passes
 the same admission as a read, on the path as given and on the path it resolves to, before
 the note is opened, and the refusal is the same whether the note exists or not. A write
-also refuses a path that crosses a symlink or a junction, even one that stays inside the
-vault. A refused path is reported as the vault-relative path the client sent; the
+also refuses a path that crosses a symlink or a junction below the vault root, even one
+that stays inside the vault; other reparse points, such as OneDrive cloud placeholders,
+are not links and are written normally. A refused path is reported as the vault-relative path the client sent; the
 resolved host path is only logged locally.
 
 Scoped reader and writer adapters mediate filesystem operations, while index results,
 chunk resolution, backlinks, resources, audit metadata, and the fixed ripgrep search root
 are checked against the same scope dependency. The journal records `audit_query` and
-`get_note_history` return pass note admission, whether or not the note still exists, and
-every string in their parameters is redacted like their path.
+`get_note_history` return pass note admission when they name a Markdown note, whether or
+not the note still exists, and every string in their parameters is redacted like their
+path. Recovery state is not filtered by note admission: a blocked operation on a sidecar,
+an attachment or an excluded note still counts in `get_health`.
 
 The underlying reader and durable writer retain their own path-containment checks.
 `VaultScope` is the replacement seam for a future ACL or namespace policy; the

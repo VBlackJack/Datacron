@@ -17,10 +17,14 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   a wrong heading answered with that excluded note's headings. A junction or symlink inside
   the vault also carried a write into an excluded folder. Every write now passes the read
   admission on both the given and the resolved path before the note is opened, refuses a
-  path crossing a link, and refuses identically whether the note exists or not.
+  path crossing a symlink or junction below the vault root (a OneDrive cloud placeholder
+  is not a link and stays writable), and refuses identically whether the note exists or
+  not.
 - `audit_query` and `get_note_history` returned the path, the heading and the restore
   availability of writes to excluded notes: journal records were filtered by confinement
-  only. They are now filtered by note admission, as the security boundary document says.
+  only. Records naming a Markdown note are now filtered by note admission, as the security
+  boundary document says. Recovery state keeps every record, so a blocked operation on a
+  sidecar or an excluded note still makes `get_health` degraded.
 - `excluded_folders` and `excluded_files` entries holding a path separator, such as
   `Clients/Confidential`, `Private/` or `sub/blocked.md`, were accepted and excluded nothing,
   because matching is per path component. A trailing separator is now dropped, and any

@@ -23,11 +23,13 @@ journal readers returned the path and headings of excluded notes.
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -35,6 +37,7 @@ from datacron.core.config import Settings
 from datacron.core.frontmatter import serialize
 from datacron.core.hashing import sha256_bytes
 from datacron.core.operation_log import OperationRecord
+from datacron.core.scope import ScopedVaultWriter, SingleTenantVaultScope
 from datacron.core.security import SecretRedactor
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
@@ -52,7 +55,7 @@ from datacron.mcp.tools import (
     _rename_note_section_impl,
     _set_frontmatter_impl,
 )
-from datacron.mcp.tools.ops import _operation_payload
+from datacron.mcp.tools.ops import _admitted_records, _operation_payload
 
 _EXCLUDED_ID = "01J00000000000000000000A01"
 _ADMITTED_ID = "01J00000000000000000000A02"
@@ -418,3 +421,113 @@ async def test_a_colon_cannot_open_an_alternate_data_stream(
         result = await _get_note_impl(app, id_or_path=id_or_path, fmt="full")
         assert result.get("error", {}).get("code") == "note_not_admitted", (id_or_path, result)
         assert "ads-secret" not in str(result)
+
+
+_CLOUD_REPARSE_TAG = 0x9000001A
+_BATCH_MEMBER_PATHS = (
+    ".datacron/VAULT.yaml",
+    ".datacron/ulids.json",
+    "_attachments/img.png",
+    "Private/p.md",
+    "notes/a.md",
+)
+
+
+def _record(rel_path: str) -> OperationRecord:
+    return OperationRecord(
+        operation_id=f"op-{rel_path}",
+        timestamp="2026-09-25T00:00:00+00:00",
+        op="move",
+        tool="apply_organization_manifest",
+        note_id=None,
+        rel_path=rel_path,
+        before_hash=None,
+        after_hash="a" * 64,
+        actor="me",
+        parameters={},
+        history_stored=False,
+    )
+
+
+async def test_recovery_state_keeps_every_member_an_organization_batch_journals(
+    vault: Path,
+) -> None:
+    """A blocked sidecar or excluded-note member must stay visible to health and repair.
+
+    Filtering recovery by note admission made these vanish: health reported healthy
+    while the writer refused every write, and repair answered "not found in scope".
+    """
+    items = tuple(SimpleNamespace(rel_path=rel_path) for rel_path in _BATCH_MEMBER_PATHS)
+    records = [_record(rel_path) for rel_path in _BATCH_MEMBER_PATHS]
+
+    class _Delegate:
+        recovery_blocked = items
+
+        async def inspect_recovery(self) -> tuple[SimpleNamespace, ...]:
+            return items
+
+        async def list_operations(self) -> list[OperationRecord]:
+            return records
+
+    scope = SingleTenantVaultScope(vault, Settings(write_paths=[vault]))
+    writer = ScopedVaultWriter(cast("Any", _Delegate()), scope, cast("Any", None))
+
+    assert [item.rel_path for item in writer.recovery_blocked] == list(_BATCH_MEMBER_PATHS)
+    inspected = await writer.inspect_recovery()
+    assert [item.rel_path for item in inspected] == list(_BATCH_MEMBER_PATHS)
+    listed = await writer.list_operations()
+    assert [record.rel_path for record in listed] == list(_BATCH_MEMBER_PATHS)
+
+
+async def test_the_journal_tools_withhold_excluded_notes_but_keep_other_members(
+    vault: Path, open_app: AppFactory
+) -> None:
+    app = await open_app(vault)
+
+    kept = _admitted_records(app, [_record(rel_path) for rel_path in _BATCH_MEMBER_PATHS])
+
+    assert [record.rel_path for record in kept] == [
+        ".datacron/VAULT.yaml",
+        ".datacron/ulids.json",
+        "_attachments/img.png",
+        "notes/a.md",
+    ]
+
+
+def _fake_lstat(monkeypatch: pytest.MonkeyPatch, targets: set[Path], reparse_tag: int) -> None:
+    real_lstat = os.lstat
+
+    def lstat(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        result = real_lstat(path, *args, **kwargs)
+        if Path(path) not in targets:
+            return result
+        extra = {"st_file_attributes": 0x0400, "st_reparse_tag": reparse_tag}
+        return os.stat_result(tuple(result)[:10], extra)
+
+    monkeypatch.setattr(os, "lstat", lstat)
+
+
+async def test_a_cloud_placeholder_is_not_a_link(
+    vault: Path, open_app: AppFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OneDrive Files-On-Demand marks placeholders as reparse points with a cloud tag."""
+    app = await open_app(vault)
+    _fake_lstat(monkeypatch, {vault / "notes", vault / "notes" / "a.md"}, _CLOUD_REPARSE_TAG)
+
+    result = await _append_journal_impl(app, rel_path="notes/a.md", heading="H", entry="more")
+
+    assert "error" not in result, result
+    assert "more" in (vault / "notes" / "a.md").read_text(encoding="utf-8")
+
+
+async def test_a_junction_tag_is_refused_whatever_the_platform(
+    vault: Path, open_app: AppFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = await open_app(vault)
+    before = (vault / "notes" / "a.md").read_bytes()
+    _fake_lstat(monkeypatch, {vault / "notes"}, stat.IO_REPARSE_TAG_MOUNT_POINT)
+
+    result = await _append_journal_impl(app, rel_path="notes/a.md", heading="H", entry="more")
+
+    assert result["error"]["type"] == "PathConfinementError", result
+    assert (vault / "notes" / "a.md").read_bytes() == before
