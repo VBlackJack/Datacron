@@ -45,10 +45,13 @@ _NOREPLY_EMAIL_RE: Final[Pattern[str]] = re_compile(
     r"[0-9]+\+[A-Za-z0-9][A-Za-z0-9-]*@users\.noreply\.github\.com"
 )
 _GIT_EXECUTABLE: Final[str | None] = which("git")
-# A commit message that credits a code assistant: a co-author trailer naming one,
-# or a "Generated with" footer. The word boundary keeps "regenerated with" out.
+# A commit message that credits a code assistant, in the two forms the tools write:
+# a co-author trailer naming one, or the "Generated with [Tool](link)" footer. The
+# footer needs its opening bracket, so prose such as "tables generated with mkdocs"
+# is not refused.
 _ASSISTANT_ATTRIBUTION_RE: Final[Pattern[str]] = re_compile(
-    r"^[ \t]*co-authored-by:[^\n]*(?:claude|anthropic|codex|gpt)|\bgenerated with\b",
+    r"^[ \t]*co-authored-by:[^\n]*(?:claude|anthropic|codex|gpt|openai|copilot)"
+    r"|\bgenerated with \[",
     IGNORECASE | MULTILINE,
 )
 _COMMIT_RECORD_SEPARATOR: Final[str] = "\x1e"
