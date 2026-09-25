@@ -179,8 +179,9 @@ only the sidecar/index sources that differ are realigned. For a rewritten note, 
 bytes are preserved when line endings are uniform. A note that mixes CRLF and LF is instead
 normalized to its dominant EOL, exactly as any other structured note write normalizes it. In the
 frontmatter only the `id` and `updated` values are edited; every other line, comments included,
-is kept as written. When that edit cannot be verified (a YAML anchor, a flow mapping), the block
-is re-serialized in canonical key order instead, as every structured write does in that case.
+is kept as written. When that edit cannot be made precisely (a YAML anchor or alias on `id` or
+`updated`, a flow mapping), the repair is refused and the note is left unchanged, as every
+structured write does in that case: the block is never re-serialized.
 
 `--action adopt-frontmatter` promotes the note's own ID to canonical and realigns the sidecar and
 the index instead. It leaves the note untouched, and it is refused when the frontmatter ID is not a

@@ -51,6 +51,12 @@ ERROR_ACTIONS: Final[dict[str, str]] = {
         "inspect the headings, then pass the level for inter-level matches, or the level, "
         "the occurrence and expected_hash for same-level duplicates."
     ),
+    "frontmatter_edit_refused": (
+        "Nothing was written. The frontmatter key named in the error cannot be changed "
+        "without rewriting keys the request did not touch. Read the note with get_note, "
+        "edit that key by hand (for example remove its YAML anchor or alias), then retry "
+        "with the new content_hash."
+    ),
 }
 
 

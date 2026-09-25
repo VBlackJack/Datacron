@@ -9,6 +9,28 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Fixed
+
+- Frontmatter kept as written, for every edit this time: when the key-by-key edit gave up,
+  the whole block was still re-dumped through PyYAML, so `14:30`, `01234`, `NO` and `1.10`
+  came back as `870`, `668`, `false` and `1.1` and comments went. That happened on every
+  edit of a block list (the style `create_note_ai` writes), on removing a key such as
+  `set_frontmatter(rejected=[])`, and on every body edit of a note holding a YAML anchor
+  anywhere in its header. Block lists and key removal are now edited in place, untouched
+  keys keep their bytes, and an edit that cannot be made precisely (an anchor or alias on
+  the edited key) is refused with the `frontmatter_edit_refused` code; the header is never
+  re-dumped.
+- A note whose last byte was its closing `---` had the new body glued to it
+  (`---## Log`) by `append_journal`, and lost its id, title and tags while the tool
+  reported success. The line break is restored and the whole written note is now checked
+  to read back with the expected metadata.
+- A note with an empty frontmatter value such as `updated:` (a common Obsidian template),
+  or with a block scalar (`|`, `>-`), could not be written by any section tool or by
+  `set_frontmatter`: the value splice broke the header and the parser error escaped. Such a
+  value is now replaced whole.
+- A note opening with a `---` that is never closed lost its leading and trailing whitespace
+  and its final newline on the first section edit.
+
 ## [2026.0924.00] - 2026-09-24
 
 This release closes an audit run two days after the previous one. About one finding in five
