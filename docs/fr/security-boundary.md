@@ -52,16 +52,30 @@ l'admission : le chemin doit finir par `.md`, aucun composant parent ne doit com
 point ni figurer dans `excluded_folders`, et le nom de fichier ne doit pas figurer dans
 `excluded_files`, les deux venant de `VAULT.yaml` et comparés sans tenir compte de la casse. Un
 fichier que le vault contient mais que la politique exclut est refusé à tous les outils de
-lecture.
+lecture. Chaque entrée de `excluded_folders` et `excluded_files` est un nom unique, comparé à
+un composant de chemin n'importe où dans le vault : un `/` final est retiré, et une entrée qui
+contient encore un `/` ou un `\` est refusée au démarrage, en la nommant, au lieu d'être
+chargée comme une exclusion qui ne correspondrait jamais à rien. Sous Windows, un composant de
+chemin contenant `:` est refusé, car il désigne un flux de données alternatif NTFS.
 
 Les écritures sont confinées à la racine du vault et doivent en plus tomber dans une racine
 `DATACRON_WRITE_PATHS` explicite. Aucune des deux frontières n'implique l'autre : un chemin peut
-être lisible et non inscriptible, et un chemin hors admission n'est ni l'un ni l'autre.
+être lisible et non inscriptible, et un chemin hors admission n'est ni l'un ni l'autre. Toute
+écriture de note passe la même admission qu'une lecture, sur le chemin tel que donné et sur le
+chemin résolu, avant que la note soit ouverte, et le refus est identique que la note existe ou
+non. Une écriture refuse aussi un chemin qui traverse un lien symbolique ou une jonction sous
+la racine du vault, même quand il reste dans le vault ; les autres points d'analyse, comme les
+fichiers fantômes cloud de OneDrive, ne sont pas des liens et sont écrits normalement. Un chemin refusé est rapporté sous la forme relative au vault
+envoyée par le client ; le chemin résolu sur l'hôte n'est journalisé que localement.
 
 Des adaptateurs de lecture et d'écriture à périmètre médient les opérations filesystem, tandis
 que les résultats d'index, la résolution de chunk, les backlinks, les ressources, les
 métadonnées d'audit et la racine de recherche ripgrep fixe sont vérifiés contre la même
-dépendance de périmètre.
+dépendance de périmètre. Les enregistrements du journal que renvoient `audit_query` et
+`get_note_history` passent l'admission des notes quand ils désignent une note Markdown, que la
+note existe encore ou non, et chaque chaîne de leurs paramètres est masquée comme leur chemin.
+L'état de reprise n'est pas filtré par l'admission : une opération bloquée sur un sidecar, une
+pièce jointe ou une note exclue compte toujours dans `get_health`.
 
 Le lecteur sous-jacent et l'écrivain durable conservent leurs propres contrôles de confinement
 de chemin. `VaultScope` est la couture de remplacement pour une future politique d'ACL ou

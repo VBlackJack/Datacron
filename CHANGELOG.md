@@ -9,6 +9,42 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Security
+
+- Note writes checked confinement only, never note admission. Every write tool created,
+  appended to, patched or reverted a note under an `excluded_folders` folder or with an
+  `excluded_files` name, although no read would ever serve it, and `patch_note_section` with
+  a wrong heading answered with that excluded note's headings. A junction or symlink inside
+  the vault also carried a write into an excluded folder. Every write now passes the read
+  admission on both the given and the resolved path before the note is opened, refuses a
+  path crossing a symlink or junction below the vault root (a OneDrive cloud placeholder
+  is not a link and stays writable), and refuses identically whether the note exists or
+  not.
+- `audit_query` and `get_note_history` returned the path, the heading and the restore
+  availability of writes to excluded notes: journal records were filtered by confinement
+  only. Records naming a Markdown note are now filtered by note admission, as the security
+  boundary document says. Recovery state keeps every record, so a blocked operation on a
+  sidecar or an excluded note still makes `get_health` degraded.
+- `excluded_folders` and `excluded_files` entries holding a path separator, such as
+  `Clients/Confidential`, `Private/` or `sub/blocked.md`, were accepted and excluded nothing,
+  because matching is per path component. A trailing separator is now dropped, and any
+  other separator is refused at startup with an error naming the entry.
+- On Windows, a colon in a read path opened an NTFS alternate data stream: `get_note` served
+  `a.md:evil.md`, and `blocked.md:x.md` read a stream of an excluded file. A colon in any
+  path component is now refused on Windows.
+- A path refused by confinement was reported with the absolute host path and every allowed
+  root, user name included. The MCP client now gets the vault-relative path it sent; the
+  resolved path is only logged locally.
+- `audit_query` and `get_note_history` redacted the note path only: an organization move
+  kept a secret-shaped source path in `parameters.source_rel_path`. Every string in the
+  parameters is now redacted.
+
+### Fixed
+
+- The write tools refused a Windows reserved device name (`projects/Con.md`) and a colon
+  (`Meetings/10:30 standup.md`) on every platform, although Linux and macOS store and read
+  such notes. Both rules now apply on Windows only, like the trailing dot and space rule;
+  the hidden folder rule still applies everywhere.
 ### Fixed
 
 - Frontmatter kept as written, for every edit this time: when the key-by-key edit gave up,
