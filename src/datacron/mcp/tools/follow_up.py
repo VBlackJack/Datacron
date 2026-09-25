@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 
@@ -50,12 +50,53 @@ _OWNER_MAX_LENGTH: Final[int] = 256
 _IDENTITY_BASIS_MAX_LENGTH: Final[int] = 1000
 _TEXT_MIN_LENGTH: Final[int] = 1
 _TEXT = Annotated[str, Field(min_length=_TEXT_MIN_LENGTH, max_length=FOLLOW_UP_MAX_TEXT)]
+# Shortest evidence accepted, counted without surrounding whitespace. A handful of
+# characters ("A", "yes", "ok.") matches almost any note and so proves nothing about
+# which statement the record rests on; twenty is about one short clause ("Alex will
+# send it."), the least that pins a specific sentence while staying far below any
+# real meeting line.
+FOLLOW_UP_EXCERPT_MIN_LENGTH: Final[int] = 20
+# How far past today (UTC) an event date may lie. An event is something that already
+# happened in the source; one day absorbs the gap between the server's UTC date and
+# a caller whose local date is already tomorrow.
+FOLLOW_UP_EVENT_DATE_FUTURE_MARGIN: Final[timedelta] = timedelta(days=1)
+# Persisted fields checked one by one for secret-shaped text, in the order a caller
+# is most likely to need to fix them. Any other string of the rendered entry is
+# checked after these under its own name.
+_SENSITIVE_FIELD_ORDER: Final[tuple[str, ...]] = (
+    "source_excerpt",
+    "summary",
+    "owner",
+    "identity_basis",
+)
+_RENDERED_ENTRY_FIELD: Final[str] = "entry"
 
 
 class FollowUpValidationError(ValueError):
     """Fixed, content-free diagnostic for a refused follow-up plan."""
 
     code = "follow_up_validation_failed"
+
+
+class FollowUpSensitiveContentError(FollowUpValidationError):
+    """A persisted field holds secret-shaped text; names the field, never the value."""
+
+    code = "follow_up_sensitive_content"
+
+    def __init__(self, field: str) -> None:
+        super().__init__(f"secret-shaped text refused in field {field!r}")
+        self.field = field
+
+
+class FollowUpRecordCountError(FollowUpValidationError):
+    """A request carried more records than one call accepts."""
+
+    code = "follow_up_record_count_exceeded"
+
+    def __init__(self, count: int) -> None:
+        super().__init__(
+            f"{count} records submitted; at most {FOLLOW_UP_MAX_RECORDS} are accepted per call"
+        )
 
 
 class FollowUpRecord(BaseModel):
@@ -231,28 +272,17 @@ async def prepare_follow_up(app: DatacronApp, records: list[FollowUpRecord]) -> 
     """Produce no writes; reject stale sources and ambiguous or conflicting revisions."""
     started = time.perf_counter()
     if len(records) > FOLLOW_UP_MAX_RECORDS:
-        return _error_response(
-            "prepare_follow_up", ValueError("record count exceeds bounds"), started
-        )
+        return _error_response("prepare_follow_up", FollowUpRecordCountError(len(records)), started)
     try:
         cache: dict[str, Note] = {}
         groups: dict[str, dict[str, Any]] = {}
         already: list[str] = []
         identities: set[tuple[str, str]] = set()
+        today = datetime.now(UTC).date()
         for record in records:
             target = await _read(app, cache, record.target_path)
             source = await _read(app, cache, record.source_path)
-            _validate(record, target, source)
-            if any(
-                app.secret_redactor.redact_text(value) != value
-                for value in (
-                    source.content,
-                    record.summary,
-                    record.owner or "",
-                    record.identity_basis or "",
-                )
-            ):
-                raise FollowUpValidationError("sensitive follow-up content refused")
+            _validate(record, target, source, today)
             identity = (target.id, record.record_id)
             if identity in identities:
                 raise FollowUpValidationError("duplicate record identity in this request")
@@ -334,11 +364,33 @@ async def _read(app: DatacronApp, cache: dict[str, Note], path: str) -> Note:
     return cache[path]
 
 
-def _validate(record: FollowUpRecord, target: Note, source: Note) -> None:
+def _validate(record: FollowUpRecord, target: Note, source: Note, today: date) -> None:
     if target.id != record.target_id or target.content_hash != record.expected_hash:
         raise FollowUpValidationError("target identity or hash changed")
+    # A note cannot be its own evidence: the record would cite the history it is
+    # about to extend. Compared by ULID and by resolved path, so neither an alias
+    # path nor a copied id slips through.
+    if source.id == target.id or source.rel_path == target.rel_path:
+        raise FollowUpValidationError("source note must differ from the target note")
+    if len(record.source_excerpt.strip()) < FOLLOW_UP_EXCERPT_MIN_LENGTH:
+        raise FollowUpValidationError(
+            f"source_excerpt must quote at least {FOLLOW_UP_EXCERPT_MIN_LENGTH} "
+            "non-blank characters of the source"
+        )
     if source.content_hash != record.source_hash or record.source_excerpt not in source.content:
         raise FollowUpValidationError("source hash or exact excerpt does not match")
+    if record.event_date is not None and record.event_date > (
+        today + FOLLOW_UP_EVENT_DATE_FUTURE_MARGIN
+    ):
+        raise FollowUpValidationError(
+            "event_date lies in the future; record when the sourced event happened"
+        )
+    if (
+        record.event_date is not None
+        and record.due_date is not None
+        and record.due_date < record.event_date
+    ):
+        raise FollowUpValidationError("due_date must not precede event_date")
     headings = [
         h
         for h in markdown_headings(target.content.splitlines(keepends=True))
@@ -357,6 +409,30 @@ def _validate(record: FollowUpRecord, target: Note, source: Note) -> None:
         raise FollowUpValidationError("person identity requires explicit contextual confirmation")
     if not record.summary.strip() or not record.source_excerpt.strip():
         raise FollowUpValidationError("summary and evidence must not be blank")
+
+
+def _refuse_sensitive(app: DatacronApp, raw: dict[str, Any], rendered: str) -> None:
+    """Refuse secret-shaped text in what the entry persists, naming the field.
+
+    Prepared output is a write payload, not a retrieval snippet: redacting it would
+    silently change the evidence it carries, so it is refused instead. Only the
+    persisted values are examined. The rest of the source note never leaves the
+    server through this tool, and scanning it refused ordinary meeting lines such as
+    "Password: reset via the helpdesk portal." that the record does not even quote.
+    The check follows the retrieval redaction policy, like every other payload that
+    returns vault text: with retrieval redaction off, nothing here would be redacted
+    on the way out either, so there is nothing to protect by refusing.
+    """
+    if not app.secret_redactor.retrieval_enabled(app.settings):
+        return
+    names = [*_SENSITIVE_FIELD_ORDER, *sorted(set(raw) - set(_SENSITIVE_FIELD_ORDER))]
+    for name in names:
+        value = raw.get(name)
+        if isinstance(value, str) and app.secret_redactor.redact_text(value) != value:
+            raise FollowUpSensitiveContentError(name)
+    # Backstop for a match that only forms across the serialized entry.
+    if app.secret_redactor.redact_text(rendered) != rendered:
+        raise FollowUpSensitiveContentError(_RENDERED_ENTRY_FIELD)
 
 
 def _render_entry(
@@ -387,10 +463,7 @@ def _render_entry(
     ).hexdigest()
     raw["text_format"] = "raw"
     rendered = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=2)
-    # Prepared output is a write payload, not a retrieval snippet: refuse rather than
-    # silently modify sensitive text and invalidate the source evidence.
-    if app.secret_redactor.redact_text(rendered) != rendered:
-        raise FollowUpValidationError("sensitive follow-up content refused")
+    _refuse_sensitive(app, raw, rendered)
     key = sha256(f"{target.id}:{record.record_id}".encode()).hexdigest()
     digest = sha256(rendered.encode()).hexdigest()
     marker = f"<!-- {FOLLOW_UP_MARKER_PREFIX}{key}:{record.revision}:{digest} -->"

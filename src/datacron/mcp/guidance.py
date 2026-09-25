@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Any, Final
 
+from datacron.core.memory_protocol import FOLLOW_UP_MAX_RECORDS
+
 ERROR_ACTIONS: Final[dict[str, str]] = {
     "duplicate_note_identity": (
         "Inspect the conflicting note IDs; choose their identities explicitly, then retry indexing."
@@ -45,6 +47,19 @@ ERROR_ACTIONS: Final[dict[str, str]] = {
     "follow_up_offset_invalid": (
         "Restart at offset 0, or continue with the next_offset and snapshot_hash "
         "returned by the previous page."
+    ),
+    "follow_up_validation_failed": (
+        "Correct the record as the message states, rereading the target and source notes "
+        "for fresh hashes and an exact excerpt, then prepare again. Nothing was written."
+    ),
+    "follow_up_sensitive_content": (
+        "The field named in the message holds secret-shaped text. Quote an excerpt and "
+        "write a summary, owner and identity basis that leave the secret value out, then "
+        "prepare again. Nothing was written."
+    ),
+    "follow_up_record_count_exceeded": (
+        f"Split the records into several calls of at most {FOLLOW_UP_MAX_RECORDS} each and "
+        "apply each call's plans before preparing the next. Nothing was written."
     ),
     "heading_ambiguous": (
         "Several sections match the selector named in the error. Use get_note format=map to "

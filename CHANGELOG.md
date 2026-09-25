@@ -9,6 +9,28 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Security
+
+- `get_follow_up` returned the stored `summary` (up to 4000 characters) and `identity_basis`
+  bare, with only the control-token escape, and stripped the envelope older entries were
+  stored with, so vault text reached later sessions as plain instructions. Both now come back
+  inside a `vault_content` envelope, like `source_excerpt`.
+
+### Fixed
+
+- `prepare_follow_up` scanned the whole source note for secret-shaped text, whatever the
+  redaction policy, so an ordinary meeting line the record did not even quote ("We moved to
+  token-based authentication.", "Password: reset via the helpdesk portal.") refused every
+  record citing that meeting, with a message that named nothing. Only the persisted fields
+  are checked now, only when retrieval redaction is on, and the refusal carries the code
+  `follow_up_sensitive_content`, the field name and a next action. `get_follow_up` applies
+  the same policy to its own redaction.
+- `prepare_follow_up` accepted records that contradict themselves: a due date before the
+  event date, an event date centuries ahead, a note cited as its own evidence, and a
+  one-character excerpt. These are refused now (the excerpt needs 20 non-blank characters,
+  the event date may be at most one day ahead of today in UTC), and every validation refusal,
+  including too many records in one call, carries a code and a next action.
+
 ## [2026.0924.00] - 2026-09-24
 
 This release closes an audit run two days after the previous one. About one finding in five

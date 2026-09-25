@@ -20,7 +20,7 @@ import re
 import time
 from hashlib import sha256
 from html import escape
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.memory_protocol import FOLLOW_UP_MARKER_PREFIX, SESSION_MAX_NOTES
@@ -46,6 +46,9 @@ _ENTRY = re.compile(
     + r"(?P<fence>`{3,})json\n(?P<body>.*?)\n(?P=fence)$",
     re.MULTILINE | re.DOTALL,
 )
+# Free-text record fields returned inside a vault_content envelope. The excerpt is
+# labelled with its source note, the others with the note the record lives on.
+_ENVELOPED_FIELDS: Final[tuple[str, ...]] = ("source_excerpt", "summary", "identity_basis")
 
 
 class FollowUpEntryError(ValueError):
@@ -136,11 +139,25 @@ async def get_follow_up(
                     continue
                 projected = _project_text(item)
                 safe = sanitize_payload_strings(projected)
-                if isinstance(projected.get("source_excerpt"), str):
-                    safe["source_excerpt"] = wrap_vault_content(
-                        str(item.get("source_path", note.rel_path)), projected["source_excerpt"]
-                    )
-                safe = app.secret_redactor.redact_value(safe)
+                # Every free-text field is stored vault text, whoever typed it first,
+                # and reaches a later session as data: each one travels inside its
+                # own envelope. Only the excerpt used to, so a summary of up to
+                # FOLLOW_UP_MAX_TEXT characters came back bare after the denylist
+                # escape alone, and the legacy projection even stripped the envelope
+                # older entries were stored with.
+                for field in _ENVELOPED_FIELDS:
+                    value = projected.get(field)
+                    if isinstance(value, str):
+                        label = (
+                            str(item.get("source_path", note.rel_path))
+                            if field == "source_excerpt"
+                            else note.rel_path
+                        )
+                        safe[field] = wrap_vault_content(label, value)
+                # Same policy as every other read tool: with retrieval redaction off,
+                # get_note returns these bytes unredacted, and so does this.
+                if app.secret_redactor.retrieval_enabled(app.settings):
+                    safe = app.secret_redactor.redact_value(safe)
                 records.append(
                     {
                         "record": safe,
