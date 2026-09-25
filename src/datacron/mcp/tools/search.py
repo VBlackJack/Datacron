@@ -17,19 +17,23 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import (
     GROUPED_OVERFETCH_GROWTH,
     GROUPED_OVERFETCH_MAX_CHUNKS,
+    MAX_SEARCH_QUERY_CHARS,
+    MAX_SEARCH_QUERY_TERMS,
     TEMPORAL_OVERFETCH_FACTOR,
 )
 from datacron.core.frontmatter import normalize_tag_filter
 from datacron.core.models import Chunk, SearchResult
 from datacron.core.paths import PathConfinementError
+from datacron.core.scope import ScopedVaultReader
 from datacron.core.temporal import rerank_temporal
 from datacron.core.vault import DuplicateNoteIdentityError
+from datacron.indexing.fts5_store import fts5_query_terms
 from datacron.indexing.reconcile import ReconcileStats, reconcile
 from datacron.indexing.ripgrep import (
     RegexFallbackError,
@@ -52,12 +56,13 @@ from datacron.mcp.tools.payloads import (
     _sanitize_retrieval_metadata,
     _validate_frontmatter_filter,
 )
-from datacron.mcp.tools.retrieval import bound_results, protect_results
+from datacron.mcp.tools.retrieval import SearchIndexStaleError, bound_results, protect_results
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+SEARCH_QUERY_TOO_LARGE_CODE: Final[str] = "search_query_too_large"
 
 
 async def _search_text_impl(
@@ -75,13 +80,10 @@ async def _search_text_impl(
     started = time.perf_counter()
     timings_ms: dict[str, float] = {}
     cleaned = query.strip()
-    if not cleaned:
-        return _error_response(
-            "search_text",
-            ValueError("query must not be empty"),
-            started,
-            query=query,
-        )
+    query_error = _search_query_error(cleaned)
+    if query_error is not None:
+        # The query is not echoed: bounding it is the point of one of these refusals.
+        return _error_response("search_text", query_error, started, query_chars=len(query))
     validation_error = _validate_frontmatter_filter(frontmatter)
     if validation_error is not None:
         exc, context = validation_error
@@ -104,7 +106,7 @@ async def _search_text_impl(
             group_by_note=group_by_note,
             timings_ms=timings_ms,
         )
-    except DuplicateNoteIdentityError as exc:
+    except (DuplicateNoteIdentityError, SearchIndexStaleError) as exc:
         return _error_response("search_text", exc, started, query=query)
     except Exception:
         return _internal_error_response("search_text", started, query=query)
@@ -161,6 +163,29 @@ async def _search_text_impl(
         truncated_for_tokens=truncated_for_tokens,
     )
     return payload
+
+
+class SearchQueryTooLargeError(ValueError):
+    """A ``search_text`` query longer or with more terms than one search accepts."""
+
+    code: Final[str] = SEARCH_QUERY_TOO_LARGE_CODE
+
+
+def _search_query_error(query: str) -> ValueError | None:
+    """Refuse an empty query, or one that would hold the index connection for seconds.
+
+    Fifty thousand terms took 5.8 s inside SQLite, on the one connection every
+    other tool call shares, and the echoed query then outgrew the result budget.
+    """
+    if not query:
+        return ValueError("query must not be empty")
+    if len(query) > MAX_SEARCH_QUERY_CHARS:
+        return SearchQueryTooLargeError(
+            f"query must be at most {MAX_SEARCH_QUERY_CHARS} characters"
+        )
+    if len(fts5_query_terms(query)) > MAX_SEARCH_QUERY_TERMS:
+        return SearchQueryTooLargeError(f"query must hold at most {MAX_SEARCH_QUERY_TERMS} terms")
+    return None
 
 
 def _authorized_search_folder(app: DatacronApp, folder: str | None) -> str | None:
@@ -306,15 +331,10 @@ async def _search_regex_impl(
             started,
             pattern=pattern,
         )
-    try:
-        re.compile(pattern)
-    except re.error as exc:
-        return _error_response(
-            "search_regex",
-            ValueError(f"invalid regex: {exc}"),
-            started,
-            pattern=pattern,
-        )
+    # No Python pre-validation: ripgrep's dialect is not Python's, and refusing a
+    # Unicode class such as \p{Lu} here refused a pattern the supported path runs.
+    # Each path judges the pattern it runs: ripgrep's parse error comes back in its
+    # stderr, and the indexed fallback compiles with Python before any index read.
     bounded_limit = _bounded_count(limit, app.settings.max_result_count)
     try:
         repair = await _repair_index_on_read(app)
@@ -350,6 +370,7 @@ async def _search_regex_impl(
         RegexGlobError,
         RipgrepOutputError,
         DuplicateNoteIdentityError,
+        SearchIndexStaleError,
     ) as exc:
         mapped_exc = ValueError(str(exc)) if isinstance(exc, RegexFallbackError) else exc
         return _error_response("search_regex", mapped_exc, started, pattern=pattern, glob=glob)
@@ -440,6 +461,10 @@ async def _get_backlinks_impl(
     try:
         repair = await _repair_index_on_read(app)
         sources = await _find_backlink_sources(app, resolved_id, cleaned, bounded_limit)
+    except SearchIndexStaleError as exc:
+        return _error_response(
+            "get_backlinks", exc, started, target=target, resolved_note_id=resolved_id
+        )
     except Exception:
         return _internal_error_response(
             "get_backlinks", started, stage="scan", target=target, resolved_note_id=resolved_id
@@ -525,7 +550,16 @@ async def _repair_index_on_read(app: DatacronApp) -> ReconcileStats:
         now = _repair_clock()
         last_sweep = app.repair_state.last_sweep_completed_at
         interval = app.settings.repair_min_interval_seconds
-        if interval > 0.0 and last_sweep is not None and now - last_sweep < interval:
+        # A note a read found stale cannot heal while the sweep is throttled, and a
+        # read-only server cannot heal it at all, so only a writable one skips the wait.
+        stale = frozenset(app.repair_state.stale_note_paths)
+        pending_stale = bool(stale) and app.write_policy.writes_allowed
+        if (
+            interval > 0.0
+            and last_sweep is not None
+            and now - last_sweep < interval
+            and not pending_stale
+        ):
             return _throttled_repair_stats()
 
         # One walk per sweep. Its keys are the paths this scope admits as live
@@ -544,8 +578,14 @@ async def _repair_index_on_read(app: DatacronApp) -> ReconcileStats:
             }
         else:
             stats = await reconcile(
-                app.store, app.vault_reader, app.chunker, mtime_gate=True, live=live
+                app.store,
+                app.vault_reader,
+                app.chunker,
+                mtime_gate=True,
+                live=live,
+                rechunk_paths=stale,
             )
+            app.repair_state.stale_note_paths.difference_update(stale)
         app.repair_state.last_sweep_completed_at = _repair_clock()
 
     await _invalidate_alias_cache_if_index_changed(app, stats)
@@ -631,6 +671,7 @@ async def _find_backlink_sources(
     """
     target_alias_lower = target_alias.strip().lower()
     alias_cache: dict[str, str | None] = {target_alias_lower: target_note_id}
+    resolve = _backlink_alias_resolver(app, target_note_id)
     admission_cache: dict[str, bool] = {}
     seen_chunk_ids: set[str] = set()
     matched_ids: list[str] = []
@@ -651,7 +692,7 @@ async def _find_backlink_sources(
             continue
         if source.chunk_id in seen_chunk_ids:
             continue
-        if not await _chunk_links_to(app, source.wikilinks_out, target_note_id, alias_cache):
+        if not await _chunk_links_to(resolve, source.wikilinks_out, target_note_id, alias_cache):
             continue
         seen_chunk_ids.add(source.chunk_id)
         matched_ids.append(source.chunk_id)
@@ -702,8 +743,36 @@ def _filter_admitted_results(
     return admitted_results
 
 
+def _backlink_alias_resolver(
+    app: DatacronApp, target_note_id: str
+) -> Callable[[str], Awaitable[str | None]]:
+    """Return an alias resolver that agrees with the scoped one on ``target_note_id``.
+
+    The scan only asks whether an alias names the target. The scoped resolver
+    admitted the note behind every distinct alias of the vault, a database lookup,
+    a realpath and a stat each, to answer a question about one note: 5.9 s at 3000
+    notes. Here an alias is resolved without admission and the target alone is
+    admitted, once and only when some alias names it, so the answer is unchanged.
+    """
+    reader = app.vault_reader
+    if not isinstance(reader, ScopedVaultReader):
+        return reader.resolve_alias
+    target_admitted: bool | None = None
+
+    async def resolve(alias: str) -> str | None:
+        nonlocal target_admitted
+        resolved = await reader.resolve_alias_unscoped(alias)
+        if resolved != target_note_id:
+            return resolved
+        if target_admitted is None:
+            target_admitted = await reader.admits_note_id(target_note_id)
+        return resolved if target_admitted else None
+
+    return resolve
+
+
 async def _chunk_links_to(
-    app: DatacronApp,
+    resolve: Callable[[str], Awaitable[str | None]],
     wikilinks: Sequence[str],
     target_note_id: str,
     alias_cache: dict[str, str | None],
@@ -711,14 +780,14 @@ async def _chunk_links_to(
     """Return True if any wikilink in ``wikilinks`` resolves to ``target_note_id``.
 
     Indexed wikilinks are raw target aliases; resolution happens here via
-    :meth:`VaultReader.resolve_alias`, cached across the scan.
+    ``resolve``, cached across the scan.
     """
     for target_alias in wikilinks:
         key = target_alias.strip().lower()
         if not key:
             continue
         if key not in alias_cache:
-            alias_cache[key] = await app.vault_reader.resolve_alias(target_alias)
+            alias_cache[key] = await resolve(target_alias)
         if alias_cache[key] == target_note_id:
             return True
     return False

@@ -5491,17 +5491,22 @@ async def test_body_and_field_edits_keep_the_hand_written_frontmatter(
     assert "updated: '2026-01-01T00:00:00+00:00'" not in after
 
 
-async def test_an_edit_the_span_patch_cannot_verify_falls_back_to_a_full_rewrite(
+async def test_a_changed_block_list_is_rewritten_in_place_in_block_style(
     writable_app: DatacronApp, tmp_vault: Path
 ) -> None:
-    """A changed block list cannot be spliced; the note is still written correctly."""
+    """A changed block list is replaced key and items together; no other byte moves.
+
+    It used to fall back to re-dumping the whole block, which rewrote every other
+    key of the note through PyYAML.
+    """
     from datacron.mcp.tools import _set_frontmatter_impl
 
     rel_path = "_memory/facts/block-list.md"
     target = tmp_vault / rel_path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        "---\nid: 01J00000000000000000000152\nsupersedes:\n  - 01J00000000000000000000153\n"
+        "---\nid: 01J00000000000000000000152\nmeeting: 14:30\nsupersedes:\n"
+        "  - 01J00000000000000000000153\n"
         "updated: '2026-01-01T00:00:00+00:00'\n---\n# Block list\n",
         encoding="utf-8",
     )
@@ -5511,8 +5516,13 @@ async def test_an_edit_the_span_patch_cannot_verify_falls_back_to_a_full_rewrite
     )
 
     assert "error" not in result, result
-    metadata, _body = parse(target.read_text(encoding="utf-8"))
+    after = target.read_text(encoding="utf-8")
+    metadata, _body = parse(after)
     assert metadata["supersedes"] == ["01J00000000000000000000154"]
+    assert after.startswith(
+        "---\nid: 01J00000000000000000000152\nmeeting: 14:30\nsupersedes:\n"
+        "  - 01J00000000000000000000154\nupdated: '"
+    )
 
 
 class TestWritePathP2Fixes:
@@ -5645,14 +5655,14 @@ class TestWritePathP2Fixes:
         assert "single line" in result["error"]["message"]
         assert self._body_headings(vault) == [(1, "Root"), (2, "Log")]
 
-    async def test_set_frontmatter_refuses_last_id_with_a_block_list(self, tmp_path: Path) -> None:
-        """An impossible combination must say so, not fail as a YAML parse error.
+    async def test_set_frontmatter_combines_last_id_with_a_block_list(self, tmp_path: Path) -> None:
+        """A block list edited next to last_id is replaced whole, not refused or broken.
 
         `create_note_ai` serialises a non-empty list in block style, and a block
         collection's span ends after its terminating newline while the flow value
         the edit renders carries none. Splicing one over the other ran the next key
-        onto the same line and the header stopped parsing, so the caller was handed
-        a parser message about a file it never wrote, every time.
+        onto the same line and the header stopped parsing; the combination was
+        then refused outright. The key and its items are now replaced as one entry.
         """
         from datacron.mcp.tools.write import _set_frontmatter_impl
 
@@ -5688,9 +5698,15 @@ class TestWritePathP2Fixes:
         finally:
             await app.store.close()
 
-        assert result["error"]["type"] == "ValueError", result
-        assert "block list" in result["error"]["message"]
-        assert (vault / rel_path).read_bytes() == before
+        assert "error" not in result, result
+        after = (vault / rel_path).read_text(encoding="utf-8")
+        metadata, _body = parse(after)
+        assert metadata["rejected"] == ["A -- b2"]
+        assert metadata["last_id"] == "BL-0002"
+        # read_text folds the CRLF that write_text produces on Windows.
+        untouched_head = before.decode("utf-8").replace("\r\n", "\n").split("rejected:")[0]
+        assert after.startswith(untouched_head)
+        assert "rejected:\n  - A -- b2\n" in after
 
 
 @pytest.mark.parametrize(

@@ -30,11 +30,13 @@ import shlex
 import shutil
 import stat
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal, Protocol, cast
+
+import yaml
 
 from datacron.bootstrap import BootstrapResult, initialize_vault
 from datacron.core.config import (
@@ -47,6 +49,7 @@ from datacron.core.config import (
     get_settings,
     load_vault_config,
 )
+from datacron.core.error_text import describe_config_error
 from datacron.core.logger import get_logger
 from datacron.core.paths import sidecar_index_db, sidecar_index_dir, sidecar_vault_config
 from datacron.core.vault import build_configured_reader
@@ -55,16 +58,29 @@ from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.reconcile import reconcile
 from datacron.installers.claude_desktop import (
     ClaudeDesktopConfigError,
+    config_path_for_platform,
+    datacron_env_in_config,
     install_claude_desktop_config,
     resolve_mcp_invocation,
+)
+from datacron.installers.env_merge import (
+    ENV_READ_ONLY,
+    ENV_READ_PATHS,
+    ENV_VAULT_ROOT,
+    ENV_WRITE_PATHS,
+    env_flag_enabled,
+    env_names_vault,
+    split_env_paths,
 )
 from datacron.installers.mcp_clients import (
     ALL_CLIENT_IDS,
     SCOPE_PROJECT,
     SCOPE_USER,
     InstallOutcome,
+    MCPClientError,
     discover_targets,
     install_targets,
+    read_datacron_env,
 )
 
 __all__ = [
@@ -83,6 +99,7 @@ __all__ = [
     "SetupResult",
     "claude_code_stdio_config",
     "configure_user_write_env",
+    "existing_client_settings",
     "get_user_write_env",
     "reset_user_state",
     "run_setup",
@@ -116,11 +133,11 @@ DEFAULT_WRITE_SUBFOLDERS: Final[tuple[str, ...]] = ("_memory", "_drafts", "_jour
 # Runtime environment keys embedded into the MCP client config. Datacron's
 # Settings derive these from the ``DATACRON_`` prefix; they are named
 # explicitly here because the client config is plain JSON, not a Settings load.
-_ENV_VAULT_ROOT: Final[str] = "DATACRON_VAULT_ROOT"
-_ENV_READ_PATHS: Final[str] = "DATACRON_READ_PATHS"
-_ENV_WRITE_PATHS: Final[str] = "DATACRON_WRITE_PATHS"
+_ENV_VAULT_ROOT: Final[str] = ENV_VAULT_ROOT
+_ENV_READ_PATHS: Final[str] = ENV_READ_PATHS
+_ENV_WRITE_PATHS: Final[str] = ENV_WRITE_PATHS
 _ENV_DURABILITY: Final[str] = "DATACRON_DURABILITY"
-_ENV_READ_ONLY: Final[str] = "DATACRON_READ_ONLY"
+_ENV_READ_ONLY: Final[str] = ENV_READ_ONLY
 _ENV_TRUE: Final[str] = "true"
 
 _WINDOWS_ENVIRONMENT_KEY: Final[str] = "Environment"
@@ -192,7 +209,9 @@ class SetupPlan:
     Attributes:
         vault_path: Markdown vault root to initialize and serve.
         build_index: Whether to build the FTS5 index during setup.
-        enable_write: Whether to enable the confined write tools.
+        enable_write: ``True`` enables the confined write tools, ``False``
+            removes an existing write allowlist from the client config, and
+            ``None`` leaves whatever the config already holds.
         write_paths: Write-allowlisted directories when ``enable_write`` is set.
             An empty list falls back to the three default vault subfolders.
         machine_wide_write: Apply the allowlist to the user environment after
@@ -204,21 +223,23 @@ class SetupPlan:
         install_scope: Which config scopes to write for detected clients
             (:data:`INSTALL_SCOPE_CHOICES`).
         durability: Durability mode (:data:`VALID_DURABILITY_MODES`).
-        read_only: Whether to run the server in certified read-only mode.
+        read_only: ``True`` selects certified read-only mode, ``False``
+            removes it from the client config, and ``None`` leaves whatever
+            the config already holds.
         force: Overwrite an existing ``VAULT.yaml``.
         reset: Remove the generated config and index before setup.
     """
 
     vault_path: Path
     build_index: bool = True
-    enable_write: bool = False
+    enable_write: bool | None = None
     write_paths: list[Path] = field(default_factory=list)
     machine_wide_write: bool = False
     replace_existing_write_env: bool = False
     client: str = CLIENT_ALL
     install_scope: str = INSTALL_SCOPE_BOTH
     durability: str = "best-effort"
-    read_only: bool = False
+    read_only: bool | None = None
     force: bool = False
     reset: bool = False
 
@@ -235,14 +256,18 @@ class SetupResult:
             file was written (``claude-code`` and ``none``).
         stdio_config: A ready-to-paste stdio MCP config snippet for clients that
             Datacron does not write directly (``claude-code``), else ``None``.
-        write_paths: The write-allowlisted directories; empty when writing stays
-            disabled.
+        write_paths: The write-allowlisted directories the written client
+            config holds, preserved entries included; empty when writing is
+            disabled. With no config written, the directories requested.
         machine_write_env: Result of the explicit user-wide environment step.
-        read_only: Whether certified read-only mode was selected.
+        read_only: Whether the written client config selects certified
+            read-only mode, or whether it was requested when none was written.
         durability: The selected durability mode.
         client_installs: Per-client registration outcomes for ``client=all``.
         reset_result: Surgical reset outcome, when reset was requested.
         warnings: Non-fatal messages surfaced to the operator.
+        client_errors: Client configurations that were requested and could
+            not be written; any entry makes the setup a failure.
     """
 
     bootstrap: BootstrapResult
@@ -257,6 +282,7 @@ class SetupResult:
     client_installs: list[InstallOutcome] = field(default_factory=list)
     reset_result: ResetResult | None = None
     warnings: list[str] = field(default_factory=list)
+    client_errors: list[str] = field(default_factory=list)
 
 
 def _validate_plan(plan: SetupPlan) -> None:
@@ -275,6 +301,8 @@ def _validate_plan(plan: SetupPlan) -> None:
         )
     if plan.machine_wide_write and not plan.enable_write:
         raise ValueError("Machine-wide write configuration requires enable_write.")
+    if plan.enable_write is False and plan.write_paths:
+        raise ValueError("Write paths cannot be combined with an explicit write opt-out.")
 
 
 def _scopes_for(install_scope: str) -> tuple[str, ...]:
@@ -605,37 +633,60 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
         reset_result = reset_user_state(plan.vault_path)
     bootstrap = initialize_vault(plan.vault_path, force=plan.force)
     vault_root = bootstrap.vault_path
+    _require_loadable_vault_config(vault_root)
 
     write_paths, machine_write_env = _prepare_write_setup(plan, vault_root, warnings)
 
     extra_env = _build_extra_env(plan, write_paths)
+    removed_env = _removed_env_keys(plan)
     client_config_path: Path | None = None
     stdio_config: str | None = None
     client_installs: list[InstallOutcome] = []
+    client_errors: list[str] = []
+    written_envs: list[tuple[str, Mapping[str, object]]] = []
     if plan.client == CLIENT_ALL:
         client_installs = _install_detected_clients(
             plan,
             vault_root,
             extra_env,
+            removed_env,
             warnings,
+            client_errors,
             include=None,
         )
     elif plan.client == CLIENT_CLAUDE_DESKTOP:
         try:
-            client_config_path = install_claude_desktop_config(vault_root, extra_env=extra_env)
+            client_config_path = install_claude_desktop_config(
+                vault_root, extra_env=extra_env, removed_env=removed_env
+            )
+            written_envs.append(("Claude Desktop", datacron_env_in_config(client_config_path)))
         except ClaudeDesktopConfigError as exc:
-            warnings.append(f"Claude Desktop config not written: {exc}")
+            client_errors.append(f"Claude Desktop config not written: {exc}")
             _LOGGER.warning("cli.setup client config failed: %s", exc)
     elif plan.client == CLIENT_CLAUDE_CODE:
         stdio_config = claude_code_stdio_config(vault_root, extra_env)
+        written_envs.append(("Claude Code", _client_env(vault_root, extra_env)))
     elif plan.client != CLIENT_NONE:
         client_installs = _install_detected_clients(
             plan,
             vault_root,
             extra_env,
+            removed_env,
             warnings,
+            client_errors,
             include=(plan.client,),
         )
+    written_envs.extend(
+        (f"{outcome.display_name} ({outcome.scope})", outcome.env)
+        for outcome in client_installs
+        if outcome.installed and outcome.env is not None
+    )
+    effective_write_paths, effective_read_only = _effective_settings(
+        written_envs,
+        requested_write_paths=write_paths,
+        requested_read_only=plan.read_only is True,
+        warnings=warnings,
+    )
 
     indexed_notes: int | None = None
     index_error: str | None = None
@@ -652,22 +703,134 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
         indexed_notes=indexed_notes,
         index_error=index_error,
         client_config_path=client_config_path,
-        write_paths=write_paths,
-        read_only=plan.read_only,
+        write_paths=effective_write_paths,
+        read_only=effective_read_only,
         durability=plan.durability,
         machine_write_env=machine_write_env,
         stdio_config=stdio_config,
         client_installs=client_installs,
         reset_result=reset_result,
         warnings=warnings,
+        client_errors=client_errors,
     )
+
+
+def _require_loadable_vault_config(vault_root: Path) -> None:
+    """Refuse to wire clients to a vault whose ``VAULT.yaml`` does not load.
+
+    An existing, malformed config is kept by setup without ``--force``, and the
+    index step then failed on it and was reported as merely deferred: setup
+    exited 0 with "setup complete" on a vault that ``status`` and ``index``
+    could not open.
+    """
+    config_path = sidecar_vault_config(vault_root)
+    try:
+        load_vault_config(config_path)
+    except (ValueError, yaml.YAMLError) as exc:
+        raise ValueError(
+            f"{config_path} does not load: {describe_config_error(exc)}. Fix it, or rerun "
+            "setup with --force to replace it."
+        ) from exc
+
+
+def _client_env(vault_root: Path, extra_env: Mapping[str, str]) -> dict[str, str]:
+    """Return the environment a fresh client entry for ``vault_root`` holds."""
+    return {
+        _ENV_VAULT_ROOT: str(vault_root),
+        _ENV_READ_PATHS: str(vault_root),
+        **extra_env,
+    }
+
+
+def _env_settings(env: Mapping[str, object]) -> tuple[list[Path], bool]:
+    write_value = env.get(_ENV_WRITE_PATHS)
+    write_paths = (
+        [Path(part) for part in split_env_paths(write_value)]
+        if isinstance(write_value, str)
+        else []
+    )
+    return write_paths, env_flag_enabled(env.get(_ENV_READ_ONLY))
+
+
+def _effective_settings(
+    written_envs: list[tuple[str, Mapping[str, object]]],
+    *,
+    requested_write_paths: list[Path],
+    requested_read_only: bool,
+    warnings: list[str],
+) -> tuple[list[Path], bool]:
+    """Return the write allowlist and read-only mode the written configs hold.
+
+    The summary used to print what the run asked for. Preserved settings are
+    part of what the server runs with, so a rerun without --read-only printed
+    "read-only: no" over a config that still said true. When clients were
+    written with different preserved values, each is named in a warning.
+    """
+    if not written_envs:
+        return requested_write_paths, requested_read_only
+    settings = [(label, _env_settings(env)) for label, env in written_envs]
+    first = settings[0][1]
+    if any(values != first for _label, values in settings[1:]):
+        details = "; ".join(
+            f"{label}: writing "
+            f"{os.pathsep.join(str(path) for path in paths) if paths else 'disabled'}, "
+            f"read-only {'yes' if read_only else 'no'}"
+            for label, (paths, read_only) in settings
+        )
+        warnings.append(f"Clients hold different settings after the merge: {details}")
+    return first
+
+
+def existing_client_settings(
+    vault_root: Path,
+    client: str,
+    install_scope: str,
+) -> tuple[bool, bool] | None:
+    """Return ``(writing, read_only)`` held by an existing entry for this vault.
+
+    Interactive setup offers these as the prompt defaults, so pressing Enter on
+    a rerun keeps the current setting instead of answering "no". The first
+    Datacron entry written for ``vault_root`` among the clients this run would
+    configure decides; ``None`` means there is none, or none could be read.
+    """
+    envs: list[Mapping[str, object]] = []
+    try:
+        if client == CLIENT_CLAUDE_DESKTOP:
+            envs.append(datacron_env_in_config(config_path_for_platform()))
+        elif client not in (CLIENT_CLAUDE_CODE, CLIENT_NONE):
+            targets = discover_targets(
+                scopes=_scopes_for(install_scope),
+                project_dir=vault_root,
+                include=None if client == CLIENT_ALL else (client,),
+            )
+            envs.extend(found for target in targets if (found := read_datacron_env(target)))
+    except (ClaudeDesktopConfigError, MCPClientError, OSError, ValueError) as exc:
+        _LOGGER.warning("cli.setup could not read existing client settings: %s", exc)
+        return None
+    for env in envs:
+        if env_names_vault(env, vault_root):
+            write_paths, read_only = _env_settings(env)
+            return bool(write_paths), read_only
+    return None
+
+
+def _removed_env_keys(plan: SetupPlan) -> tuple[str, ...]:
+    """Return the client env keys this run explicitly turns off."""
+    removed: list[str] = []
+    if plan.enable_write is False:
+        removed.append(_ENV_WRITE_PATHS)
+    if plan.read_only is False:
+        removed.append(_ENV_READ_ONLY)
+    return tuple(removed)
 
 
 def _install_detected_clients(
     plan: SetupPlan,
     vault_root: Path,
     extra_env: dict[str, str],
+    removed_env: tuple[str, ...],
     warnings: list[str],
+    client_errors: list[str],
     *,
     include: tuple[str, ...] | None,
 ) -> list[InstallOutcome]:
@@ -679,15 +842,11 @@ def _install_detected_clients(
     try:
         invocation = resolve_mcp_invocation()
     except ClaudeDesktopConfigError as exc:
-        warnings.append(f"Client auto-install skipped: {exc}")
+        client_errors.append(f"Client auto-install skipped: {exc}")
         _LOGGER.warning("cli.setup could not resolve MCP command: %s", exc)
         return []
 
-    env: dict[str, str] = {
-        _ENV_VAULT_ROOT: str(vault_root),
-        _ENV_READ_PATHS: str(vault_root),
-        **extra_env,
-    }
+    env = _client_env(vault_root, extra_env)
     targets = discover_targets(
         scopes=_scopes_for(plan.install_scope),
         project_dir=vault_root,
@@ -707,6 +866,7 @@ def _install_detected_clients(
         command=invocation.command,
         args=list(invocation.args),
         env=env,
+        removed_env=removed_env,
     )
 
 
@@ -725,11 +885,7 @@ def claude_code_stdio_config(vault_root: Path, extra_env: dict[str, str]) -> str
     Returns:
         A pretty-printed JSON string.
     """
-    env: dict[str, str] = {
-        _ENV_VAULT_ROOT: str(vault_root),
-        _ENV_READ_PATHS: str(vault_root),
-        **extra_env,
-    }
+    env = _client_env(vault_root, extra_env)
     invocation = resolve_mcp_invocation()
     snippet = {
         "mcpServers": {

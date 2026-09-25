@@ -686,12 +686,26 @@ class ScopedVaultReader:
         resolved_id = await self._delegate.resolve_alias(alias)
         if resolved_id is None:
             return None
+        return resolved_id if await self.admits_note_id(resolved_id) else None
+
+    async def resolve_alias_unscoped(self, alias: str) -> str | None:
+        """Resolve ``alias`` without admitting the note it names.
+
+        Only for comparing against a note ID the caller admits itself: the backlink
+        scan asks whether each alias names one target, and paying the admission of
+        every other note an alias named made it cost seconds on a large vault.
+        ``resolve_alias`` is this followed by :meth:`admits_note_id`.
+        """
+        return await self._delegate.resolve_alias(alias)
+
+    async def admits_note_id(self, note_id: str) -> bool:
+        """Return whether the note behind ``note_id`` passes this scope's admission."""
         if self._note_path_lookup is not None:
-            rel_path = await self._note_path_lookup(resolved_id)
+            rel_path = await self._note_path_lookup(note_id)
             if rel_path is not None:
-                return resolved_id if self._scope.allows_note_rel_path(rel_path) else None
+                return self._scope.allows_note_rel_path(rel_path)
         notes = await self.list_notes()
-        return resolved_id if any(note.id == resolved_id for note in notes) else None
+        return any(note.id == note_id for note in notes)
 
     async def invalidate_alias_cache(self) -> None:
         await self._delegate.invalidate_alias_cache()
@@ -702,6 +716,11 @@ class ScopedVaultReader:
         *,
         expected_path: Path | None = None,
     ) -> bool:
+        if expected_path is not None and note.path == expected_path:
+            # The delegate returned the very path this reader authorized, so the pair
+            # is a walked one: admitting it resolves once, where resolving each side
+            # separately cost two realpaths on every note a sweep reads.
+            return self._scope.admits_walked_note(note.rel_path, note.path)
         try:
             returned = self._scope.authorize_path(note.path, "read")
             admitted = self._scope.authorize_note_rel_path(note.rel_path)

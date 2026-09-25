@@ -36,8 +36,14 @@ _SECRET_KEYWORDS: Final[str] = (
     r"password|passwd|pwd|passphrase|secret|token|api[_-]?key|access[_-]?key|"
     r"private[_-]?key|client[_-]?secret|fingerprint|thumbprint|mdp|mot\s+de\s+passe"
 )
+# A key name starts only where a run of name characters starts. Allowing a start
+# after any "_" or "-" let every segment of "token_token_..." begin a scan to the
+# end of the run, which made the detector quadratic in the run length. Leading
+# separators and doubled ones ("--token", "DB__PASSWORD") stay inside the run, so
+# every key the old start positions found still ends at the same place.
 _SECRET_KEY_NAME: Final[str] = (
-    rf"(?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_-])*(?:{_SECRET_KEYWORDS})(?:[_-]key)?(?![A-Za-z0-9])"
+    rf"(?<![A-Za-z0-9_-])[_-]*(?:[A-Za-z0-9]+[_-]+)*(?:{_SECRET_KEYWORDS})"
+    r"(?:[_-]key)?(?![A-Za-z0-9])"
 )
 _LABELLED_SECRET: Final[str] = (
     rf"(?i)(?P<prefix>[\"']?{_SECRET_KEY_NAME}[\"']?\s*(?::|=|\bis\b)\s*)"
@@ -52,8 +58,12 @@ _KNOWN_TOKEN: Final[str] = (
     r"xox[abprs]-[A-Za-z0-9-]{10,}|glpat-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|"
     r"eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})\b)"
 )
+# The scheme starts where a run of scheme characters starts, for the same reason as
+# the key name above: a start at every word boundary rescanned "a-a-a-..." to its end
+# once per segment. Leading digits and marks stay in the (preserved) prefix.
 _URL_USERINFO_SECRET: Final[str] = (
-    r"(?P<prefix>\b[A-Za-z][A-Za-z0-9+.-]*://[^\s:/@]+:)(?P<secret>[^\s@/]+)(?=@)"
+    r"(?P<prefix>(?<![A-Za-z0-9+.-])[0-9+.-]*[A-Za-z][A-Za-z0-9+.-]*://[^\s:/@]+:)"
+    r"(?P<secret>[^\s@/]+)(?=@)"
 )
 _SLUGGED_SECRET: Final[str] = (
     r"(?i)(?P<prefix>\b(?:password|passwd|pwd|token|api[_-]?key|access[_-]?key|"

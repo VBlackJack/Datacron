@@ -749,3 +749,29 @@ class TestStatusCountsWithoutReading:
 
         assert result.exit_code == 0
         assert not sidecar.exists()
+
+
+@pytest.mark.parametrize("command", ["status", "index", "reindex"])
+@pytest.mark.parametrize(
+    "document",
+    [
+        "vault_id: [unclosed\nsecret_value: hunter2\n",
+        "history_mode: hunter2\n",
+        "- hunter2\n",
+    ],
+    ids=["yaml-syntax", "schema", "not-a-mapping"],
+)
+def test_a_malformed_vault_yaml_is_a_configuration_error(
+    runner: CliRunner, tmp_path: Path, command: str, document: str
+) -> None:
+    """status and index ended in a raw parser or pydantic traceback on a bad VAULT.yaml."""
+    vault = tmp_path / "vault"
+    runner.invoke(app, ["init", str(vault)])
+    sidecar_vault_config(vault).write_text(document, encoding="utf-8")
+
+    result = runner.invoke(app, [command, "--vault", str(vault)])
+
+    assert result.exit_code == 2, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "does not load" in result.output
+    assert "hunter2" not in result.output
