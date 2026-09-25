@@ -30,12 +30,96 @@ parser and this module disagree about what a heading is, and the search for the
 underline of a heading mistletoe had already built then found nothing at all.
 """
 _FENCE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})")
-_COMMENT_BLOCK_START = re.compile(r" {0,3}<!--")
 _COMMENT_CLOSE = "-->"
+_RAW_TEXT_TAGS = ("pre", "script", "style", "textarea")
+"""CommonMark type-1 HTML block tags: their content is raw text up to the closing tag."""
+
+# One opener per CommonMark HTML block type whose end is a fixed marker, each
+# paired with that marker. Order matters: a comment and CDATA both start with
+# ``<!`` and must be tried before the generic declaration.
+_HTML_BLOCK_KINDS: tuple[tuple[re.Pattern[str], str | None], ...] = (
+    (
+        re.compile(
+            rf" {{0,3}}<(?P<tag>{'|'.join(_RAW_TEXT_TAGS)})(?=[ \t>]|$)",
+            re.IGNORECASE,
+        ),
+        None,
+    ),
+    (re.compile(r" {0,3}<!--"), _COMMENT_CLOSE),
+    (re.compile(r" {0,3}<\?"), "?>"),
+    (re.compile(r" {0,3}<!\[CDATA\["), "]]>"),
+    (re.compile(r" {0,3}<![A-Za-z]"), ">"),
+)
 
 
-def _html_comment_lines(lines: list[str]) -> frozenset[int]:
-    """Return the indices of the lines that sit inside an HTML comment.
+def _html_block_opener(line: str) -> tuple[int, str] | None:
+    """Return where a masked HTML block opener ends on ``line`` and its closing marker."""
+    for pattern, close in _HTML_BLOCK_KINDS:
+        match = pattern.match(line)
+        if match is None:
+            continue
+        if close is None:
+            # A type-1 block closes on its own end tag, compared case-insensitively.
+            return match.end(), f"</{match.group('tag').lower()}>"
+        return match.end(), close
+    return None
+
+
+def _html_block_scan(lines: list[str]) -> tuple[frozenset[int], bool]:
+    """Return the masked line indices, and whether a block is still open at the end."""
+    close: str | None = None
+    fence: str | None = None
+    masked: set[int] = set()
+    pending: set[int] = set()
+    for index, raw_line in enumerate(lines):
+        line = raw_line.rstrip("\r\n")
+        if close is None:
+            fence_match = _FENCE.match(line)
+            if fence_match is not None:
+                marker = fence_match.group("fence")
+                if fence is None:
+                    fence = marker
+                elif marker[0] == fence[0] and len(marker) >= len(fence):
+                    fence = None
+                continue
+            if fence is not None:
+                continue
+            opener = _html_block_opener(line)
+            if opener is None:
+                continue
+            search_from, close = opener
+        else:
+            search_from = 0
+        pending.add(index)
+        if line.lower().find(close, search_from) >= 0:
+            close = None
+            masked |= pending
+            pending.clear()
+    return frozenset(masked), close is not None
+
+
+def leaves_html_block_open(lines: list[str]) -> bool:
+    """Return whether ``lines`` open an HTML comment or raw block they never close.
+
+    The masker discards such a span rather than hiding the rest of the note, so
+    the headings below still count; but the first matching closer written later
+    anywhere below would pair with it and hide every heading in between. An edit
+    that inserts content can therefore ask whether that content is closed.
+    """
+    return _html_block_scan(lines)[1]
+
+
+def html_comment_lines(lines: list[str]) -> frozenset[int]:
+    """Return the indices of the lines that sit inside an HTML comment or raw block.
+
+    Besides comments, the CommonMark HTML blocks that end on a fixed marker are
+    masked the same way: the raw-text blocks (``<pre>``, ``<script>``, ``<style>``,
+    ``<textarea>``, up to the matching close tag), processing instructions
+    (``<?`` to ``?>``), declarations (``<!X`` to ``>``) and CDATA (``<![CDATA[`` to
+    ``]]>``). A renderer shows a ``### Inner`` inside ``<pre>`` as literal text;
+    counting it as a heading let ``move_note_section`` carry it out of the block,
+    leaving an orphan ``<pre>`` that swallowed the next section, and the move
+    verifier accepted it because the heading sequence was unchanged.
 
     mistletoe's default token set carries no HTML block, so ``<!--`` only opens
     an ordinary paragraph and a following ``##`` line interrupts it as a real
@@ -59,38 +143,9 @@ def _html_comment_lines(lines: list[str]) -> frozenset[int]:
     between vanished: patching or deleting the section above then replaced the
     sections it had swallowed. Once a block is open, the first ``-->`` closes it
     wherever it sits in the line, and the rest of that line belongs to the block
-    and opens nothing.
+    and opens nothing. The same rules hold for every masked block kind.
     """
-    inside_comment = False
-    fence: str | None = None
-    masked: set[int] = set()
-    pending: set[int] = set()
-    for index, raw_line in enumerate(lines):
-        line = raw_line.rstrip("\r\n")
-        if not inside_comment:
-            fence_match = _FENCE.match(line)
-            if fence_match is not None:
-                marker = fence_match.group("fence")
-                if fence is None:
-                    fence = marker
-                elif marker[0] == fence[0] and len(marker) >= len(fence):
-                    fence = None
-                continue
-            if fence is not None:
-                continue
-            opener = _COMMENT_BLOCK_START.match(line)
-            if opener is None:
-                continue
-            inside_comment = True
-            search_from = opener.end()
-        else:
-            search_from = 0
-        pending.add(index)
-        if line.find(_COMMENT_CLOSE, search_from) >= 0:
-            inside_comment = False
-            masked |= pending
-            pending.clear()
-    return frozenset(masked)
+    return _html_block_scan(lines)[0]
 
 
 @dataclass(frozen=True)
@@ -130,7 +185,7 @@ def markdown_headings(lines: list[str]) -> list[MarkdownHeading]:
     document = block_token.Document(
         [line.replace("\r\n", "\n").replace("\r", "\n") for line in lines]
     )
-    commented = _html_comment_lines(lines)
+    commented = html_comment_lines(lines)
     result = []
     for token in document.children or []:
         if not isinstance(token, block_token.Heading | block_token.SetextHeading):

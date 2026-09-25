@@ -315,6 +315,7 @@ async def test_get_health_reports_bounded_sanitized_recovery_blocks(
     assert health["recovery"] == {
         "required": True,
         "blocked_operations": 2,
+        "unexpected_entries": [],
         "operations": [
             {
                 "operation_id": "blocked-operation-1",

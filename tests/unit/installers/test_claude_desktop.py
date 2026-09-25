@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from datacron.installers.claude_desktop import (
     DATACRON_SERVER_KEY,
     ClaudeDesktopConfigError,
     config_path_for_platform,
+    datacron_env_in_config,
     install_claude_desktop_config,
     resolve_mcp_invocation,
 )
@@ -202,6 +204,43 @@ class TestInstall:
         # the config file and nothing else with a .tmp suffix.
         leftovers = [p for p in custom_config_path.parent.iterdir() if p.name.endswith(".tmp")]
         assert leftovers == []
+
+    def test_removed_env_and_vault_change_reach_the_file(
+        self, tmp_path: Path, custom_config_path: Path
+    ) -> None:
+        """An explicit off drops a key; a new vault drops allowlists into the old one."""
+        old_vault = tmp_path / "old"
+        new_vault = tmp_path / "new"
+        old_vault.mkdir()
+        new_vault.mkdir()
+        inside = new_vault.resolve() / "_memory"
+        custom_config_path.parent.mkdir(parents=True)
+        existing_env = {
+            "DATACRON_VAULT_ROOT": str(old_vault.resolve()),
+            "DATACRON_READ_ONLY": "true",
+            "DATACRON_WRITE_PATHS": os.pathsep.join(
+                [str(old_vault.resolve() / "_memory"), str(inside)]
+            ),
+            "DATACRON_DURABILITY": "strict",
+        }
+        custom_config_path.write_text(
+            json.dumps({"mcpServers": {DATACRON_SERVER_KEY: {"env": existing_env}}}),
+            encoding="utf-8",
+        )
+
+        install_claude_desktop_config(
+            new_vault,
+            config_path=custom_config_path,
+            command=_TEST_COMMAND,
+            removed_env=("DATACRON_READ_ONLY",),
+        )
+
+        assert datacron_env_in_config(custom_config_path) == {
+            "DATACRON_VAULT_ROOT": str(new_vault.resolve()),
+            "DATACRON_READ_PATHS": str(new_vault.resolve()),
+            "DATACRON_WRITE_PATHS": str(inside),
+            "DATACRON_DURABILITY": "strict",
+        }
 
     def test_empty_file_treated_as_empty_config(
         self, tmp_path: Path, custom_config_path: Path

@@ -39,6 +39,8 @@ __all__ = ["build_health", "index_generation", "vault_checksum"]
 
 _EVIDENCE_RESOURCE: Final[str] = "reliability_evidence.json"
 _INVALID_DETAIL_MESSAGE: Final[str] = "detail must be 'summary' or 'full'"
+HEALTH_MAX_UNEXPECTED_RECOVERY_ENTRIES: Final[int] = 20
+"""Most unexpected recovery-directory entries one health reply names."""
 _VALID_INVARIANT_STATUSES: Final[frozenset[str]] = frozenset(
     {"PROVEN", "BASELINE-TRACKED", "DEFERRED"}
 )
@@ -106,10 +108,12 @@ async def build_health(
     scrubber_anomaly_count = scrubber["anomalies_count"]
     scrubber_critical = isinstance(scrubber_anomaly_count, int) and scrubber_anomaly_count > 0
     recovery_blocked = app.vault_writer.recovery_blocked
+    recovery_unexpected = app.vault_writer.recovery_unexpected_entries
     healthy = (
         not stale_paths
         and _integrity_is_clean(scan)
         and not recovery_blocked
+        and not recovery_unexpected
         and (app.settings.durability != "strict" or app.durability_status.directory_flush_supported)
     )
     integrity = _build_integrity(scan, detail=detail, limit=bounded_limit)
@@ -146,6 +150,7 @@ async def build_health(
         "durability": durability,
         "recovery": _build_recovery(
             recovery_blocked,
+            recovery_unexpected,
             detail=detail,
             limit=bounded_limit,
         ),
@@ -167,15 +172,25 @@ async def build_health(
 
 def _build_recovery(
     blocked: tuple[Any, ...],
+    unexpected_entries: tuple[str, ...],
     *,
     detail: HealthDetail,
     limit: int,
 ) -> dict[str, Any]:
-    """Build bounded, content-free recovery evidence for health consumers."""
+    """Build bounded, content-free recovery evidence for health consumers.
+
+    Unexpected entries are named at every detail level: they are sidecar paths,
+    not note content, and the name is the one thing an operator needs to clear
+    them. The list is capped so a directory full of strays cannot swell the reply.
+    """
     selected = blocked[:limit] if detail == "full" else ()
     return {
-        "required": bool(blocked),
+        "required": bool(blocked or unexpected_entries),
         "blocked_operations": len(blocked),
+        "unexpected_entries": [
+            sanitize_metadata_value(entry)
+            for entry in unexpected_entries[:HEALTH_MAX_UNEXPECTED_RECOVERY_ENTRIES]
+        ],
         "operations": [
             {
                 "operation_id": item.operation_id,

@@ -37,7 +37,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import wraps
 from inspect import isawaitable
 from pathlib import Path
@@ -69,6 +69,7 @@ from datacron.core.config import (
 )
 from datacron.core.durability import (
     DurabilityStatus,
+    RecoveryRequiredError,
     WritePolicy,
     probe_directory_durability,
 )
@@ -127,6 +128,23 @@ class RepairState:
     sweep, a path absent from it is still checked. Nothing that changes index
     membership has to keep it up to date, because leaving it stale can only cost a
     check, never a note.
+    """
+    missing_note_ids: dict[str, float] = field(default_factory=dict)
+    """Note IDs a full walk just failed to find, with when, on the repair clock.
+
+    Looking up an identity the index has never recorded walks the whole vault, and
+    a caller repeating one unknown ULID paid that walk on every call. Within the
+    repair interval the same ID is answered from here instead; any other ID still
+    walks, so a note written since the last walk is still found.
+    """
+    stale_note_paths: set[str] = field(default_factory=set)
+    """Vault-relative paths whose indexed chunks a read found to differ from disk.
+
+    A note edited outside Datacron inside the repair throttle window keeps serving
+    its old chunks until the next sweep. The protection pass drops those hits and
+    records the path here, and the next repair of a writable server runs its sweep
+    at once instead of waiting out the interval, re-chunking these notes even when
+    their mtime and hash did not move.
     """
 
 
@@ -400,7 +418,9 @@ async def _startup_recover_operations(app: DatacronApp) -> None:
     it -- must not stall the MCP lifespan: if it did, ``initialize`` would never
     be answered and the client would drop the server with zero tools registered.
     On lock contention we log a warning and defer recovery (retried on the next
-    write). Residual operation recovery errors are degraded; all other errors abort startup.
+    write). Residual operation recovery errors and every typed ``recovery_required``
+    refusal, such as an unexpected entry in a recovery directory, are degraded;
+    all other errors abort startup.
     """
     try:
         recovered = await app.vault_writer.recover_operations()
@@ -415,6 +435,17 @@ async def _startup_recover_operations(app: DatacronApp) -> None:
         _LOGGER.error(
             "Startup operation-log recovery blocked by a residual recovery error: %s; "
             "tools will register and reads remain available",
+            exc,
+        )
+        return
+    except RecoveryRequiredError as exc:
+        # A stray file in a recovery directory, or batch evidence this scope may
+        # not recover, used to abort the lifespan: the client saw no tool at all.
+        # Every write is refused with the same typed error until it is resolved,
+        # and get_health reports it, so startup only has to say so.
+        _LOGGER.error(
+            "Startup operation-log recovery blocked: %s; tools will register and reads "
+            "remain available",
             exc,
         )
         return

@@ -107,7 +107,10 @@ def parse(raw: str) -> tuple[dict[str, Any], str]:
         return {}, raw
     try:
         post = frontmatter.loads(parseable)
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, ValueError) as exc:
+        # PyYAML builds dates itself and lets the constructor's ValueError out
+        # for an impossible one such as ``2024-02-30``. It is malformed
+        # frontmatter like any other, and must degrade the same way.
         raise FrontmatterError(str(exc)) from exc
     metadata: dict[str, Any] = dict(post.metadata)
     _normalize_lifecycle_scalars(metadata)
@@ -227,13 +230,18 @@ def parse_preserving_bom_and_body_eols(raw: str) -> tuple[dict[str, Any], str, b
     The plain parser normalizes line endings and strips surrounding whitespace, which
     is fine for reading and wrong for an exact rewrite. When a frontmatter block is
     present, the body returned here is the raw text after its closing boundary.
+
+    A note that opens with ``---`` and never closes it has no frontmatter: its
+    whole text is the body, unchanged. The stripped text of the plain parser was
+    returned there, so every section edit dropped the note's leading and
+    trailing whitespace and its final newline.
     """
     metadata, parsed_body, has_bom = parse_preserving_bom(raw)
     parseable = raw[1:] if has_bom else raw
     lines = parseable.splitlines(keepends=True)
     closing = _frontmatter_block_end(lines)
     if closing is None:
-        return metadata, parsed_body, has_bom
+        return metadata, parsed_body if metadata else parseable, has_bom
     if closing < 0:
         return metadata, parseable, has_bom
     return metadata, "".join(lines[closing + 1 :]), has_bom
@@ -289,7 +297,10 @@ def _frontmatter_block_end(lines: Sequence[str]) -> int | None:
         return None
     try:
         loaded = yaml.safe_load("".join(lines[opening + 1 : closing]))
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError):
+        # The constructor's plain ValueError for an impossible date such as
+        # ``2024-02-30`` means the block cannot be loaded, exactly as a syntax
+        # error does, and this check answers rather than raises.
         return _AMBIGUOUS_BLOCK
     if loaded is None or isinstance(loaded, dict):
         return closing

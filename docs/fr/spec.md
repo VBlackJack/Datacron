@@ -261,10 +261,10 @@ seuls les tools de lecture, advisory et opérationnels restent exposés.
 | Advisory | `contradiction_scan` | Candidats déterministes et proposition de call d'écriture; n'écrit jamais |
 | Opérationnel | `get_health` | Fraîcheur, intégrité, checksum, durabilité et preuves d'invariants |
 | Écriture | `create_note_ai` | Crée une note mémoire sans overwrite |
-| Écriture | `append_journal` | Ajoute une entrée sous un heading d'une note existante |
+| Écriture | `append_journal` | Ajoute une entrée sous un heading d'une note existante, après le contenu propre du heading et avant sa première sous-section |
 | Écriture | `set_frontmatter` | Modifie les champs de cycle de vie autorisés, le compteur monotone `last_id` et `updated` |
 | Écriture | `patch_note_preamble` | Remplace ou supprime le préambule avant le premier titre Markdown reconnu |
-| Écriture | `patch_note_section` | Remplace le contenu sous un heading existant en conservant la ligne du heading |
+| Écriture | `patch_note_section` | Remplace le contenu sous un heading existant en conservant la ligne du heading ; refuse une section qui contient des sous-sections |
 | Écriture | `delete_note_section` | Supprime explicitement une section H2-H6 et son sous-arbre |
 | Écriture | `rename_note_section` | Renomme un titre H2-H6 sans modifier son contenu |
 | Écriture | `move_note_section` | Prévisualise ou applique un déplacement exact de sous-arbre dans une note, avec CAS obligatoire |
@@ -371,6 +371,12 @@ casse.
 réconciliation ou un oracle planner différent retourne respectivement
 `committed_index_incomplete` ou `committed_report_mismatch`, avec `already_committed: true|false`
 selon qu'il s'agit d'un replay ; ce n'est jamais présenté comme une absence de mutation.
+`validate` consulte d'abord le reçu durable : un manifeste déjà commité retourne
+`status: already_committed` avec le `confirmation_token` de son reçu. Quand les notes du reçu ont
+changé depuis (un déplacement défait à la main, une édition ultérieure), les deux modes refusent avec
+le code d'erreur `manifest_already_committed_state_diverged` : rien n'est corrompu et aucune
+récupération n'est nécessaire ; planifie un nouveau manifeste depuis le vault actuel au lieu de
+rejouer celui-ci.
 
 ---
 

@@ -30,6 +30,215 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   one-character excerpt. These are refused now (the excerpt needs 20 non-blank characters,
   the event date may be at most one day ahead of today in UTC), and every validation refusal,
   including too many records in one call, carries a code and a next action.
+### Fixed
+
+- One stray file in a recovery directory stopped the server. A `desktop.ini`, `.DS_Store`
+  or sync-conflict copy in `.datacron/oplog/pending` or the organization batch directories
+  aborted startup, so the client saw no tool at all, and failed every write with an opaque
+  internal error. Shell metadata (`desktop.ini`, `.DS_Store`, `Thumbs.db`, AppleDouble
+  `._*`) is now ignored. Any other entry, including a pending manifest whose name does not
+  match its content, lets startup finish with reads available, refuses writes with a
+  `recovery_required` error naming the entry, and is listed in `get_health`
+  (`recovery.unexpected_entries`) and by `datacron ops inspect`, which no longer stops at
+  the first one.
+- A torn `ulids.json` emptied the index. Every note without a frontmatter id failed to
+  resolve its identity with a JSON error, and reconcile took that for an undecodable note
+  and purged its rows: three notes out of four disappeared from search. A damaged identity
+  sidecar now raises its own error, logged once per read with the sidecar path, and the
+  notes it affects keep their rows and are reported as unreadable.
+- A frontmatter date that does not exist, such as `created: 2024-02-30`, made the note
+  unreadable: PyYAML reports it with a plain `ValueError`, which escaped the handling of
+  malformed frontmatter. The note is now read with empty metadata like any other malformed
+  frontmatter, so it stays indexed, searchable and listed. A write to such a note, such as
+  `append_journal` or `set_frontmatter`, is refused with a typed `FrontmatterError` and
+  leaves the note untouched, and the write tools' check for an ambiguous leading block no
+  longer leaks the same `ValueError`.
+- The guidance for a keyed write that was committed and then reverted could not succeed.
+  The request fingerprint includes `expected_hash`, so a write first made without one cannot
+  be replayed with one, yet both the writer's refusal and `get_write_progress` said to do
+  exactly that. The writer now says to write again under a new `request_id`, and
+  `get_write_progress` answers `retry_with_new_request_id_and_expected_hash` unless the
+  caller supplies an original `expected_hash` that an identical replay can still satisfy.
+- A kill or a power loss in the middle of an operation-log append left the log ending
+  mid-line: startup succeeded and every write then failed with an internal error, with no
+  command to repair it. Recovery now cuts a final fragment that is not valid JSON back to
+  the last complete record, under the journal lock, and saves the cut bytes next to the log
+  as `operations.jsonl.torn-<timestamp>`. A complete record that only lost its newline is
+  never cut.
+- `patch_note_section` silently deleted the subsections of an H2-H6 target: the replaced span
+  runs to the next heading of the same or a shallower level, and only level 1 was guarded. It
+  now refuses, at every level, a section that contains subsections, with the error code
+  `section_has_subsections`, the list of those subsections (level and occurrence included,
+  redacted like heading suggestions) and a next action: patch a subsection, or delete it
+  explicitly first.
+- `append_journal` filed an entry under the last subsection of the target heading, because it
+  inserted at the end of the whole subtree. The entry now goes at the end of the heading's own
+  content, before its first subsection.
+- `patch_note_section`, `append_journal` and `patch_note_preamble` did not check the note after
+  splicing: content that left a code fence or an HTML comment open turned every later heading
+  into code, and each later `append_journal` then created an invisible duplicate section. The
+  result must now keep the heading sequence outside the edited span, and the inserted content
+  must close every fence and HTML block it opens; otherwise the write is refused with
+  `section_structure_changed`.
+- `append_journal` did not find a heading whose text looks like Markdown markup, such as
+  `## \*draft\* notes`, and created a duplicate section on every call, while
+  `patch_note_section` matched the same selector. The exact parsed text is now tried first,
+  and the rendered form of the selector only on a miss.
+- Only HTML comments were masked from the heading model. Headings inside the other CommonMark
+  HTML blocks that end on a fixed marker (`<pre>`, `<script>`, `<style>`, `<textarea>`,
+  processing instructions, declarations and CDATA) counted as sections, so
+  `move_note_section` could carry a heading out of a `<pre>` block and leave an orphan opener
+  that swallowed the next section. They are now masked like comments; an unclosed block still
+  masks nothing.
+### Security
+
+- Note writes checked confinement only, never note admission. Every write tool created,
+  appended to, patched or reverted a note under an `excluded_folders` folder or with an
+  `excluded_files` name, although no read would ever serve it, and `patch_note_section` with
+  a wrong heading answered with that excluded note's headings. A junction or symlink inside
+  the vault also carried a write into an excluded folder. Every write now passes the read
+  admission on both the given and the resolved path before the note is opened, refuses a
+  path crossing a symlink or junction below the vault root (a OneDrive cloud placeholder
+  is not a link and stays writable), and refuses identically whether the note exists or
+  not.
+- `audit_query` and `get_note_history` returned the path, the heading and the restore
+  availability of writes to excluded notes: journal records were filtered by confinement
+  only. Records naming a Markdown note are now filtered by note admission, as the security
+  boundary document says. Recovery state keeps every record, so a blocked operation on a
+  sidecar or an excluded note still makes `get_health` degraded.
+- `excluded_folders` and `excluded_files` entries holding a path separator, such as
+  `Clients/Confidential`, `Private/` or `sub/blocked.md`, were accepted and excluded nothing,
+  because matching is per path component. A trailing separator is now dropped, and any
+  other separator is refused at startup with an error naming the entry.
+- On Windows, a colon in a read path opened an NTFS alternate data stream: `get_note` served
+  `a.md:evil.md`, and `blocked.md:x.md` read a stream of an excluded file. A colon in any
+  path component is now refused on Windows.
+- A path refused by confinement was reported with the absolute host path and every allowed
+  root, user name included. The MCP client now gets the vault-relative path it sent; the
+  resolved path is only logged locally.
+- `audit_query` and `get_note_history` redacted the note path only: an organization move
+  kept a secret-shaped source path in `parameters.source_rel_path`. Every string in the
+  parameters is now redacted.
+
+### Fixed
+
+- The write tools refused a Windows reserved device name (`projects/Con.md`) and a colon
+  (`Meetings/10:30 standup.md`) on every platform, although Linux and macOS store and read
+  such notes. Both rules now apply on Windows only, like the trailing dot and space rule;
+  the hidden folder rule still applies everywhere.
+### Fixed
+
+- Frontmatter kept as written, for every edit this time: when the key-by-key edit gave up,
+  the whole block was still re-dumped through PyYAML, so `14:30`, `01234`, `NO` and `1.10`
+  came back as `870`, `668`, `false` and `1.1` and comments went. That happened on every
+  edit of a block list (the style `create_note_ai` writes), on removing a key such as
+  `set_frontmatter(rejected=[])`, and on every body edit of a note holding a YAML anchor
+  anywhere in its header. Block lists and key removal are now edited in place, untouched
+  keys keep their bytes, and an edit that cannot be made precisely (an anchor or alias on
+  the edited key) is refused with the `frontmatter_edit_refused` code; the header is never
+  re-dumped.
+- A note whose last byte was its closing `---` had the new body glued to it
+  (`---## Log`) by `append_journal`, and lost its id, title and tags while the tool
+  reported success. The line break is restored and the whole written note is now checked
+  to read back with the expected metadata.
+- A note with an empty frontmatter value such as `updated:` (a common Obsidian template),
+  or with a block scalar (`|`, `>-`), could not be written by any section tool or by
+  `set_frontmatter`: the value splice broke the header and the parser error escaped. Such a
+  value is now replaced whole.
+- A note opening with a `---` that is never closed lost its leading and trailing whitespace
+  and its final newline on the first section edit.
+### Added
+
+- `datacron setup --no-write` and `--no-read-only` remove an existing write allowlist or
+  read-only mode from the client configs. Without either form, a rerun keeps what each config
+  already holds, as before. In interactive setup, the write and read-only prompts default to
+  the setting this vault's existing client entry holds, so pressing Enter keeps it; only an
+  explicit answer changes it.
+
+### Fixed
+
+- An organization manifest could name a replace target or a move source with a file name
+  spelled in another case than on disk. On a case-insensitive filesystem it validated and
+  committed, then answered `committed_report_mismatch` on every retry. Only the folders were
+  compared; the file name now is too, and the manifest is refused with `target_case_mismatch`.
+- Organization manifests, batches, the planner and the tag-policy scope check folded path
+  case only when running on Windows. The default macOS filesystem is case-insensitive too, so
+  there two spellings of one note were treated as two paths. Whether the vault's volume folds
+  case is now probed on the volume itself, once per vault root.
+- `validate` on an organization manifest never looked at its committed receipt. After the move
+  was undone by hand it validated again with the same token, and `apply` then answered
+  `recovery_required`, telling the operator to stop writers over a vault that was not corrupt.
+  `validate` now reports `already_committed`, and a committed manifest whose notes changed since
+  is refused in both modes with `manifest_already_committed_state_diverged`, which says no
+  recovery is needed.
+- Rerunning `datacron setup` without `--read-only` printed "read-only: no" while the client
+  config kept `DATACRON_READ_ONLY=true`, and the same for the write allowlist: the summary showed
+  what was asked, not what was written. It now shows the merged settings. Setting up another
+  vault also dropped nothing: preserved write paths kept pointing into the old vault, and are
+  now removed when they lie outside the new one.
+- Offline library link checks read wikilinks as URLs: `[[Project: Alpha]]` counted as an
+  external link, a broken `[[Missing: thing]]` was never reported, and `[[What is X?]]` was
+  looked up without its question mark. Wikilink names are now matched literally.
+- `datacron setup` exited 0 with "setup complete" when the Claude Desktop config could not be
+  written, or when the server command could not be resolved for `--client all`. Both now fail
+  the setup with exit code 1.
+- `datacron protocol status` crashed with a traceback on an instruction file holding the
+  protocol markers twice. That file is now reported as `invalid`.
+- `datacron status`, `index` and `reindex` crashed with a raw parser or validation traceback on
+  a malformed `VAULT.yaml`; they now exit 2 with a message that names the problem without
+  echoing the offending value. `datacron setup` refuses such a vault instead of reporting
+  success.
+### Fixed
+
+- One note edited outside Datacron (Obsidian, a sync client) inside the 30 s repair window
+  made `search_text`, `search_regex` and `get_backlinks` fail with `internal_error` whenever
+  that note ranked, and a read-only server kept failing until `datacron index`. A hit whose
+  indexed chunk no longer matches the note on disk is now dropped while the others are
+  returned, and the next read refreshes that note at once, even when its mtime or hash did
+  not move. When every hit was stale the read answers with the retryable code
+  `search_index_stale`. A note whose frontmatter the reader refuses after indexing (a date
+  out of range) is dropped the same way instead of failing the read.
+- Notes whose chunks this release computes differently kept their old chunks after an
+  upgrade, because their bytes, mtime and hash had not moved, and `datacron index` skipped
+  them. The index now records the chunker version that wrote it; the first `datacron index`
+  or read repair after an upgrade re-chunks every note once and rewrites only those whose
+  chunks changed.
+- `search_regex` skipped notes with an upper-case extension such as `Upper.MD`, which the
+  vault reader indexes and `search_text` finds: the ripgrep file type was case-sensitive.
+- The secret detector took 45 s on a 96 KB run such as `token_token_...`, and the URL
+  userinfo detector grew the same way on `a-a-a-...`: both restarted a scan at every
+  separator. Both are linear again, with every detection kept.
+- A list item such as ``- ```git log``` shows history`` was read as a code fence opener,
+  so every wikilink after it in the chunk was missing from the backlinks. A backtick fence
+  whose info string holds a backtick is inline code, as in CommonMark.
+- `get_note` with `format=map` failed on a note with a heading inside an HTML comment, or
+  reported that heading with a wrong level and a path `get_note` then refused. The chunker
+  now shares the heading model of the map and the write tools.
+- `get_backlinks` admitted every note any wikilink in the vault named, not only the source
+  notes: 5.7 s at 3000 notes, now 2.9 s, with half the admission checks.
+- Chunking a long list or paragraph rescanned the whole block for every segment, which was
+  quadratic in the block length.
+- A table wikilink with an escaped pipe, `[[Target\|label]]`, was recorded with the target
+  `Target\`, so the note was missing from the backlinks of `Target`.
+- `search_regex` validated every pattern with Python's `re`, so ripgrep syntax such as
+  `\p{Lu}\w+` was refused on the ripgrep path. Python now judges only the patterns it runs,
+  on the indexed fallback; ripgrep reports its own parse errors.
+- `get_note` with an unknown ULID walked the whole vault on every call (2.7 s at 5000 notes).
+  An ID the walk did not find is now remembered for the repair interval; any other ID
+  still walks, so a note written since the last sweep is still found.
+- The first index-backed call on a cold index resolved each note path about thirteen times;
+  it now resolves it about seven times (2000 notes: 16.5 s to 14.2 s).
+
+### Changed
+
+- `search_regex` documents that both of its paths search note bodies only: a match inside
+  frontmatter is not returned.
+
+### Security
+
+- A `search_text` query had no size bound: 50 000 terms held the shared index connection for
+  seconds and the echoed query escaped the result budget. A query is now refused above 2048
+  characters or 64 terms, with the code `search_query_too_large`, and is not echoed back.
 
 ## [2026.0924.00] - 2026-09-24
 

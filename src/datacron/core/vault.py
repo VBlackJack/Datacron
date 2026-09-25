@@ -56,6 +56,7 @@ from datacron.core.paths import read_ulid_mappings
 __all__ = [
     "H1_PATTERN",
     "FilesystemVaultReader",
+    "IdentitySidecarError",
     "JsonIdStore",
     "NoteAdmissionPolicy",
     "build_configured_reader",
@@ -161,6 +162,16 @@ def _coerce_datetime(value: object, fallback: datetime) -> datetime:
     return fallback
 
 
+class IdentitySidecarError(ValueError):
+    """Raised when the ULID sidecar holds bytes that are not a valid mapping.
+
+    It is state a note depends on, not part of the note: every note without a
+    frontmatter id fails to resolve its identity while the sidecar is damaged.
+    A dedicated type lets reconcile keep those notes' index rows, where a
+    ValueError from the note itself is a reason to drop them.
+    """
+
+
 @final
 class JsonIdStore:
     """JSON-backed mapping from vault-relative paths to ULIDs.
@@ -191,6 +202,9 @@ class JsonIdStore:
         except OSError as exc:
             _LOGGER.error("Failed to read ULID sidecar %s: %s", self._path, exc)
             raise
+        except ValueError as exc:
+            _LOGGER.error("ULID sidecar %s is damaged: %s", self._path, exc)
+            raise IdentitySidecarError(f"ULID sidecar {self._path} is damaged: {exc}") from exc
 
         migrated_path = self._path.with_name(MIGRATED_ULID_SIDECAR_FILENAME)
         if not migrated_path.exists():
@@ -201,6 +215,11 @@ class JsonIdStore:
         except OSError as exc:
             _LOGGER.error("Failed to read migrated ULID sidecar %s: %s", migrated_path, exc)
             raise
+        except ValueError as exc:
+            _LOGGER.error("Migrated ULID sidecar %s is damaged: %s", migrated_path, exc)
+            raise IdentitySidecarError(
+                f"migrated ULID sidecar {migrated_path} is damaged: {exc}"
+            ) from exc
         if not migrated:
             return primary
 
@@ -419,7 +438,9 @@ class FilesystemVaultReader:
             metadata = {}
             body = raw_text
 
-        rel_path = _normalize_rel_path(resolved, self._vault_root)
+        # ``resolved`` is a realpath under the resolved root, so its relative spelling
+        # is arithmetic; resolving both sides again cost two realpaths per read.
+        rel_path = _walked_rel_path(resolved, self._vault_root)
         note_id = await self._resolve_id(metadata, rel_path)
         title = resolve_note_title(
             metadata,

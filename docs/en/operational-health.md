@@ -35,7 +35,8 @@ The response contains:
   is a policy/configuration precondition, not proof that ACLs, free space, recovery state, or a
   concrete I/O operation will allow a write;
 - `recovery`: whether blocked operations require explicit repair, their count, and bounded
-  content-free evidence in `detail=full` mode;
+  content-free evidence in `detail=full` mode, plus `unexpected_entries`, the vault-relative
+  paths of files in a recovery directory that recovery cannot classify (see below);
 - `scrubber`: last completed scrub, current pass and index generation, coverage,
   checked bytes, canary state, and path/type anomaly evidence;
 - `invariants`: I1 through I15 from packaged `reliability_evidence.json`.
@@ -58,6 +59,22 @@ the complete verified pre-apply backup as one offline maintenance rollback. If n
 available, stop and preserve the evidence for manual recovery; never force or quarantine only one
 member. Restart Datacron, run `datacron ops inspect` again, then reconcile or reindex and verify
 `get_health` before resuming writes.
+
+### Unexpected entries in recovery directories
+
+Recovery reads `.datacron/oplog/pending` and the organization batch `pending` and `stage`
+directories. Operating system metadata files (`desktop.ini`, `.DS_Store`, `Thumbs.db`,
+AppleDouble `._*`) are ignored there. Any other entry, such as a file left by hand or a sync
+client's conflict copy of a pending manifest, is not guessed at: the server still starts and
+serves reads, every write is refused with `recovery_required` naming the entry, and
+`get_health` lists it under `recovery.unexpected_entries`. `datacron ops inspect` lists every
+such entry next to the blocked operations. With no Datacron writer running, inspect each one,
+move it out of the `.datacron` directory, and retry.
+
+A final operation-log line cut short by a kill or a power loss is repaired by recovery: a
+fragment that is not valid JSON is cut back to the last complete record and saved next to the
+log as `operations.jsonl.torn-<timestamp>`. A complete record that only lost its newline is left
+in place for an operator.
 
 ### Index staleness definition
 
@@ -179,8 +196,9 @@ only the sidecar/index sources that differ are realigned. For a rewritten note, 
 bytes are preserved when line endings are uniform. A note that mixes CRLF and LF is instead
 normalized to its dominant EOL, exactly as any other structured note write normalizes it. In the
 frontmatter only the `id` and `updated` values are edited; every other line, comments included,
-is kept as written. When that edit cannot be verified (a YAML anchor, a flow mapping), the block
-is re-serialized in canonical key order instead, as every structured write does in that case.
+is kept as written. When that edit cannot be made precisely (a YAML anchor or alias on `id` or
+`updated`, a flow mapping), the repair is refused and the note is left unchanged, as every
+structured write does in that case: the block is never re-serialized.
 
 `--action adopt-frontmatter` promotes the note's own ID to canonical and realigns the sidecar and
 the index instead. It leaves the note untouched, and it is refused when the frontmatter ID is not a
