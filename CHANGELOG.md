@@ -28,7 +28,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - A frontmatter date that does not exist, such as `created: 2024-02-30`, made the note
   unreadable: PyYAML reports it with a plain `ValueError`, which escaped the handling of
   malformed frontmatter. The note is now read with empty metadata like any other malformed
-  frontmatter, so it stays indexed, searchable and listed.
+  frontmatter, so it stays indexed, searchable and listed. A write to such a note, such as
+  `append_journal` or `set_frontmatter`, is refused with a typed `FrontmatterError` and
+  leaves the note untouched, and the write tools' check for an ambiguous leading block no
+  longer leaks the same `ValueError`.
 - The guidance for a keyed write that was committed and then reverted could not succeed.
   The request fingerprint includes `expected_hash`, so a write first made without one cannot
   be replayed with one, yet both the writer's refusal and `get_write_progress` said to do

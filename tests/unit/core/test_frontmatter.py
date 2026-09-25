@@ -78,6 +78,17 @@ class TestParse:
         with pytest.raises(FrontmatterError, match="day is out of range"):
             parse(raw)
 
+    def test_the_write_path_block_check_does_not_leak_an_impossible_date(self) -> None:
+        """The write tools' delimiter check loads the YAML itself.
+
+        It caught only YAMLError, so the constructor's plain ValueError escaped a
+        check whose contract is to answer, not to raise. A block that cannot be
+        loaded is ambiguous, whatever the loader raises for it.
+        """
+        raw = "---\ncreated: 2024-02-30\n---\nbody\n"
+
+        assert has_ambiguous_leading_delimiter_block(raw) is True
+
     def test_lifecycle_dates_are_parsed_as_iso_strings(self) -> None:
         raw = (
             "---\n"

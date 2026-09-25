@@ -1340,6 +1340,55 @@ async def test_a_note_with_an_impossible_date_stays_searchable_and_listed(
     assert {note["rel_path"] for note in listed["notes"]} == set(ids)
 
 
+_IMPOSSIBLE_DATE_NOTE = (
+    "---\nid: 01J00000000000000000000124\ncreated: 2024-02-30\n---\n"
+    "# Dated\n\n## Journal\n\n- first\n"
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        ("append_journal", {"heading": "Journal", "entry": "- second"}),
+        ("set_frontmatter", {"confidence": "high"}),
+    ],
+)
+async def test_a_write_to_a_note_with_an_impossible_date_is_never_an_internal_error(
+    tmp_path: Path,
+    tool: str,
+    arguments: dict[str, Any],
+) -> None:
+    """The write path parses frontmatter too, and met the same bare ValueError.
+
+    A write must either land, keeping the invalid key's bytes, or be refused with
+    a typed error; an internal error tells the caller nothing it can act on.
+    """
+    note = tmp_path / "dated.md"
+    note.write_text(_IMPOSSIBLE_DATE_NOTE, encoding="utf-8", newline="\n")
+    settings = Settings(
+        vault_root=tmp_path,
+        read_paths=[tmp_path],
+        write_paths=[tmp_path],
+        repair_min_interval_seconds=0,
+    )
+    app = build_app(settings=settings, vault_root=tmp_path)
+    await app.store.open(sidecar_index_db(tmp_path))
+    try:
+        result = await create_server(app).call_tool(tool, {"rel_path": "dated.md", **arguments})
+        payload = cast("dict[str, Any]", json.loads(cast("Any", result).content[0].text))
+    finally:
+        await app.store.close()
+
+    error = payload.get("error")
+    if error is None:
+        assert "created: 2024-02-30" in note.read_text(encoding="utf-8")
+    else:
+        assert error.get("code") != "internal_error", error
+        assert error.get("type") == "FrontmatterError", error
+        assert note.read_text(encoding="utf-8") == _IMPOSSIBLE_DATE_NOTE
+
+
 class TestBuildAppReadPaths:
     def test_read_paths_allow_vault_inside_allowed_root(self, tmp_path: Path) -> None:
         allowed = tmp_path / "allowed"

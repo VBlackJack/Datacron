@@ -292,7 +292,10 @@ def _frontmatter_block_end(lines: Sequence[str]) -> int | None:
         return None
     try:
         loaded = yaml.safe_load("".join(lines[opening + 1 : closing]))
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError):
+        # The constructor's plain ValueError for an impossible date such as
+        # ``2024-02-30`` means the block cannot be loaded, exactly as a syntax
+        # error does, and this check answers rather than raises.
         return _AMBIGUOUS_BLOCK
     if loaded is None or isinstance(loaded, dict):
         return closing
