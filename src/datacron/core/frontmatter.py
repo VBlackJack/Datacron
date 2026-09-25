@@ -107,7 +107,10 @@ def parse(raw: str) -> tuple[dict[str, Any], str]:
         return {}, raw
     try:
         post = frontmatter.loads(parseable)
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, ValueError) as exc:
+        # PyYAML builds dates itself and lets the constructor's ValueError out
+        # for an impossible one such as ``2024-02-30``. It is malformed
+        # frontmatter like any other, and must degrade the same way.
         raise FrontmatterError(str(exc)) from exc
     metadata: dict[str, Any] = dict(post.metadata)
     _normalize_lifecycle_scalars(metadata)

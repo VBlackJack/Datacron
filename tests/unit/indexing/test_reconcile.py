@@ -277,6 +277,40 @@ async def test_a_torn_identity_sidecar_keeps_the_rows_of_id_less_notes(
     assert set(await store.list_indexed_notes_with_mtime()) == before
 
 
+async def test_a_note_with_an_impossible_date_stays_indexed_and_current(
+    store: SQLiteFTS5Store,
+    chunker: MarkdownChunker,
+    tmp_path: Path,
+) -> None:
+    """``created: 2024-02-30`` is malformed frontmatter, not an unreadable note.
+
+    PyYAML raises a plain ValueError for it. Kept as "unreadable", the note's
+    rows went on describing bytes it no longer holds, and every search that
+    re-read it for redaction failed. It is now read with empty metadata like
+    any other malformed frontmatter, so its rows follow the file.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note = vault / "b.md"
+    note.write_text(
+        "---\nid: 01J00000000000000000000122\n---\n# b\n\nbudget review\n", encoding="utf-8"
+    )
+    reader = FilesystemVaultReader(vault)
+    await reconcile(store, reader, chunker, mtime_gate=True)
+
+    note.write_text(
+        "---\nid: 01J00000000000000000000122\ncreated: 2024-02-30\n---\n# b\n\nbudget changed\n",
+        encoding="utf-8",
+    )
+    stats = await reconcile(store, reader, chunker, mtime_gate=False)
+    current = await reader.read_note(note)
+
+    indexed = await store.list_indexed_notes_with_mtime()
+    assert stats["reindexed_notes"] == 1
+    assert indexed["b.md"][:2] == (current.id, current.content_hash)
+    assert "budget changed" in current.content
+
+
 async def test_a_transiently_unreadable_note_keeps_its_rows(
     store: SQLiteFTS5Store,
     reader: FilesystemVaultReader,

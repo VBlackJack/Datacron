@@ -67,6 +67,17 @@ class TestParse:
         with pytest.raises(FrontmatterError, match="while parsing"):
             parse(raw)
 
+    def test_an_impossible_date_raises_the_typed_error(self) -> None:
+        """PyYAML reports ``2024-02-30`` with a plain ValueError, not a YAMLError.
+
+        Uncaught, it escaped every reader that degrades malformed frontmatter to
+        empty metadata, so the note could not be read at all.
+        """
+        raw = "---\ncreated: 2024-02-30\n---\nbody\n"
+
+        with pytest.raises(FrontmatterError, match="day is out of range"):
+            parse(raw)
+
     def test_lifecycle_dates_are_parsed_as_iso_strings(self) -> None:
         raw = (
             "---\n"

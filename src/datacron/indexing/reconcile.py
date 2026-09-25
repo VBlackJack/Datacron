@@ -39,7 +39,7 @@ from typing import TypedDict
 
 from datacron.core.logger import get_logger
 from datacron.core.protocols import ASTChunker, FTS5Store, VaultReader
-from datacron.core.vault import DuplicateNoteIdentityError
+from datacron.core.vault import DuplicateNoteIdentityError, IdentitySidecarError
 
 __all__ = ["IndexProgress", "ReconcileStats", "reconcile"]
 
@@ -336,7 +336,7 @@ async def _prepare_live_identities(
     The last two are kept apart because they call for opposite index states. A
     read error is transient (a Windows share lock, an antivirus scan, a damaged
     identity sidecar), so the rows of the last good read are kept. A decoding
-    error, and only a ``UnicodeDecodeError``, is a property of the
+    error, or any other ValueError from the note itself, is a property of the
     bytes on disk, and keeping the rows kept serving content the file no longer
     holds: every later list or search then re-read that note for redaction or
     paging, hit the same error and failed as a whole, and no pass ever healed it.
@@ -351,19 +351,18 @@ async def _prepare_live_identities(
         else:
             try:
                 note = await reader.read_note(path)
-            except UnicodeDecodeError as exc:
-                _LOGGER.warning("Dropping undecodable note %s from the index: %s", path, exc)
-                undecodable.add(rel_path)
-                await on_settled()
-                continue
-            except (OSError, ValueError) as exc:
-                # Only a decoding error is a property of the note's own bytes. Any
-                # other ValueError can come from state the note merely depends on:
-                # a torn ``ulids.json`` makes every note without a frontmatter id
-                # raise a JSON decoding error, and purging on that emptied the
-                # index of intact notes. So those keep their rows, like a lock.
+            except (OSError, IdentitySidecarError) as exc:
+                # A damaged ``ulids.json`` is state the note depends on, not the
+                # note: every note without a frontmatter id fails on it, and
+                # purging on that emptied the index of intact notes. So those
+                # keep their rows, like a locked file.
                 _LOGGER.warning("Skipping unreadable note %s: %s", path, exc)
                 unreadable.add(rel_path)
+                await on_settled()
+                continue
+            except ValueError as exc:
+                _LOGGER.warning("Dropping undecodable note %s from the index: %s", path, exc)
+                undecodable.add(rel_path)
                 await on_settled()
                 continue
             prepared[rel_path] = (note.id, note.content_hash)

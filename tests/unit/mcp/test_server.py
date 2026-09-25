@@ -1286,6 +1286,60 @@ async def test_rename_note_section_write_descriptions_lead_with_usage_trigger(
         assert "chunk_id" in description
 
 
+@pytest.mark.asyncio
+async def test_a_note_with_an_impossible_date_stays_searchable_and_listed(
+    tmp_path: Path,
+) -> None:
+    """One ``created: 2024-02-30`` must not cost search and listing their answer.
+
+    PyYAML raises a plain ValueError for it, which escaped the malformed
+    frontmatter handling, so the note could not be read: its old rows were kept,
+    and every search or listing that re-read it failed as a whole. The repair
+    runs before each search here; with a throttled repair, any edit leaves rows
+    that describe older bytes, and how search treats those is its own concern.
+    """
+    ids = {
+        "a.md": "01J00000000000000000000121",
+        "b.md": "01J00000000000000000000122",
+        "c.md": "01J00000000000000000000123",
+    }
+    settings = Settings(
+        vault_root=tmp_path,
+        read_paths=[tmp_path],
+        write_paths=[tmp_path],
+        repair_min_interval_seconds=0,
+    )
+    app = build_app(settings=settings, vault_root=tmp_path)
+    for name, note_id in ids.items():
+        (tmp_path / name).write_text(
+            "---\nid: " + note_id + "\n---\n# " + name + "\n\nbudget review\n", encoding="utf-8"
+        )
+
+    async def call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        result = await create_server(app).call_tool(tool, arguments)
+        text = cast("Any", result).content[0].text
+        return cast("dict[str, Any]", json.loads(text))
+
+    await app.store.open(sidecar_index_db(tmp_path))
+    try:
+        first = await call("search_text", {"query": "budget"})
+        assert "error" not in first, first
+        (tmp_path / "b.md").write_text(
+            "---\nid: " + ids["b.md"] + "\ncreated: 2024-02-30\n---\n# b.md\n\nbudget review\n",
+            encoding="utf-8",
+        )
+        for _attempt in range(2):
+            found = await call("search_text", {"query": "budget"})
+            assert "error" not in found, found
+            assert "b.md" in {item["note_rel_path"] for item in found["results"]}
+        listed = await call("list_notes", {})
+    finally:
+        await app.store.close()
+
+    assert "error" not in listed, listed
+    assert {note["rel_path"] for note in listed["notes"]} == set(ids)
+
+
 class TestBuildAppReadPaths:
     def test_read_paths_allow_vault_inside_allowed_root(self, tmp_path: Path) -> None:
         allowed = tmp_path / "allowed"

@@ -22,9 +22,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   the first one.
 - A torn `ulids.json` emptied the index. Every note without a frontmatter id failed to
   resolve its identity with a JSON error, and reconcile took that for an undecodable note
-  and purged its rows: three notes out of four disappeared from search. Only a note whose
-  own bytes cannot be decoded is dropped now; any other read error keeps the rows and is
-  reported as unreadable.
+  and purged its rows: three notes out of four disappeared from search. A damaged identity
+  sidecar now raises its own error, logged once per read with the sidecar path, and the
+  notes it affects keep their rows and are reported as unreadable.
+- A frontmatter date that does not exist, such as `created: 2024-02-30`, made the note
+  unreadable: PyYAML reports it with a plain `ValueError`, which escaped the handling of
+  malformed frontmatter. The note is now read with empty metadata like any other malformed
+  frontmatter, so it stays indexed, searchable and listed.
 - The guidance for a keyed write that was committed and then reverted could not succeed.
   The request fingerprint includes `expected_hash`, so a write first made without one cannot
   be replayed with one, yet both the writer's refusal and `get_write_progress` said to do
