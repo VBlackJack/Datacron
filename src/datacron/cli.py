@@ -106,6 +106,7 @@ from datacron.setup_wizard import (
     SetupPlan,
     SetupResult,
     _scopes_for,
+    existing_client_settings,
     get_user_write_env,
     run_setup,
 )
@@ -279,6 +280,15 @@ def _explain(prompt: _SetupPrompt, **values: str) -> None:
     """Render centralized guidance immediately before one interactive setup prompt."""
     for line in _SETUP_PROMPT_EXPLANATIONS[prompt]:
         _print(f"  {line.format_map(values)}")
+
+
+def _explain_current(current: bool | None) -> None:
+    """Say which setting this vault already holds, when there is one."""
+    if current is not None:
+        _print(
+            f"  Current setting for this vault: {'yes' if current else 'no'}. "
+            "Press Enter to keep it."
+        )
 
 
 def _error(message: str, *, exit_code: int = 1) -> NoReturn:
@@ -1693,8 +1703,18 @@ def setup(
     resolved_client = _prompt_client(client, assume_yes)
     resolved_scope = _prompt_scope(scope, resolved_client, assume_yes)
     resolved_durability = _prompt_durability(durability, assume_yes)
+    # Interactive prompts default to what this vault's client entry already holds,
+    # so Enter on a rerun keeps it. They defaulted to "no", and a "no" now removes
+    # the setting, so Enter silently took write access away.
+    current: tuple[bool, bool] | None = None
+    if not assume_yes and ((enable_write is None and write_path is None) or read_only is None):
+        current = existing_client_settings(resolved_vault, resolved_client, resolved_scope)
     resolved_enable_write, resolved_write_paths = _prompt_write(
-        enable_write, write_path, resolved_vault, assume_yes
+        enable_write,
+        write_path,
+        resolved_vault,
+        assume_yes,
+        current_write=None if current is None else current[0],
     )
     resolved_machine_wide_write, replace_existing_write_env = _prompt_machine_wide_write(
         machine_wide_write,
@@ -1707,7 +1727,12 @@ def setup(
         resolved_read_only = read_only
     else:
         _explain(_SetupPrompt.READ_ONLY)
-        resolved_read_only = typer.confirm("Configure certified read-only mode?", default=False)
+        current_read_only = None if current is None else current[1]
+        _explain_current(current_read_only)
+        answer = typer.confirm(
+            "Configure certified read-only mode?", default=bool(current_read_only)
+        )
+        resolved_read_only = _kept_or_answer(answer, current_read_only)
     if protocol_enabled or assume_yes:
         resolved_protocol = protocol_enabled
     else:
@@ -1864,8 +1889,15 @@ def _prompt_write(
     write_path: Path | None,
     vault_root: Path,
     assume_yes: bool,
+    *,
+    current_write: bool | None = None,
 ) -> tuple[bool | None, list[Path]]:
-    """Resolve the write choice: ``None`` keeps what the client config holds."""
+    """Resolve the write choice: ``None`` keeps what the client config holds.
+
+    ``current_write`` is the setting an existing entry holds for this vault, or
+    ``None`` without one; it is the prompt default, and answering it keeps the
+    entry as it is, write paths included.
+    """
     if write_path is not None:
         if enable_write is False:
             _error("--write-path cannot be combined with --no-write.")
@@ -1877,12 +1909,22 @@ def _prompt_write(
     if assume_yes:
         return None, []
     _explain(_SetupPrompt.WRITE)
-    if not typer.confirm(
+    _explain_current(current_write)
+    answer = typer.confirm(
         "Let my AI assistants write notes (in 3 dedicated subfolders only)?",
-        default=False,
-    ):
-        return False, []
+        default=bool(current_write),
+    )
+    decision = _kept_or_answer(answer, current_write)
+    if not decision:
+        return decision, []
     return True, _prompt_write_paths(vault_root, assume_yes)
+
+
+def _kept_or_answer(answer: bool, current: bool | None) -> bool | None:
+    """Return ``None`` (keep) when the answer repeats an existing setting."""
+    if current is not None and answer == current:
+        return None
+    return answer
 
 
 def _prompt_write_paths(vault_root: Path, assume_yes: bool) -> list[Path]:

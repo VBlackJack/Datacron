@@ -35,6 +35,7 @@ __all__ = [
     "ENV_VAULT_ROOT",
     "ENV_WRITE_PATHS",
     "env_flag_enabled",
+    "env_names_vault",
     "merge_server_env",
     "split_env_paths",
 ]
@@ -63,6 +64,12 @@ def env_flag_enabled(value: object) -> bool:
 def _normalized(path_text: str) -> Path:
     resolved = Path(path_text).expanduser().resolve(strict=False)
     return Path(os.path.normcase(str(resolved)))
+
+
+def env_names_vault(env: Mapping[str, object], vault_root: Path) -> bool:
+    """Return whether ``env`` was written for ``vault_root``."""
+    value = env.get(ENV_VAULT_ROOT)
+    return isinstance(value, str) and _normalized(value) == _normalized(str(vault_root))
 
 
 def _paths_inside(value: str, vault_root: str) -> list[str]:

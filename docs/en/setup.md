@@ -42,7 +42,7 @@ Useful options:
 - `datacron setup --enable-write --write-path PATH` - enable writing on one explicit subfolder; without `--write-path`, the defaults are `<vault>/_memory`, `<vault>/_drafts`, and `<vault>/_journal`.
 - `datacron setup --enable-write --machine-wide-write` - also opt in to the user environment allowlist for future clients.
 - `datacron setup --durability strict --read-only` - strict durability and certified read-only mode.
-- `datacron setup --no-write` / `datacron setup --no-read-only` - remove an existing write allowlist or read-only mode from the client configs. A rerun that names neither form keeps what each client config already holds, and the summary prints the settings actually written, preserved ones included. Pointing setup at another vault drops preserved write paths that lie outside it.
+- `datacron setup --no-write` / `datacron setup --no-read-only` - remove an existing write allowlist or read-only mode from the client configs. A rerun that names neither form keeps what each client config already holds, and the summary prints the settings actually written, preserved ones included. Pointing setup at another vault drops preserved write paths that lie outside it. Interactively, the write and read-only prompts default to the setting this vault's existing client entry holds: Enter keeps it, only an explicit answer changes it.
 - `datacron setup --no-index` - skip building the index.
 - `datacron setup --client claude-code` - print a ready-to-paste stdio config snippet for Claude Code.
 - `datacron setup --client none` - configure the vault without writing or printing any client config.

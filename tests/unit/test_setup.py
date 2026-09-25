@@ -1399,3 +1399,99 @@ def test_cli_setup_refuses_a_vault_yaml_that_does_not_load(tmp_path: Path) -> No
     assert "Datacron setup complete." not in result.output
     assert "does not load" in result.output
     assert "hunter2" not in result.output
+
+
+def _interactive_rerun(vault: Path, answers: str) -> Any:
+    return _runner.invoke(
+        app,
+        [
+            "setup",
+            "--vault",
+            str(vault),
+            "--client",
+            "all",
+            "--scope",
+            "user",
+            "--durability",
+            "best-effort",
+            "--no-index",
+        ],
+        input=answers,
+    )
+
+
+def test_cli_setup_interactive_enter_keeps_the_existing_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Enter at the write and read-only prompts keeps what the entry already holds.
+
+    Both prompts defaulted to "no", and an explicit "no" removes the setting, so
+    pressing Enter on a rerun took write access away.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    memory = str(vault.resolve() / "_memory")
+    config = _existing_cursor_entry(
+        tmp_path,
+        monkeypatch,
+        {
+            "DATACRON_VAULT_ROOT": str(vault.resolve()),
+            "DATACRON_WRITE_PATHS": memory,
+            "DATACRON_READ_ONLY": "true",
+        },
+    )
+
+    result = _interactive_rerun(vault, "\n\n\n")
+
+    assert result.exit_code == 0, result.output
+    env = _written_env(config)
+    assert env["DATACRON_WRITE_PATHS"] == memory
+    assert env["DATACRON_READ_ONLY"] == "true"
+    assert "Current setting for this vault: yes" in result.output
+
+
+def test_cli_setup_interactive_explicit_answer_changes_the_existing_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    config = _existing_cursor_entry(
+        tmp_path,
+        monkeypatch,
+        {
+            "DATACRON_VAULT_ROOT": str(vault.resolve()),
+            "DATACRON_WRITE_PATHS": str(vault.resolve() / "_memory"),
+            "DATACRON_READ_ONLY": "true",
+        },
+    )
+
+    result = _interactive_rerun(vault, "n\nn\n\n")
+
+    assert result.exit_code == 0, result.output
+    env = _written_env(config)
+    assert "DATACRON_WRITE_PATHS" not in env
+    assert "DATACRON_READ_ONLY" not in env
+
+
+def test_cli_setup_interactive_defaults_stay_no_for_another_vault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An entry written for a different vault is not this vault's current setting."""
+    vault = tmp_path / "vault"
+    other = tmp_path / "other"
+    vault.mkdir()
+    other.mkdir()
+    config = _existing_cursor_entry(
+        tmp_path,
+        monkeypatch,
+        {
+            "DATACRON_VAULT_ROOT": str(other.resolve()),
+            "DATACRON_WRITE_PATHS": str(other.resolve() / "_memory"),
+        },
+    )
+
+    result = _interactive_rerun(vault, "\n\n\n")
+
+    assert result.exit_code == 0, result.output
+    assert "Current setting for this vault" not in result.output
+    assert "DATACRON_WRITE_PATHS" not in _written_env(config)

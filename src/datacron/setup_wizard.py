@@ -58,6 +58,7 @@ from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.reconcile import reconcile
 from datacron.installers.claude_desktop import (
     ClaudeDesktopConfigError,
+    config_path_for_platform,
     datacron_env_in_config,
     install_claude_desktop_config,
     resolve_mcp_invocation,
@@ -68,6 +69,7 @@ from datacron.installers.env_merge import (
     ENV_VAULT_ROOT,
     ENV_WRITE_PATHS,
     env_flag_enabled,
+    env_names_vault,
     split_env_paths,
 )
 from datacron.installers.mcp_clients import (
@@ -75,8 +77,10 @@ from datacron.installers.mcp_clients import (
     SCOPE_PROJECT,
     SCOPE_USER,
     InstallOutcome,
+    MCPClientError,
     discover_targets,
     install_targets,
+    read_datacron_env,
 )
 
 __all__ = [
@@ -95,6 +99,7 @@ __all__ = [
     "SetupResult",
     "claude_code_stdio_config",
     "configure_user_write_env",
+    "existing_client_settings",
     "get_user_write_env",
     "reset_user_state",
     "run_setup",
@@ -774,6 +779,39 @@ def _effective_settings(
         )
         warnings.append(f"Clients hold different settings after the merge: {details}")
     return first
+
+
+def existing_client_settings(
+    vault_root: Path,
+    client: str,
+    install_scope: str,
+) -> tuple[bool, bool] | None:
+    """Return ``(writing, read_only)`` held by an existing entry for this vault.
+
+    Interactive setup offers these as the prompt defaults, so pressing Enter on
+    a rerun keeps the current setting instead of answering "no". The first
+    Datacron entry written for ``vault_root`` among the clients this run would
+    configure decides; ``None`` means there is none, or none could be read.
+    """
+    envs: list[Mapping[str, object]] = []
+    try:
+        if client == CLIENT_CLAUDE_DESKTOP:
+            envs.append(datacron_env_in_config(config_path_for_platform()))
+        elif client not in (CLIENT_CLAUDE_CODE, CLIENT_NONE):
+            targets = discover_targets(
+                scopes=_scopes_for(install_scope),
+                project_dir=vault_root,
+                include=None if client == CLIENT_ALL else (client,),
+            )
+            envs.extend(found for target in targets if (found := read_datacron_env(target)))
+    except (ClaudeDesktopConfigError, MCPClientError, OSError, ValueError) as exc:
+        _LOGGER.warning("cli.setup could not read existing client settings: %s", exc)
+        return None
+    for env in envs:
+        if env_names_vault(env, vault_root):
+            write_paths, read_only = _env_settings(env)
+            return bool(write_paths), read_only
+    return None
 
 
 def _removed_env_keys(plan: SetupPlan) -> tuple[str, ...]:

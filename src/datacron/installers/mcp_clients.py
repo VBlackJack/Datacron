@@ -63,6 +63,7 @@ __all__ = [
     "discover_targets",
     "discover_unregistration_targets",
     "install_targets",
+    "read_datacron_env",
     "unregister_targets",
 ]
 
@@ -642,6 +643,26 @@ def _remove_toml_entry(path: Path) -> bool:
     del servers[_SERVER_NAME]
     _atomic_write(path, tomli_w.dumps(config).encode("utf-8"))
     return True
+
+
+def read_datacron_env(target: ClientTarget) -> dict[str, object] | None:
+    """Return the environment of the Datacron entry in ``target``, or ``None``.
+
+    Read-only: nothing is created or rewritten. ``None`` means the config holds
+    no Datacron entry at all.
+    """
+    if target.fmt == _FMT_TOML:
+        servers = _load_toml(target.config_path).get("mcp_servers")
+    else:
+        key = "mcpServers" if target.fmt == _FMT_JSON_MCPSERVERS else "servers"
+        servers = _load_json(target.config_path).get(key)
+    if not isinstance(servers, dict):
+        return None
+    entry = servers.get(_SERVER_NAME)
+    if not isinstance(entry, dict):
+        return None
+    env = entry.get("env")
+    return dict(env) if isinstance(env, dict) else {}
 
 
 def _load_json(path: Path) -> dict[str, Any]:

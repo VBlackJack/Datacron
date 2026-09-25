@@ -13,7 +13,9 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 - `datacron setup --no-write` and `--no-read-only` remove an existing write allowlist or
   read-only mode from the client configs. Without either form, a rerun keeps what each config
-  already holds, as before.
+  already holds, as before. In interactive setup, the write and read-only prompts default to
+  the setting this vault's existing client entry holds, so pressing Enter keeps it; only an
+  explicit answer changes it.
 
 ### Fixed
 
