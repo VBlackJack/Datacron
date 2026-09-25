@@ -23,7 +23,10 @@ from typing import Any, Final
 import pytest
 
 from datacron.core.config import Settings
+from datacron.core.models import Note
 from datacron.core.paths import sidecar_index_db
+from datacron.indexing.chunker import CHUNKER_VERSION
+from datacron.indexing.reconcile import reconcile
 from datacron.indexing.ripgrep import ripgrep_available
 from datacron.mcp.server import DatacronApp, build_app
 from datacron.mcp.tools.retrieval import SEARCH_INDEX_STALE_CODE
@@ -176,6 +179,71 @@ class TestStaleHitsAfterOutOfBandEdit:
             assert _paths(payload) == {"beta.md"}
         refused = await _search_text_impl(reader, query="apple", limit=_LIMIT)
         assert refused["error"]["code"] == SEARCH_INDEX_STALE_CODE
+
+    async def test_a_note_the_reader_refuses_is_dropped_not_fatal(
+        self, app_factory: AppFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A frontmatter value the parser refuses (a date out of range) surfaces as a
+        # plain ValueError from read_note, after the note was indexed.
+        app = await app_factory()
+        await _search_text_impl(app, query="zebra", limit=_LIMIT)
+        read_note = app.vault_reader.read_note
+
+        async def refusing(path: Path) -> Note:
+            if path.name == "alpha.md":
+                raise ValueError("year 2024 is out of range")
+            return await read_note(path)
+
+        monkeypatch.setattr(app.vault_reader, "read_note", refusing)
+        assert _paths(await _search_text_impl(app, query="zebra", limit=_LIMIT)) == {"beta.md"}
+        assert app.repair_state.stale_note_paths == {"alpha.md"}
+
+
+class TestChunkerUpgrade:
+    async def _index_with_an_older_chunker(self, app: DatacronApp) -> None:
+        """Leave alpha.md with the chunks and the version an earlier release wrote."""
+        await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        path = app.vault_root / "alpha.md"
+        note = await app.vault_reader.read_note(path)
+        older = [
+            chunk.model_copy(update={"wikilinks_out": ["Ghost"]})
+            for chunk in app.chunker.chunk(note)
+        ]
+        await app.store.upsert_note(note, older, fs_mtime_ns=path.stat().st_mtime_ns)
+        await app.store.set_chunker_version(CHUNKER_VERSION - 1)
+
+    async def test_datacron_index_rechunks_after_an_upgrade(self, app_factory: AppFactory) -> None:
+        writer = await app_factory()
+        await self._index_with_an_older_chunker(writer)
+        await writer.store.close()
+
+        reader = await app_factory(read_only=True)
+        assert _paths(await _get_backlinks_impl(reader, target="Beta", limit=_LIMIT)) == set()
+        await reader.store.close()
+
+        # What `datacron index` runs: mtime-gated, and the bytes did not move.
+        indexer = await app_factory()
+        stats = await reconcile(
+            indexer.store, indexer.vault_reader, indexer.chunker, mtime_gate=True
+        )
+        assert stats["reindexed_notes"] == 1
+        assert await indexer.store.get_chunker_version() == CHUNKER_VERSION
+        await indexer.store.close()
+
+        reader = await app_factory(read_only=True)
+        assert _paths(await _get_backlinks_impl(reader, target="Beta", limit=_LIMIT)) == {
+            "alpha.md"
+        }
+
+    async def test_an_upgrade_rewrites_only_notes_whose_chunks_changed(
+        self, app_factory: AppFactory
+    ) -> None:
+        app = await app_factory()
+        await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        await app.store.set_chunker_version(CHUNKER_VERSION - 1)
+        stats = await reconcile(app.store, app.vault_reader, app.chunker, mtime_gate=True)
+        assert stats["reindexed_notes"] == 0
+        assert await app.store.get_chunker_version() == CHUNKER_VERSION
 
 
 @pytest.mark.skipif(not ripgrep_available(), reason="ripgrep is not installed")

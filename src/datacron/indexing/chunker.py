@@ -38,8 +38,18 @@ _HEADING_SEPARATOR: Final[str] = " / "
 # a note name, not a paragraph, so this is generous; the bound is what keeps an
 # adversarial line of nothing but "[[" from turning the scan quadratic.
 _WIKILINK_SCAN_WINDOW: Final[int] = 256
+CHUNKER_VERSION: Final[int] = 2
+"""Version of the chunks this chunker produces for unchanged note bytes.
 
-__all__ = ["MarkdownChunker", "content_line_offset"]
+Bumped whenever a release changes the chunks of a note whose bytes did not move
+(boundaries, heading model, wikilink extraction). The index records the version
+that wrote it; a pass that finds another one re-chunks every note, because the
+mtime gate and the content hash both say an unchanged note is up to date.
+Version 2: headings inside HTML comments, inline triple backticks, and escaped
+table pipes in wikilinks.
+"""
+
+__all__ = ["CHUNKER_VERSION", "MarkdownChunker", "content_line_offset"]
 
 
 @final

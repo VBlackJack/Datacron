@@ -57,6 +57,7 @@ __all__ = ["SQLiteFTS5Store", "fts5_query_terms"]
 
 _LOGGER = get_logger(__name__)
 
+_CHUNKER_VERSION_KEY: Final[str] = "chunker_version"
 _BULK_COMMIT_NOTES: Final[int] = 500
 """Notes written per durable commit while a bulk scope is open.
 
@@ -1308,6 +1309,29 @@ class SQLiteFTS5Store:
             "INSERT INTO index_meta(key, value) VALUES ('generation', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
             (str(generation),),
+        )
+        await connection.commit()
+
+    async def get_chunker_version(self) -> int | None:
+        """Return the chunker version that wrote the index, ``None`` when unrecorded."""
+        connection = self._require_connection()
+        try:
+            async with connection.execute(
+                "SELECT value FROM index_meta WHERE key = ?;", (_CHUNKER_VERSION_KEY,)
+            ) as cursor:
+                row = await cursor.fetchone()
+        except sqlite3.OperationalError:
+            return None
+        return int(row[0]) if row is not None else None
+
+    async def set_chunker_version(self, version: int) -> None:
+        """Record the chunker version every indexed note is now chunked with."""
+        connection = self._require_connection()
+        self._require_writable()
+        await connection.execute(
+            "INSERT INTO index_meta(key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+            (_CHUNKER_VERSION_KEY, str(version)),
         )
         await connection.commit()
 

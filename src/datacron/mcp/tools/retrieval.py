@@ -157,11 +157,12 @@ async def protect_results(app: DatacronApp, results: list[SearchResult]) -> list
                 parents[path] = await app.vault_reader.read_note(
                     app.scope.authorize_note_rel_path(path)
                 )
-            except (UnicodeDecodeError, FileNotFoundError, NoteAdmissionError) as exc:
-                # The note was re-saved in a legacy encoding, or removed, after it
-                # was indexed. Its chunks describe bytes the file no longer holds,
-                # so they are dropped rather than failing the whole search until
-                # the next sweep removes them from the index.
+            except (ValueError, FileNotFoundError, NoteAdmissionError) as exc:
+                # The note was re-saved in a legacy encoding, removed, or given
+                # frontmatter the reader refuses (a ValueError, such as a date out
+                # of range), after it was indexed. Its chunks describe bytes the
+                # file no longer holds, so they are dropped rather than failing the
+                # whole search until the next sweep removes them from the index.
                 _LOGGER.warning("Dropping search results of unreadable note %s: %s", path, exc)
                 unusable.add(path)
                 app.repair_state.stale_note_paths.add(path)

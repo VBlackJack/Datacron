@@ -40,6 +40,7 @@ from typing import TypedDict
 from datacron.core.logger import get_logger
 from datacron.core.protocols import ASTChunker, FTS5Store, VaultReader
 from datacron.core.vault import DuplicateNoteIdentityError
+from datacron.indexing.chunker import CHUNKER_VERSION
 
 __all__ = ["IndexProgress", "ReconcileStats", "reconcile"]
 
@@ -103,6 +104,12 @@ async def reconcile(
     indexed = await store.list_indexed_notes_with_mtime()
     if live is None:
         live = await reader.stat_notes()
+    # An index written by another chunker holds chunks this one would not produce
+    # for the same bytes, and neither the mtime nor the hash can tell. Every note
+    # is re-chunked once, and only a note whose chunks actually differ is written.
+    upgrade = await store.get_chunker_version() != CHUNKER_VERSION
+    if upgrade:
+        rechunk_paths = frozenset(live)
     gated = frozenset(
         rel_path
         for rel_path, (_path, st_mtime_ns) in live.items()
@@ -169,6 +176,8 @@ async def reconcile(
             await _advance_generation_after_failure(store)
         raise
     deleted, reindexed, skipped = counts.deleted, counts.reindexed, counts.skipped
+    if upgrade:
+        await store.set_chunker_version(CHUNKER_VERSION)
 
     if unreadable:
         _LOGGER.warning(
@@ -291,7 +300,20 @@ async def _apply_pass(
         if note.id != note_id and owners.get(note.id, rel_path) != rel_path:
             raise DuplicateNoteIdentityError(note.id, owners[note.id], rel_path)
         owners[note.id] = rel_path
-        await store.upsert_note(note, chunker.chunk(note), fs_mtime_ns=st_mtime_ns)
+        chunks = chunker.chunk(note)
+        if (
+            rel_path in rechunk
+            and entry is not None
+            and entry[:2] == (note.id, note.content_hash)
+            and await store.list_chunks_for_note(note.id) == chunks
+        ):
+            # Re-chunked only to check it: the stored chunks are already these.
+            if entry[2] != st_mtime_ns:
+                await store.record_mtime(note.id, st_mtime_ns)
+            counts.skipped += 1
+            await advance()
+            continue
+        await store.upsert_note(note, chunks, fs_mtime_ns=st_mtime_ns)
         counts.reindexed += 1
         await advance()
 

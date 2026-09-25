@@ -17,7 +17,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   indexed chunk no longer matches the note on disk is now dropped while the others are
   returned, and the next read refreshes that note at once, even when its mtime or hash did
   not move. When every hit was stale the read answers with the retryable code
-  `search_index_stale`.
+  `search_index_stale`. A note whose frontmatter the reader refuses after indexing (a date
+  out of range) is dropped the same way instead of failing the read.
+- Notes whose chunks this release computes differently kept their old chunks after an
+  upgrade, because their bytes, mtime and hash had not moved, and `datacron index` skipped
+  them. The index now records the chunker version that wrote it; the first `datacron index`
+  or read repair after an upgrade re-chunks every note once and rewrites only those whose
+  chunks changed.
 - `search_regex` skipped notes with an upper-case extension such as `Upper.MD`, which the
   vault reader indexes and `search_text` finds: the ripgrep file type was case-sensitive.
 - The secret detector took 45 s on a 96 KB run such as `token_token_...`, and the URL
