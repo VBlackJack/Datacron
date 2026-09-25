@@ -50,6 +50,57 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   a malformed `VAULT.yaml`; they now exit 2 with a message that names the problem without
   echoing the offending value. `datacron setup` refuses such a vault instead of reporting
   success.
+### Fixed
+
+- One note edited outside Datacron (Obsidian, a sync client) inside the 30 s repair window
+  made `search_text`, `search_regex` and `get_backlinks` fail with `internal_error` whenever
+  that note ranked, and a read-only server kept failing until `datacron index`. A hit whose
+  indexed chunk no longer matches the note on disk is now dropped while the others are
+  returned, and the next read refreshes that note at once, even when its mtime or hash did
+  not move. When every hit was stale the read answers with the retryable code
+  `search_index_stale`. A note whose frontmatter the reader refuses after indexing (a date
+  out of range) is dropped the same way instead of failing the read.
+- Notes whose chunks this release computes differently kept their old chunks after an
+  upgrade, because their bytes, mtime and hash had not moved, and `datacron index` skipped
+  them. The index now records the chunker version that wrote it; the first `datacron index`
+  or read repair after an upgrade re-chunks every note once and rewrites only those whose
+  chunks changed.
+- `search_regex` skipped notes with an upper-case extension such as `Upper.MD`, which the
+  vault reader indexes and `search_text` finds: the ripgrep file type was case-sensitive.
+- The secret detector took 45 s on a 96 KB run such as `token_token_...`, and the URL
+  userinfo detector grew the same way on `a-a-a-...`: both restarted a scan at every
+  separator. Both are linear again, with every detection kept.
+- A list item such as ``- ```git log``` shows history`` was read as a code fence opener,
+  so every wikilink after it in the chunk was missing from the backlinks. A backtick fence
+  whose info string holds a backtick is inline code, as in CommonMark.
+- `get_note` with `format=map` failed on a note with a heading inside an HTML comment, or
+  reported that heading with a wrong level and a path `get_note` then refused. The chunker
+  now shares the heading model of the map and the write tools.
+- `get_backlinks` admitted every note any wikilink in the vault named, not only the source
+  notes: 5.7 s at 3000 notes, now 2.9 s, with half the admission checks.
+- Chunking a long list or paragraph rescanned the whole block for every segment, which was
+  quadratic in the block length.
+- A table wikilink with an escaped pipe, `[[Target\|label]]`, was recorded with the target
+  `Target\`, so the note was missing from the backlinks of `Target`.
+- `search_regex` validated every pattern with Python's `re`, so ripgrep syntax such as
+  `\p{Lu}\w+` was refused on the ripgrep path. Python now judges only the patterns it runs,
+  on the indexed fallback; ripgrep reports its own parse errors.
+- `get_note` with an unknown ULID walked the whole vault on every call (2.7 s at 5000 notes).
+  An ID the walk did not find is now remembered for the repair interval; any other ID
+  still walks, so a note written since the last sweep is still found.
+- The first index-backed call on a cold index resolved each note path about thirteen times;
+  it now resolves it about seven times (2000 notes: 16.5 s to 14.2 s).
+
+### Changed
+
+- `search_regex` documents that both of its paths search note bodies only: a match inside
+  frontmatter is not returned.
+
+### Security
+
+- A `search_text` query had no size bound: 50 000 terms held the shared index connection for
+  seconds and the echoed query escaped the result budget. A query is now refused above 2048
+  characters or 64 terms, with the code `search_query_too_large`, and is not echoed back.
 
 ## [2026.0924.00] - 2026-09-24
 

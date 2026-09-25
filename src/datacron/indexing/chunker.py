@@ -26,7 +26,7 @@ from mistletoe import block_token
 from datacron.core.config import DEFAULT_CHUNK_MAX_TOKENS, TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
-from datacron.core.markdown_headings import token_text
+from datacron.core.markdown_headings import html_comment_lines, token_text
 from datacron.core.markdown_sections import heading_ancestry
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.indexing.wikilinks import OpenFence, extract_wikilink_targets, open_fence_after
@@ -38,8 +38,18 @@ _HEADING_SEPARATOR: Final[str] = " / "
 # a note name, not a paragraph, so this is generous; the bound is what keeps an
 # adversarial line of nothing but "[[" from turning the scan quadratic.
 _WIKILINK_SCAN_WINDOW: Final[int] = 256
+CHUNKER_VERSION: Final[int] = 2
+"""Version of the chunks this chunker produces for unchanged note bytes.
 
-__all__ = ["MarkdownChunker", "content_line_offset"]
+Bumped whenever a release changes the chunks of a note whose bytes did not move
+(boundaries, heading model, wikilink extraction). The index records the version
+that wrote it; a pass that finds another one re-chunks every note, because the
+mtime gate and the content hash both say an unchanged note is up to date.
+Version 2: headings inside HTML comments, inline triple backticks, and escaped
+table pipes in wikilinks.
+"""
+
+__all__ = ["CHUNKER_VERSION", "MarkdownChunker", "content_line_offset"]
 
 
 @final
@@ -85,6 +95,15 @@ class MarkdownChunker:
         line_offset = content_line_offset(note)
         document = block_token.Document(source_lines)
         blocks = list(document.children or [])
+        # One heading model with the map and the write selectors: a heading line
+        # inside an HTML comment is not a heading there, so it is not one here. A
+        # HEADING chunk the map could not match raised StopIteration, and a masked
+        # heading nested under a real one was reported with the wrong level.
+        commented = html_comment_lines(source_lines)
+
+        def is_heading(token: Any) -> bool:
+            return _is_heading(token) and _token_line_index(token) not in commented
+
         if not blocks:
             line_number = max(1, line_offset + 1)
             return [
@@ -106,7 +125,7 @@ class MarkdownChunker:
                 [
                     _HeadingToken(_heading_level(token), _token_text(token).strip())
                     for token in blocks
-                    if _is_heading(token)
+                    if is_heading(token)
                 ]
             )
         )
@@ -141,14 +160,31 @@ class MarkdownChunker:
         for index, token in enumerate(blocks):
             block_start, block_end = _block_line_range(source_lines, blocks, index)
             raw_lines = source_lines[block_start - 1 : block_end]
-            chunk_type = _chunk_type_for_token(token)
+            heading = is_heading(token)
+            chunk_type = (
+                ChunkType.NARRATIVE
+                if _is_heading(token) and not heading
+                else _chunk_type_for_token(token)
+            )
             lang = _code_language(token) if chunk_type is ChunkType.CODE else None
 
-            if _is_heading(token):
+            if heading:
                 chunk_headings = [item.title for item in next(trails)]
+            # The fence state at each segment start is carried forward from the
+            # previous one. Rescanning the whole block prefix for every segment made
+            # a long list or paragraph quadratic in its length.
+            fence_state: OpenFence | None = None
+            scanned = 0
             for content, rel_start, rel_end in _segment_block_content(
                 raw_lines, chunk_type, self._max_chars
             ):
+                open_fence: OpenFence | None = None
+                if rel_start and chunk_type is not ChunkType.CODE:
+                    fence_state = open_fence_after(
+                        "".join(raw_lines[scanned:rel_start]), fence_state
+                    )
+                    scanned = rel_start
+                    open_fence = fence_state
                 chunk = self._build_chunk(
                     note=note,
                     headings=chunk_headings,
@@ -158,11 +194,7 @@ class MarkdownChunker:
                     line_end=block_start + rel_end + line_offset,
                     ordinal_counters=ordinal_counters,
                     lang=lang,
-                    open_fence=(
-                        open_fence_after("".join(raw_lines[:rel_start]))
-                        if rel_start and chunk_type is not ChunkType.CODE
-                        else None
-                    ),
+                    open_fence=open_fence,
                 )
                 chunks.append(chunk)
 
@@ -229,6 +261,10 @@ def _header_path(headings: Iterable[str]) -> str:
 
 def _is_heading(token: Any) -> bool:
     return isinstance(token, block_token.Heading | block_token.SetextHeading)
+
+
+def _token_line_index(token: Any) -> int:
+    return int(getattr(token, "line_number", 1)) - 1
 
 
 def _heading_level(token: Any) -> int:
