@@ -36,6 +36,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
+from datacron.core.case_folding import case_folding_for, fold_path_key
 from datacron.core.config import OrganizationConfig, VaultConfig
 from datacron.core.error_text import describe_validation_error, describe_yaml_error
 from datacron.core.frontmatter import (
@@ -226,8 +227,12 @@ def sha256_bytes(content: bytes) -> str:
 
 
 def _filesystem_path_key(value: str) -> str:
-    """Normalize case only on filesystems whose path contract is case-insensitive."""
-    return value.casefold() if os.name == "nt" else value
+    """Normalize case only on filesystems whose path contract is case-insensitive.
+
+    The answer is probed on the vault's volume (see :mod:`datacron.core.case_folding`):
+    testing ``os.name`` missed case-insensitive macOS volumes.
+    """
+    return fold_path_key(value)
 
 
 class ExistingNoteIdentity(_StrictModel):
@@ -2204,6 +2209,16 @@ def validate_organization_bundle(
             scope, link, or configuration precondition differs.
     """
     resolved_vault = _resolve_plain_vault_root(vault_root)
+    with case_folding_for(resolved_vault):
+        return _validate_organization_bundle(bundle, resolved_vault=resolved_vault, scope=scope)
+
+
+def _validate_organization_bundle(
+    bundle: OrganizationBundle,
+    *,
+    resolved_vault: Path,
+    scope: VaultScope,
+) -> ValidatedOrganizationBundle:
     if _is_within(bundle.bundle_root, resolved_vault) or _is_within(
         resolved_vault,
         bundle.bundle_root,

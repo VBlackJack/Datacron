@@ -23,6 +23,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   spelled in another case than on disk. On a case-insensitive filesystem it validated and
   committed, then answered `committed_report_mismatch` on every retry. Only the folders were
   compared; the file name now is too, and the manifest is refused with `target_case_mismatch`.
+- Organization manifests, batches, the planner and the tag-policy scope check folded path
+  case only when running on Windows. The default macOS filesystem is case-insensitive too, so
+  there two spellings of one note were treated as two paths. Whether the vault's volume folds
+  case is now probed on the volume itself, once per vault root.
 - `validate` on an organization manifest never looked at its committed receipt. After the move
   was undone by hand it validated again with the same token, and `apply` then answered
   `recovery_required`, telling the operator to stop writers over a vault that was not corrupt.

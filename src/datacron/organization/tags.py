@@ -29,13 +29,13 @@ a path, which :func:`path_within_scope` aligns for the writer.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Final, final
 
+from datacron.core.case_folding import platform_folds_case
 from datacron.core.config import OrganizationConfig, OrganizationTagPolicy
 
 __all__ = [
@@ -81,19 +81,19 @@ class TagPolicyError(ValueError):
         super().__init__(f"{rel_path}: {format_violations(violations)}")
 
 
-def _canonical_parts(rel_path: str) -> tuple[str, ...]:
+def _canonical_parts(rel_path: str, *, fold_case: bool) -> tuple[str, ...]:
     """Collapse separators and ``.`` segments; case follows the filesystem contract."""
     parts = tuple(
         part
         for part in PurePosixPath(rel_path.replace("\\", "/")).parts
         if part not in {"", ".", "/"}
     )
-    if os.name == "nt":
+    if fold_case:
         return tuple(part.casefold() for part in parts)
     return parts
 
 
-def path_within_scope(rel_path: str, scope: str) -> bool:
+def path_within_scope(rel_path: str, scope: str, *, fold_case: bool | None = None) -> bool:
     """True when ``rel_path`` lies strictly inside ``scope``, both vault-relative.
 
     ``./_memory/x.md`` and ``_memory//x.md`` are the same path as
@@ -103,9 +103,14 @@ def path_within_scope(rel_path: str, scope: str) -> bool:
     that accept user paths must first normalize them against the vault root
     (the writer guard does), because a ``False`` from this function means
     "not judged", never "refused".
+
+    ``fold_case`` says whether the vault's filesystem folds path case (see
+    :func:`datacron.core.case_folding.filesystem_folds_case`); without it the
+    platform default applies.
     """
-    path_parts = _canonical_parts(rel_path)
-    scope_parts = _canonical_parts(scope)
+    folds = platform_folds_case() if fold_case is None else fold_case
+    path_parts = _canonical_parts(rel_path, fold_case=folds)
+    scope_parts = _canonical_parts(scope, fold_case=folds)
     if ".." in path_parts or ".." in scope_parts or not scope_parts:
         return False
     return len(path_parts) > len(scope_parts) and path_parts[: len(scope_parts)] == scope_parts
