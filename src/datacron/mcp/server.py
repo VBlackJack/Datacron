@@ -37,7 +37,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import wraps
 from inspect import isawaitable
 from pathlib import Path
@@ -127,6 +127,15 @@ class RepairState:
     sweep, a path absent from it is still checked. Nothing that changes index
     membership has to keep it up to date, because leaving it stale can only cost a
     check, never a note.
+    """
+    stale_note_paths: set[str] = field(default_factory=set)
+    """Vault-relative paths whose indexed chunks a read found to differ from disk.
+
+    A note edited outside Datacron inside the repair throttle window keeps serving
+    its old chunks until the next sweep. The protection pass drops those hits and
+    records the path here, and the next repair of a writable server runs its sweep
+    at once instead of waiting out the interval, re-chunking these notes even when
+    their mtime and hash did not move.
     """
 
 

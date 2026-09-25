@@ -9,6 +9,33 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Fixed
+
+- One note edited outside Datacron (Obsidian, a sync client) inside the 30 s repair window
+  made `search_text`, `search_regex` and `get_backlinks` fail with `internal_error` whenever
+  that note ranked, and a read-only server kept failing until `datacron index`. A hit whose
+  indexed chunk no longer matches the note on disk is now dropped while the others are
+  returned, and the next read refreshes that note at once, even when its mtime or hash did
+  not move. When every hit was stale the read answers with the retryable code
+  `search_index_stale`.
+- `search_regex` skipped notes with an upper-case extension such as `Upper.MD`, which the
+  vault reader indexes and `search_text` finds: the ripgrep file type was case-sensitive.
+- The secret detector took 45 s on a 96 KB run such as `token_token_...`, and the URL
+  userinfo detector grew the same way on `a-a-a-...`: both restarted a scan at every
+  separator. Both are linear again, with every detection kept.
+- A list item such as ``- ```git log``` shows history`` was read as a code fence opener,
+  so every wikilink after it in the chunk was missing from the backlinks. A backtick fence
+  whose info string holds a backtick is inline code, as in CommonMark.
+- `get_note` with `format=map` failed on a note with a heading inside an HTML comment, or
+  reported that heading with a wrong level and a path `get_note` then refused. The chunker
+  now shares the heading model of the map and the write tools.
+- `get_backlinks` admitted every note any wikilink in the vault named, not only the source
+  notes: 5.7 s at 3000 notes, now 2.9 s, with half the admission checks.
+- Chunking a long list or paragraph rescanned the whole block for every segment, which was
+  quadratic in the block length.
+- A table wikilink with an escaped pipe, `[[Target\|label]]`, was recorded with the target
+  `Target\`, so the note was missing from the backlinks of `Target`.
+
 ## [2026.0924.00] - 2026-09-24
 
 This release closes an audit run two days after the previous one. About one finding in five

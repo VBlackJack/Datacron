@@ -749,11 +749,18 @@ def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
     for chunk in chunks:
         if chunk.chunk_type is not ChunkType.HEADING:
             continue
+        # The chunker and this map share one heading model, so a match always
+        # exists; a disagreement must drop one entry, not raise StopIteration.
         selected = next(
-            item
-            for item in reversed(selected_headings)
-            if item.start < chunk.line_start - line_offset
+            (
+                item
+                for item in reversed(selected_headings)
+                if item.start < chunk.line_start - line_offset
+            ),
+            None,
         )
+        if selected is None:
+            continue
         level = selected.level
         headings.append(
             {

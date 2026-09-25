@@ -60,7 +60,10 @@ _NO_MATCH_RETURN_CODE: Final[int] = 1
 _MAX_STDERR_BYTES: Final[int] = 8192
 _STDERR_READ_CHUNK_BYTES: Final[int] = 65536
 _NOTE_TYPE_NAME: Final[str] = "datacronnote"
-_NOTE_TYPE_DEFINITION: Final[str] = f"{_NOTE_TYPE_NAME}:*.md"
+# ripgrep globs are case-sensitive, while the vault reader admits any case of the
+# extension: a note named ``Upper.MD`` was indexed and found by search_text, and
+# never reached by search_regex. A character class matches every case variant.
+_NOTE_TYPE_DEFINITION: Final[str] = f"{_NOTE_TYPE_NAME}:*.[mM][dD]"
 _STDERR_TRUNCATION_MARKER: Final[str] = "\n... (ripgrep diagnostics truncated)"
 _RISKY_REPETITION_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"\([^)]*(?:\||[+*])[^)]*\)(?:[+*]|\{)"

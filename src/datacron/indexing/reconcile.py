@@ -73,6 +73,7 @@ async def reconcile(
     mtime_gate: bool,
     progress: IndexProgress | None = None,
     live: dict[str, tuple[Path, int]] | None = None,
+    rechunk_paths: frozenset[str] = frozenset(),
 ) -> ReconcileStats:
     """Reconcile the FTS index in ``store`` with the live vault behind ``reader``.
 
@@ -89,6 +90,11 @@ async def reconcile(
         live: The walk this pass reconciles against, when the caller has already
             performed it. ``None`` walks here. The read repair passes its own, so
             one sweep never walks the vault twice.
+        rechunk_paths: Notes read and re-chunked even when the mtime gate or an
+            unchanged hash would skip them. A read that found a note's indexed
+            chunks differ from a fresh chunking passes it here: an edit can land
+            without moving the mtime, and a chunker change leaves the hash equal
+            while the stored chunks no longer match, which no sweep ever healed.
 
     Returns:
         Per-pass counts. ``skipped_notes`` covers both mtime-gated skips and
@@ -100,7 +106,8 @@ async def reconcile(
     gated = frozenset(
         rel_path
         for rel_path, (_path, st_mtime_ns) in live.items()
-        if _gate_holds(indexed.get(rel_path), st_mtime_ns, mtime_gate=mtime_gate)
+        if rel_path not in rechunk_paths
+        and _gate_holds(indexed.get(rel_path), st_mtime_ns, mtime_gate=mtime_gate)
     )
     # A note advances the counter once, when its index state is settled: during the
     # pre-pass when its content is unchanged, at commit when it is new or changed.
@@ -123,7 +130,12 @@ async def reconcile(
     try:
         async with reader.defer_identity_writes():
             prepared, owners, unreadable, undecodable = await _prepare_live_identities(
-                reader, live, indexed, gated=gated, on_settled=advance
+                reader,
+                live,
+                indexed,
+                gated=gated,
+                rechunk=rechunk_paths,
+                on_settled=advance,
             )
             async with store.bulk_writes():
                 await _apply_pass(
@@ -139,6 +151,7 @@ async def reconcile(
                     indexed=indexed,
                     prepared=prepared,
                     gated=gated,
+                    rechunk=rechunk_paths,
                     unreadable=unreadable,
                     owners=owners,
                     advance=advance,
@@ -227,6 +240,7 @@ async def _apply_pass(
     indexed: dict[str, tuple[str, str, int | None]],
     prepared: dict[str, tuple[str, str]],
     gated: frozenset[str],
+    rechunk: frozenset[str],
     unreadable: frozenset[str],
     owners: dict[str, str],
     advance: Callable[[], Awaitable[None]],
@@ -252,7 +266,12 @@ async def _apply_pass(
 
         note_id, content_hash = prepared[rel_path]
 
-        if entry is not None and entry[0] == note_id and entry[1] == content_hash:
+        if (
+            entry is not None
+            and entry[0] == note_id
+            and entry[1] == content_hash
+            and rel_path not in rechunk
+        ):
             # Content unchanged. If only the mtime moved, refresh the stored
             # mtime so the next pass can skip this note via the gate above.
             if entry[2] != st_mtime_ns:
@@ -321,6 +340,7 @@ async def _prepare_live_identities(
     indexed: dict[str, tuple[str, str, int | None]],
     *,
     gated: frozenset[str],
+    rechunk: frozenset[str],
     on_settled: Callable[[], Awaitable[None]],
 ) -> tuple[dict[str, tuple[str, str]], dict[str, str], frozenset[str], frozenset[str]]:
     """Validate projected identities before deleting or replacing any index rows.
@@ -363,7 +383,11 @@ async def _prepare_live_identities(
             prepared[rel_path] = (note.id, note.content_hash)
             note_id = note.id
             entry = indexed.get(rel_path)
-            settled = entry is not None and entry[:2] == (note.id, note.content_hash)
+            settled = (
+                entry is not None
+                and entry[:2] == (note.id, note.content_hash)
+                and rel_path not in rechunk
+            )
             del note
             if settled:
                 await on_settled()

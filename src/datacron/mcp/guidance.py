@@ -24,6 +24,10 @@ ERROR_ACTIONS: Final[dict[str, str]] = {
     "StaleChunkError": (
         "Read the parent note and refresh the index before requesting a new chunk ID."
     ),
+    "search_index_stale": (
+        "Retry the same read: it refreshes the changed notes first. On a read-only "
+        "server, run `datacron index` before retrying."
+    ),
     "WriteConflictError": (
         "Read the current target and original request receipt; reprepare only uncommitted work."
     ),

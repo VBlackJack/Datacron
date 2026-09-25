@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.hashing import hash_text
@@ -25,6 +25,7 @@ from datacron.core.logger import get_logger
 from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
 from datacron.core.markdown_sections import heading_ancestry
 from datacron.core.models import Chunk, Note, SearchResult
+from datacron.core.scope import NoteAdmissionError
 from datacron.core.security import REDACTED
 from datacron.indexing.chunker import content_line_offset
 from datacron.mcp.sandbox import VAULT_CONTENT_CLOSE
@@ -36,6 +37,7 @@ _LOGGER = get_logger(__name__)
 
 # '@' cannot occur in a heading slug, keeping aliases disjoint from stored IDs.
 OPAQUE_CHUNK_PATTERN = re.compile(r"^([0-9A-HJKMNP-TV-Z]{26})::@redacted-[0-9a-f]{64}::0000$")
+SEARCH_INDEX_STALE_CODE: Final[str] = "search_index_stale"
 
 
 def opaque_chunk_id(chunk: Chunk) -> str:
@@ -121,32 +123,49 @@ def protect_note_title(
     return app.secret_redactor.redact_text(note.title)
 
 
+class SearchIndexStaleError(ValueError):
+    """Every hit of a read came from notes that changed on disk since indexing."""
+
+    code: Final[str] = SEARCH_INDEX_STALE_CODE
+
+
 async def protect_results(app: DatacronApp, results: list[SearchResult]) -> list[SearchResult]:
-    """Load each admitted parent once; never redact stale chunks against new bytes."""
+    """Load each admitted parent once; never redact stale chunks against new bytes.
+
+    A hit whose chunk no longer matches its note on disk is dropped, not served and
+    not allowed to fail the others: one note edited outside Datacron inside the
+    repair throttle window used to turn every search that ranked it into an internal
+    error. Its path is recorded so the next repair sweeps at once. Only when every
+    hit was dropped that way does the read fail, with a typed, retryable refusal.
+    """
     if not results or not app.secret_redactor.retrieval_enabled(app.settings):
         return results
     parents: dict[str, Note] = {}
     live_chunks: dict[str, dict[str, Chunk]] = {}
     safe_chunks: dict[str, dict[str, Chunk]] = {}
-    undecodable: set[str] = set()
+    unusable: set[str] = set()
+    stale_hits = 0
     protected = []
     for result in results:
         chunk = result.chunk
         path = chunk.note_rel_path
-        if path in undecodable:
+        if path in unusable:
+            stale_hits += 1
             continue
         if path not in parents:
             try:
                 parents[path] = await app.vault_reader.read_note(
                     app.scope.authorize_note_rel_path(path)
                 )
-            except UnicodeDecodeError as exc:
-                # The note was re-saved in a legacy encoding after it was indexed.
-                # Its chunks describe bytes the file no longer holds, so they are
-                # dropped rather than failing the whole search until the next
-                # sweep removes them from the index.
-                _LOGGER.warning("Dropping search results of undecodable note %s: %s", path, exc)
-                undecodable.add(path)
+            except (UnicodeDecodeError, FileNotFoundError, NoteAdmissionError) as exc:
+                # The note was re-saved in a legacy encoding, or removed, after it
+                # was indexed. Its chunks describe bytes the file no longer holds,
+                # so they are dropped rather than failing the whole search until
+                # the next sweep removes them from the index.
+                _LOGGER.warning("Dropping search results of unreadable note %s: %s", path, exc)
+                unusable.add(path)
+                app.repair_state.stale_note_paths.add(path)
+                stale_hits += 1
                 continue
             live_chunks[path] = {item.chunk_id: item for item in app.chunker.chunk(parents[path])}
             originals = list(live_chunks[path].values())
@@ -162,7 +181,9 @@ async def protect_results(app: DatacronApp, results: list[SearchResult]) -> list
         # another request may have reindexed between search and this read. A
         # read-only index may still serve independently unchanged live chunks.
         if live_chunks[path].get(chunk.chunk_id) != chunk:
-            raise ValueError("search source changed; refresh the index and retry")
+            app.repair_state.stale_note_paths.add(path)
+            stale_hits += 1
+            continue
         safe = app.secret_redactor.redact_fragment(
             chunk.content, note.raw_content, chunk.line_start, chunk.line_end
         )
@@ -176,6 +197,16 @@ async def protect_results(app: DatacronApp, results: list[SearchResult]) -> list
                 }
             )
         protected.append(safe_result)
+    if not protected and stale_hits:
+        raise SearchIndexStaleError(
+            "every match came from notes changed since they were indexed; retry, "
+            "the next read refreshes them"
+            if app.write_policy.writes_allowed
+            else "every match came from notes changed since they were indexed; "
+            "run `datacron index` to refresh a read-only index"
+        )
+    if stale_hits:
+        _LOGGER.info("Dropped %d stale search result(s) pending index repair", stale_hits)
     return protected
 
 
