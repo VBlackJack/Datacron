@@ -149,7 +149,7 @@ def _indexed_paths(db_path: Path) -> set[str]:
     except sqlite3.Error as exc:
         raise AuditInputError(
             f"the index at {db_path} predates this audit and has no notes table "
-            f"({exc}); rebuild it with `datacron index --rebuild`"
+            f"({exc}); rebuild it with `datacron reindex`"
         ) from exc
     finally:
         connection.close()

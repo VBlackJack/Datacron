@@ -9,6 +9,45 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Fixed
+
+- The declared dependency floors were below what the code needs: `pydantic-settings>=2.2`
+  could not import `NoDecode` (added in 2.7), and `typer>=0.12` crashed on every command. The
+  floors are now `pydantic-settings>=2.7` and `typer>=0.16`, and `click>=8.2` is declared
+  because the CLI imports it directly. A new CI job installs every direct dependency at its
+  floor (`--resolution lowest-direct`) and runs a smoke test and a test subset there.
+- The release script tagged the version bump commit and asked for that tag to be pushed after
+  the merge, while the last three releases were tagged on the merge commit of the release pull
+  request. `release.bat` no longer creates the tag: it prints the post-merge commands, and a
+  new `release_preflight.py merged` phase checks that the tag points at origin main's tip and
+  that the tip contains the version bump. `bump_version.py` prints the same steps.
+- The Windows release build picked the Inno Setup compiler by sorting folder names as text,
+  so `Inno Setup 10` would lose to `Inno Setup 7`. It now compares the parsed version.
+- Documentation fixes: a script message named `datacron index --rebuild` instead of
+  `datacron reindex`; a source comment pointed to a design note that is not in the repository;
+  the architecture pages cited a README section that does not exist (it is "Privacy and
+  security"); three pages carried their translation link at the bottom instead of under the
+  title.
+
+### Changed
+
+- The macOS release binary is now backed by a macOS leg in the CI test matrix.
+- The CI tools that were fetched at their latest version are pinned: twine, pip-audit, and the
+  Chocolatey packages for Inno Setup and ripgrep.
+- Pull requests are refused when a commit message credits a code assistant (a co-author
+  trailer or a "Generated with" footer), through a new `release_preflight.py attribution`
+  phase. History is not rewritten.
+- The licence header guard covers every tracked Python, YAML, TOML, shell, PowerShell, batch
+  and Inno Setup file instead of `src/` only; 45 files with a truncated header and 5 empty
+  package markers now carry the whole header.
+- The typography guard also refuses the figure space, zero width joiners and the word joiner,
+  scans SVG files as text, and holds the changelog and release notes to ASCII plus French
+  accented letters.
+- The `.githooks/pre-push` hook, tracked but never wired and calling a bare `python`, is
+  removed; CI is the gate.
+- The Windsurf global rules limit (6000 characters, of which the protocol block takes about
+  5900) is documented in the FAQ and the Windows installation guide, with how to free space.
+
 ## [2026.0924.00] - 2026-09-24
 
 This release closes an audit run two days after the previous one. About one finding in five

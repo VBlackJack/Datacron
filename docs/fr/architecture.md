@@ -60,7 +60,7 @@ Le socle livré reste volontairement **minimaliste** :
 |---|---|
 | 💸 Économie de tokens 20-50× | Toujours via MCP, jamais en dump |
 | 📂 Vault portable, zéro migration | Datacron lit ce qu'il y a, ne déplace rien |
-| 🔒 Local-first transparent | Section *What leaves your machine* honnête, pas de buzzword |
+| 🔒 Local-first transparent | Section [Vie privée et sécurité](../../README.fr.md#vie-privée-et-sécurité) honnête, pas de buzzword |
 
 ---
 
@@ -479,7 +479,7 @@ datacron/                              # GitHub: VBlackJack/Datacron
 │   ├── eval-questions.example.yaml
 │   └── conversations/                 # Exemples de traces de conversation
 ├── scripts/
-│   ├── check_invariants.py            # ruff + mypy + tests d'invariants (garde pre-push)
+│   ├── check_invariants.py            # ruff + mypy + tests d'invariants (garde de la CI)
 │   ├── ci_scope.py                    # Matrice CI réduite pour la documentation seule
 │   ├── bump_version.py                # Incrément CalVer
 │   ├── release_preflight.py           # Invariants Git de release, phase par phase
@@ -543,7 +543,7 @@ sequenceDiagram
 | Audit | Pas de traçabilité | Une ligne d'audit sur chaque appel ; un journal NDJSON append-only pour chaque écriture validée |
 | Écriture accidentelle | Datacron modifie un fichier non prévu | `DATACRON_WRITE_PATHS` obligatoire, confinement strict, writes OFF par défaut |
 | Perte de contenu | Overwrite destructif | Historique adressé par contenu + écriture atomique temp/replace |
-| Privacy LLM cloud | Chunks partent chez Anthropic via Claude | Documenté honnêtement dans README "What leaves your machine" |
+| Privacy LLM cloud | Chunks partent chez Anthropic via Claude | Documenté honnêtement dans la section [Vie privée et sécurité](../../README.fr.md#vie-privée-et-sécurité) du README |
 
 ---
 

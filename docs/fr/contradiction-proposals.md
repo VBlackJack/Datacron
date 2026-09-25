@@ -1,5 +1,7 @@
 # Propositions de contradiction complètes
 
+**Français** | [English](../en/contradiction-proposals.md)
+
 La mise à jour cite la section source complète lue dans le fichier lorsqu'elle tient dans
 le plafond de citation. Une source trop longue ou ambiguë produit un renvoi daté, sans phrase
 inachevée. Les preuves affichées peuvent rester abrégées ; elles ne servent pas de payload.
@@ -18,5 +20,3 @@ Une référence `target` ou `source` désigne sa section par `note_id`, `note_re
 `header_path`, la référence porte `chunk_id: null` et `chunk_id_redacted: true`, parce que
 l'identifiant de chunk contient un slug du texte du titre. La confirmation n'en a pas
 besoin : le `proposal_token` seul identifie le candidat au scan suivant.
-
-[Translation](../en/contradiction-proposals.md)

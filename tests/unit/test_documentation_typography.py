@@ -42,7 +42,6 @@ _BINARY_SUFFIXES: Final[frozenset[str]] = frozenset(
         ".pdf",
         ".png",
         ".pyc",
-        ".svg",
         ".woff",
         ".woff2",
         ".zip",
@@ -51,14 +50,16 @@ _BINARY_SUFFIXES: Final[frozenset[str]] = frozenset(
 _REQUIRED_NON_DOCS_FILES: Final[tuple[Path, ...]] = (
     _REPO_ROOT / "packaging" / "windows" / "datacron-installer.iss",
     _REPO_ROOT / "pyproject.toml",
+    _REPO_ROOT / "docs" / "assets" / "architecture-overview.svg",
 )
-"""Files outside ``docs/`` whose text reaches a user, pinned so the sweep keeps them.
+"""Files outside the Markdown pages whose text reaches a user, pinned so the sweep keeps them.
 
 The guard used to scan two hand-listed roots, which covered 137 of the repository's
 299 tracked files. Everything a user reads outside ``docs/`` was outside it: the
 installer's own UI strings, the PyPI long description, the MCP registry entry. A sweep
 a curly quote can walk around is the failure this rule exists to stop, so the scan is
-the tracked tree now and these two are asserted reachable.
+the tracked tree now and these files are asserted reachable. The SVG diagram is text
+whose labels render on the README, so it is scanned like any other text file.
 """
 
 _REMEDIES: Final[dict[str, str]] = {
@@ -79,7 +80,11 @@ _REMEDIES: Final[dict[str, str]] = {
     "\u00a0": " ",  # no-break space
     "\u202f": " ",  # narrow no-break space
     "\u2009": " ",  # thin space
+    "\u2007": " ",  # figure space
     "\u200b": "",  # zero width space
+    "\u200c": "",  # zero width non-joiner
+    "\u200d": "",  # zero width joiner
+    "\u2060": "",  # word joiner
     "\ufeff": "",  # byte order mark
     "\u0153": "oe",  # latin small ligature oe
     "\u0152": "OE",  # latin capital ligature oe
@@ -186,6 +191,16 @@ def test_documentation_keeps_clauses_apart_from_their_conjunction() -> None:
     assert not findings, "\n".join(findings)
 
 
+# The translation link belongs at the top of a page, under its title: a reader who
+# landed in the wrong language decides in the first screen, not after the last section.
+_TRANSLATION_LINK_WINDOW: Final[int] = 10
+
+
+def _links_near_top(page: Path, target: str) -> bool:
+    head = page.read_text(encoding="utf-8").splitlines()[:_TRANSLATION_LINK_WINDOW]
+    return any(target in line for line in head)
+
+
 def test_every_public_page_links_to_its_translation() -> None:
     pairs = _language_pairs()
     assert pairs, "no English documentation page was found"
@@ -194,10 +209,16 @@ def test_every_public_page_links_to_its_translation() -> None:
         if not french.is_file():
             findings.append(f"docs/fr/{english.name} is missing")
             continue
-        if f"(../fr/{english.name})" not in english.read_text(encoding="utf-8"):
-            findings.append(f"docs/en/{english.name} does not link to its translation")
-        if f"(../en/{english.name})" not in french.read_text(encoding="utf-8"):
-            findings.append(f"docs/fr/{french.name} does not link to its translation")
+        if not _links_near_top(english, f"(../fr/{english.name})"):
+            findings.append(
+                f"docs/en/{english.name} does not link to its translation "
+                f"within its first {_TRANSLATION_LINK_WINDOW} lines"
+            )
+        if not _links_near_top(french, f"(../en/{english.name})"):
+            findings.append(
+                f"docs/fr/{french.name} does not link to its translation "
+                f"within its first {_TRANSLATION_LINK_WINDOW} lines"
+            )
     orphans = sorted(
         page.name
         for page in (_REPO_ROOT / "docs" / "fr").glob("*.md")
@@ -225,3 +246,62 @@ def test_source_scan_reaches_the_package() -> None:
 def test_source_code_uses_ascii_punctuation() -> None:
     findings = [finding for path in _source_files() for finding in _violations(path)]
     assert not findings, "\n".join(findings)
+
+
+# Release notes follow a stricter rule than the rest of the documentation. They are
+# read on a release page and by an update client that never chose a language or a
+# font, so only ASCII and the accented letters an AZERTY keyboard produces are
+# accepted there: the arrows, box-drawing characters and emoji welcome in a guide are
+# refused in a note. The allowlist grants; nothing else does.
+_FRENCH_ACCENTED_LETTERS: Final[frozenset[str]] = frozenset("àâäçéèêëîïôöùûüÿÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸ")
+_ASCII_LIMIT: Final[int] = 0x7F
+_RELEASE_NOTES_PATTERN: Final[str] = "*release-notes*.md"
+_CHANGELOG: Final[Path] = _REPO_ROOT / "CHANGELOG.md"
+
+
+def _release_note_files() -> list[Path]:
+    notes = [_CHANGELOG]
+    for language in ("en", "fr"):
+        notes.extend(sorted((_REPO_ROOT / "docs" / language).glob(_RELEASE_NOTES_PATTERN)))
+    return notes
+
+
+def release_note_violations(path: Path, root: Path) -> list[str]:
+    """Every character of ``path`` outside ASCII and the French accented letters."""
+    findings: list[str] = []
+    relative = path.relative_to(root).as_posix()
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        findings.extend(
+            f"{relative}:{number}: U+{ord(character):04X} is not allowed in release notes"
+            for character in line
+            if ord(character) > _ASCII_LIMIT and character not in _FRENCH_ACCENTED_LETTERS
+        )
+    return findings
+
+
+def test_release_notes_scan_reaches_the_changelog_and_the_notes() -> None:
+    scanned = _release_note_files()
+    assert _CHANGELOG in scanned
+    for language in ("en", "fr"):
+        directory = _REPO_ROOT / "docs" / language
+        assert any(path.parent == directory for path in scanned), (
+            f"the release-notes guard never reached docs/{language}"
+        )
+
+
+def test_release_notes_are_ascii_plus_french_accents() -> None:
+    findings = [
+        finding
+        for path in _release_note_files()
+        for finding in release_note_violations(path, _REPO_ROOT)
+    ]
+    assert not findings, "\n".join(findings)
+
+
+def test_release_notes_guard_refuses_arrows_and_keeps_accents(tmp_path: Path) -> None:
+    note = tmp_path / "note.md"
+    note.write_text("Corrigé : état \u2192 prêt \u2705\n", encoding="utf-8")
+    assert release_note_violations(note, tmp_path) == [
+        "note.md:1: U+2192 is not allowed in release notes",
+        "note.md:1: U+2705 is not allowed in release notes",
+    ]

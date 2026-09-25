@@ -60,7 +60,7 @@ The delivered foundation stays deliberately **minimalist**:
 |---|---|
 | 💸 20-50× token savings | Always via MCP, never by dump |
 | 📂 Portable vault, zero migration | Datacron reads what is there, moves nothing |
-| 🔒 Transparent local-first | An honest *What leaves your machine* section, no buzzword |
+| 🔒 Transparent local-first | An honest [Privacy and security](../../README.md#privacy-and-security) section, no buzzword |
 
 ---
 
@@ -465,7 +465,7 @@ datacron/                              # GitHub: VBlackJack/Datacron
 │   ├── eval-questions.example.yaml
 │   └── conversations/                 # Conversation trace samples
 ├── scripts/
-│   ├── check_invariants.py            # ruff + mypy + invariant tests (pre-push gate)
+│   ├── check_invariants.py            # ruff + mypy + invariant tests (CI gate)
 │   ├── ci_scope.py                    # Documentation-only CI matrix
 │   ├── bump_version.py                # CalVer bump
 │   ├── release_preflight.py           # Release Git invariants, phase by phase
@@ -529,7 +529,7 @@ sequenceDiagram
 | Audit | No traceability | An audit line on every call; an append-only NDJSON journal for every committed write |
 | Accidental write | Datacron modifies an unintended file | `DATACRON_WRITE_PATHS` mandatory, strict confinement, writes OFF by default |
 | Content loss | Destructive overwrite | Content-addressed history + atomic temp/replace write |
-| Cloud LLM privacy | Chunks go to Anthropic via Claude | Honestly documented in the README "What leaves your machine" |
+| Cloud LLM privacy | Chunks go to Anthropic via Claude | Honestly documented in the README [Privacy and security](../../README.md#privacy-and-security) section |
 
 ---
 

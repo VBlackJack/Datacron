@@ -1,5 +1,7 @@
 # Durée de validité des tokens de proposition
 
+**Français** | [English](../en/proposal-token-lifetime.md)
+
 Les tokens de `contradiction_scan` n'expirent pas avec le temps. La date dans
 `cs2:YYYY-MM-DD:<sha256>` est celle de la proposition utilisée dans la mise à jour,
 pas une TTL. Un token de la veille reste confirmable si la proposition se recalcule à l'identique.
@@ -18,5 +20,3 @@ et demande un nouveau scan suivi d'une revue, sans appel d'écriture. Les tokens
 ne portent aucune génération d'index : ce refus ne distingue pas une migration d'un
 autre changement de candidat ou d'un token inconnu. Une reconstruction qui conserve
 l'identité de la proposition ne l'invalide pas du seul fait d'avancer la génération.
-
-[Translation](../en/proposal-token-lifetime.md)

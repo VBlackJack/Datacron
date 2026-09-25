@@ -822,8 +822,30 @@ def test_the_protocol_block_leaves_a_client_room_for_its_own_rules() -> None:
         pytest.xfail(
             f"the block leaves {reserve} characters of the {_WINDSURF_GLOBAL_RULE_MAX_CHARS} "
             f"budget, under the {_USER_RULES_RESERVE_CHARS} a user needs for their own "
-            "rules; a shorter Windsurf variant is the open decision"
+            "rules; a shorter Windsurf variant is the open product decision, and until "
+            "it is taken the limit and its workaround are documented in docs/en/faq.md "
+            "(Why did the memory protocol install fail for Windsurf?) and in "
+            "docs/en/installation-windows.md section 8"
         )
+
+
+@pytest.mark.parametrize(
+    ("page", "heading"),
+    [
+        ("docs/en/faq.md", "## Why did the memory protocol install fail for Windsurf?"),
+        (
+            "docs/fr/faq.md",
+            "## Pourquoi l'installation du protocole mémoire échoue-t-elle pour Windsurf ?",
+        ),
+    ],
+)
+def test_the_windsurf_budget_is_documented_with_its_real_limit(page: str, heading: str) -> None:
+    """Until a shorter Windsurf block is decided, users must find the limit documented."""
+    text = (Path(__file__).resolve().parents[2] / page).read_text(encoding="utf-8")
+    assert heading in text
+    section = text.split(heading, 1)[1].split("\n## ", 1)[0]
+    assert str(_WINDSURF_GLOBAL_RULE_MAX_CHARS) in section
+    assert "global_rules.md" in section
 
 
 def test_an_instruction_file_that_is_a_link_is_refused(fake_home: Path) -> None:
