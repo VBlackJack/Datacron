@@ -196,9 +196,17 @@ def _operation_payload(app: DatacronApp, record: OperationRecord) -> dict[str, o
     Search and backlinks redact a note path that carries a secret-shaped name, and
     the journal readers returned the same path in full, so the secret the other
     tools concealed was one audit_query away.
+
+    Every string parameter is redacted too. Redacting the path alone left the same
+    secret in ``parameters.source_rel_path``, which an organization batch records for
+    every move. Keys are left alone: the server names them, a caller never does.
     """
     payload = record.to_dict()
     payload["rel_path"] = _redact_retrieval_text(app, record.rel_path)
+    payload["parameters"] = {
+        key: _redact_retrieval_text(app, value) if isinstance(value, str) else value
+        for key, value in record.parameters.items()
+    }
     return payload
 
 

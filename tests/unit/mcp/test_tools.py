@@ -1987,7 +1987,8 @@ class TestCreateNoteAi:
             await store.close()
 
         assert result["error"]["type"] == "PathConfinementError"
-        assert "outside the allowed write roots" in result["error"]["message"]
+        assert "outside the allowed write scope" in result["error"]["message"]
+        assert str(tmp_vault) not in result["error"]["message"]
         assert not (tmp_vault / "elsewhere" / "blocked.md").exists()
 
     @pytest.mark.asyncio
@@ -2214,7 +2215,8 @@ class TestAppendJournal:
             await store.close()
 
         assert result["error"]["type"] == "PathConfinementError"
-        assert "outside the allowed write roots" in result["error"]["message"]
+        assert "outside the allowed write scope" in result["error"]["message"]
+        assert str(tmp_vault) not in result["error"]["message"]
         assert target.read_text(encoding="utf-8") == original_raw
 
     @pytest.mark.asyncio

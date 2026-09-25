@@ -619,6 +619,35 @@ def _validate_policy_names(
                 )
 
 
+_EXCLUSION_SEPARATORS: Final[tuple[str, ...]] = ("/", "\\")
+
+
+def _exclusion_names(value: list[object], *, field: str) -> list[str]:
+    """Return the single path-component names an exclusion list may hold.
+
+    Admission compares each entry with one path component at a time, so an entry
+    holding a separator could never match anything: ``Clients/Confidential`` and
+    ``sub/blocked.md`` were accepted and excluded nothing, silently. One trailing
+    separator is only how a folder is often written and is dropped; any other
+    separator is refused, naming the entry, so the vault does not start with an
+    exclusion it believes in and does not have.
+    """
+    names: list[str] = []
+    for item in value:
+        entry = str(item).strip()
+        if not entry:
+            continue
+        name = entry[:-1].strip() if entry.endswith(_EXCLUSION_SEPARATORS) else entry
+        if not name or any(separator in name for separator in _EXCLUSION_SEPARATORS):
+            raise ValueError(
+                f"{field} entry {entry!r} must be a single folder or file name, "
+                "without a path separator; entries match one path component anywhere "
+                "in the vault"
+            )
+        names.append(name)
+    return names
+
+
 class VaultConfig(BaseModel):
     """Typed model for ``.datacron/VAULT.yaml``."""
 
@@ -683,7 +712,7 @@ class VaultConfig(BaseModel):
             return list(DEFAULT_EXCLUDED_FOLDERS)
         if not isinstance(value, list):
             raise TypeError("excluded_folders must be a list of folder names")
-        return [str(item).strip() for item in value if str(item).strip()]
+        return _exclusion_names(value, field="excluded_folders")
 
     @field_validator("excluded_files", mode="before")
     @classmethod
@@ -692,7 +721,7 @@ class VaultConfig(BaseModel):
             return list(DEFAULT_EXCLUDED_FILES)
         if not isinstance(value, list):
             raise TypeError("excluded_files must be a list of file names")
-        return [str(item).strip() for item in value if str(item).strip()]
+        return _exclusion_names(value, field="excluded_files")
 
     @field_validator("query_expansion", mode="before")
     @classmethod

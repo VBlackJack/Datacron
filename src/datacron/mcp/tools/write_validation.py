@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from datetime import UTC, date, datetime, timedelta
 from pathlib import PureWindowsPath
 from typing import Any, Final
@@ -477,6 +478,11 @@ def _assert_markdown_rel_path(cleaned_rel_path: str) -> None:
             raise ValueError("rel_path must not enter a hidden folder")
         # A colon names an NTFS alternate data stream, and a reserved device name
         # is not a file on Windows: both failed after a stray temp file was made.
+        # Both are Win32 rules, like the trailing dot and space the path check
+        # gates the same way: Linux and macOS store "Con.md" and "10:30 standup.md"
+        # as written, and the reader admits them there.
+        if sys.platform != "win32":
+            continue
         if ":" in part:
             raise ValueError("rel_path must not contain ':'")
         if part.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:

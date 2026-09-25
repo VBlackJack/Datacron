@@ -51,15 +51,26 @@ Reads are **not** permitted throughout the vault. Every note read also passes no
 admission: the path must end in `.md`, no parent component may start with a dot or appear
 in `excluded_folders`, and the filename must not appear in `excluded_files`, both taken
 from `VAULT.yaml` and compared casefolded. A file the vault holds but the policy excludes
-is refused to every read tool.
+is refused to every read tool. Each entry of `excluded_folders` and `excluded_files` is a
+single name, matched against one path component anywhere in the vault: a trailing `/` is
+dropped, and an entry that still holds a `/` or a `\` is refused at startup, naming it,
+instead of loading as an exclusion that would never match. On Windows, a path component
+holding `:` is refused, since it names an NTFS alternate data stream.
 
 Writes are confined to the vault root and, in addition, must fall within an explicit
 `DATACRON_WRITE_PATHS` root. Neither boundary implies the other: a path can be readable
-and not writable, and a path outside note admission is neither.
+and not writable, and a path outside note admission is neither. Every note write passes
+the same admission as a read, on the path as given and on the path it resolves to, before
+the note is opened, and the refusal is the same whether the note exists or not. A write
+also refuses a path that crosses a symlink or a junction, even one that stays inside the
+vault. A refused path is reported as the vault-relative path the client sent; the
+resolved host path is only logged locally.
 
 Scoped reader and writer adapters mediate filesystem operations, while index results,
 chunk resolution, backlinks, resources, audit metadata, and the fixed ripgrep search root
-are checked against the same scope dependency.
+are checked against the same scope dependency. The journal records `audit_query` and
+`get_note_history` return pass note admission, whether or not the note still exists, and
+every string in their parameters is redacted like their path.
 
 The underlying reader and durable writer retain their own path-containment checks.
 `VaultScope` is the replacement seam for a future ACL or namespace policy; the

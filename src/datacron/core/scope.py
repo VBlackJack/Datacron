@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import stat
 from collections.abc import Awaitable, Callable, Iterable, Sequence
@@ -74,13 +75,16 @@ __all__ = [
     "ScopedVaultWriter",
     "SingleTenantVaultScope",
     "VaultScope",
+    "admits_note_path",
     "assert_path_chain_without_links",
+    "authorize_note_write",
 ]
 
 AccessMode = Literal["read", "write"]
 NoteMutation = Callable[[str], str]
 NotePathLookup = Callable[[str], Awaitable[str | None]]
 _FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = 0x0400
+_LOGGER = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -280,8 +284,21 @@ class SingleTenantVaultScope:
         return resolved
 
     def authorize_rel_path(self, rel_path: str, access: AccessMode) -> Path:
+        """Resolve and authorize a vault-relative path.
+
+        The caller named a vault-relative path, and the refusal names the same
+        one. The confinement check phrases its refusal with the resolved absolute
+        path and every allowed root, which suits a local operator and not an MCP
+        client: it handed the host's user name and directory layout to whoever
+        asked. The resolved form is logged here, locally, and only the caller's
+        spelling travels on.
+        """
         assert_vault_rel_path(rel_path)
-        return self.authorize_path(self._vault_root / rel_path, access)
+        try:
+            return self.authorize_path(self._vault_root / rel_path, access)
+        except PathConfinementError as exc:
+            _LOGGER.debug("Refused %s access to %r: %s", access, rel_path, exc)
+            raise type(exc)(f"Path {rel_path!r} is outside the allowed {access} scope.") from exc
 
     def allows_rel_path(self, rel_path: str, access: AccessMode) -> bool:
         try:
@@ -292,16 +309,76 @@ class SingleTenantVaultScope:
 
     def authorize_note_rel_path(self, rel_path: str) -> Path:
         """Return a confined, admitted, existing Markdown note path."""
+        try:
+            resolved = self._authorize_note_location(rel_path, "read")
+        except PathConfinementError as exc:
+            raise NoteAdmissionError(f"Path escapes the admitted vault: {rel_path!r}") from exc
+        if not resolved.is_file():
+            raise NoteAdmissionError(f"Path is not a live note: {rel_path!r}")
+        return resolved
+
+    def admits_note_path(self, rel_path: str) -> bool:
+        """Return whether ``rel_path`` names a place note admission covers.
+
+        Unlike :meth:`allows_note_rel_path` the note need not exist. A journal
+        record outlives the note it describes, through a move or a deletion, and
+        its path and heading must still be withheld when the policy excludes that
+        place, and served when it does not.
+        """
+        try:
+            self._authorize_note_location(rel_path, "read")
+        except (NoteAdmissionError, PathConfinementError):
+            return False
+        return True
+
+    def authorize_note_write_rel_path(self, rel_path: str) -> Path:
+        """Return the confined, admitted path of a note about to be written.
+
+        Writes used to pass confinement alone, so a note under an excluded folder
+        or with an excluded name was created, appended to and patched although no
+        read would ever serve it, and a patch naming a wrong heading answered with
+        the headings of that note. The note may not exist yet, which is the one
+        difference from :meth:`authorize_note_rel_path`.
+
+        A write also refuses any link or reparse point on the way to the note.
+        Resolution would otherwise follow a junction inside the vault to a folder
+        the lexical spelling does not name.
+
+        Every refusal depends on the spelling and the policy, never on whether the
+        note exists, so the refusal cannot be used to probe excluded notes.
+
+        Raises:
+            NoteAdmissionError: If the path, or the place it resolves to, is
+                outside note admission.
+            PathConfinementError: If the path escapes the vault, is outside the
+                write scope, or crosses a link. A link is reported with this base
+                type, the one write tools have always answered an escape with.
+        """
+        # Traversal, drives and absolute paths are confinement refusals first, as
+        # they always were; admission then judges a path that stays in the vault.
+        assert_vault_rel_path(rel_path)
         lexical_parts = PurePosixPath(rel_path.replace("\\", "/")).parts
         self._assert_admitted_parts(lexical_parts, rel_path=rel_path)
         try:
-            resolved = self.authorize_rel_path(rel_path, "read")
-        except PathConfinementError as exc:
-            raise NoteAdmissionError(f"Path escapes the admitted vault: {rel_path!r}") from exc
+            assert_path_chain_without_links(
+                self._vault_root / rel_path,
+                anchor=self._vault_root,
+                allow_missing=True,
+            )
+        except LinkedPathError as exc:
+            _LOGGER.debug("Refused a write through a linked path %r: %s", rel_path, exc)
+            raise PathConfinementError(
+                f"Path {rel_path!r} crosses a link or reparse point; writes do not follow links."
+            ) from exc
+        return self._authorize_note_location(rel_path, "write")
+
+    def _authorize_note_location(self, rel_path: str, access: AccessMode) -> Path:
+        """Admit both spellings of a note path, without requiring the file."""
+        lexical_parts = PurePosixPath(rel_path.replace("\\", "/")).parts
+        self._assert_admitted_parts(lexical_parts, rel_path=rel_path)
+        resolved = self.authorize_rel_path(rel_path, access)
         canonical_rel_path = resolved.relative_to(self._vault_root)
         self._assert_admitted_parts(canonical_rel_path.parts, rel_path=rel_path)
-        if not resolved.is_file():
-            raise NoteAdmissionError(f"Path is not a live note: {rel_path!r}")
         return resolved
 
     def allows_note_rel_path(self, rel_path: str) -> bool:
@@ -431,6 +508,19 @@ class ConjunctiveVaultScope:
             rel_path
         ) and self._restriction.allows_note_rel_path(rel_path)
 
+    def admits_note_path(self, rel_path: str) -> bool:
+        """Canonical note admission, live or not, narrowed by the restriction."""
+        return self._canonical.admits_note_path(rel_path) and self._restriction.allows_rel_path(
+            rel_path, "read"
+        )
+
+    def authorize_note_write_rel_path(self, rel_path: str) -> Path:
+        """Canonical note write admission, narrowed by the restriction's write scope."""
+        canonical = self._canonical.authorize_note_write_rel_path(rel_path)
+        restricted = self._restriction.authorize_rel_path(rel_path, "write")
+        self._assert_same_path(canonical, restricted)
+        return canonical
+
     def admits_walked_note(self, rel_path: str, path: Path) -> bool:
         if not (
             self._canonical.admits_walked_note(rel_path, path)
@@ -457,6 +547,32 @@ class ConjunctiveVaultScope:
             raise PathConfinementError(
                 "Injected scope resolved a path outside the canonical vault scope."
             )
+
+
+def authorize_note_write(scope: VaultScope, rel_path: str) -> Path:
+    """Authorize a note write through ``scope``, note admission included.
+
+    The two scopes this module builds admit a note that does not exist yet. Any
+    other scope is known only through the protocol, whose note admission requires
+    a live note, so it is asked for both confinement and admission, and a creation
+    through it fails closed instead of skipping the policy.
+    """
+    if isinstance(scope, (SingleTenantVaultScope, ConjunctiveVaultScope)):
+        return scope.authorize_note_write_rel_path(rel_path)
+    resolved = scope.authorize_rel_path(rel_path, "write")
+    scope.authorize_note_rel_path(rel_path)
+    return resolved
+
+
+def admits_note_path(scope: VaultScope, rel_path: str) -> bool:
+    """Return whether ``scope`` admits ``rel_path`` as a note location, live or not.
+
+    A scope known only through the protocol answers for live notes alone, so a
+    record whose note is gone is withheld from it rather than guessed about.
+    """
+    if isinstance(scope, (SingleTenantVaultScope, ConjunctiveVaultScope)):
+        return scope.admits_note_path(rel_path)
+    return scope.allows_note_rel_path(rel_path)
 
 
 @final
@@ -571,9 +687,14 @@ class ScopedVaultWriter:
         self._write_policy = write_policy
 
     def _readable_by_rel_path(self, items: Sequence[_HasRelPathT]) -> list[_HasRelPathT]:
-        """Keep the items this read scope admits, deciding each path once.
+        """Keep the items note admission admits, deciding each path once.
 
-        ``allows_rel_path`` resolves the candidate and every allowed root on
+        Confinement alone let the record of a write to an excluded note return
+        its path, its heading and whether a restore point exists, although every
+        read of that note is refused. Records are filtered by note admission, and
+        without requiring the note to exist still, since a record outlives a move.
+
+        Admission resolves the candidate and every allowed root on
         each call, which on Windows is a file-open syscall apiece. These
         sequences come from the operation journal, which holds one record per
         committed write and is never compacted, so the same ``rel_path``
@@ -589,7 +710,7 @@ class ScopedVaultWriter:
         for item in items:
             decision = admitted.get(item.rel_path)
             if decision is None:
-                decision = self._scope.allows_rel_path(item.rel_path, "read")
+                decision = admits_note_path(self._scope, item.rel_path)
                 admitted[item.rel_path] = decision
             if decision:
                 kept.append(item)
@@ -612,7 +733,7 @@ class ScopedVaultWriter:
     ) -> str:
         self._write_policy.ensure_writable()
         await self._ensure_organization_recovery_scope()
-        self._scope.authorize_rel_path(rel_path, "write")
+        authorize_note_write(self._scope, rel_path)
         return await self._delegate.write_note_atomic(
             rel_path,
             content,
@@ -632,7 +753,7 @@ class ScopedVaultWriter:
     ) -> str:
         self._write_policy.ensure_writable()
         await self._ensure_organization_recovery_scope()
-        self._scope.authorize_rel_path(rel_path, "write")
+        authorize_note_write(self._scope, rel_path)
         return await self._delegate.mutate_note_atomic(
             rel_path,
             mutation,
@@ -650,7 +771,7 @@ class ScopedVaultWriter:
     ) -> str:
         self._write_policy.ensure_writable()
         await self._ensure_organization_recovery_scope()
-        self._scope.authorize_rel_path(rel_path, "write")
+        authorize_note_write(self._scope, rel_path)
         return await self._delegate.revert_note_atomic(
             rel_path,
             to_hash,
