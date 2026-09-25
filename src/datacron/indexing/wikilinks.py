@@ -37,14 +37,16 @@ _WIKILINK_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?P<target>[^\]|#^]+?)"
     r"(?:#\^(?P<block>[^\]|]+?))?"
     r"(?:#(?P<header>[^\]|]+?))?"
-    r"(?:\|(?P<display>[^\]]+?))?"
+    # Inside a table the pipe is escaped, ``[[Target\|label]]``, and the backslash
+    # belongs to the separator, not to the target.
+    r"(?:\\?\|(?P<display>[^\]]+?))?"
     r"\]\]",
     re.MULTILINE,
 )
 # A same-note anchor, ``[[#Heading]]``, has no target: the index ignores it (it never
 # resolves to another note) while the offline library must verify its heading.
 _ANCHOR_ONLY_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"(?<!\\)\[\[#(?P<header>[^\]|#^]+?)(?:\|(?P<display>[^\]]+?))?\]\]",
+    r"(?<!\\)\[\[#(?P<header>[^\]|#^]+?)(?:\\?\|(?P<display>[^\]]+?))?\]\]",
     re.MULTILINE,
 )
 _WHITESPACE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\s+")
@@ -167,8 +169,11 @@ def _frontmatter_range(content: str) -> tuple[int, int] | None:
     return None
 
 
-def open_fence_after(text: str) -> OpenFence | None:
+def open_fence_after(text: str, open_fence: OpenFence | None = None) -> OpenFence | None:
     """Return the fence still open at the end of ``text``, as ``(marker, length)``.
+
+    ``open_fence`` is the fence already open where ``text`` starts, so a caller can
+    carry the state across consecutive pieces instead of rescanning from the top.
 
     The chunker cuts a long block into segments and links are extracted per
     segment. A segment that starts inside a fence then begins with that fence's
@@ -176,7 +181,7 @@ def open_fence_after(text: str) -> OpenFence | None:
     code: its links vanished from the backlinks. The chunker asks this for the
     text before each segment and passes the answer to the extractor.
     """
-    _ranges, still_open = _fence_ranges(text, None, None)
+    _ranges, still_open = _fence_ranges(text, None, open_fence)
     return None if still_open is None else (still_open[0], still_open[1])
 
 
@@ -197,10 +202,9 @@ def _fence_ranges(
         if frontmatter is not None and frontmatter[0] <= start < frontmatter[1]:
             continue
         if opening is None:
-            match = _FENCE_OPEN_PATTERN.match(line)
-            if match is not None:
-                fence = match.group("fence")
-                opening = (fence[0], len(fence), start)
+            fence = _fence_opener(line)
+            if fence is not None:
+                opening = (fence[0], fence[1], start)
             continue
         marker, minimum, range_start = opening
         stripped = line.lstrip(" \t")
@@ -211,6 +215,22 @@ def _fence_ranges(
     if opening is not None:
         ranges.append((opening[2], len(content)))
     return ranges, opening
+
+
+def _fence_opener(line: str) -> OpenFence | None:
+    """Return the fence ``line`` opens, as ``(marker, length)``, or ``None``.
+
+    A backtick fence's info string may not contain a backtick (CommonMark), so
+    "- ```git log``` shows the history" is inline code in a list item, not an
+    opener. Reading it as one excluded every link after it from the backlinks.
+    """
+    match = _FENCE_OPEN_PATTERN.match(line)
+    if match is None:
+        return None
+    fence = match.group("fence")
+    if fence[0] == "`" and "`" in line[match.end() :]:
+        return None
+    return fence[0], len(fence)
 
 
 def _inside(position: int, ranges: list[tuple[int, int]]) -> bool:

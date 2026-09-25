@@ -37,7 +37,7 @@ il renvoie à Claude uniquement les notes ou fragments (chunks) pertinents. Conc
 | `list_notes` | Liste paginée des notes, filtrable par dossier, par tags et par frontmatter de premier niveau ; renvoie ULID, titre, tags, alias et dates. |
 | `get_note` | Lit une note précise par ULID, par identifiant de chunk ou par chemin relatif ; contenu paginé, chunk isolé, ou plan des titres. |
 | `search_text` | Recherche BM25 sur l'index FTS5 : snippets classés, notes obsolètes démotées par défaut. |
-| `search_regex` | Recherche littérale par expression régulière via ripgrep, résolue vers les chunks indexés. Sans ripgrep, le balayage porte sur les corps de chunks indexés : plus lent, et le frontmatter est ignoré. |
+| `search_regex` | Recherche littérale par expression régulière via ripgrep (syntaxe ripgrep), résolue vers les chunks indexés. Elle ne porte que sur le corps des notes : une correspondance dans le frontmatter n'est pas renvoyée. Sans ripgrep, le balayage porte sur les corps de chunks indexés, en syntaxe regex Python : plus lent. |
 | `get_backlinks` | Renvoie les chunks dont les wikilinks pointent vers un ULID ou un alias donné. |
 
 Par exemple, `list_notes(frontmatter={"confidence": "needs_verification", "origin": "ai"})`

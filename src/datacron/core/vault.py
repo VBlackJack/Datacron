@@ -419,7 +419,9 @@ class FilesystemVaultReader:
             metadata = {}
             body = raw_text
 
-        rel_path = _normalize_rel_path(resolved, self._vault_root)
+        # ``resolved`` is a realpath under the resolved root, so its relative spelling
+        # is arithmetic; resolving both sides again cost two realpaths per read.
+        rel_path = _walked_rel_path(resolved, self._vault_root)
         note_id = await self._resolve_id(metadata, rel_path)
         title = resolve_note_title(
             metadata,

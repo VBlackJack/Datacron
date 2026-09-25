@@ -34,7 +34,7 @@ _COMMENT_BLOCK_START = re.compile(r" {0,3}<!--")
 _COMMENT_CLOSE = "-->"
 
 
-def _html_comment_lines(lines: list[str]) -> frozenset[int]:
+def html_comment_lines(lines: list[str]) -> frozenset[int]:
     """Return the indices of the lines that sit inside an HTML comment.
 
     mistletoe's default token set carries no HTML block, so ``<!--`` only opens
@@ -130,7 +130,7 @@ def markdown_headings(lines: list[str]) -> list[MarkdownHeading]:
     document = block_token.Document(
         [line.replace("\r\n", "\n").replace("\r", "\n") for line in lines]
     )
-    commented = _html_comment_lines(lines)
+    commented = html_comment_lines(lines)
     result = []
     for token in document.children or []:
         if not isinstance(token, block_token.Heading | block_token.SetextHeading):

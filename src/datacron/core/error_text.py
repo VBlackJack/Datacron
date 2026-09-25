@@ -27,7 +27,24 @@ from __future__ import annotations
 import yaml
 from pydantic import ValidationError
 
-__all__ = ["describe_validation_error", "describe_yaml_error"]
+__all__ = ["describe_config_error", "describe_validation_error", "describe_yaml_error"]
+
+
+def describe_config_error(exc: ValueError | yaml.YAMLError) -> str:
+    """Describe a configuration load failure with the matching value-free helper.
+
+    Args:
+        exc: A YAML parse error, a pydantic validation error, or a plain
+            ``ValueError`` raised by a loader about the document's shape.
+
+    Returns:
+        A description that names the location and the rule, never the value.
+    """
+    if isinstance(exc, ValidationError):
+        return describe_validation_error(exc)
+    if isinstance(exc, yaml.YAMLError):
+        return describe_yaml_error(exc)
+    return str(exc)
 
 
 def describe_validation_error(exc: ValidationError) -> str:

@@ -320,8 +320,10 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
             "Regex search via ripgrep. Returns ranked sandbox-wrapped match lines "
             "with **term** highlighting, resolved to indexed chunks. Restrict file "
             "scope with `glob` (e.g. '*.md'). Requires `datacron index` for chunk "
-            "resolution. Without `rg` on PATH it falls back to scanning indexed "
-            "chunk bodies, which is slower and sees only indexed content."
+            "resolution. Searches note bodies only: a match inside frontmatter is "
+            "not returned. The pattern uses ripgrep syntax. Without `rg` on PATH it "
+            "falls back to scanning indexed chunk bodies with Python regex syntax, "
+            "which is slower and sees only indexed content."
         ),
         annotations=_READ_ANNOTATIONS,
     )

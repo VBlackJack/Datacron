@@ -75,6 +75,10 @@ TEMPORAL_OVERFETCH_FACTOR: Final[int] = 3
 # and never past this many chunks, so one hub note cannot hide every other match.
 GROUPED_OVERFETCH_GROWTH: Final[int] = 4
 GROUPED_OVERFETCH_MAX_CHUNKS: Final[int] = 4000
+# A search_text query runs on the index connection every tool call shares, so its
+# size is bounded well above any question and far below a pasted document.
+MAX_SEARCH_QUERY_CHARS: Final[int] = 2048
+MAX_SEARCH_QUERY_TERMS: Final[int] = 64
 # The one place that names the archive tags and the state-note namespace. A vault
 # overrides the archive tags in its organization tag policy; the index, the library
 # and the planner read them from here or from that policy, never from a local copy.

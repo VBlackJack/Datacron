@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -34,6 +33,7 @@ from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, final
 
+from datacron.core.case_folding import filesystem_folds_case
 from datacron.core.config import (
     DEFAULT_STATE_NOTE_NAMESPACE,
     OrganizationConfig,
@@ -92,9 +92,9 @@ _TITLE_KEY: Final[str] = "title"
 _ALIASES_KEY: Final[str] = "aliases"
 
 
-def _filesystem_parts(path: PurePosixPath) -> tuple[str, ...]:
-    """Normalize path case only for case-insensitive filesystem contracts."""
-    if os.name == "nt":
+def _filesystem_parts(path: PurePosixPath, *, fold_case: bool) -> tuple[str, ...]:
+    """Normalize path case only when the vault's filesystem folds it."""
+    if fold_case:
         return tuple(part.casefold() for part in path.parts)
     return path.parts
 
@@ -874,12 +874,13 @@ def _snapshot_target_folders(
     if organization is None or not organization.rules or organization.scope is None:
         raise OrganizationConfigurationError("active organization rules require a scope")
     resolved_root = vault_root.expanduser().resolve()
+    fold_case = filesystem_folds_case(resolved_root)
     scope = PurePosixPath(_on_disk_spelling(resolved_root, PurePosixPath(organization.scope)))
-    scope_key = _filesystem_parts(scope)
+    scope_key = _filesystem_parts(scope, fold_case=fold_case)
     targets: dict[str, str] = {}
     for rule in organization.rules:
         folder = PurePosixPath(_on_disk_spelling(resolved_root, PurePosixPath(rule.folder)))
-        folder_key = _filesystem_parts(folder)
+        folder_key = _filesystem_parts(folder, fold_case=fold_case)
         if folder_key[: len(scope_key)] != scope_key:
             raise OrganizationConfigurationError(
                 "organization rule folder resolves outside organization scope "
@@ -907,11 +908,12 @@ def plan_organization_snapshot(
             skipped=(),
         )
     scope, active, targets = _snapshot_target_folders(vault_root, config)
-    scope_key = _filesystem_parts(PurePosixPath(scope))
+    fold_case = filesystem_folds_case(vault_root)
+    scope_key = _filesystem_parts(PurePosixPath(scope), fold_case=fold_case)
     materialized = tuple(notes)
     for note in materialized:
         relative = PurePosixPath(note.rel_path)
-        relative_key = _filesystem_parts(relative)
+        relative_key = _filesystem_parts(relative, fold_case=fold_case)
         if (
             relative.is_absolute()
             or ".." in relative.parts
