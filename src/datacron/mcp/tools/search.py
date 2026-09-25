@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any, Final
 from datacron.core.config import (
     GROUPED_OVERFETCH_GROWTH,
     GROUPED_OVERFETCH_MAX_CHUNKS,
+    MAX_SEARCH_QUERY_CHARS,
+    MAX_SEARCH_QUERY_TERMS,
     TEMPORAL_OVERFETCH_FACTOR,
 )
 from datacron.core.frontmatter import normalize_tag_filter
@@ -31,6 +33,7 @@ from datacron.core.paths import PathConfinementError
 from datacron.core.scope import ScopedVaultReader
 from datacron.core.temporal import rerank_temporal
 from datacron.core.vault import DuplicateNoteIdentityError
+from datacron.indexing.fts5_store import fts5_query_terms
 from datacron.indexing.reconcile import ReconcileStats, reconcile
 from datacron.indexing.ripgrep import (
     RegexFallbackError,
@@ -59,6 +62,7 @@ if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
 _ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+SEARCH_QUERY_TOO_LARGE_CODE: Final[str] = "search_query_too_large"
 
 
 async def _search_text_impl(
@@ -76,13 +80,10 @@ async def _search_text_impl(
     started = time.perf_counter()
     timings_ms: dict[str, float] = {}
     cleaned = query.strip()
-    if not cleaned:
-        return _error_response(
-            "search_text",
-            ValueError("query must not be empty"),
-            started,
-            query=query,
-        )
+    query_error = _search_query_error(cleaned)
+    if query_error is not None:
+        # The query is not echoed: bounding it is the point of one of these refusals.
+        return _error_response("search_text", query_error, started, query_chars=len(query))
     validation_error = _validate_frontmatter_filter(frontmatter)
     if validation_error is not None:
         exc, context = validation_error
@@ -162,6 +163,29 @@ async def _search_text_impl(
         truncated_for_tokens=truncated_for_tokens,
     )
     return payload
+
+
+class SearchQueryTooLargeError(ValueError):
+    """A ``search_text`` query longer or with more terms than one search accepts."""
+
+    code: Final[str] = SEARCH_QUERY_TOO_LARGE_CODE
+
+
+def _search_query_error(query: str) -> ValueError | None:
+    """Refuse an empty query, or one that would hold the index connection for seconds.
+
+    Fifty thousand terms took 5.8 s inside SQLite, on the one connection every
+    other tool call shares, and the echoed query then outgrew the result budget.
+    """
+    if not query:
+        return ValueError("query must not be empty")
+    if len(query) > MAX_SEARCH_QUERY_CHARS:
+        return SearchQueryTooLargeError(
+            f"query must be at most {MAX_SEARCH_QUERY_CHARS} characters"
+        )
+    if len(fts5_query_terms(query)) > MAX_SEARCH_QUERY_TERMS:
+        return SearchQueryTooLargeError(f"query must hold at most {MAX_SEARCH_QUERY_TERMS} terms")
+    return None
 
 
 def _authorized_search_folder(app: DatacronApp, folder: str | None) -> str | None:
@@ -307,15 +331,10 @@ async def _search_regex_impl(
             started,
             pattern=pattern,
         )
-    try:
-        re.compile(pattern)
-    except re.error as exc:
-        return _error_response(
-            "search_regex",
-            ValueError(f"invalid regex: {exc}"),
-            started,
-            pattern=pattern,
-        )
+    # No Python pre-validation: ripgrep's dialect is not Python's, and refusing a
+    # Unicode class such as \p{Lu} here refused a pattern the supported path runs.
+    # Each path judges the pattern it runs: ripgrep's parse error comes back in its
+    # stderr, and the indexed fallback compiles with Python before any index read.
     bounded_limit = _bounded_count(limit, app.settings.max_result_count)
     try:
         repair = await _repair_index_on_read(app)

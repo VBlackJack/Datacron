@@ -128,6 +128,14 @@ class RepairState:
     membership has to keep it up to date, because leaving it stale can only cost a
     check, never a note.
     """
+    missing_note_ids: dict[str, float] = field(default_factory=dict)
+    """Note IDs a full walk just failed to find, with when, on the repair clock.
+
+    Looking up an identity the index has never recorded walks the whole vault, and
+    a caller repeating one unknown ULID paid that walk on every call. Within the
+    repair interval the same ID is answered from here instead; any other ID still
+    walks, so a note written since the last walk is still found.
+    """
     stale_note_paths: set[str] = field(default_factory=set)
     """Vault-relative paths whose indexed chunks a read found to differ from disk.
 

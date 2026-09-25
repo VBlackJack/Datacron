@@ -28,6 +28,10 @@ ERROR_ACTIONS: Final[dict[str, str]] = {
         "Retry the same read: it refreshes the changed notes first. On a read-only "
         "server, run `datacron index` before retrying."
     ),
+    "search_query_too_large": (
+        "Shorten the query to the few distinctive words that matter; use search_regex "
+        "for an exact passage."
+    ),
     "WriteConflictError": (
         "Read the current target and original request receipt; reprepare only uncommitted work."
     ),

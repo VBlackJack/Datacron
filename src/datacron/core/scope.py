@@ -559,6 +559,11 @@ class ScopedVaultReader:
         *,
         expected_path: Path | None = None,
     ) -> bool:
+        if expected_path is not None and note.path == expected_path:
+            # The delegate returned the very path this reader authorized, so the pair
+            # is a walked one: admitting it resolves once, where resolving each side
+            # separately cost two realpaths on every note a sweep reads.
+            return self._scope.admits_walked_note(note.rel_path, note.path)
         try:
             returned = self._scope.authorize_path(note.path, "read")
             admitted = self._scope.authorize_note_rel_path(note.rel_path)

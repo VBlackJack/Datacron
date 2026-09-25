@@ -35,6 +35,25 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   quadratic in the block length.
 - A table wikilink with an escaped pipe, `[[Target\|label]]`, was recorded with the target
   `Target\`, so the note was missing from the backlinks of `Target`.
+- `search_regex` validated every pattern with Python's `re`, so ripgrep syntax such as
+  `\p{Lu}\w+` was refused on the ripgrep path. Python now judges only the patterns it runs,
+  on the indexed fallback; ripgrep reports its own parse errors.
+- `get_note` with an unknown ULID walked the whole vault on every call (2.7 s at 5000 notes).
+  An ID the walk did not find is now remembered for the repair interval; any other ID
+  still walks, so a note written since the last sweep is still found.
+- The first index-backed call on a cold index resolved each note path about thirteen times;
+  it now resolves it about seven times (2000 notes: 16.5 s to 14.2 s).
+
+### Changed
+
+- `search_regex` documents that both of its paths search note bodies only: a match inside
+  frontmatter is not returned.
+
+### Security
+
+- A `search_text` query had no size bound: 50 000 terms held the shared index connection for
+  seconds and the echoed query escaped the result budget. A query is now refused above 2048
+  characters or 64 terms, with the code `search_query_too_large`, and is not echoed back.
 
 ## [2026.0924.00] - 2026-09-24
 

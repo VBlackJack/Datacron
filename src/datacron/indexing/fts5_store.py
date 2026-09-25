@@ -53,7 +53,7 @@ from datacron.core.vault import (
     DuplicateNoteIdentityError,
 )
 
-__all__ = ["SQLiteFTS5Store"]
+__all__ = ["SQLiteFTS5Store", "fts5_query_terms"]
 
 _LOGGER = get_logger(__name__)
 
@@ -1709,6 +1709,11 @@ def _chunk_context(note_title: str, header_path: str) -> str:
 
 def _fts5_terms(query: str) -> list[str]:
     return _FTS5_TERM_PATTERN.findall(query)
+
+
+def fts5_query_terms(query: str) -> list[str]:
+    """Return the terms :meth:`SQLiteFTS5Store.search` would match for ``query``."""
+    return _fts5_terms(query)
 
 
 def _join_fts5_terms(terms: list[str], *, operator: str) -> str:
