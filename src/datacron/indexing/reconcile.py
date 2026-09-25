@@ -334,8 +334,9 @@ async def _prepare_live_identities(
     that could not be read, and the notes whose bytes could not be decoded.
 
     The last two are kept apart because they call for opposite index states. A
-    read error is transient (a Windows share lock, an antivirus scan), so the
-    rows of the last good read are kept. A decoding error is a property of the
+    read error is transient (a Windows share lock, an antivirus scan, a damaged
+    identity sidecar), so the rows of the last good read are kept. A decoding
+    error, and only a ``UnicodeDecodeError``, is a property of the
     bytes on disk, and keeping the rows kept serving content the file no longer
     holds: every later list or search then re-read that note for redaction or
     paging, hit the same error and failed as a whole, and no pass ever healed it.
@@ -350,14 +351,19 @@ async def _prepare_live_identities(
         else:
             try:
                 note = await reader.read_note(path)
-            except OSError as exc:
-                _LOGGER.warning("Skipping unreadable note %s: %s", path, exc)
-                unreadable.add(rel_path)
-                await on_settled()
-                continue
-            except ValueError as exc:
+            except UnicodeDecodeError as exc:
                 _LOGGER.warning("Dropping undecodable note %s from the index: %s", path, exc)
                 undecodable.add(rel_path)
+                await on_settled()
+                continue
+            except (OSError, ValueError) as exc:
+                # Only a decoding error is a property of the note's own bytes. Any
+                # other ValueError can come from state the note merely depends on:
+                # a torn ``ulids.json`` makes every note without a frontmatter id
+                # raise a JSON decoding error, and purging on that emptied the
+                # index of intact notes. So those keep their rows, like a lock.
+                _LOGGER.warning("Skipping unreadable note %s: %s", path, exc)
+                unreadable.add(rel_path)
                 await on_settled()
                 continue
             prepared[rel_path] = (note.id, note.content_hash)

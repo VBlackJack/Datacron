@@ -244,6 +244,39 @@ async def test_an_undecodable_note_is_dropped_from_the_index(
     assert "welcome.md" not in await store.list_indexed_notes_with_mtime()
 
 
+async def test_a_torn_identity_sidecar_keeps_the_rows_of_id_less_notes(
+    store: SQLiteFTS5Store,
+    chunker: MarkdownChunker,
+    tmp_path: Path,
+) -> None:
+    """A torn ``ulids.json`` is not a property of the notes' bytes.
+
+    Every note without a frontmatter id resolves its identity through the sidecar,
+    so a truncated or hand-edited sidecar makes each of them raise a JSON decoding
+    error, which is a ``ValueError``. Classed as undecodable, those notes were
+    purged from the index while their Markdown was intact: three notes out of four
+    vanished from search on one bad sidecar write.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    for index in range(3):
+        (vault / f"n{index}.md").write_text(f"# Note {index}\n\nbody {index}\n", encoding="utf-8")
+    (vault / "withid.md").write_text(
+        "---\nid: 01J00000000000000000000151\n---\n# With id\n", encoding="utf-8"
+    )
+    await reconcile(store, FilesystemVaultReader(vault), chunker, mtime_gate=True)
+    before = set(await store.list_indexed_notes_with_mtime())
+    assert before == {"n0.md", "n1.md", "n2.md", "withid.md"}
+
+    sidecar = vault / ".datacron" / "ulids.json"
+    assert sidecar.is_file()
+    sidecar.write_text('{"n0.md": "01J0000000000000000000015', encoding="utf-8")
+    stats = await reconcile(store, FilesystemVaultReader(vault), chunker, mtime_gate=False)
+
+    assert stats["deleted_notes"] == 0
+    assert set(await store.list_indexed_notes_with_mtime()) == before
+
+
 async def test_a_transiently_unreadable_note_keeps_its_rows(
     store: SQLiteFTS5Store,
     reader: FilesystemVaultReader,
