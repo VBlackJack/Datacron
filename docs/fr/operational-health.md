@@ -37,7 +37,9 @@ La réponse contient :
   pas la preuve que les ACL, l'espace libre, l'état de récupération ou une E/S concrète
   autoriseront l'écriture ;
 - `recovery` : besoin éventuel de réparer explicitement des opérations bloquées, leur nombre et,
-  avec `detail=full`, des preuves bornées sans contenu de note ;
+  avec `detail=full`, des preuves bornées sans contenu de note, ainsi que `unexpected_entries`,
+  les chemins relatifs au vault des fichiers d'un répertoire de reprise que la reprise ne sait pas
+  classer (voir plus bas) ;
 - `scrubber` : dernier scrub terminé, passe et génération d'index courantes, couverture, octets
   vérifiés, état des sentinelles et preuves d'anomalies chemin/type ;
 - `invariants` : I1 à I15 depuis le `reliability_evidence.json` packagé.
@@ -63,6 +65,24 @@ vérifiée comme un seul rollback de maintenance hors ligne. Sans cette sauvegar
 préserve les preuves pour une récupération manuelle ; ne force ni ne mets en quarantaine un seul
 membre. Redémarre Datacron, relance `datacron ops inspect`, puis réconcilie ou réindexe et vérifie
 `get_health` avant de reprendre les écritures.
+
+### Entrées inattendues dans les répertoires de reprise
+
+La reprise lit `.datacron/oplog/pending` et les répertoires `pending` et `stage` des batchs
+d'organisation. Les fichiers de métadonnées du système (`desktop.ini`, `.DS_Store`, `Thumbs.db`,
+AppleDouble `._*`) y sont ignorés. Toute autre entrée, comme un fichier déposé à la main ou la
+copie de conflit d'un manifeste pending créée par un client de synchronisation, n'est pas
+devinée : le serveur démarre quand même et sert les lectures, chaque écriture est refusée avec
+`recovery_required` en nommant l'entrée, et `get_health` la liste sous
+`recovery.unexpected_entries`. `datacron ops inspect` liste chacune de ces entrées à côté des
+opérations bloquées. Sans aucun writer Datacron en cours, examine chaque entrée, déplace-la hors
+du répertoire `.datacron`, puis réessaie.
+
+Une dernière ligne de l'operation log coupée par un arrêt brutal ou une coupure de courant est
+réparée par la reprise : un fragment qui n'est pas du JSON valide est coupé jusqu'au dernier
+enregistrement complet et sauvegardé à côté du journal sous `operations.jsonl.torn-<horodatage>`.
+Un enregistrement complet qui n'a perdu que son retour à la ligne est laissé en place pour un
+opérateur.
 
 ### Définition de l'obsolescence d'index
 

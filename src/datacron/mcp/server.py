@@ -69,6 +69,7 @@ from datacron.core.config import (
 )
 from datacron.core.durability import (
     DurabilityStatus,
+    RecoveryRequiredError,
     WritePolicy,
     probe_directory_durability,
 )
@@ -400,7 +401,9 @@ async def _startup_recover_operations(app: DatacronApp) -> None:
     it -- must not stall the MCP lifespan: if it did, ``initialize`` would never
     be answered and the client would drop the server with zero tools registered.
     On lock contention we log a warning and defer recovery (retried on the next
-    write). Residual operation recovery errors are degraded; all other errors abort startup.
+    write). Residual operation recovery errors and every typed ``recovery_required``
+    refusal, such as an unexpected entry in a recovery directory, are degraded;
+    all other errors abort startup.
     """
     try:
         recovered = await app.vault_writer.recover_operations()
@@ -415,6 +418,17 @@ async def _startup_recover_operations(app: DatacronApp) -> None:
         _LOGGER.error(
             "Startup operation-log recovery blocked by a residual recovery error: %s; "
             "tools will register and reads remain available",
+            exc,
+        )
+        return
+    except RecoveryRequiredError as exc:
+        # A stray file in a recovery directory, or batch evidence this scope may
+        # not recover, used to abort the lifespan: the client saw no tool at all.
+        # Every write is refused with the same typed error until it is resolved,
+        # and get_health reports it, so startup only has to say so.
+        _LOGGER.error(
+            "Startup operation-log recovery blocked: %s; tools will register and reads "
+            "remain available",
             exc,
         )
         return

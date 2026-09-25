@@ -20,7 +20,7 @@ import platform
 import stat
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, final
@@ -30,7 +30,11 @@ if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
 
-from datacron.core.config import Settings
+from datacron.core.config import (
+    OS_METADATA_FILENAME_PREFIX,
+    OS_METADATA_FILENAMES,
+    Settings,
+)
 from datacron.core.hashing import sha256_bytes
 from datacron.core.logger import get_logger
 
@@ -40,10 +44,12 @@ __all__ = [
     "DurabilityUnavailableError",
     "ReadOnlyModeError",
     "RecoveryRequiredError",
+    "UnexpectedRecoveryEntryError",
     "WritePolicy",
     "atomic_durable_write",
     "durable_flush_directory",
     "flush_directory_entry",
+    "is_os_metadata_file",
     "probe_directory_durability",
     "read_bytes_with_windows_retry",
 ]
@@ -75,6 +81,52 @@ class RecoveryRequiredError(PermissionError):
     """Raised when quarantined operation evidence blocks every mutation."""
 
     code: Final[str] = RECOVERY_REQUIRED_CODE
+
+
+class UnexpectedRecoveryEntryError(RecoveryRequiredError):
+    """Raised when a recovery directory holds an entry recovery cannot classify.
+
+    Recovery cannot tell a stray file from evidence it does not understand, so it
+    refuses to guess and blocks every mutation instead. Being a
+    :class:`RecoveryRequiredError` is what keeps that from being fatal: startup
+    degrades rather than aborts, reads stay available, and writes are refused
+    with ``recovery_required``. ``entries`` holds vault-relative POSIX paths, so
+    an operator can find each one; they name sidecar files, never note content.
+    """
+
+    def __init__(self, entries: Iterable[str], problem: str) -> None:
+        self.entries: tuple[str, ...] = tuple(entries)
+        super().__init__(
+            f"Recovery required: {problem}: {', '.join(self.entries)}. With no Datacron "
+            "writer running, inspect it and move it out of the .datacron directory, then retry"
+        )
+
+
+_REPORTED_OS_METADATA: set[str] = set()
+"""Metadata files already logged by this process, so a scan per write logs each once."""
+
+
+def is_os_metadata_file(path: Path) -> bool:
+    """Report, and log once, a shell metadata file that a recovery scan should skip.
+
+    ``desktop.ini``, ``Thumbs.db``, ``.DS_Store`` and AppleDouble ``._*`` files
+    appear in any folder a file manager or a sync client has shown. They carry no
+    Datacron state, and reading one as unexplained recovery evidence stopped the
+    server from starting. Only a regular file qualifies: a directory by one of
+    these names is not something a shell writes, and stays unexpected.
+    """
+    name = path.name
+    if name.casefold() not in OS_METADATA_FILENAMES and not name.startswith(
+        OS_METADATA_FILENAME_PREFIX
+    ):
+        return False
+    if not path.is_file() or path.is_symlink():
+        return False
+    key = os.fspath(path)
+    if key not in _REPORTED_OS_METADATA:
+        _REPORTED_OS_METADATA.add(key)
+        _LOGGER.info("Ignoring operating system metadata file in a recovery directory: %s", path)
+    return True
 
 
 def atomic_durable_write(

@@ -444,6 +444,7 @@ class HealthRecoveryOutput(TypedDict):
 
     required: bool
     blocked_operations: int
+    unexpected_entries: list[str]
     operations: list[HealthRecoveryOperationOutput]
 
 

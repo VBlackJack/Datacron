@@ -1424,6 +1424,62 @@ class TestStartupRecovery:
         assert writer.recovery_blocked[0].operation_id == record.operation_id
         assert "Startup operation-log recovery blocked" in caplog.text
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "directory",
+        [("oplog", "pending"), ("oplog", "batches", "pending"), ("oplog", "batches", "stage")],
+    )
+    async def test_a_stray_entry_degrades_startup_instead_of_aborting_it(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        directory: tuple[str, ...],
+    ) -> None:
+        """One file Datacron did not write must not cost the client every tool.
+
+        Shell metadata is ignored outright. Any other entry lets tools register and
+        reads run, while writes are refused with ``recovery_required`` naming it and
+        ``get_health`` reports it.
+        """
+        from datacron.mcp.health import build_health
+        from datacron.mcp.tools.write import _append_journal_impl
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "n.md").write_text("# N\n\n## Journal\n\nx\n", encoding="utf-8", newline="\n")
+        stray_dir = vault.joinpath(".datacron", *directory)
+        stray_dir.mkdir(parents=True)
+        (stray_dir / ".DS_Store").write_bytes(b"\x00")
+        (stray_dir / "desktop.ini").write_text("[.ShellClassInfo]\n", encoding="ascii")
+        settings = Settings(read_paths=[vault], write_paths=[vault], vault_root=vault)
+        app = build_app(settings=settings, vault_root=vault)
+        await app.store.open(sidecar_index_db(vault))
+        try:
+            await _startup_recover_operations(app)
+            written = await _append_journal_impl(
+                app, rel_path="n.md", heading="Journal", entry="metadata ignored"
+            )
+            assert "error" not in written, written
+
+            (stray_dir / "stray.txt").write_text("left by hand\n", encoding="ascii")
+            await _startup_recover_operations(app)
+            assert "Startup operation-log recovery blocked" in caplog.text
+
+            refused = await _append_journal_impl(
+                app, rel_path="n.md", heading="Journal", entry="refused"
+            )
+            health = await build_health(app, detail="summary", limit=10)
+        finally:
+            await app.store.close()
+
+        entry = "/".join((".datacron", *directory, "stray.txt"))
+        assert refused["error"]["code"] == "recovery_required"
+        assert entry in refused["error"]["message"]
+        assert "refused" not in (vault / "n.md").read_text(encoding="utf-8")
+        assert health["status"] != "healthy"
+        assert health["recovery"]["required"] is True
+        assert health["recovery"]["unexpected_entries"] == [entry]
+
 
 class TestBatchReconcileIsGated:
     """The index refresh after a committed batch costs what the batch moved."""

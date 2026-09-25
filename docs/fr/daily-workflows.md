@@ -59,7 +59,7 @@ L'outil reste en lecture seule ; il ne promet pas un instantané atomique multi-
 |---|---|
 | `committed_current` | Le reçu correspond aux octets et à l'index actuels. Relire la note. |
 | `committed_changed` | L'opération est enregistrée, puis les octets ont divergé. Relire sans répéter l'écriture. |
-| `committed_reverted` | L'opération est enregistrée puis annulée : les octets courants sont ceux qu'elle avait remplacés. Rejouer les mêmes arguments avec `expected_hash`. |
+| `committed_reverted` | L'opération est enregistrée puis annulée : les octets courants sont ceux qu'elle avait remplacés. Si la requête d'origine portait un `expected_hash` égal aux octets courants et que tu le fournis ici, `next_action` vaut `replay_identical_arguments_with_expected_hash` : rejouer les mêmes arguments. Sinon il vaut `retry_with_new_request_id_and_expected_hash` : l'empreinte de la requête inclut `expected_hash`, donc réécrire sous un nouveau `request_id` avec le hash courant. |
 | `committed_index_incomplete` | Les octets correspondent au reçu, mais pas l'index. Réparer l'index sans nouvelle mutation. |
 | `conflict` | Aucun reçu trouvé et le hash CAS d'origine diffère. Examiner la requête initiale avant de repréparer. |
 | `not_recorded` | Aucun reçu validé trouvé. Examiner la reprise ou rejouer exactement les mêmes arguments avec la même clé. |

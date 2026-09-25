@@ -57,7 +57,7 @@ and does not claim an atomic snapshot across notes.
 |---|---|
 | `committed_current` | Receipt matches current bytes and index. Reread the note. |
 | `committed_changed` | The operation committed, then current bytes diverged. Read current state; do not repeat it. |
-| `committed_reverted` | The operation committed and was then undone: current bytes are the ones it replaced. Replay the identical arguments with `expected_hash`. |
+| `committed_reverted` | The operation committed and was then undone: current bytes are the ones it replaced. When the original request carried an `expected_hash` equal to the current bytes and you pass it here, `next_action` is `replay_identical_arguments_with_expected_hash`: replay the identical arguments. Otherwise it is `retry_with_new_request_id_and_expected_hash`: the request fingerprint includes `expected_hash`, so write again under a new `request_id` with the current hash. |
 | `committed_index_incomplete` | Bytes match the commit but the index does not. Repair indexing without a new mutation. |
 | `conflict` | No receipt found and the original CAS hash differs. Inspect the original request before preparing remaining work. |
 | `not_recorded` | No committed receipt found. Inspect recovery or replay identical arguments with the same key. |

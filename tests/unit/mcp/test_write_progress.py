@@ -17,15 +17,17 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from datacron.core.config import DEFAULT_MAX_RESULT_TOKENS, Settings
 from datacron.core.frontmatter import serialize
-from datacron.core.hashing import HASH_HEX_LENGTH
+from datacron.core.hashing import HASH_HEX_LENGTH, sha256_bytes
 from datacron.core.memory_protocol import FOLLOW_UP_MAX_RECORDS
 from datacron.core.paths import sidecar_index_db
 from datacron.mcp.server import DatacronApp, build_app
+from datacron.mcp.tools.write import _append_journal_impl, _revert_note_impl
 from datacron.mcp.tools.write_progress import (
     WriteReference,
     _inspect_target,
@@ -164,3 +166,78 @@ async def test_matching_expected_hash_without_receipt_is_not_recorded(
 
     assert item["status"] == "not_recorded"
     assert item["indexed"] is False
+
+
+async def _append_then_revert(
+    app: DatacronApp, root: Path, request_id: str, *, with_expected_hash: bool
+) -> tuple[str, dict[str, Any]]:
+    """Commit one keyed append, revert it, and return the reverted hash and its kwargs."""
+    before_hash = sha256_bytes((root / _NOTE).read_bytes())
+    arguments: dict[str, Any] = {
+        "rel_path": _NOTE,
+        "heading": "Journal",
+        "entry": f"- entry for {request_id}",
+        "request_id": request_id,
+    }
+    if with_expected_hash:
+        arguments["expected_hash"] = before_hash
+    written = await _append_journal_impl(app, **arguments)
+    assert written.get("committed") is True, written
+    reverted = await _revert_note_impl(
+        app,
+        note=_NOTE,
+        to_hash=before_hash,
+        expected_hash=sha256_bytes((root / _NOTE).read_bytes()),
+    )
+    assert "error" not in reverted, reverted
+    assert sha256_bytes((root / _NOTE).read_bytes()) == before_hash
+    return before_hash, arguments
+
+
+async def test_reverted_write_without_expected_hash_is_told_to_use_a_new_request_id(
+    app: DatacronApp, tmp_path: Path
+) -> None:
+    """The guidance for a reverted keyed write has to be one that can succeed.
+
+    The request fingerprint includes ``expected_hash``. A write first made without
+    one therefore cannot be replayed with one: the writer calls that a different
+    set of arguments. Both the writer and ``get_write_progress`` used to send the
+    caller exactly there, and every path they offered was refused.
+    """
+    before_hash, arguments = await _append_then_revert(
+        app, tmp_path, "req-no-hash", with_expected_hash=False
+    )
+
+    progress = await get_write_progress(app, [WriteReference(note=_NOTE, request_id="req-no-hash")])
+    item = progress["items"][0]
+    assert item["status"] == "committed_reverted"
+    assert item["next_action"] == "retry_with_new_request_id_and_expected_hash"
+
+    refused = await _append_journal_impl(app, **arguments)
+    assert "new request_id" in refused["error"]["message"]
+
+    retried = await _append_journal_impl(
+        app, **{**arguments, "request_id": "req-no-hash-2", "expected_hash": before_hash}
+    )
+    assert retried.get("committed") is True, retried
+    assert arguments["entry"] in (tmp_path / _NOTE).read_text(encoding="utf-8")
+
+
+async def test_reverted_write_with_expected_hash_replays_its_identical_arguments(
+    app: DatacronApp, tmp_path: Path
+) -> None:
+    before_hash, arguments = await _append_then_revert(
+        app, tmp_path, "req-hash", with_expected_hash=True
+    )
+
+    progress = await get_write_progress(
+        app, [WriteReference(note=_NOTE, request_id="req-hash", expected_hash=before_hash)]
+    )
+    item = progress["items"][0]
+    assert item["status"] == "committed_reverted"
+    assert item["next_action"] == "replay_identical_arguments_with_expected_hash"
+
+    replayed = await _append_journal_impl(app, **arguments)
+    assert replayed.get("committed") is True, replayed
+    assert replayed.get("replayed") is False
+    assert arguments["entry"] in (tmp_path / _NOTE).read_text(encoding="utf-8")

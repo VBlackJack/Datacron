@@ -477,10 +477,21 @@ def ops_inspect(
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
     started = _log_invocation("ops.inspect", vault=str(vault_root))
+    writer = _ops_writer(vault_root, settings)
     try:
-        blocked = asyncio.run(_ops_writer(vault_root, settings).inspect_recovery())
+        blocked = asyncio.run(writer.inspect_recovery())
     except (OSError, OperationLogError, ValueError, VaultLockBusyError) as exc:
         _error(f"Recovery inspection failed: {exc}")
+    unexpected = writer.recovery_unexpected_entries
+    if unexpected:
+        noun = "entry" if len(unexpected) == 1 else "entries"
+        _print(
+            f"Recovery inspection: {len(unexpected)} unexpected {noun} block every write. "
+            "With no Datacron writer running, inspect each one and move it out of the "
+            ".datacron directory:"
+        )
+        for entry in unexpected:
+            _print(f"  entry: {entry}")
     if not blocked:
         _print("Recovery inspection: no blocked operations.")
         _print("No changes made.")

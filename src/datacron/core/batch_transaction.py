@@ -36,8 +36,10 @@ from typing import Any, Final, Literal, NoReturn, TypeAlias, final
 from datacron.core.config import SIDECAR_DIR_NAME, VaultConfig
 from datacron.core.durability import (
     RecoveryRequiredError,
+    UnexpectedRecoveryEntryError,
     atomic_durable_write,
     durable_flush_directory,
+    is_os_metadata_file,
 )
 from datacron.core.frontmatter import (
     FrontmatterError,
@@ -123,6 +125,8 @@ _BATCHES_DIR_NAME: Final[str] = "batches"
 _PENDING_DIR_NAME: Final[str] = "pending"
 _STAGE_DIR_NAME: Final[str] = "stage"
 _COMMITTED_DIR_NAME: Final[str] = "committed"
+_UNEXPECTED_PENDING_PROBLEM: Final[str] = "unexpected organization batch pending entry"
+_UNEXPECTED_STAGE_PROBLEM: Final[str] = "unexpected organization batch stage entry"
 _CONFIG_REL_PATH: Final[str] = ".datacron/VAULT.yaml"
 _IDENTITY_SIDECAR_REL_PATH: Final[str] = f"{SIDECAR_DIR_NAME}/{ULID_SIDECAR_FILENAME}"
 _MIGRATED_IDENTITY_SIDECAR_REL_PATH: Final[str] = (
@@ -504,7 +508,16 @@ class OrganizationBatchTransaction:
             )
 
     def has_pending_batches(self) -> bool:
-        """Return whether a durable organization batch is pending recovery."""
+        """Return whether a durable organization batch is pending recovery.
+
+        A stray entry in the stage root is refused here too, as in the pending
+        root: an ordinary write checks for batches through this alone, and a
+        stray that blocked only the batch path would vanish from health on the
+        next ordinary write while still sitting in the sidecar.
+        """
+        stray_stages = self._unexpected_stage_root_entries()
+        if stray_stages:
+            raise UnexpectedRecoveryEntryError(stray_stages, _UNEXPECTED_STAGE_PROBLEM)
         return bool(self._pending_paths())
 
     def apply(
@@ -659,7 +672,14 @@ class OrganizationBatchTransaction:
         return BatchRecoveryOutcome(recovered=recovered)
 
     def inspect(self) -> tuple[BlockedOperation, ...]:
-        """Inspect pending batches without changing vault or sidecar bytes."""
+        """Inspect pending batches without changing vault or sidecar bytes.
+
+        A stray entry in the pending or the stage root is refused by name, as
+        recovery would refuse it, rather than reported as a blocked batch.
+        """
+        stray_stages = self._unexpected_stage_root_entries()
+        if stray_stages:
+            raise UnexpectedRecoveryEntryError(stray_stages, _UNEXPECTED_STAGE_PROBLEM)
         batches = tuple(self._read_pending_stable(path) for path in self._pending_paths())
         records = {record.operation_id: record for record in self._read_records()}
         return (
@@ -1570,6 +1590,8 @@ class OrganizationBatchTransaction:
             safe_entry = self._assert_internal_path(entry, allow_missing=False)
             if not safe_entry.is_file():
                 return f"unexpected non-file stage entry: {safe_entry.name}"
+            if is_os_metadata_file(safe_entry):
+                continue
             actual_names.add(safe_entry.name)
         if actual_names != expected_names:
             return "batch stage members differ from pending receipt"
@@ -2459,16 +2481,38 @@ class OrganizationBatchTransaction:
         if not pending_root.is_dir():
             raise RecoveryRequiredError("Recovery required: batch pending root is not a directory")
         paths: list[Path] = []
+        unexpected: list[str] = []
         for path in sorted(pending_root.iterdir()):
             safe_path = self._assert_internal_path(path, allow_missing=False)
             if _ATOMIC_RECEIPT_TEMP_PATTERN.fullmatch(safe_path.name) and safe_path.is_file():
                 continue
+            if is_os_metadata_file(safe_path):
+                continue
             if not safe_path.is_file() or safe_path.suffix != ".json":
-                raise RecoveryRequiredError(
-                    f"Recovery required: unexpected batch pending entry {safe_path.name}"
-                )
+                unexpected.append(self._entry_label(safe_path))
+                continue
             paths.append(safe_path)
+        if unexpected:
+            raise UnexpectedRecoveryEntryError(unexpected, _UNEXPECTED_PENDING_PROBLEM)
         return tuple(paths)
+
+    def _entry_label(self, path: Path) -> str:
+        """Name a sidecar entry by its vault-relative POSIX path, for an operator."""
+        return path.relative_to(self._vault_root).as_posix()
+
+    def _unexpected_stage_root_entries(self) -> list[str]:
+        """Return the stage-root entries that are neither a stage nor shell metadata."""
+        stage_root = self._assert_internal_path(self._stage_root, allow_missing=True)
+        if not stage_root.is_dir():
+            return []
+        unexpected: list[str] = []
+        for stage_dir in sorted(stage_root.iterdir()):
+            safe_stage_dir = self._assert_internal_path(stage_dir, allow_missing=False)
+            if is_os_metadata_file(safe_stage_dir):
+                continue
+            if not _HASH_PATTERN.fullmatch(safe_stage_dir.name):
+                unexpected.append(self._entry_label(safe_stage_dir))
+        return unexpected
 
     def _cleanup_atomic_receipt_temps(self) -> None:
         for root in (self._pending_root, self._committed_root):
@@ -2508,7 +2552,11 @@ class OrganizationBatchTransaction:
         for path in sorted(stage_dir.iterdir()):
             safe_path = self._assert_internal_path(path, allow_missing=False)
             if not safe_path.is_file():
-                raise OperationLogError(f"unexpected batch stage entry: {path}")
+                raise UnexpectedRecoveryEntryError(
+                    (self._entry_label(safe_path),), "unexpected non-file batch stage entry"
+                )
+            # Shell metadata inside a stage is deleted with the stage it sits in:
+            # the directory is Datacron's own and is about to be removed.
             safe_path.unlink()
         durable_flush_directory(stage_dir)
         stage_dir.rmdir()
@@ -2520,12 +2568,13 @@ class OrganizationBatchTransaction:
             return
         if not stage_root.is_dir():
             raise RecoveryRequiredError("Recovery required: batch stage root is not a directory")
+        unexpected = self._unexpected_stage_root_entries()
+        if unexpected:
+            raise UnexpectedRecoveryEntryError(unexpected, _UNEXPECTED_STAGE_PROBLEM)
         for stage_dir in sorted(stage_root.iterdir()):
             safe_stage_dir = self._assert_internal_path(stage_dir, allow_missing=False)
             if not _HASH_PATTERN.fullmatch(safe_stage_dir.name):
-                raise RecoveryRequiredError(
-                    "Recovery required: unexpected organization batch stage directory"
-                )
+                continue
             if not safe_stage_dir.is_dir() or safe_stage_dir.name in pending_ids:
                 continue
             self._remove_stage(safe_stage_dir.name)
