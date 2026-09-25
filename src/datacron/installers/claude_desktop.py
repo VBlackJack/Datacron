@@ -32,11 +32,13 @@ import json
 import os
 import shutil
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
 from datacron.core.logger import get_logger
+from datacron.installers.env_merge import ENV_READ_PATHS, ENV_VAULT_ROOT, merge_server_env
 from datacron.installers.foreign_files import replace_foreign_file
 
 __all__ = [
@@ -44,6 +46,7 @@ __all__ = [
     "ClaudeDesktopConfigError",
     "MCPServerInvocation",
     "config_path_for_platform",
+    "datacron_env_in_config",
     "install_claude_desktop_config",
     "resolve_mcp_command",
     "resolve_mcp_invocation",
@@ -169,6 +172,7 @@ def install_claude_desktop_config(
     config_path: Path | None = None,
     command: str | None = None,
     extra_env: dict[str, str] | None = None,
+    removed_env: Iterable[str] = (),
 ) -> Path:
     """Install Datacron into the Claude Desktop ``claude_desktop_config.json``.
 
@@ -184,6 +188,8 @@ def install_claude_desktop_config(
             string to bypass resolution; its arguments default to empty.
         extra_env: Optional additional env vars to merge into the
             subprocess environment.
+        removed_env: Env var names the caller explicitly turns off; they are
+            dropped from the existing entry instead of being preserved.
 
     Returns:
         The :class:`Path` of the config file that was written.
@@ -220,16 +226,18 @@ def install_claude_desktop_config(
     # DATACRON_DURABILITY from an existing install, so re-running `mcp install`
     # after an upgrade turned a configured writable vault back into a read-only
     # one, with the next write refused and nothing saying why. Anything this call
-    # supplies still wins; only the keys it does not mention are preserved.
-    env = _preserved_datacron_env(servers.get(DATACRON_SERVER_KEY))
-    env.update(
-        {
-            "DATACRON_VAULT_ROOT": str(resolved_vault),
-            "DATACRON_READ_PATHS": str(resolved_vault),
-        }
+    # supplies still wins; only the keys it does not mention are preserved, and
+    # removed_env is how an explicit "off" reaches the file.
+    supplied = {
+        ENV_VAULT_ROOT: str(resolved_vault),
+        ENV_READ_PATHS: str(resolved_vault),
+        **(extra_env or {}),
+    }
+    env = merge_server_env(
+        _preserved_datacron_env(servers.get(DATACRON_SERVER_KEY)),
+        supplied,
+        removed=removed_env,
     )
-    if extra_env:
-        env.update(extra_env)
 
     servers[DATACRON_SERVER_KEY] = {
         "command": invocation.command,
@@ -245,6 +253,19 @@ def install_claude_desktop_config(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def datacron_env_in_config(config_path: Path) -> dict[str, str]:
+    """Return the DATACRON_* environment of the Datacron entry in ``config_path``.
+
+    Setup reports what it wrote from this, rather than from what it asked for:
+    preserved settings are part of what the server will run with.
+    """
+    config = _load_existing_config(config_path)
+    servers = config.get(_MCP_SERVERS_KEY)
+    if not isinstance(servers, dict):
+        return {}
+    return _preserved_datacron_env(servers.get(DATACRON_SERVER_KEY))
 
 
 def _preserved_datacron_env(existing_entry: object) -> dict[str, str]:

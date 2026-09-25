@@ -42,6 +42,7 @@ d'indexation est différé et n'annule jamais l'enregistrement des clients. Opti
 - `datacron setup --enable-write --write-path CHEMIN` - active l'écriture sur un sous-dossier explicite ; sans `--write-path`, les défauts sont `<vault>/_memory`, `<vault>/_drafts` et `<vault>/_journal`.
 - `datacron setup --enable-write --machine-wide-write` - active aussi explicitement l'allowlist dans l'environnement utilisateur pour les futurs clients.
 - `datacron setup --durability strict --read-only` - mode durabilité strict et lecture seule certifiée.
+- `datacron setup --no-write` / `datacron setup --no-read-only` - retire une allowlist d'écriture ou un mode lecture seule existant des configs client. Une relance qui ne nomme aucune des deux formes garde ce que chaque config client contient déjà, et le récapitulatif affiche les réglages réellement écrits, conservés compris. Pointer le setup vers un autre vault retire les chemins d'écriture conservés qui sont en dehors.
 - `datacron setup --no-index` - saute la construction de l'index.
 - `datacron setup --client claude-code` - affiche un snippet de config stdio prêt à coller dans Claude Code.
 - `datacron setup --client none` - configure le vault sans écrire ni afficher de config client.

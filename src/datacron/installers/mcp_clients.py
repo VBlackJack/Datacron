@@ -36,6 +36,7 @@ import os
 import shutil
 import sys
 import tomllib
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -47,6 +48,7 @@ from datacron.installers.claude_desktop import (
     ClaudeDesktopConfigError,
     config_path_for_platform,
 )
+from datacron.installers.env_merge import merge_server_env
 from datacron.installers.foreign_files import replace_foreign_file
 
 __all__ = [
@@ -149,6 +151,8 @@ class InstallOutcome:
         config_path: The configuration file that was targeted.
         installed: ``True`` on success, ``False`` when an error occurred.
         detail: Error message when ``installed`` is ``False``, else ``""``.
+        env: The environment the written entry holds after merging with what
+            the config already had, or ``None`` when nothing was written.
     """
 
     client_id: str
@@ -157,6 +161,7 @@ class InstallOutcome:
     config_path: Path
     installed: bool
     detail: str = ""
+    env: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -395,16 +400,22 @@ def install_targets(
     command: str,
     args: list[str],
     env: dict[str, str],
+    removed_env: Iterable[str] = (),
 ) -> list[InstallOutcome]:
     """Write the Datacron server entry into each target, collecting outcomes.
 
     A failure on one target is recorded as a failed :class:`InstallOutcome`
-    rather than aborting the remaining installs.
+    rather than aborting the remaining installs. ``removed_env`` names the
+    variables the caller explicitly turns off: they are dropped from an
+    existing entry instead of being preserved.
     """
+    removed = tuple(removed_env)
     outcomes: list[InstallOutcome] = []
     for target in targets:
         try:
-            _install_one(target, command=command, args=args, env=env)
+            written_env = _install_one(
+                target, command=command, args=args, env=env, removed_env=removed
+            )
             outcomes.append(
                 InstallOutcome(
                     target.client_id,
@@ -412,6 +423,7 @@ def install_targets(
                     target.scope,
                     target.config_path,
                     installed=True,
+                    env=written_env,
                 )
             )
             _LOGGER.info("Registered Datacron with %s (%s)", target.display_name, target.scope)
@@ -480,15 +492,27 @@ def _install_one(
     command: str,
     args: list[str],
     env: dict[str, str],
-) -> None:
+    removed_env: tuple[str, ...] = (),
+) -> Mapping[str, object]:
+    """Write one entry and return the environment it holds after the merge."""
     if target.fmt == _FMT_JSON_MCPSERVERS:
-        _merge_json(target.config_path, "mcpServers", _stdio_entry(command, args, env))
-    elif target.fmt == _FMT_JSON_SERVERS:
-        _merge_json(target.config_path, "servers", _stdio_entry(command, args, env, with_type=True))
-    elif target.fmt == _FMT_TOML:
-        _merge_toml(target.config_path, command=command, args=args, env=env)
-    else:  # pragma: no cover - guarded by _client_format
-        raise MCPClientError(f"Unknown config format: {target.fmt!r}")
+        return _merge_json(
+            target.config_path, "mcpServers", _stdio_entry(command, args, env), removed_env
+        )
+    if target.fmt == _FMT_JSON_SERVERS:
+        return _merge_json(
+            target.config_path,
+            "servers",
+            _stdio_entry(command, args, env, with_type=True),
+            removed_env,
+        )
+    if target.fmt == _FMT_TOML:
+        return _merge_toml(
+            target.config_path, command=command, args=args, env=env, removed_env=removed_env
+        )
+    raise MCPClientError(  # pragma: no cover - guarded by _client_format
+        f"Unknown config format: {target.fmt!r}"
+    )
 
 
 def _unregister_one(target: ClientTarget) -> bool:
@@ -514,7 +538,11 @@ def _stdio_entry(
     return entry
 
 
-def _merged_entry(existing: object, entry: dict[str, Any]) -> dict[str, Any]:
+def _merged_entry(
+    existing: object,
+    entry: dict[str, Any],
+    removed_env: tuple[str, ...] = (),
+) -> dict[str, Any]:
     """Return ``entry`` laid over the Datacron entry the client already holds.
 
     The entry was replaced wholesale, so re-running setup, which the Windows
@@ -523,32 +551,55 @@ def _merged_entry(existing: object, entry: dict[str, Any]) -> dict[str, Any]:
     word, together with any proxy variable, ``disabled`` flag or ``autoApprove``
     list the user had added. What this call supplies still wins; every other key
     and environment variable is kept. The Claude Desktop writer already kept the
-    DATACRON_* variables for the same reason.
+    DATACRON_* variables for the same reason. ``removed_env`` names what an
+    explicit "off" drops; see :func:`merge_server_env`.
     """
     if not isinstance(existing, dict):
         return entry
     merged: dict[str, Any] = {**existing, **{k: v for k, v in entry.items() if k != "env"}}
     existing_env = existing.get("env")
-    env = dict(existing_env) if isinstance(existing_env, dict) else {}
-    env.update(entry.get("env", {}))
-    if env:
+    env = merge_server_env(
+        existing_env if isinstance(existing_env, dict) else {},
+        entry.get("env", {}),
+        removed=removed_env,
+    )
+    if env or isinstance(existing_env, dict):
         merged["env"] = env
     return merged
 
 
-def _merge_json(path: Path, servers_key: str, entry: dict[str, Any]) -> None:
+def _entry_env(entry: dict[str, Any]) -> Mapping[str, object]:
+    env = entry.get("env")
+    return dict(env) if isinstance(env, dict) else {}
+
+
+def _merge_json(
+    path: Path,
+    servers_key: str,
+    entry: dict[str, Any],
+    removed_env: tuple[str, ...] = (),
+) -> Mapping[str, object]:
     config = _load_json(path)
     servers = config.setdefault(servers_key, {})
     if not isinstance(servers, dict):
         raise MCPClientError(
             f"{path}: existing {servers_key!r} is not an object; refusing to edit."
         )
-    servers[_SERVER_NAME] = _merged_entry(servers.get(_SERVER_NAME), entry)
+    merged = _merged_entry(servers.get(_SERVER_NAME), entry, removed_env)
+    servers[_SERVER_NAME] = merged
     serialized = json.dumps(config, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     _atomic_write(path, serialized.encode("utf-8"))
+    return _entry_env(merged)
 
 
-def _merge_toml(path: Path, *, command: str, args: list[str], env: dict[str, str]) -> None:
+def _merge_toml(
+    path: Path,
+    *,
+    command: str,
+    args: list[str],
+    env: dict[str, str],
+    removed_env: tuple[str, ...] = (),
+) -> Mapping[str, object]:
     config = _load_toml(path)
     servers = config.setdefault("mcp_servers", {})
     if not isinstance(servers, dict):
@@ -556,8 +607,10 @@ def _merge_toml(path: Path, *, command: str, args: list[str], env: dict[str, str
     entry: dict[str, Any] = {"command": command, "args": list(args)}
     if env:
         entry["env"] = dict(env)
-    servers[_SERVER_NAME] = _merged_entry(servers.get(_SERVER_NAME), entry)
+    merged = _merged_entry(servers.get(_SERVER_NAME), entry, removed_env)
+    servers[_SERVER_NAME] = merged
     _atomic_write(path, tomli_w.dumps(config).encode("utf-8"))
+    return _entry_env(merged)
 
 
 def _remove_json_entry(path: Path, servers_key: str) -> bool:

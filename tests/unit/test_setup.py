@@ -465,9 +465,11 @@ def test_run_setup_configures_claude_desktop(
     assert "DATACRON_WRITE_PATHS" in captured["extra_env"]
 
 
-def test_run_setup_client_failure_becomes_warning(
+def test_run_setup_client_failure_is_a_client_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A Claude Desktop write that fails is a setup failure, not a warning."""
+
     def boom(vault_root: Path, *, extra_env: dict[str, str] | None = None, **_: Any) -> Path:
         raise ClaudeDesktopConfigError("no config here")
 
@@ -476,8 +478,9 @@ def test_run_setup_client_failure_becomes_warning(
         run_setup(SetupPlan(vault_path=tmp_path, client=CLIENT_CLAUDE_DESKTOP, build_index=False))
     )
     assert result.client_config_path is None
-    assert result.warnings
-    assert "no config here" in result.warnings[0]
+    assert not result.warnings
+    assert len(result.client_errors) == 1
+    assert "no config here" in result.client_errors[0]
 
 
 def test_run_setup_claude_code_returns_snippet(
@@ -568,7 +571,9 @@ def test_run_setup_all_installs_detected_clients(
         captured["include"] = include
         return [target]
 
-    def fake_install(targets: Any, *, command: str, args: Any, env: dict[str, str]) -> Any:
+    def fake_install(
+        targets: Any, *, command: str, args: Any, env: dict[str, str], **_: Any
+    ) -> Any:
         captured["command"] = command
         captured["args"] = args
         captured["env"] = env
@@ -1169,3 +1174,228 @@ def test_cli_unregister_rejects_unknown_selection(option: str, value: str, expec
     result = _runner.invoke(app, ["unregister", option, value, "--yes"])
     assert result.exit_code == 1
     assert expected in result.output
+
+
+# ---------------------------------------------------------------------------
+# Rerun semantics: omitted keeps, explicit off removes, the summary tells the truth
+# ---------------------------------------------------------------------------
+
+
+def _isolate_user_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point every per-user config location at the test directory."""
+    profile = tmp_path / "profile"
+    profile.mkdir(exist_ok=True)
+    for variable in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME"):
+        monkeypatch.setenv(variable, str(profile))
+    monkeypatch.setattr(Path, "home", lambda: profile)
+
+
+def _existing_cursor_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str],
+) -> Path:
+    """Write one Cursor config holding a Datacron entry, and route setup to it."""
+    _isolate_user_profile(tmp_path, monkeypatch)
+    config = tmp_path / "profile" / ".cursor" / "mcp.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        json.dumps({"mcpServers": {"datacron": {"command": "old", "args": [], "env": env}}}),
+        encoding="utf-8",
+    )
+    target = ClientTarget("cursor", "Cursor", "user", config, "json-mcpservers")
+    monkeypatch.setattr(setup_wizard, "discover_targets", lambda **_: [target])
+    monkeypatch.setattr(
+        setup_wizard,
+        "resolve_mcp_invocation",
+        lambda: MCPServerInvocation(command="datacron-mcp", args=()),
+    )
+    return config
+
+
+def _written_env(config: Path) -> dict[str, str]:
+    env: dict[str, str] = json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["datacron"][
+        "env"
+    ]
+    return env
+
+
+def test_rerun_without_write_options_reports_the_preserved_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An omitted option keeps the existing value, and the result says so.
+
+    The summary was built from the plan, so it printed "writing: disabled" and
+    "read-only: no" over a config that still held both.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    memory = str(vault.resolve() / "_memory")
+    config = _existing_cursor_entry(
+        tmp_path,
+        monkeypatch,
+        {
+            "DATACRON_VAULT_ROOT": str(vault.resolve()),
+            "DATACRON_WRITE_PATHS": memory,
+            "DATACRON_READ_ONLY": "true",
+        },
+    )
+
+    result = asyncio.run(
+        run_setup(SetupPlan(vault_path=vault, client=CLIENT_ALL, build_index=False))
+    )
+
+    env = _written_env(config)
+    assert env["DATACRON_WRITE_PATHS"] == memory
+    assert env["DATACRON_READ_ONLY"] == "true"
+    assert result.write_paths == [Path(memory)]
+    assert result.read_only is True
+
+
+def test_cli_setup_explicit_off_removes_write_and_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--no-write and --no-read-only reach the file; nothing else could remove them."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    config = _existing_cursor_entry(
+        tmp_path,
+        monkeypatch,
+        {
+            "DATACRON_VAULT_ROOT": str(vault.resolve()),
+            "DATACRON_WRITE_PATHS": str(vault.resolve() / "_memory"),
+            "DATACRON_READ_ONLY": "true",
+            "HTTPS_PROXY": "http://proxy.invalid",
+        },
+    )
+
+    result = _runner.invoke(
+        app,
+        [
+            "setup",
+            "--vault",
+            str(vault),
+            "--client",
+            "all",
+            "--scope",
+            "user",
+            "--yes",
+            "--no-index",
+            "--no-write",
+            "--no-read-only",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    env = _written_env(config)
+    assert "DATACRON_WRITE_PATHS" not in env
+    assert "DATACRON_READ_ONLY" not in env
+    assert env["HTTPS_PROXY"] == "http://proxy.invalid"
+    assert "writing:    disabled" in result.output
+    assert "read-only:  no" in result.output
+
+
+def test_cli_setup_rejects_write_path_with_no_write(tmp_path: Path) -> None:
+    result = _runner.invoke(
+        app,
+        [
+            "setup",
+            "--vault",
+            str(tmp_path),
+            "--client",
+            "none",
+            "--yes",
+            "--write-path",
+            str(tmp_path / "_memory"),
+            "--no-write",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--no-write" in result.output
+
+
+def test_setup_on_another_vault_drops_write_paths_into_the_old_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A preserved allowlist must not keep granting writes into the previous vault."""
+    old_vault = tmp_path / "old"
+    new_vault = tmp_path / "new"
+    old_vault.mkdir()
+    new_vault.mkdir()
+    config = _existing_cursor_entry(
+        tmp_path,
+        monkeypatch,
+        {
+            "DATACRON_VAULT_ROOT": str(old_vault.resolve()),
+            "DATACRON_READ_PATHS": str(old_vault.resolve()),
+            "DATACRON_WRITE_PATHS": str(old_vault.resolve() / "_memory"),
+        },
+    )
+
+    result = asyncio.run(
+        run_setup(SetupPlan(vault_path=new_vault, client=CLIENT_ALL, build_index=False))
+    )
+
+    env = _written_env(config)
+    assert env["DATACRON_VAULT_ROOT"] == str(new_vault.resolve())
+    assert env["DATACRON_READ_PATHS"] == str(new_vault.resolve())
+    assert "DATACRON_WRITE_PATHS" not in env
+    assert result.write_paths == []
+
+
+def test_cli_setup_fails_when_claude_desktop_cannot_be_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A requested client that was not configured is a failed setup, not a warning."""
+
+    def boom(vault_root: Path, **_: Any) -> Path:
+        raise ClaudeDesktopConfigError("no config here")
+
+    monkeypatch.setattr(setup_wizard, "install_claude_desktop_config", boom)
+
+    result = _runner.invoke(
+        app,
+        ["setup", "--vault", str(tmp_path), "--client", "claude-desktop", "--yes", "--no-index"],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Datacron setup complete." not in result.output
+    assert "finished with errors" in result.output
+    assert "no config here" in result.output
+
+
+def test_cli_setup_fails_when_the_launch_command_cannot_be_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unresolved() -> MCPServerInvocation:
+        raise ClaudeDesktopConfigError("datacron-mcp not found")
+
+    monkeypatch.setattr(setup_wizard, "resolve_mcp_invocation", unresolved)
+
+    result = _runner.invoke(
+        app,
+        ["setup", "--vault", str(tmp_path), "--client", "all", "--yes", "--no-index"],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Datacron setup complete." not in result.output
+    assert "datacron-mcp not found" in result.output
+
+
+def test_cli_setup_refuses_a_vault_yaml_that_does_not_load(tmp_path: Path) -> None:
+    """Setup kept a malformed VAULT.yaml and reported the index as merely deferred."""
+    initialize_vault(tmp_path)
+    sidecar_vault_config(tmp_path).write_text(
+        "vault_id: [unclosed\nsecret_value: hunter2\n", encoding="utf-8"
+    )
+
+    result = _runner.invoke(
+        app,
+        ["setup", "--vault", str(tmp_path), "--client", "none", "--yes"],
+    )
+
+    assert result.exit_code != 0, result.output
+    assert "Datacron setup complete." not in result.output
+    assert "does not load" in result.output
+    assert "hunter2" not in result.output
