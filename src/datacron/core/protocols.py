@@ -399,6 +399,11 @@ class VaultWriter(Protocol):
         """Return blocked operations observed by the latest complete scan."""
         ...
 
+    @property
+    def recovery_unexpected_entries(self) -> tuple[str, ...]:
+        """Return recovery-directory entries the latest scan could not classify."""
+        ...
+
     async def write_note_atomic(
         self,
         rel_path: str,

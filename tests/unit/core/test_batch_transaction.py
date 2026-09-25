@@ -714,6 +714,31 @@ async def test_move_sidecar_recovery_authenticates_before_and_result_aliases(
     )
 
 
+async def test_shell_metadata_in_a_pending_stage_does_not_block_its_recovery(
+    tmp_path: Path,
+) -> None:
+    """A file manager that opened the stage leaves a file there that is no member.
+
+    Counted as a member, it made the stage differ from its receipt, so a batch that
+    could roll forward was reported blocked for good.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    bundle = _move_bundle_with_sidecar(vault)
+    writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
+    await _leave_pending(writer, bundle)
+    stage_dir = _stage_path(vault, bundle, "unused").parent
+    (stage_dir / ".DS_Store").write_bytes(b"\x00")
+    (stage_dir / "desktop.ini").write_text("[.ShellClassInfo]\n", encoding="ascii")
+    restarted = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
+
+    assert await restarted.recover_operations() == 1
+    assert restarted.recovery_blocked == ()
+    assert not (vault / "notes" / "old.md").exists()
+    assert (vault / "notes" / "new.md").is_file()
+    assert not stage_dir.exists()
+
+
 async def test_case_canonicalization_recovers_after_pending_publish(
     tmp_path: Path,
 ) -> None:
@@ -2837,10 +2862,13 @@ async def test_operation_recovery_rejects_pending_filename_id_mismatch(
     expected_error = (
         "filename does not match operation_id" if renamed.suffix == ".json" else "unexpected entry"
     )
-    with pytest.raises(OperationLogError, match=expected_error):
+    # A typed recovery refusal, not an internal error: it blocks writes by name
+    # and lets startup degrade instead of aborting.
+    with pytest.raises(RecoveryRequiredError, match=expected_error):
         await writer.recover_operations()
-    with pytest.raises(OperationLogError, match=expected_error):
+    with pytest.raises(RecoveryRequiredError, match=expected_error):
         await writer.write_note_atomic("other.md", "# Other\n", overwrite=False)
+    assert writer.recovery_unexpected_entries == (f".datacron/oplog/pending/{renamed_name}",)
 
     assert target.read_bytes() == b"before\n"
     assert not (vault / "other.md").exists()
@@ -2895,7 +2923,9 @@ def test_operation_pending_receipt_read_is_bounded(tmp_path: Path) -> None:
     oversized.parent.mkdir(parents=True)
     oversized.write_bytes(b" " * (64 * 1024 + 1))
 
-    with pytest.raises(OperationLogError, match="exceeds 65536 bytes"):
+    # Still bounded, and now a typed recovery refusal naming the entry, so an
+    # oversized file in the pending directory degrades startup instead of aborting it.
+    with pytest.raises(RecoveryRequiredError, match=r"exceeds 65536 bytes.*oversized\.json"):
         journal.read_pending(oversized)
 
 

@@ -1346,6 +1346,58 @@ async def test_a_clock_stepped_back_between_two_writers_does_not_wedge_the_vault
     assert not list((vault / ".datacron" / "oplog" / "pending").glob("*.json"))
 
 
+async def test_recovery_cuts_a_torn_final_fragment_and_keeps_a_copy(tmp_path: Path) -> None:
+    """A kill or a power loss mid-append leaves the journal ending mid-line.
+
+    Startup reported success and every write then failed with an internal error,
+    for good: nothing cut the fragment. Recovery now removes it, under the journal
+    lock, after copying it next to the log.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "n.md").write_bytes(b"# N\n")
+    writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
+    context = OperationContext(op="append", tool="append_journal", actor="test", parameters={})
+    await writer.mutate_note_atomic("n.md", lambda text: text + "a\n", operation=context)
+    operations = vault / ".datacron" / "oplog" / "operations.jsonl"
+    committed = operations.read_bytes()
+    fragment = b'{"actor":"x","after_'
+    operations.write_bytes(committed + fragment)
+
+    restarted = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
+    assert await restarted.recover_operations() == 0
+    assert operations.read_bytes() == committed
+    backups = list(operations.parent.glob("operations.jsonl.torn-*"))
+    assert [backup.read_bytes() for backup in backups] == [fragment]
+
+    await restarted.mutate_note_atomic("n.md", lambda text: text + "b\n", operation=context)
+    assert (vault / "n.md").read_bytes() == b"# N\na\nb\n"
+    assert len(restarted._operation_journal.read_records()) == 2
+
+
+async def test_recovery_never_cuts_a_complete_record_that_lost_its_newline(
+    tmp_path: Path,
+) -> None:
+    """A final line that parses is a record, not debris, so it is left for an operator."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "n.md").write_bytes(b"# N\n")
+    writer = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
+    context = OperationContext(op="append", tool="append_journal", actor="test", parameters={})
+    await writer.mutate_note_atomic("n.md", lambda text: text + "a\n", operation=context)
+    operations = vault / ".datacron" / "oplog" / "operations.jsonl"
+    unterminated = operations.read_bytes().rstrip(b"\n")
+    operations.write_bytes(unterminated)
+
+    restarted = FilesystemVaultWriter(vault, Settings(write_paths=[vault]))
+    with pytest.raises(OperationLogError, match="JSONL boundary"):
+        await restarted.mutate_note_atomic("n.md", lambda text: text + "b\n", operation=context)
+
+    assert operations.read_bytes() == unterminated
+    assert (vault / "n.md").read_bytes() == b"# N\na\n"
+    assert not list(operations.parent.glob("operations.jsonl.torn-*"))
+
+
 def test_a_pending_record_behind_the_tail_is_restamped_on_recovery(tmp_path: Path) -> None:
     journal = OperationJournal(tmp_path, retention_days=30, history_mode="full")
     now = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)

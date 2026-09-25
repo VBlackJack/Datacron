@@ -782,6 +782,16 @@ class ScopedVaultWriter:
         """Return only blocked operations visible in this read scope."""
         return tuple(self._readable_by_rel_path(self._delegate.recovery_blocked))
 
+    @property
+    def recovery_unexpected_entries(self) -> tuple[str, ...]:
+        """Return unclassified recovery-directory entries, unfiltered by read scope.
+
+        They are sidecar paths, not notes, so no read scope admits them, and they
+        block every writer in the vault alike: hiding them would leave a scoped
+        client refused with no way to learn why.
+        """
+        return self._delegate.recovery_unexpected_entries
+
     async def write_note_atomic(
         self,
         rel_path: str,

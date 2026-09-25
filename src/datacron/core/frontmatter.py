@@ -107,7 +107,10 @@ def parse(raw: str) -> tuple[dict[str, Any], str]:
         return {}, raw
     try:
         post = frontmatter.loads(parseable)
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, ValueError) as exc:
+        # PyYAML builds dates itself and lets the constructor's ValueError out
+        # for an impossible one such as ``2024-02-30``. It is malformed
+        # frontmatter like any other, and must degrade the same way.
         raise FrontmatterError(str(exc)) from exc
     metadata: dict[str, Any] = dict(post.metadata)
     _normalize_lifecycle_scalars(metadata)
@@ -294,7 +297,10 @@ def _frontmatter_block_end(lines: Sequence[str]) -> int | None:
         return None
     try:
         loaded = yaml.safe_load("".join(lines[opening + 1 : closing]))
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError):
+        # The constructor's plain ValueError for an impossible date such as
+        # ``2024-02-30`` means the block cannot be loaded, exactly as a syntax
+        # error does, and this check answers rather than raises.
         return _AMBIGUOUS_BLOCK
     if loaded is None or isinstance(loaded, dict):
         return closing

@@ -44,6 +44,7 @@ from datacron.core.batch_transaction import (
 from datacron.core.config import SIDECAR_DIR_NAME, Settings, VaultConfig
 from datacron.core.durability import (
     RecoveryRequiredError,
+    UnexpectedRecoveryEntryError,
     WritePolicy,
     atomic_durable_write,
     durable_flush_directory,
@@ -148,6 +149,7 @@ class RecoveryOutcome:
 
     recovered: int = 0
     blocked: tuple[BlockedOperation, ...] = ()
+    unexpected_entries: tuple[str, ...] = ()
 
 
 class VaultLockBusyError(RuntimeError):
@@ -197,6 +199,11 @@ class FilesystemVaultWriter:
     def recovery_blocked(self) -> tuple[BlockedOperation, ...]:
         """Return the blocked operations observed by the latest complete scan."""
         return self._recovery_outcome.blocked
+
+    @property
+    def recovery_unexpected_entries(self) -> tuple[str, ...]:
+        """Return the recovery-directory entries the latest scan could not classify."""
+        return self._recovery_outcome.unexpected_entries
 
     async def write_note_atomic(
         self,
@@ -353,7 +360,14 @@ class FilesystemVaultWriter:
 
     async def has_pending_organization_batches(self) -> bool:
         """Return whether organization batch recovery is pending."""
-        return await asyncio.to_thread(self._batch_transaction.has_pending_batches)
+        return await asyncio.to_thread(self._has_pending_organization_batches_sync)
+
+    def _has_pending_organization_batches_sync(self) -> bool:
+        try:
+            return self._batch_transaction.has_pending_batches()
+        except UnexpectedRecoveryEntryError as exc:
+            self._recovery_outcome = RecoveryOutcome(unexpected_entries=exc.entries)
+            raise
 
     async def recover_operations(self) -> int:
         """Resolve durable pending manifests before serving or writing."""
@@ -754,9 +768,14 @@ class FilesystemVaultWriter:
                         "request_id was already committed and the note is no longer what it "
                         "wrote; creating it again needs a new request_id"
                     )
+                # Retrying the same request_id with an expected_hash cannot work:
+                # the request fingerprint includes expected_hash, and this call
+                # matched the fingerprint without one, so adding it reads as a
+                # different set of arguments. Only a new request_id can proceed.
                 raise WriteConflictError(
                     "request_id was already committed and the note has changed since; "
-                    "re-read and retry with an exact expected_hash"
+                    "re-read the note, then write again with a new request_id and an "
+                    "exact expected_hash"
                 )
             return
         request.record = record
@@ -901,6 +920,29 @@ class FilesystemVaultWriter:
         purge_history: bool = True,
         recover_organization_batches: bool = True,
     ) -> RecoveryOutcome:
+        """Resolve pending work, recording any entry that blocks it for health to report.
+
+        An entry recovery cannot classify refuses the scan with a typed
+        ``recovery_required`` error. It is recorded here first, so ``get_health``
+        and startup can name it without a write having to fail on it again.
+        """
+        try:
+            with self._advisory_lock("oplog"):
+                self._operation_journal.repair_torn_tail()
+            return self._recover_operations_scan_sync(
+                purge_history=purge_history,
+                recover_organization_batches=recover_organization_batches,
+            )
+        except UnexpectedRecoveryEntryError as exc:
+            self._recovery_outcome = RecoveryOutcome(unexpected_entries=exc.entries)
+            raise
+
+    def _recover_operations_scan_sync(
+        self,
+        *,
+        purge_history: bool,
+        recover_organization_batches: bool,
+    ) -> RecoveryOutcome:
         batch_outcome = self._recover_organization_batches_sync(
             allowed=recover_organization_batches
         )
@@ -1018,11 +1060,28 @@ class FilesystemVaultWriter:
             return self._inspect_recovery_locked_sync()
 
     def _inspect_recovery_locked_sync(self) -> tuple[BlockedOperation, ...]:
-        blocked: list[BlockedOperation] = list(self._batch_transaction.inspect())
+        """Classify every pending manifest, collecting entries that are not one.
+
+        An entry recovery cannot classify is recorded and the inspection goes on,
+        so the operator sees every stray file and every blocked operation in one
+        run instead of the first refusal only.
+        """
+        unexpected: list[str] = []
+        try:
+            blocked: list[BlockedOperation] = list(self._batch_transaction.inspect())
+        except UnexpectedRecoveryEntryError as exc:
+            blocked = []
+            unexpected.extend(exc.entries)
         records = self._operation_journal.read_records()
-        for pending_path in self._operation_journal.pending_paths():
+        pending_paths, stray = self._operation_journal.scan_pending()
+        unexpected.extend(stray)
+        for pending_path in pending_paths:
             manifest_before = pending_path.read_bytes()
-            record = self._operation_journal.read_pending(pending_path)
+            try:
+                record = self._operation_journal.read_pending(pending_path)
+            except UnexpectedRecoveryEntryError as exc:
+                unexpected.extend(exc.entries)
+                continue
             candidate = (self._vault_root / record.rel_path).expanduser().resolve()
             safe_rel_path = self._safe_relative_path(candidate)
             current_bytes = candidate.read_bytes() if candidate.is_file() else None
@@ -1066,7 +1125,10 @@ class FilesystemVaultWriter:
                         log_error=False,
                     )
                 )
-        self._recovery_outcome = RecoveryOutcome(blocked=tuple(blocked))
+        self._recovery_outcome = RecoveryOutcome(
+            blocked=tuple(blocked),
+            unexpected_entries=tuple(sorted(unexpected)),
+        )
         return tuple(blocked)
 
     def _repair_recovery_sync(

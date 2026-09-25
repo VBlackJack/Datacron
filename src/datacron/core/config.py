@@ -158,6 +158,11 @@ INDEX_DB_FILENAME: Final[str] = "datacron.db"
 HISTORY_DIR_NAME: Final[str] = "history"
 OPLOG_DIR_NAME: Final[str] = "oplog"
 OPLOG_PENDING_DIR_NAME: Final[str] = "pending"
+# Files an operating system shell writes into any folder it displays, casefolded.
+# Recovery directories ignore them instead of reading them as unexplained evidence.
+OS_METADATA_FILENAMES: Final[frozenset[str]] = frozenset({"desktop.ini", ".ds_store", "thumbs.db"})
+# macOS writes an AppleDouble companion ``._<name>`` beside files on non-HFS volumes.
+OS_METADATA_FILENAME_PREFIX: Final[str] = "._"
 VAULT_CONFIG_FILENAME: Final[str] = "VAULT.yaml"
 # Key under which the writing Datacron build (package version) is stamped, both
 # in ``VAULT.yaml`` (provenance) and the ``vault/info`` MCP resource. Must match

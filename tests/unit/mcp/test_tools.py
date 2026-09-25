@@ -445,6 +445,10 @@ class _CountingVaultWriter:
     def recovery_blocked(self) -> tuple[BlockedOperation, ...]:
         return self._delegate.recovery_blocked
 
+    @property
+    def recovery_unexpected_entries(self) -> tuple[str, ...]:
+        return self._delegate.recovery_unexpected_entries
+
     async def write_note_atomic(
         self,
         rel_path: str,

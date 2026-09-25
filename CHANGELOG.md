@@ -11,6 +11,39 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Fixed
 
+- One stray file in a recovery directory stopped the server. A `desktop.ini`, `.DS_Store`
+  or sync-conflict copy in `.datacron/oplog/pending` or the organization batch directories
+  aborted startup, so the client saw no tool at all, and failed every write with an opaque
+  internal error. Shell metadata (`desktop.ini`, `.DS_Store`, `Thumbs.db`, AppleDouble
+  `._*`) is now ignored. Any other entry, including a pending manifest whose name does not
+  match its content, lets startup finish with reads available, refuses writes with a
+  `recovery_required` error naming the entry, and is listed in `get_health`
+  (`recovery.unexpected_entries`) and by `datacron ops inspect`, which no longer stops at
+  the first one.
+- A torn `ulids.json` emptied the index. Every note without a frontmatter id failed to
+  resolve its identity with a JSON error, and reconcile took that for an undecodable note
+  and purged its rows: three notes out of four disappeared from search. A damaged identity
+  sidecar now raises its own error, logged once per read with the sidecar path, and the
+  notes it affects keep their rows and are reported as unreadable.
+- A frontmatter date that does not exist, such as `created: 2024-02-30`, made the note
+  unreadable: PyYAML reports it with a plain `ValueError`, which escaped the handling of
+  malformed frontmatter. The note is now read with empty metadata like any other malformed
+  frontmatter, so it stays indexed, searchable and listed. A write to such a note, such as
+  `append_journal` or `set_frontmatter`, is refused with a typed `FrontmatterError` and
+  leaves the note untouched, and the write tools' check for an ambiguous leading block no
+  longer leaks the same `ValueError`.
+- The guidance for a keyed write that was committed and then reverted could not succeed.
+  The request fingerprint includes `expected_hash`, so a write first made without one cannot
+  be replayed with one, yet both the writer's refusal and `get_write_progress` said to do
+  exactly that. The writer now says to write again under a new `request_id`, and
+  `get_write_progress` answers `retry_with_new_request_id_and_expected_hash` unless the
+  caller supplies an original `expected_hash` that an identical replay can still satisfy.
+- A kill or a power loss in the middle of an operation-log append left the log ending
+  mid-line: startup succeeded and every write then failed with an internal error, with no
+  command to repair it. Recovery now cuts a final fragment that is not valid JSON back to
+  the last complete record, under the journal lock, and saves the cut bytes next to the log
+  as `operations.jsonl.torn-<timestamp>`. A complete record that only lost its newline is
+  never cut.
 - `patch_note_section` silently deleted the subsections of an H2-H6 target: the replaced span
   runs to the next heading of the same or a shallower level, and only level 1 was guarded. It
   now refuses, at every level, a section that contains subsections, with the error code
