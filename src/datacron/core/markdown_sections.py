@@ -25,6 +25,7 @@ from datacron.core.markdown_headings import (
     MarkdownHeading,
     heading_before,
     heading_identity,
+    leaves_html_block_open,
     markdown_headings,
 )
 
@@ -32,16 +33,21 @@ __all__ = [
     "HEADING_SUGGESTION_MAX_CHARS",
     "AmbiguousHeadingError",
     "HeadingNotFoundError",
+    "SectionHasSubsectionsError",
     "SectionSelector",
     "SectionSelectorError",
+    "SectionStructureError",
     "append_entry_to_heading",
     "find_section_span",
     "heading_ancestry",
     "move_note_section",
     "parse_heading_line",
     "patch_note_preamble",
+    "reject_section_with_subsections",
     "rename_atx_heading_line",
     "section_replacement_block",
+    "selector_heading_text",
+    "verify_spliced_headings",
 ]
 
 HEADING_SUGGESTION_MAX_CHARS: Final[int] = 160
@@ -136,8 +142,42 @@ class HeadingNotFoundError(SectionSelectorError):
         self.suggestion_spans = suggestion_spans if suggestion_spans is not None else []
 
 
+class SectionHasSubsectionsError(ValueError):
+    """Replacing a section's content would delete the subsections it contains."""
+
+    code: Final[str] = "section_has_subsections"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        subsections: list[HeadingSuggestion],
+        source_context: str,
+        subsection_spans: list[tuple[int, int]],
+    ) -> None:
+        super().__init__(message)
+        self.subsections = subsections
+        self.source_context = source_context
+        self.subsection_spans = subsection_spans
+
+
+class SectionStructureError(ValueError):
+    """An edit would change how the headings outside the edited span are read."""
+
+    code: Final[str] = "section_structure_changed"
+
+
+# A heading appended after inserted content: it survives as the last heading only
+# when that content closes every code fence it opens.
+_OPEN_BLOCK_PROBE: Final[str] = "# datacron-open-block-probe\n"
+
+
 def append_entry_to_heading(body: str, heading: str, entry: str) -> str:
-    """Append ``entry`` under ``heading``, creating a level-two section if absent."""
+    """Append ``entry`` under ``heading``, creating a level-two section if absent.
+
+    The entry lands at the end of the section's own content, before its first
+    subsection, and the result must keep every existing heading readable.
+    """
     lines = body.splitlines(keepends=True)
     section = _find_heading_section(lines, heading)
     if section is None:
@@ -147,13 +187,154 @@ def append_entry_to_heading(body: str, heading: str, entry: str) -> str:
         leading = body.rstrip("\n")
         separator = "" if not leading else "\n\n"
         entry_block = entry if entry.endswith("\n") else f"{entry}\n"
-        return f"{leading}{separator}## {heading}\n\n{entry_block}"
+        created = f"{separator}## {heading}\n\n{entry_block}"
+        rendered = f"{leading}{created}"
+        verify_spliced_headings(lines, len(lines), len(lines), created, rendered)
+        return rendered
 
     _heading_index, _level, insert_at = section
     prefix = "".join(lines[:insert_at])
     suffix = "".join(lines[insert_at:])
     block = _entry_block(entry, prefix=prefix, suffix=suffix)
-    return f"{prefix}{block}{suffix}"
+    rendered = f"{prefix}{block}{suffix}"
+    verify_spliced_headings(lines, insert_at, insert_at, block, rendered)
+    return rendered
+
+
+def selector_heading_text(headings: Iterable[MarkdownHeading], heading: str) -> str:
+    """Return the parsed heading text an additive selector ``heading`` stands for.
+
+    The exact parsed text wins, as it does for ``find_section_span``, so
+    ``*draft* notes`` finds the heading written ``\\*draft\\* notes``. Only when no
+    heading carries that text is the selector read as raw Markdown: ``Use `rg`
+    flags`` then finds ``Use rg flags``. Rendering first lost the exact form,
+    because re-parsing ``*draft* notes`` yields ``draft notes``: ``append_journal``
+    found nothing and created a duplicate section on every call, while
+    ``patch_note_section`` matched the same selector. The raw-Markdown fallback
+    stays with the additive path, whose miss would otherwise create a section;
+    destructive selectors refuse a miss and suggest the rendered text instead.
+    """
+    if any(item.text == heading for item in headings):
+        return heading
+    return heading_identity(heading)
+
+
+def reject_section_with_subsections(
+    lines: list[str],
+    content_start: int,
+    content_end: int,
+    *,
+    source_context: str | None = None,
+) -> None:
+    """Refuse a content replacement whose span contains subsection headings.
+
+    A section's span runs to the next heading of the same or a shallower level,
+    so replacing it replaced every subsection too. Only level 1 was guarded; an
+    H2 patch silently deleted its H3 children, although the tool promises to keep
+    every section it does not target. The error names each child with the level
+    and occurrence that address it.
+    """
+    headings = markdown_headings(lines)
+    occurrences: dict[tuple[str, int], int] = {}
+    children: list[HeadingSuggestion] = []
+    child_headings: list[MarkdownHeading] = []
+    for item in headings:
+        key = (item.text, item.level)
+        occurrences[key] = occurrences.get(key, 0) + 1
+        if content_start <= item.start < content_end:
+            children.append(
+                {
+                    "heading": item.text,
+                    "heading_level": item.level,
+                    "heading_occurrence": occurrences[key],
+                }
+            )
+            child_headings.append(item)
+    if not children:
+        return
+    context = source_context if source_context is not None else "".join(lines)
+    raise SectionHasSubsectionsError(
+        f"section contains {len(children)} subsection heading(s) that replacing its "
+        "content would delete; patch a subsection instead, or delete it explicitly "
+        "with delete_note_section first",
+        subsections=children,
+        source_context=context,
+        subsection_spans=_context_spans(lines, context, child_headings),
+    )
+
+
+def verify_spliced_headings(
+    original: list[str],
+    start: int,
+    end: int,
+    inserted: str,
+    rendered: str,
+) -> None:
+    """Refuse a splice that changes how any heading outside it is read.
+
+    ``inserted`` replaced ``original[start:end]`` to produce ``rendered``. Nothing
+    checked the result, so content that opened a code fence (```` ```python ````
+    without its closer) or an HTML comment turned every later heading into code
+    or comment: the sections vanished from every selector, and the next
+    ``append_journal`` created an invisible duplicate section at the end. The
+    headings before the span, those of the inserted content read alone, and those
+    after the span must be exactly the headings of the result, and the inserted
+    content must close what it opens, even at the end of the note, where there is
+    no later heading yet to swallow.
+    """
+    inserted_lines = inserted.splitlines(keepends=True)
+    if _leaves_block_open(inserted_lines):
+        raise SectionStructureError(
+            "new content leaves a code fence, HTML comment or raw HTML block open; "
+            "close it so the content after it keeps its structure"
+        )
+    before = markdown_headings(original)
+    expected = [(item.level, item.text) for item in before if item.start < start]
+    expected += [(item.level, item.text) for item in markdown_headings(inserted_lines)]
+    expected += [(item.level, item.text) for item in before if item.start >= end]
+    actual = [
+        (item.level, item.text) for item in markdown_headings(rendered.splitlines(keepends=True))
+    ]
+    if actual != expected:
+        raise SectionStructureError(
+            "edit changes how the note's other headings are read; refusing a write "
+            "that would hide or create sections outside the edited span"
+        )
+
+
+def _leaves_block_open(lines: list[str]) -> bool:
+    """Return whether ``lines`` leave a code fence or a masked HTML block open."""
+    sealed = list(lines)
+    if sealed and not sealed[-1].endswith(("\n", "\r")):
+        sealed[-1] += "\n"
+    sealed += ["\n", _OPEN_BLOCK_PROBE]
+    headings = markdown_headings(sealed)
+    if not headings or headings[-1].start != len(sealed) - 1:
+        return True
+    return leaves_html_block_open(lines)
+
+
+def _context_spans(
+    lines: list[str], source_context: str, items: Iterable[MarkdownHeading]
+) -> list[tuple[int, int]]:
+    """Map heading spans of ``lines`` to one-based line spans of ``source_context``.
+
+    ``lines`` is the body; ``source_context`` is usually the whole note, the body
+    preceded by its frontmatter. When the body is not a suffix of the context the
+    spans cannot be placed, and each falls back to the whole context.
+    """
+    body = "".join(lines)
+    offset = (
+        len(source_context[: len(source_context) - len(body)].splitlines())
+        if source_context.endswith(body)
+        else None
+    )
+    return [
+        (item.start + 1 + offset, item.end + offset)
+        if offset is not None
+        else (1, len(source_context.splitlines()))
+        for item in items
+    ]
 
 
 def find_section_span(
@@ -173,6 +354,8 @@ def find_section_span(
     instead of a plain ``ValueError``.
     """
     headings = markdown_headings(lines)
+    # Exact parsed text only: a destructive selector never reinterprets raw
+    # Markdown. A miss returns rendered-identity suggestions for the caller to pick.
     matches = [
         (item.end, item.level)
         for item in headings
@@ -184,24 +367,16 @@ def find_section_span(
         )
     except HeadingNotFoundError as exc:
         exc.suggestions = _heading_suggestions(lines, heading, heading_level)
-        body = "".join(lines)
-        exc.source_context = source_context if source_context is not None else body
-        offset = (
-            len(exc.source_context[: len(exc.source_context) - len(body)].splitlines())
-            if exc.source_context.endswith(body)
-            else None
-        )
-        for candidate in exc.suggestions:
-            selected = [
+        exc.source_context = source_context if source_context is not None else "".join(lines)
+        selected = [
+            [
                 item
                 for item in headings
                 if item.text == candidate["heading"] and item.level == candidate["heading_level"]
             ][candidate["heading_occurrence"] - 1]
-            exc.suggestion_spans.append(
-                (selected.start + 1 + offset, selected.end + offset)
-                if offset is not None
-                else (1, len(exc.source_context.splitlines()))
-            )
+            for candidate in exc.suggestions
+        ]
+        exc.suggestion_spans.extend(_context_spans(lines, exc.source_context, selected))
         raise
     content_end = next(
         (item.start for item in headings if item.start >= content_start and item.level <= level),
@@ -315,11 +490,13 @@ def patch_note_preamble(body: str, new_content: str) -> str:
     if not normalized.strip():
         normalized = ""
     suffix = "".join(lines[heading_index:])
-    rendered = suffix if not normalized else f"{normalized}\n\n{suffix}"
+    inserted = "" if not normalized else f"{normalized}\n\n"
+    rendered = f"{inserted}{suffix}"
     normalized_body = body.replace("\r\n", "\n").replace("\r", "\n")
     normalized_rendered = rendered.replace("\r\n", "\n").replace("\r", "\n")
     if normalized_rendered == normalized_body:
         raise ValueError("preamble is unchanged; nothing to patch")
+    verify_spliced_headings(lines, 0, heading_index, inserted, rendered)
     return rendered
 
 
@@ -359,13 +536,21 @@ def section_replacement_block(new_content: str, *, prefix: str, suffix: str) -> 
 
 
 def _find_heading_section(lines: list[str], heading: str) -> tuple[int, int, int] | None:
-    identity = heading_identity(heading)
-    matches = [item for item in markdown_headings(lines) if item.text == identity]
+    """Return a heading's start, level and the line where its own content ends.
+
+    The content ends at the next heading of any level, not at the end of the
+    subtree: an entry appended to ``## Journal`` belongs above ``### Archive``,
+    where it used to be filed under that archive instead.
+    """
+    headings = markdown_headings(lines)
+    target = selector_heading_text(headings, heading)
+    matches = [item for item in headings if item.text == target]
     if not matches:
         return None
-    start, end = find_section_span(lines, identity, None)
+    start, _subtree_end = find_section_span(lines, target, None)
     selected = matches[0]
-    return selected.start, selected.level, _trim_trailing_blank_lines(lines, start, end)
+    own_end = next((item.start for item in headings if item.start >= start), len(lines))
+    return selected.start, selected.level, _trim_trailing_blank_lines(lines, start, own_end)
 
 
 def _trim_trailing_blank_lines(lines: list[str], start: int, end: int) -> int:

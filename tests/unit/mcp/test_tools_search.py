@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import time
 from collections.abc import AsyncIterator, Callable
@@ -631,8 +632,19 @@ async def stubbed_app(tmp_vault: Path) -> AsyncIterator[DatacronApp]:
 
 class TestSearchRegex:
     @pytest.mark.asyncio
-    async def test_invalid_regex_returns_structured_error(self, stubbed_app: DatacronApp) -> None:
-        result = await _search_regex_impl(stubbed_app, pattern="(", glob=None, limit=5)
+    async def test_invalid_regex_returns_structured_error(
+        self, stubbed_app: DatacronApp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Python judges a pattern only on the path that runs it with Python: the
+        # indexed fallback, reached here because the configured binary is missing.
+        fallback_app = dataclasses.replace(
+            stubbed_app,
+            ripgrep=RipgrepWrapper(),
+            settings=stubbed_app.settings.model_copy(
+                update={"ripgrep_path": str(tmp_path / "missing-rg")}
+            ),
+        )
+        result = await _search_regex_impl(fallback_app, pattern="(", glob=None, limit=5)
         assert "error" in result
         assert result["error"]["type"] == "ValueError"
         assert "invalid regex" in result["error"]["message"].lower()

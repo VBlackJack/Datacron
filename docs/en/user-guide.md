@@ -36,7 +36,7 @@ returns only the relevant notes or fragments (chunks) to Claude. Concretely:
 | `list_notes` | Paginated list of notes, filterable by folder, tags, and top-level frontmatter; returns ULID, title, tags, aliases, and dates. |
 | `get_note` | Reads a specific note by ULID, chunk id, or relative path; paginated content, single chunk, or heading outline. |
 | `search_text` | BM25 search over the FTS5 index: ranked snippets, stale notes demoted by default. |
-| `search_regex` | Literal regular-expression search via ripgrep, resolved to indexed chunks. Without ripgrep it scans indexed chunk bodies instead, which is slower and misses frontmatter. |
+| `search_regex` | Literal regular-expression search via ripgrep (ripgrep syntax), resolved to indexed chunks. It searches note bodies only: a match inside frontmatter is not returned. Without ripgrep it scans indexed chunk bodies with Python regex syntax instead, which is slower. |
 | `get_backlinks` | Returns chunks whose wikilinks point to a given ULID or alias. |
 
 For example, `list_notes(frontmatter={"confidence": "needs_verification", "origin": "ai"})`

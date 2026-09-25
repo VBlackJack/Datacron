@@ -359,6 +359,18 @@ class TestLeadingDelimiterBlockThatIsNotFrontmatter:
         assert metadata == {}
         assert body == "\n# Title\n"
 
+    @pytest.mark.parametrize(
+        "raw",
+        ["---\nIntro para\n\n## A\n\nb\n  \n", "\ufeff---\r\n\r\n# N\r\n\r\nbody\r\n"],
+    )
+    def test_an_unclosed_opening_delimiter_keeps_the_exact_text_as_body(self, raw: str) -> None:
+        """The stripped python-frontmatter text lost the leading and trailing whitespace."""
+        metadata, body, has_bom = parse_preserving_bom_and_body_eols(raw)
+
+        assert metadata == {}
+        assert body == raw.removeprefix("\ufeff")
+        assert has_bom is raw.startswith("\ufeff")
+
 
 class TestHasAmbiguousLeadingDelimiterBlock:
     """Tell a real frontmatter block from a leading --- that only looks like one."""

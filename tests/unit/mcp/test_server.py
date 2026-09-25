@@ -1256,7 +1256,9 @@ async def test_rename_note_section_write_descriptions_lead_with_usage_trigger(
         assert "'option -- reason'" in (descriptions[name] or "")
     patch_description = descriptions["patch_note_section"]
     assert patch_description is not None
-    assert "refuses a level-1 heading that contains subsections" in patch_description
+    assert "refuses, at every level, a section that contains subsections" in patch_description
+    assert "section_has_subsections" in patch_description
+    assert "section_structure_changed" in patch_description
     preamble_description = descriptions["patch_note_preamble"]
     assert preamble_description is not None
     assert "strictly before the first Markdown heading" in preamble_description

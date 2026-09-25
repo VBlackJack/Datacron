@@ -28,6 +28,7 @@ HealthDetail: TypeAlias = Literal["summary", "full"]
 OrganizationManifestMode: TypeAlias = Literal["validate", "apply"]
 OrganizationManifestStatus: TypeAlias = Literal[
     "validated",
+    "already_committed",
     "applied",
     "committed_index_incomplete",
     "committed_report_mismatch",

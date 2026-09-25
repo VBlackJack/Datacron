@@ -387,3 +387,192 @@ class TestHeadingsWrittenWithInlineMarkup:
         twice = append_entry_to_heading(once, "Use **rg** flags", "- b")
 
         assert twice.count("## Use **rg** flags") == 1
+
+    @pytest.mark.parametrize("requested", ["*draft* notes", "\\*draft\\* notes"])
+    def test_append_finds_a_heading_whose_text_looks_like_markup(self, requested: str) -> None:
+        """The exact parsed text wins over the rendered form of the selector.
+
+        ``## \\*draft\\* notes`` is read as ``*draft* notes``; rendering that selector
+        again gives ``draft notes``, which matched nothing, so every append created a
+        duplicate section at the end of the note. patch_note_section matched it.
+        """
+        from datacron.core.markdown_sections import append_entry_to_heading
+
+        body = "# T\n\n## \\*draft\\* notes\n\nold\n\n## Other\n\nx\n"
+
+        appended = append_entry_to_heading(body, requested, "e1")
+
+        assert appended == "# T\n\n## \\*draft\\* notes\n\nold\n\ne1\n\n## Other\n\nx\n"
+
+
+class TestAppendPlacement:
+    """An entry belongs to the heading's own content, not to its last subsection."""
+
+    def test_an_entry_lands_before_the_first_subsection(self) -> None:
+        from datacron.core.markdown_sections import append_entry_to_heading
+
+        body = "## Journal\n\n- e0\n\n### Archive 2025\n\n- old\n\n## Next\n\nn\n"
+
+        appended = append_entry_to_heading(body, "Journal", "- e1")
+
+        assert appended == (
+            "## Journal\n\n- e0\n\n- e1\n\n### Archive 2025\n\n- old\n\n## Next\n\nn\n"
+        )
+
+    def test_a_heading_with_only_subsections_gets_its_own_content(self) -> None:
+        from datacron.core.markdown_sections import append_entry_to_heading
+
+        body = "## Journal\n### Archive\n\n- old\n"
+
+        appended = append_entry_to_heading(body, "Journal", "- e1")
+
+        assert appended == "## Journal\n\n- e1\n\n### Archive\n\n- old\n"
+        assert [item.text for item in markdown_headings(appended.splitlines(True))] == [
+            "Journal",
+            "Archive",
+        ]
+
+
+class TestSplicedStructureIsVerified:
+    """An edit must not change how the headings outside the edited span are read.
+
+    Content that opened a code fence without its closer turned every later
+    heading into code, so the sections vanished from every selector and the next
+    append created an invisible duplicate section at the end of the note.
+    """
+
+    @pytest.mark.parametrize(
+        "inserted",
+        [
+            "```python\nx = 1",
+            "~~~\nx",
+            "<!-- draft",
+            "<pre>\nraw",
+            "<script>\nlet x = 1;",
+        ],
+    )
+    def test_inserted_content_that_leaves_a_block_open_is_refused(self, inserted: str) -> None:
+        from datacron.core.markdown_sections import SectionStructureError, verify_spliced_headings
+
+        lines = "## A\n\na\n\n## B\n\nb\n".splitlines(True)
+        block = f"\n{inserted}\n\n"
+        rendered = "".join(lines[:1]) + block + "".join(lines[4:])
+
+        with pytest.raises(SectionStructureError) as caught:
+            verify_spliced_headings(lines, 1, 4, block, rendered)
+
+        assert caught.value.code == "section_structure_changed"
+
+    def test_an_unclosed_fence_is_refused_even_in_the_last_section(self) -> None:
+        """No later heading exists to swallow yet; the next append would create one."""
+        from datacron.core.markdown_sections import SectionStructureError, verify_spliced_headings
+
+        lines = "## A\n\na\n".splitlines(True)
+        block = "\n```\nx\n"
+
+        with pytest.raises(SectionStructureError):
+            verify_spliced_headings(lines, 1, 3, block, "## A\n" + block)
+
+    def test_closed_blocks_and_new_subheadings_are_accepted(self) -> None:
+        from datacron.core.markdown_sections import verify_spliced_headings
+
+        lines = "## A\n\na\n\n## B\n\nb\n".splitlines(True)
+        block = "\n```python\nx = 1\n```\n\n<!-- note -->\n\n### Added\n\ntext\n\n"
+        rendered = "".join(lines[:1]) + block + "".join(lines[4:])
+
+        verify_spliced_headings(lines, 1, 4, block, rendered)
+
+    def test_a_closer_that_pairs_with_an_earlier_orphan_opener_is_refused(self) -> None:
+        """Content that opens nothing can still hide headings by closing an orphan."""
+        from datacron.core.markdown_sections import SectionStructureError, verify_spliced_headings
+
+        lines = "## A\n\n<!--\n\n## B\n\nb\n\n## C\n\nc\n".splitlines(True)
+        block = "\n-->\n\n"
+        start = len(lines) - 1
+        rendered = "".join(lines[:start]) + block
+
+        with pytest.raises(SectionStructureError):
+            verify_spliced_headings(lines, start, len(lines), block, rendered)
+
+    def test_append_refuses_to_create_a_section_inside_an_open_fence(self) -> None:
+        from datacron.core.markdown_sections import SectionStructureError, append_entry_to_heading
+
+        body = "## A\n\n```python\nx = 1\n"
+
+        with pytest.raises(SectionStructureError):
+            append_entry_to_heading(body, "Journal", "- e1")
+
+    def test_append_refuses_an_entry_that_leaves_a_fence_open(self) -> None:
+        from datacron.core.markdown_sections import SectionStructureError, append_entry_to_heading
+
+        body = "## Journal\n\n- e0\n\n## Next\n\nn\n"
+
+        with pytest.raises(SectionStructureError):
+            append_entry_to_heading(body, "Journal", "```\ncode")
+
+    def test_preamble_that_leaves_a_fence_open_is_refused(self) -> None:
+        from datacron.core.markdown_sections import SectionStructureError, patch_note_preamble
+
+        with pytest.raises(SectionStructureError):
+            patch_note_preamble("# Root\n\n## A\n", "```\nunclosed")
+
+
+class TestHeadingsInsideRawHtmlBlocks:
+    """CommonMark HTML blocks that end on a fixed marker hide their headings too.
+
+    Only comments were masked. A ``### Inner`` inside ``<pre>`` counted as a
+    heading, so move_note_section carried it out of the block, leaving an orphan
+    ``<pre>`` that swallowed the following section, and the verifier agreed.
+    """
+
+    @pytest.mark.parametrize(
+        ("opener", "closer"),
+        [
+            ("<pre>", "</pre>"),
+            ("<PRE class='x'>", "</Pre>"),
+            ("<script>", "</script>"),
+            ("<style>", "</style>"),
+            ("<textarea>", "</textarea>"),
+            ("<?php", "?>"),
+            ("<!DOCTYPE html", ">"),
+            ("<![CDATA[", "]]>"),
+        ],
+    )
+    def test_a_heading_inside_the_block_is_not_reported(self, opener: str, closer: str) -> None:
+        body = f"## A\n\n{opener}\n### Inner\ntext\n{closer}\n\n## B\n"
+
+        headings = markdown_headings(body.splitlines(keepends=True))
+
+        assert [item.text for item in headings] == ["A", "B"]
+
+    def test_a_tag_name_prefix_does_not_open_a_block(self) -> None:
+        body = "## A\n\n<prefix>\n### Inner\n</pre>\n\n## B\n"
+
+        headings = markdown_headings(body.splitlines(keepends=True))
+
+        assert [item.text for item in headings] == ["A", "Inner", "B"]
+
+    def test_an_unterminated_raw_block_hides_nothing(self) -> None:
+        body = "## A\n\n<pre>\n## Still A Heading\n"
+
+        headings = markdown_headings(body.splitlines(keepends=True))
+
+        assert [item.text for item in headings] == ["A", "Still A Heading"]
+
+    def test_a_block_opener_inside_a_fence_opens_nothing(self) -> None:
+        body = "## A\n\n```\n<pre>\n```\n\n## B\n\n</pre>\n"
+
+        headings = markdown_headings(body.splitlines(keepends=True))
+
+        assert [item.text for item in headings] == ["A", "B"]
+
+    def test_moving_a_heading_out_of_a_pre_block_is_refused(self) -> None:
+        from datacron.core.markdown_sections import HeadingNotFoundError, move_note_section
+
+        body = (
+            "# T\n\n## Dest\n\nd\n\n## S\n\n<pre>\n### Inner\nprotected text\n</pre>\n\n"
+            "after pre in S\n\n## Tail\n\nt\n"
+        )
+
+        with pytest.raises(HeadingNotFoundError):
+            move_note_section(body, "Inner", "Dest")

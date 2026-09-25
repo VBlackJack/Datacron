@@ -1055,13 +1055,17 @@ def test_v1_rejects_organization_scope_changes(tmp_path: Path) -> None:
     assert error.value.code == "organization_scope_change_unsupported"
 
 
-def test_scope_membership_keeps_posix_case_semantics(
-    monkeypatch: pytest.MonkeyPatch,
+def test_scope_membership_keeps_case_on_a_case_sensitive_volume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(os, "name", "posix")
+    """The vault's volume decides; this used to pin the os.name proxy instead."""
+    from datacron.core import case_folding
 
-    assert manifest_module._path_belongs_to_organization_scope("memory/a.md", "memory")
-    assert not manifest_module._path_belongs_to_organization_scope("Memory/a.md", "memory")
+    monkeypatch.setattr(case_folding, "filesystem_folds_case", lambda _root: False)
+
+    with case_folding.case_folding_for(tmp_path):
+        assert manifest_module._path_belongs_to_organization_scope("memory/a.md", "memory")
+        assert not manifest_module._path_belongs_to_organization_scope("Memory/a.md", "memory")
 
 
 @pytest.mark.parametrize(
@@ -1292,10 +1296,10 @@ def test_adoption_refuses_a_manifest_target_whose_case_differs_from_the_file(
     with pytest.raises(OrganizationManifestError) as error:
         _load_and_validate(case)
 
-    # Case-insensitive filesystems resolve the file and refuse the identity;
-    # case-sensitive ones do not find the source at all (missing, or two
-    # paths resolved by the scope), which was already refused before.
-    assert error.value.code in {"source_identity_invalid", "source_missing", "vault_path_invalid"}
+    # Case-insensitive filesystems find the file under another spelling and
+    # refuse the name before reading it; case-sensitive ones do not find the
+    # source at all (missing, or two paths resolved by the scope).
+    assert error.value.code in {"target_case_mismatch", "source_missing", "vault_path_invalid"}
 
 
 @pytest.mark.parametrize("raw_id", ["123", "false", "[]", "{}"])
@@ -1525,3 +1529,72 @@ def test_a_target_folder_spelled_unlike_the_disk_is_refused(tmp_path: Path) -> N
 
     assert caught.value.code == "target_case_mismatch"
     assert "'Sub'" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("on_disk", "spelled"),
+    [
+        ("Replace.md", "memory/replace.md"),
+        ("Move.md", "memory/move.md"),
+    ],
+    ids=["replace-target", "move-source"],
+)
+def test_an_existing_file_spelled_unlike_the_disk_is_refused(
+    tmp_path: Path, on_disk: str, spelled: str
+) -> None:
+    """A replace target or move source must name the file exactly as on disk.
+
+    Only the folders were compared: ``memory/replace.md`` opened ``Replace.md``
+    on a case-insensitive filesystem, the batch validated and committed, then
+    answered committed_report_mismatch on every retry with the same token.
+    """
+    probe = tmp_path / "CaseProbe"
+    probe.mkdir()
+    if not (tmp_path / "caseprobe").exists():
+        pytest.skip("case-sensitive filesystem: the lowercase file would simply be missing")
+    case = _build_case(tmp_path / "case")
+    lowercase = case.vault / spelled
+    lowercase.rename(lowercase.with_name(on_disk))
+
+    with pytest.raises(OrganizationManifestError) as caught:
+        _load_and_validate(case)
+
+    assert caught.value.code == "target_case_mismatch"
+    assert f"'{on_disk}'" in str(caught.value)
+
+
+def test_validation_folds_path_case_as_the_vault_volume_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Validation asks the vault's volume, not os.name, whether path case folds.
+
+    On a case-insensitive macOS volume the keys were never folded, because only
+    Windows was assumed to fold; forced to fold on a non-Windows platform,
+    validation must fold, and it must ask about this vault.
+    """
+    from datacron.core import case_folding
+
+    asked: list[Path] = []
+
+    def folds(root: Path) -> bool:
+        asked.append(root)
+        return True
+
+    monkeypatch.setattr(case_folding, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(case_folding, "filesystem_folds_case", folds)
+    seen: list[str] = []
+    original = case_folding.fold_path_key
+
+    def recording_key(value: str) -> str:
+        folded = original(value)
+        seen.append(folded)
+        return folded
+
+    monkeypatch.setattr(manifest_module, "fold_path_key", recording_key)
+    case = _build_case(tmp_path)
+
+    _load_and_validate(case)
+
+    assert asked == [case.vault.resolve()]
+    assert seen
+    assert all(key == key.casefold() for key in seen)

@@ -230,13 +230,18 @@ def parse_preserving_bom_and_body_eols(raw: str) -> tuple[dict[str, Any], str, b
     The plain parser normalizes line endings and strips surrounding whitespace, which
     is fine for reading and wrong for an exact rewrite. When a frontmatter block is
     present, the body returned here is the raw text after its closing boundary.
+
+    A note that opens with ``---`` and never closes it has no frontmatter: its
+    whole text is the body, unchanged. The stripped text of the plain parser was
+    returned there, so every section edit dropped the note's leading and
+    trailing whitespace and its final newline.
     """
     metadata, parsed_body, has_bom = parse_preserving_bom(raw)
     parseable = raw[1:] if has_bom else raw
     lines = parseable.splitlines(keepends=True)
     closing = _frontmatter_block_end(lines)
     if closing is None:
-        return metadata, parsed_body, has_bom
+        return metadata, parsed_body if metadata else parseable, has_bom
     if closing < 0:
         return metadata, parseable, has_bom
     return metadata, "".join(lines[closing + 1 :]), has_bom
