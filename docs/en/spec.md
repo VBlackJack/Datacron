@@ -356,6 +356,11 @@ hash. A retry of the same validated manifest returns the durable receipt without
 failure or differing planner oracle returns `committed_index_incomplete` or
 `committed_report_mismatch`, respectively, with `already_committed: true|false` depending on replay;
 it is never reported as though no mutation occurred.
+`validate` consults the durable receipt first: a manifest already committed returns
+`status: already_committed` with its receipt's `confirmation_token`. When the receipt's notes have
+changed since (a move undone by hand, a later edit), both modes refuse with the error code
+`manifest_already_committed_state_diverged`: nothing is corrupt and no recovery is needed; plan a new
+manifest from the current vault instead of replaying this one.
 
 ---
 

@@ -24,15 +24,25 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path, PurePosixPath
-from typing import Any, Final, Literal, NoReturn, TypeAlias, final
+from typing import (
+    Any,
+    Concatenate,
+    Final,
+    Literal,
+    NoReturn,
+    ParamSpec,
+    TypeAlias,
+    TypeVar,
+    final,
+)
 
+from datacron.core.case_folding import case_folding_for, fold_path_key
 from datacron.core.config import SIDECAR_DIR_NAME, VaultConfig
 from datacron.core.durability import (
     RecoveryRequiredError,
@@ -240,6 +250,18 @@ class BatchConflictError(ValueError):
     """Raised when exact batch preconditions no longer match disk state."""
 
 
+class CommittedBatchDivergedError(BatchConflictError):
+    """Raised when a committed batch's files no longer hold its receipt's bytes.
+
+    The receipt is written only after every member has rolled forward, so a
+    difference found afterwards is a later edit (a note moved back by hand, a
+    rewrite through another tool), not a torn batch. Nothing needs recovering;
+    the manifest simply describes a vault that no longer exists.
+    """
+
+    code: Final[str] = "manifest_already_committed_state_diverged"
+
+
 @dataclass(frozen=True)
 class BatchMemberResult:
     """Committed exact-byte effect for one manifest member."""
@@ -392,6 +414,25 @@ class _PathState:
     is_source: bool
 
 
+_Params = ParamSpec("_Params")
+_Result = TypeVar("_Result")
+
+
+def _following_vault_case(
+    method: Callable[Concatenate[OrganizationBatchTransaction, _Params], _Result],
+) -> Callable[Concatenate[OrganizationBatchTransaction, _Params], _Result]:
+    """Run ``method`` with path keys folded as the vault's own filesystem folds them."""
+
+    @wraps(method)
+    def wrapper(
+        self: OrganizationBatchTransaction, /, *args: _Params.args, **kwargs: _Params.kwargs
+    ) -> _Result:
+        with case_folding_for(self._vault_root):
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 @final
 class OrganizationBatchTransaction:
     """Apply and recover one validated organization manifest transaction."""
@@ -450,16 +491,16 @@ class OrganizationBatchTransaction:
         for member in result.members:
             target_hash = self._disk_hash(member.target_rel_path)
             if target_hash != member.after_hash:
-                raise RecoveryRequiredError(
-                    "Recovery required: committed organization batch target differs from "
-                    f"receipt: {member.target_rel_path}"
+                raise CommittedBatchDivergedError(
+                    "manifest is already committed and its target changed since: "
+                    f"{member.target_rel_path}"
                 )
             if (
                 member.source_rel_path is not None
                 and self._disk_hash(member.source_rel_path) is not None
             ):
-                raise RecoveryRequiredError(
-                    "Recovery required: committed organization batch move source reappeared: "
+                raise CommittedBatchDivergedError(
+                    "manifest is already committed and its move source reappeared since: "
                     f"{member.source_rel_path}"
                 )
 
@@ -469,6 +510,7 @@ class OrganizationBatchTransaction:
         self._verify_result_disk_state(result)
         return tuple(item.stale_id for item in result.identity_sidecar_case_canonicalizations)
 
+    @_following_vault_case
     def validate_capacity(
         self,
         bundle: ValidatedOrganizationBundle,
@@ -507,6 +549,7 @@ class OrganizationBatchTransaction:
         """Return whether a durable organization batch is pending recovery."""
         return bool(self._pending_paths())
 
+    @_following_vault_case
     def apply(
         self,
         bundle: ValidatedOrganizationBundle,
@@ -603,6 +646,7 @@ class OrganizationBatchTransaction:
                     self._remove_stage(pending.batch_id)
                 raise
 
+    @_following_vault_case
     def recover(self) -> BatchRecoveryOutcome:
         """Roll every safe pending batch forward, or return exact-hash blockers."""
         snapshots = tuple(self._read_pending_snapshot(path) for path in self._pending_paths())
@@ -3766,7 +3810,7 @@ def _yaml_values_equal_exact(before: object, after: object) -> bool:
 
 def _platform_path_key(rel_path: str) -> str:
     normalized = PurePosixPath(rel_path.replace("\\", "/")).as_posix()
-    return normalized.casefold() if os.name == "nt" else normalized
+    return fold_path_key(normalized)
 
 
 def _rel_path_belongs_to_scope(rel_path: str, scope: str) -> bool:

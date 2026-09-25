@@ -109,7 +109,7 @@ def leaves_html_block_open(lines: list[str]) -> bool:
     return _html_block_scan(lines)[1]
 
 
-def _html_comment_lines(lines: list[str]) -> frozenset[int]:
+def html_comment_lines(lines: list[str]) -> frozenset[int]:
     """Return the indices of the lines that sit inside an HTML comment or raw block.
 
     Besides comments, the CommonMark HTML blocks that end on a fixed marker are
@@ -185,7 +185,7 @@ def markdown_headings(lines: list[str]) -> list[MarkdownHeading]:
     document = block_token.Document(
         [line.replace("\r\n", "\n").replace("\r", "\n") for line in lines]
     )
-    commented = _html_comment_lines(lines)
+    commented = html_comment_lines(lines)
     result = []
     for token in document.children or []:
         if not isinstance(token, block_token.Heading | block_token.SetextHeading):

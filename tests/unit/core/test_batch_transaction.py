@@ -34,6 +34,7 @@ from datacron.core.batch_transaction import (
     BATCH_FAULT_POINTS,
     BatchApplyResult,
     BatchConflictError,
+    CommittedBatchDivergedError,
     OrganizationBatchTransaction,
 )
 from datacron.core.config import Settings, VaultConfig
@@ -459,7 +460,7 @@ async def test_committed_result_rejects_target_returned_to_before_state(tmp_path
     await _apply(writer, bundle)
     (vault / "notes" / "new.md").unlink()
 
-    with pytest.raises(RecoveryRequiredError, match="target differs from receipt"):
+    with pytest.raises(CommittedBatchDivergedError, match="target changed since"):
         await writer.get_organization_batch_result(bundle.manifest_sha256)
 
 
@@ -471,7 +472,7 @@ async def test_committed_result_rejects_reappeared_move_source(tmp_path: Path) -
     await _apply(writer, bundle)
     (vault / "notes" / "old.md").write_bytes(_note(_FIRST_ID, "Before"))
 
-    with pytest.raises(RecoveryRequiredError, match="move source reappeared"):
+    with pytest.raises(CommittedBatchDivergedError, match="move source reappeared"):
         await writer.get_organization_batch_result(bundle.manifest_sha256)
 
 

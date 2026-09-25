@@ -27,6 +27,7 @@ from datacron.core.markdown_sections import (
     move_note_section,
 )
 from datacron.core.operation_log import OperationContext
+from datacron.core.scope import authorize_note_write
 from datacron.core.vault_writer import WriteConflictError
 from datacron.mcp.tools.payloads import _audit
 from datacron.mcp.tools.read import _read_note_by_rel_path
@@ -122,7 +123,9 @@ async def _move_note_section_impl(
         except SectionSelectorError as exc:
             failed_selector = exc.selector
             raise
-        app.scope.authorize_rel_path(cleaned_path, "write")
+        # The same gate as the scoped writer, before the preview reads anything, so a
+        # preview and a commit refuse an excluded or linked note identically.
+        authorize_note_write(app.scope, cleaned_path)
         selection: dict[str, int] = {}
 
         def mutation(raw: str) -> str:

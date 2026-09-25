@@ -24,11 +24,24 @@ ERROR_ACTIONS: Final[dict[str, str]] = {
     "StaleChunkError": (
         "Read the parent note and refresh the index before requesting a new chunk ID."
     ),
+    "search_index_stale": (
+        "Retry the same read: it refreshes the changed notes first. On a read-only "
+        "server, run `datacron index` before retrying."
+    ),
+    "search_query_too_large": (
+        "Shorten the query to the few distinctive words that matter; use search_regex "
+        "for an exact passage."
+    ),
     "WriteConflictError": (
         "Read the current target and original request receipt; reprepare only uncommitted work."
     ),
     "recovery_required": (
         "Stop writers and inspect recovery. Preserve the operation journal and pending files."
+    ),
+    "manifest_already_committed_state_diverged": (
+        "This manifest is already committed and the vault changed since; nothing is corrupt "
+        "and no recovery is needed. Do not replay it: plan a new manifest from the current "
+        "vault state."
     ),
     "context_budget_too_small": (
         "Retry with required_tokens or read _memory/INIT.md. Reuse a known "
@@ -50,6 +63,12 @@ ERROR_ACTIONS: Final[dict[str, str]] = {
         "Several sections match the selector named in the error. Use get_note format=map to "
         "inspect the headings, then pass the level for inter-level matches, or the level, "
         "the occurrence and expected_hash for same-level duplicates."
+    ),
+    "frontmatter_edit_refused": (
+        "Nothing was written. The frontmatter key named in the error cannot be changed "
+        "without rewriting keys the request did not touch. Read the note with get_note, "
+        "edit that key by hand (for example remove its YAML anchor or alias), then retry "
+        "with the new content_hash."
     ),
     "section_has_subsections": (
         "Nothing was written. Patch one of the listed subsections with its level and "

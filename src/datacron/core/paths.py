@@ -88,7 +88,8 @@ def assert_vault_rel_path(rel_path: str) -> str:
     Raises:
         PathConfinementError: If the path names a drive, a UNC share or an absolute
             location, traverses out of the vault, carries a control character,
-            or ends a component with a dot or a space.
+            or, on Windows, ends a component with a dot or a space or carries a
+            colon.
     """
     if not rel_path:
         return rel_path
@@ -116,6 +117,13 @@ def assert_vault_rel_path(rel_path: str) -> str:
         if sys.platform == "win32" and part.endswith((" ", ".")):
             raise PathConfinementError(
                 f"Vault-relative path components must not end with a dot or a space: {rel_path!r}"
+            )
+        # Also Win32 only: a colon names an NTFS alternate data stream, so
+        # "a.md:x.md" opened a hidden stream of a.md, and "blocked.md:x.md" read a
+        # stream of a file the admission policy excludes under a name it admits.
+        if sys.platform == "win32" and ":" in part:
+            raise PathConfinementError(
+                f"Vault-relative path components must not contain a colon: {rel_path!r}"
             )
     return rel_path
 

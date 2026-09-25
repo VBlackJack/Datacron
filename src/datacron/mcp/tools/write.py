@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from ulid import ULID
 
+from datacron.core.case_folding import filesystem_folds_case
 from datacron.core.durability import (
     DurabilityUnavailableError,
     ReadOnlyModeError,
@@ -54,6 +55,7 @@ from datacron.core.operation_log import (
     OperationLogError,
 )
 from datacron.core.paths import PathConfinementError
+from datacron.core.scope import NoteAdmissionError
 from datacron.core.vault_writer import UlidCollisionError
 from datacron.core.write_request import ReplayedWriteError
 from datacron.indexing.reconcile import ReconcileStats
@@ -160,7 +162,10 @@ async def _execute_write_tool(
             writes_configured=bool(app.settings.write_paths),
         )
         return _error_response(tool, mapped, started, **audit_fields)
-    except RecoveryRequiredError as exc:
+    except (NoteAdmissionError, RecoveryRequiredError) as exc:
+        # A note admission refusal comes from the scoped writer before the note is
+        # opened, so it carries no heading suggestion and says nothing about whether
+        # the note exists.
         return _error_response(tool, exc, started, **audit_fields)
     except expected as exc:
         final = remap(exc) if remap is not None else exc
@@ -239,7 +244,9 @@ def _enforce_tag_policy(app: DatacronApp, rel_path: str, tags: list[str], body: 
     root = os.path.normcase(os.path.normpath(str(app.vault_root)))
     candidate = rel_path if os.path.isabs(rel_path) else os.path.join(root, rel_path)
     relative = os.path.relpath(os.path.normcase(os.path.normpath(candidate)), root)
-    if relative.startswith("..") or not path_within_scope(relative, organization.scope):
+    if relative.startswith("..") or not path_within_scope(
+        relative, organization.scope, fold_case=filesystem_folds_case(app.vault_root)
+    ):
         return
     violations = evaluate_tag_policy(extract_tags({"tags": tags}, body), organization)
     if violations:
