@@ -5,6 +5,12 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 name: release
 
 on:
@@ -115,7 +121,7 @@ jobs:
       - name: Install Inno Setup
         if: runner.os == 'Windows'
         shell: pwsh
-        run: choco install innosetup --no-progress -y
+        run: choco install innosetup --version 6.7.1 --no-progress -y
 
       - name: Prepare optional Windows signing
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
@@ -177,12 +183,19 @@ jobs:
         env:
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
-          # Chocolatey installs the current Inno Setup, whose folder carries its
-          # major version. A hardcoded "Inno Setup 6" broke the first release
-          # after a major bump, so the newest installed ISCC.exe is used.
+          # The Inno Setup folder carries its major version. A hardcoded
+          # "Inno Setup 6" broke the first release after a major bump, so the
+          # newest installed ISCC.exe is used, ranked by the parsed number: as
+          # text, "Inno Setup 10" sorts before "Inno Setup 7".
+          $innoVersion = {
+            $digits = [regex]::Match($_.Directory.Name, '\d+(\.\d+)*$').Value
+            if (-not $digits) { return [version]'0.0' }
+            if (-not $digits.Contains('.')) { $digits = "$digits.0" }
+            [version]$digits
+          }
           $iscc = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Inno Setup *\ISCC.exe" `
             -ErrorAction SilentlyContinue |
-            Sort-Object -Property FullName -Descending |
+            Sort-Object -Property $innoVersion -Descending |
             Select-Object -First 1 -ExpandProperty FullName
           if (-not $iscc) {
             throw "ISCC.exe was not found under ${env:ProgramFiles(x86)}\Inno Setup *."

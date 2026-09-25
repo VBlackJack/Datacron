@@ -5,22 +5,41 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Publication must depend on the complete reusable quality workflow."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
 import yaml
 
 _WORKFLOWS = Path(__file__).parents[2] / ".github" / "workflows"
+
+
+def _leg_count(matrix: dict[str, Any]) -> int:
+    """The jobs GitHub starts: the cross product, plus each ``include`` leg.
+
+    Every ``include`` entry names an operating system outside the product, so
+    GitHub adds it as a new combination instead of extending an existing one.
+    """
+    return len(matrix["os"]) * len(matrix["python-version"]) + len(matrix.get("include", []))
 
 
 def _workflow(name: str) -> dict[str, Any]:
@@ -35,14 +54,22 @@ def test_publication_reuses_entire_ci() -> None:
     assert "workflow_call" in ci["on"]
     gate = ci["jobs"]["quality-gate"]
     assert gate["if"] == "always()"
-    assert set(gate["needs"]) == {"scope", "lint-type-test", "shellcheck", "dependency-audit"}
+    assert set(gate["needs"]) == {
+        "scope",
+        "lint-type-test",
+        "shellcheck",
+        "dependency-audit",
+        "lowest-direct",
+    }
     for name, consumer in [("release.yml", "build"), ("publish-pypi.yml", "build-dist")]:
         workflow = _workflow(name)
         assert workflow["jobs"]["verify"]["uses"] == "./.github/workflows/ci.yml"
         assert workflow["jobs"][consumer]["needs"] == "verify"
 
 
-@pytest.mark.parametrize("job", ["scope", "lint-type-test", "shellcheck", "dependency-audit"])
+@pytest.mark.parametrize(
+    "job", ["scope", "lint-type-test", "shellcheck", "dependency-audit", "lowest-direct"]
+)
 @pytest.mark.parametrize("result", ["success", "failure", "cancelled", "skipped"])
 def test_aggregate_gate_executes_fail_closed(job: str, result: str) -> None:
     gate = _workflow("ci.yml")["jobs"]["quality-gate"]
@@ -64,16 +91,16 @@ def test_aggregate_gate_executes_fail_closed(job: str, result: str) -> None:
     [
         (["README.md", "docs/fr/setup.md"], "push", "", 1),
         (["README.fr.md"], "pull_request", "", 1),
-        (["README.md", "src/code.py"], "push", "", 6),
-        (["docs/fr/example.py"], "push", "", 6),
-        ([".github/workflows/ci.yml"], "push", "", 6),
-        (["README.md"], "push", "true", 6),
-        (["README.md"], "workflow_dispatch", "", 6),
-        ([], "push", "", 6),
-        (["README.md"], "tag", "", 6),
-        (["README.md"], "new_branch", "", 6),
-        (["README.md"], "missing_base", "", 6),
-        (["README.md"], "rename_code", "", 6),
+        (["README.md", "src/code.py"], "push", "", 7),
+        (["docs/fr/example.py"], "push", "", 7),
+        ([".github/workflows/ci.yml"], "push", "", 7),
+        (["README.md"], "push", "true", 7),
+        (["README.md"], "workflow_dispatch", "", 7),
+        ([], "push", "", 7),
+        (["README.md"], "tag", "", 7),
+        (["README.md"], "new_branch", "", 7),
+        (["README.md"], "missing_base", "", 7),
+        (["README.md"], "rename_code", "", 7),
     ],
 )
 def test_scope_uses_actual_git_diff(
@@ -132,10 +159,95 @@ def test_scope_uses_actual_git_diff(
         timeout=30,
     )
     matrix = json.loads(output.read_text(encoding="utf-8").removeprefix("matrix="))
-    assert len(matrix["os"]) * len(matrix["python-version"]) == expected_count
+    assert _leg_count(matrix) == expected_count
 
 
 def test_reusable_ci_defaults_to_full_matrix() -> None:
     ci = _workflow("ci.yml")
     assert ci["on"]["workflow_call"]["inputs"]["force-full"]["default"] == "true"
     assert ci["jobs"]["lint-type-test"]["needs"] == "scope"
+
+
+def _scope_module() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "ci_scope", _WORKFLOWS.parents[1] / "scripts" / "ci_scope.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_full_matrix_tests_every_platform_the_release_ships() -> None:
+    """The release attaches a macOS arm64 binary, so macOS must be in the gate."""
+    scope = _scope_module()
+    build_matrix = _workflow("release.yml")["jobs"]["build"]["strategy"]["matrix"]
+    released = {entry["os"] for entry in build_matrix["include"]}
+    full = scope._FULL_MATRIX
+    tested = set(full["os"]) | {leg["os"] for leg in full["include"]}
+    assert released <= tested
+    assert all(leg["python-version"] in full["python-version"] for leg in full["include"])
+    assert "include" not in scope._DOC_MATRIX
+
+
+def test_dependency_floors_are_installed_and_gated() -> None:
+    ci = _workflow("ci.yml")
+    job = ci["jobs"]["lowest-direct"]
+    commands = "\n".join(step.get("run", "") for step in job["steps"])
+    assert "--resolution lowest-direct" in commands
+    assert "datacron --help" in commands
+    assert "pytest" in commands
+    assert "lowest-direct" in ci["jobs"]["quality-gate"]["needs"]
+
+
+_ISCC_SELECTION_END = 'Write-Host "Using $iscc"'
+_PWSH_TIMEOUT_SECONDS = 60
+
+
+def _iscc_selection_script() -> str:
+    steps = _workflow("release.yml")["jobs"]["build"]["steps"]
+    run = str(next(step["run"] for step in steps if step.get("name") == "Build Windows installer"))
+    return run[: run.index(_ISCC_SELECTION_END) + len(_ISCC_SELECTION_END)]
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
+def test_installer_build_picks_the_numerically_newest_inno_setup(tmp_path: Path) -> None:
+    """Sorting the folders as text ranked "Inno Setup 10" below "Inno Setup 7"."""
+    for folder in ("Inno Setup 6", "Inno Setup 7", "Inno Setup 10"):
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / "ISCC.exe").write_bytes(b"")
+    pwsh = shutil.which("pwsh")
+    assert pwsh is not None
+    process = subprocess.run(
+        [pwsh, "-NoProfile", "-NonInteractive", "-Command", _iscc_selection_script()],
+        env={**os.environ, "ProgramFiles(x86)": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=_PWSH_TIMEOUT_SECONDS,
+        check=False,
+    )
+    assert process.returncode == 0, process.stderr
+    chosen = Path(process.stdout.strip().removeprefix("Using ").strip())
+    assert chosen.parent.name == "Inno Setup 10"
+
+
+_SHA_PINNED_ACTION = re.compile(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}")
+_CHOCO_PINNED = re.compile(r"--version \d+(?:\.\d+)+")
+
+
+@pytest.mark.parametrize(
+    "name", ["ci.yml", "release.yml", "publish-pypi.yml", "runtime-validation.yml"]
+)
+def test_every_action_and_tool_is_pinned(name: str) -> None:
+    """An unpinned tool changes a build without any commit saying so."""
+    for job in _workflow(name)["jobs"].values():
+        for step in job.get("steps", []):
+            if "uses" in step:
+                assert _SHA_PINNED_ACTION.fullmatch(step["uses"]), step["uses"]
+            for line in step.get("run", "").splitlines():
+                if "choco install" in line:
+                    assert _CHOCO_PINNED.search(line), line
+                for tool in ("twine", "pip-audit"):
+                    if f"--from {tool}" in line or f"--with {tool}" in line:
+                        assert re.search(rf"{tool}==\d+(?:\.\d+)+", line), line

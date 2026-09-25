@@ -5,6 +5,12 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Select a smaller CI matrix only for proven documentation-only diffs."""
 
 from __future__ import annotations
@@ -16,6 +22,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 _DOC_FILES = frozenset({"README.md", "README.fr.md", "CHANGELOG.md"})
 _DOC_ROOTS = ("docs/fr/", "docs/en/")
@@ -42,11 +49,20 @@ def supported_python_versions() -> list[str]:
     return versions
 
 
-_FULL_MATRIX = {
+_SINGLE_LEG_PYTHON = "3.12"
+# The release ships a macOS arm64 binary, so macOS is tested too: one Python
+# version is enough to catch a platform difference, the interpreter spread is
+# already covered on the two other systems.
+_MACOS_LEG = {"os": "macos-latest", "python-version": _SINGLE_LEG_PYTHON}
+_FULL_MATRIX: dict[str, list[Any]] = {
     "os": ["ubuntu-latest", "windows-latest"],
     "python-version": supported_python_versions(),
+    "include": [_MACOS_LEG],
 }
-_DOC_MATRIX = {"os": ["ubuntu-latest"], "python-version": ["3.12"]}
+_DOC_MATRIX: dict[str, list[Any]] = {
+    "os": ["ubuntu-latest"],
+    "python-version": [_SINGLE_LEG_PYTHON],
+}
 
 
 def documentation_only(paths: list[str]) -> bool:
