@@ -70,6 +70,16 @@ ERROR_ACTIONS: Final[dict[str, str]] = {
         "edit that key by hand (for example remove its YAML anchor or alias), then retry "
         "with the new content_hash."
     ),
+    "section_has_subsections": (
+        "Nothing was written. Patch one of the listed subsections with its level and "
+        "occurrence, or remove it explicitly with delete_note_section first, then patch "
+        "the section again with the new expected_hash."
+    ),
+    "section_structure_changed": (
+        "Nothing was written. Close every code fence, HTML comment or raw HTML block the "
+        "new content opens, or repair the note's existing structure after reading it with "
+        "get_note, then retry with the current expected_hash."
+    ),
 }
 
 

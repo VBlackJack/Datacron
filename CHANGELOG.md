@@ -9,6 +9,33 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Fixed
+
+- `patch_note_section` silently deleted the subsections of an H2-H6 target: the replaced span
+  runs to the next heading of the same or a shallower level, and only level 1 was guarded. It
+  now refuses, at every level, a section that contains subsections, with the error code
+  `section_has_subsections`, the list of those subsections (level and occurrence included,
+  redacted like heading suggestions) and a next action: patch a subsection, or delete it
+  explicitly first.
+- `append_journal` filed an entry under the last subsection of the target heading, because it
+  inserted at the end of the whole subtree. The entry now goes at the end of the heading's own
+  content, before its first subsection.
+- `patch_note_section`, `append_journal` and `patch_note_preamble` did not check the note after
+  splicing: content that left a code fence or an HTML comment open turned every later heading
+  into code, and each later `append_journal` then created an invisible duplicate section. The
+  result must now keep the heading sequence outside the edited span, and the inserted content
+  must close every fence and HTML block it opens; otherwise the write is refused with
+  `section_structure_changed`.
+- `append_journal` did not find a heading whose text looks like Markdown markup, such as
+  `## \*draft\* notes`, and created a duplicate section on every call, while
+  `patch_note_section` matched the same selector. The exact parsed text is now tried first,
+  and the rendered form of the selector only on a miss.
+- Only HTML comments were masked from the heading model. Headings inside the other CommonMark
+  HTML blocks that end on a fixed marker (`<pre>`, `<script>`, `<style>`, `<textarea>`,
+  processing instructions, declarations and CDATA) counted as sections, so
+  `move_note_section` could carry a heading out of a `<pre>` block and leave an orphan opener
+  that swallowed the next section. They are now masked like comments; an unclosed block still
+  masks nothing.
 ### Security
 
 - Note writes checked confinement only, never note admission. Every write tool created,

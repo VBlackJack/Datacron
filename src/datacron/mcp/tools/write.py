@@ -39,11 +39,15 @@ from datacron.core.markdown_headings import heading_before, heading_identity, ma
 from datacron.core.markdown_sections import (
     HEADING_SUGGESTION_MAX_CHARS,
     HeadingNotFoundError,
+    HeadingSuggestion,
+    SectionHasSubsectionsError,
     append_entry_to_heading,
     find_section_span,
     patch_note_preamble,
+    reject_section_with_subsections,
     rename_atx_heading_line,
     section_replacement_block,
+    verify_spliced_headings,
 )
 from datacron.core.operation_log import (
     HistoryUnavailableError,
@@ -169,24 +173,31 @@ async def _execute_write_tool(
         payload = _error_response(tool, final, started, **fields)
         if isinstance(exc, HeadingNotFoundError):
             _add_heading_suggestions(app, payload, exc)
+        if isinstance(exc, SectionHasSubsectionsError):
+            payload["error"]["subsections"] = _redacted_heading_candidates(
+                app, exc.subsections, exc.subsection_spans, exc.source_context
+            )
         return payload
     except Exception:
         return _internal_error_response(tool, started, **audit_fields)
 
 
-def _add_heading_suggestions(
-    app: DatacronApp, payload: dict[str, Any], exc: HeadingNotFoundError
-) -> None:
-    """Enrich a response after its generic error has already been audited."""
-    suggestions: list[dict[str, Any]] = []
-    for index, candidate in enumerate(exc.suggestions):
+def _redacted_heading_candidates(
+    app: DatacronApp,
+    candidates: list[HeadingSuggestion],
+    spans: list[tuple[int, int]],
+    source_context: str,
+) -> list[dict[str, Any]]:
+    """Render heading selectors for an error payload, redacted like retrieval output."""
+    rendered: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates):
         text = candidate["heading"]
         if app.secret_redactor.retrieval_enabled(app.settings):
-            start, end = exc.suggestion_spans[index]
-            text = app.secret_redactor.redact_fragment(text, exc.source_context, start, end)
+            start, end = spans[index]
+            text = app.secret_redactor.redact_fragment(text, source_context, start, end)
         safe_heading = _sanitize_retrieval_metadata(app, text)
         bounded_heading = safe_heading[:HEADING_SUGGESTION_MAX_CHARS]
-        suggestions.append(
+        rendered.append(
             {
                 "heading": bounded_heading,
                 "heading_level": candidate["heading_level"],
@@ -194,7 +205,16 @@ def _add_heading_suggestions(
                 "selection_ready": bounded_heading == candidate["heading"],
             }
         )
-    payload["error"]["suggestions"] = suggestions
+    return rendered
+
+
+def _add_heading_suggestions(
+    app: DatacronApp, payload: dict[str, Any], exc: HeadingNotFoundError
+) -> None:
+    """Enrich a response after its generic error has already been audited."""
+    payload["error"]["suggestions"] = _redacted_heading_candidates(
+        app, exc.suggestions, exc.suggestion_spans, exc.source_context
+    )
     payload["error"]["suggestion_hint"] = (
         "No section was selected. Suggestions use rendered AST text, not Markdown markup. "
         "Only selection_ready=true titles can be passed unchanged with their level and "
@@ -642,24 +662,6 @@ def _set_changed_frontmatter_field(
     metadata[field] = value
 
 
-def _reject_destructive_h1_patch(
-    lines: list[str],
-    *,
-    matched_level: int,
-    content_start: int,
-    content_end: int,
-) -> None:
-    if matched_level != 1:
-        return
-    if any(
-        item.level > matched_level and content_start <= item.start < content_end
-        for item in markdown_headings(lines)
-    ):
-        raise ValueError(
-            "level-1 patching would replace subsections; patch a lower-level heading instead"
-        )
-
-
 @replayable_write
 async def _patch_note_preamble_impl(
     app: DatacronApp,
@@ -785,19 +787,12 @@ async def _patch_note_section_impl(
             )
             selected = heading_before(lines, content_start)
             matched_level, matched_text = selected.level, selected.text
-            _reject_destructive_h1_patch(
-                lines,
-                matched_level=matched_level,
-                content_start=content_start,
-                content_end=content_end,
-            )
+            reject_section_with_subsections(lines, content_start, content_end, source_context=raw)
             prefix = "".join(lines[:content_start])
             suffix = "".join(lines[content_end:])
-            new_body = (
-                f"{prefix}"
-                f"{section_replacement_block(cleaned_new_content, prefix=prefix, suffix=suffix)}"
-                f"{suffix}"
-            )
+            block = section_replacement_block(cleaned_new_content, prefix=prefix, suffix=suffix)
+            new_body = f"{prefix}{block}{suffix}"
+            verify_spliced_headings(lines, content_start, content_end, block, new_body)
             metadata["updated"] = datetime.now(tz=UTC).isoformat()
             return _serialize_preserving_frontmatter(raw, metadata, new_body, has_bom=has_bom)
 

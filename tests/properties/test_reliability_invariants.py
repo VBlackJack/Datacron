@@ -130,12 +130,95 @@ def _frontmatter_without_updated(raw: str) -> str:
     return "\n".join(line for line in header.splitlines() if not line.startswith("updated:"))
 
 
+def _opens_block(value: str) -> bool:
+    """Return whether one generated line could open a code fence or an HTML block.
+
+    Written independently of the product's heading model, and deliberately broader
+    than CommonMark: a line-leading fence marker or HTML block opener, after up to
+    three spaces. Such text is not inert filler: a fence in the preamble hides the
+    heading a property targets, and a fence in replacement content is refused.
+    """
+    line = value.lstrip(" ") if len(value) - len(value.lstrip(" ")) <= 3 else ""
+    lowered = line.lower()
+    return line.startswith(("```", "~~~", "<!", "<?")) or lowered.startswith(
+        ("<pre", "<script", "<style", "<textarea")
+    )
+
+
+# Section filler for the patch properties: one line of text that cannot change the
+# note's structure. Unicode line separators are excluded because splitlines() breaks
+# on them, which would turn one generated value into several Markdown lines (and a
+# second line of ``===`` into a Setext underline).
+_INERT_TEXT = st.text(
+    alphabet=st.characters(
+        codec="utf-8",
+        blacklist_characters=(
+            "\x00",
+            "\r",
+            "\n",
+            "#",
+            "\x0b",
+            "\x0c",
+            "\x1c",
+            "\x1d",
+            "\x1e",
+            "\x85",
+            "\u2028",
+            "\u2029",
+        ),
+    ),
+    min_size=1,
+    max_size=48,
+).filter(lambda value: bool(value.strip()) and not _opens_block(value))
+
+
+def test_inert_text_rejects_the_generated_values_that_broke_the_patch_properties() -> None:
+    """``` in a generated preamble opened a fence that hid the patched heading."""
+    for value in ("```", "  ~~~ x", "<!-- c", "<PRE>", "<?php", "<![CDATA[", "<!DOCTYPE"):
+        assert _opens_block(value)
+    for value in ("plain", "a ``` b", "    ```", "x <pre>", "-->"):
+        assert not _opens_block(value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "code"),
+    [
+        ("preamble", "```", "heading_not_found"),
+        ("replacement", "```", "section_structure_changed"),
+        ("replacement", "<!-- open", "section_structure_changed"),
+    ],
+)
+async def test_prop_02_patch_with_block_opening_text_is_refused_without_writing(
+    tmp_path: Path, field: str, value: str, code: str
+) -> None:
+    """The values the generator now excludes have a documented, non-mutating outcome."""
+    parts = {"preamble": "p", "replacement": "r", field: value}
+    vault = _fresh_vault(tmp_path)
+    rel_path = "_memory/facts/patch-refusal.md"
+    body = f"# Patch property\n\n{parts['preamble']}\n\n## Target\n\nt\n\n## Sibling\n\ns\n"
+    target, original_raw = _write_note(vault, rel_path, _NOTE_ID_A, "Patch property", body)
+    app, store = await _open_writable_app(vault)
+    try:
+        result = await _patch_note_section_impl(
+            app,
+            rel_path=rel_path,
+            heading="Target",
+            new_content=parts["replacement"],
+            expected_hash=hash_text(original_raw),
+        )
+    finally:
+        await store.close()
+
+    assert result["error"]["code"] == code
+    assert target.read_text(encoding="utf-8") == original_raw
+
+
 @settings(max_examples=12, deadline=None, suppress_health_check=_SUPPRESS_FIXTURE_CHECK)
 @given(
-    preamble=_INLINE_TEXT,
-    old_target=_INLINE_TEXT,
-    replacement=_INLINE_TEXT,
-    sibling=_INLINE_TEXT,
+    preamble=_INERT_TEXT,
+    old_target=_INERT_TEXT,
+    replacement=_INERT_TEXT,
+    sibling=_INERT_TEXT,
 )
 async def test_prop_02_patch_preserves_rest(
     tmp_path: Path,
@@ -341,7 +424,7 @@ def _assert_path_tools_reject_escape(results: dict[str, dict[str, Any]]) -> None
 
 
 @settings(max_examples=12, deadline=None, suppress_health_check=_SUPPRESS_FIXTURE_CHECK)
-@given(preamble=_INLINE_TEXT, replacement=_INLINE_TEXT, suffix=_INLINE_TEXT)
+@given(preamble=_INERT_TEXT, replacement=_INERT_TEXT, suffix=_INERT_TEXT)
 async def test_prop_02_patch_note_preamble_preserves_heading_suffix(
     tmp_path: Path,
     preamble: str,
