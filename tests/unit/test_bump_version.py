@@ -78,3 +78,35 @@ def test_bump_writes_lf_line_endings(tmp_path: Path) -> None:
     server_data = json.loads(server_file.read_text(encoding="utf-8"))
     assert server_data["version"] == "2026.716.0"
     assert server_data["packages"][0]["version"] == "2026.716.0"
+
+
+def test_bump_points_the_tag_at_main_after_the_merge(tmp_path: Path) -> None:
+    """The printed next steps must tag main's tip, never the bump commit itself.
+
+    The main ruleset only accepts a SHA the Quality gate passed, so the bump goes
+    through a pull request and the tag lands on its merge commit. The helper used
+    to print a bare ``git tag`` followed by a direct push, which tagged the bump.
+    """
+    repo = tmp_path / "repo"
+    script = repo / "scripts" / "bump_version.py"
+    init_file = repo / "src" / "datacron" / "__init__.py"
+    script.parent.mkdir(parents=True)
+    init_file.parent.mkdir(parents=True)
+    copyfile(_SCRIPT, script)
+    init_file.write_text('__version__ = "2026.0715.00"\n', encoding="utf-8")
+    (repo / "server.json").write_text(
+        '{"version":"2026.715.0","packages":[{"version":"2026.715.0"}]}\n', encoding="utf-8"
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--date", "2026-07-16"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    lines = [line.strip() for line in result.stdout.splitlines()]
+    tag_line = next(line for line in lines if line.startswith("git tag"))
+    assert tag_line == "git tag -a v2026.0716.00 origin/main -m 'Datacron 2026.0716.00'"
+    assert lines.index("git fetch origin") < lines.index(tag_line)
+    assert lines.index(tag_line) < lines.index("git push origin v2026.0716.00")
