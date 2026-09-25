@@ -3031,7 +3031,7 @@ class TestHeadingOccurrence:
             (
                 "# Root\n\n"
                 "## Same\n\nfirstbodytoken\n\n### First child\n\nfirstchildtoken\n\n"
-                "## Same\n\nsecondbodytoken\n\n### Second child\n\nsecondchildtoken\n\n"
+                "## Same\n\nsecondbodytoken\n\nsecondtailtoken\n\n"
                 "## Sibling\n\nsiblingtoken\n"
             ),
         )
@@ -3057,7 +3057,7 @@ class TestHeadingOccurrence:
         assert "firstchildtoken" in body
         assert "replacementtoken" in body
         assert "secondbodytoken" not in body
-        assert "secondchildtoken" not in body
+        assert "secondtailtoken" not in body
         assert "siblingtoken" in body
         operations = await writable_app.vault_writer.list_operations()
         assert operations[0].parameters == {
@@ -3310,11 +3310,23 @@ class TestHeadingOccurrence:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("tool", "message"),
+        ("tool", "error_type", "message"),
         [
-            ("patch", "level-1 patching would replace subsections"),
-            ("delete", "delete_note_section only supports heading levels 2 through 6"),
-            ("rename", "rename_note_section only supports ATX heading levels 2 through 6"),
+            (
+                "patch",
+                "SectionHasSubsectionsError",
+                "section contains 1 subsection heading(s) that replacing its content would delete",
+            ),
+            (
+                "delete",
+                "ValueError",
+                "delete_note_section only supports heading levels 2 through 6",
+            ),
+            (
+                "rename",
+                "ValueError",
+                "rename_note_section only supports ATX heading levels 2 through 6",
+            ),
         ],
     )
     async def test_heading_occurrence_does_not_bypass_h1_guards(
@@ -3322,6 +3334,7 @@ class TestHeadingOccurrence:
         writable_app: DatacronApp,
         tmp_vault: Path,
         tool: Literal["patch", "delete", "rename"],
+        error_type: str,
         message: str,
     ) -> None:
         rel_path = "_memory/facts/occurrence-h1.md"
@@ -3341,7 +3354,7 @@ class TestHeadingOccurrence:
             expected_hash=hash_text(original_raw),
         )
 
-        assert result["error"]["type"] == "ValueError"
+        assert result["error"]["type"] == error_type
         assert message in result["error"]["message"]
         assert target.read_bytes() == original_raw.encode("utf-8")
         assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
@@ -3767,10 +3780,23 @@ class TestPatchNoteSection:
             heading_level=heading_level,
         )
 
-        assert result["error"]["type"] == "ValueError"
-        assert "level-1 patching would replace subsections" in result["error"]["message"]
-        assert "patch a lower-level heading" in result["error"]["message"]
-        assert result["error"]["message"] != "internal error"
+        assert result["error"]["type"] == "SectionHasSubsectionsError"
+        assert result["error"]["code"] == "section_has_subsections"
+        assert "patch a subsection instead" in result["error"]["message"]
+        assert result["error"]["subsections"] == [
+            {
+                "heading": "Child",
+                "heading_level": 2,
+                "heading_occurrence": 1,
+                "selection_ready": True,
+            },
+            {
+                "heading": "Grandchild",
+                "heading_level": 3,
+                "heading_occurrence": 1,
+                "selection_ready": True,
+            },
+        ]
         assert target.read_bytes() == original_raw.encode("utf-8")
         assert _non_lock_durable_artifacts(tmp_vault) == artifacts_before
 
@@ -4075,9 +4101,10 @@ class TestPatchNoteSection:
         assert target.read_text(encoding="utf-8") == original_raw
 
     @pytest.mark.asyncio
-    async def test_nested_subsections_are_part_of_target_section(
+    async def test_nested_subsections_refuse_the_patch_and_are_listed(
         self, writable_app: DatacronApp, tmp_vault: Path
     ) -> None:
+        """An H2 patch used to replace its H3 children silently; only H1 was guarded."""
         from datacron.mcp.tools import _patch_note_section_impl
 
         rel_path = "_memory/facts/nested-patch.md"
@@ -4103,12 +4130,72 @@ class TestPatchNoteSection:
             expected_hash=hash_text(original_raw),
         )
 
-        assert result["patched"]["level"] == 2
-        _metadata, new_body = parse(target.read_text(encoding="utf-8"))
-        assert "### Sub" not in new_body
-        assert new_body == (
-            "# Journaled memory\n\n## Target\n\nReplacement.\n\n## Next\n\nNext block."
+        assert result["error"]["code"] == "section_has_subsections"
+        assert result["error"]["subsections"] == [
+            {"heading": "Sub", "heading_level": 3, "heading_occurrence": 1, "selection_ready": True}
+        ]
+        assert "delete_note_section" in result["error"]["next_action"]
+        assert target.read_text(encoding="utf-8") == original_raw
+        assert not await writable_app.vault_writer.list_operations()
+
+        # Patching the child itself stays allowed, and keeps the parent's content.
+        child = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Sub",
+            new_content="New sub.",
+            expected_hash=hash_text(original_raw),
         )
+        assert child["patched"]["level"] == 3
+        _metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        assert new_body == (
+            "# Journaled memory\n\n## Target\n\nOld target.\n\n### Sub\n\nNew sub.\n\n"
+            "## Next\n\nNext block."
+        )
+
+    @pytest.mark.asyncio
+    async def test_content_with_an_unclosed_fence_is_refused_and_append_stays_visible(
+        self, writable_app: DatacronApp, tmp_vault: Path
+    ) -> None:
+        """An unclosed fence turned every later heading into code.
+
+        The patch succeeded, the Journal section vanished from the heading map, and
+        each later append_journal created a new, invisible Journal inside the fence.
+        """
+        from datacron.mcp.tools import _append_journal_impl, _patch_note_section_impl
+
+        rel_path = "_memory/facts/unclosed-fence.md"
+        target, original_raw = _write_memory_note(
+            tmp_vault,
+            rel_path,
+            "# Root\n\n## A\n\na\n\n## Journal\n\n- e0\n",
+        )
+
+        result = await _patch_note_section_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="A",
+            new_content="```python\nx = 1",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert result["error"]["code"] == "section_structure_changed"
+        assert "next_action" in result["error"]
+        assert target.read_text(encoding="utf-8") == original_raw
+        assert not await writable_app.vault_writer.list_operations()
+
+        appended = await _append_journal_impl(
+            writable_app,
+            rel_path=rel_path,
+            heading="Journal",
+            entry="- e1",
+            expected_hash=hash_text(original_raw),
+        )
+
+        assert "appended" in appended
+        _metadata, new_body = parse(target.read_text(encoding="utf-8"))
+        assert new_body.count("## Journal") == 1
+        assert new_body.endswith("## Journal\n\n- e0\n\n- e1")
 
     @pytest.mark.asyncio
     async def test_last_section_replaces_to_eof(
