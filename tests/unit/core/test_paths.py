@@ -215,6 +215,24 @@ class TestAssertVaultRelPath:
             "Clients/Acme Inc./meeting.md"
         )
 
+    @pytest.mark.parametrize("rel_path", ["a.md:evil.md", "notes/hidden.md:x.md", "a.md::$DATA"])
+    def test_refuses_an_alternate_data_stream_on_windows(
+        self, rel_path: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A colon opened an NTFS stream of a.md, or of a file admission excludes."""
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        with pytest.raises(PathConfinementError, match="must not contain a colon"):
+            assert_vault_rel_path(rel_path)
+
+    @pytest.mark.parametrize("platform", ["linux", "darwin"])
+    def test_a_colon_is_an_ordinary_character_elsewhere(
+        self, platform: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", platform)
+
+        assert assert_vault_rel_path("Meetings/10:30 standup.md") == "Meetings/10:30 standup.md"
+
 
 class TestStripExtendedLengthPrefix:
     @pytest.mark.parametrize(

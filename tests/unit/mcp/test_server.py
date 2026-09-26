@@ -1256,7 +1256,9 @@ async def test_rename_note_section_write_descriptions_lead_with_usage_trigger(
         assert "'option -- reason'" in (descriptions[name] or "")
     patch_description = descriptions["patch_note_section"]
     assert patch_description is not None
-    assert "refuses a level-1 heading that contains subsections" in patch_description
+    assert "refuses, at every level, a section that contains subsections" in patch_description
+    assert "section_has_subsections" in patch_description
+    assert "section_structure_changed" in patch_description
     preamble_description = descriptions["patch_note_preamble"]
     assert preamble_description is not None
     assert "strictly before the first Markdown heading" in preamble_description
@@ -1284,6 +1286,109 @@ async def test_rename_note_section_write_descriptions_lead_with_usage_trigger(
         assert "exact expected_hash" in description
         assert "document order" in description
         assert "chunk_id" in description
+
+
+@pytest.mark.asyncio
+async def test_a_note_with_an_impossible_date_stays_searchable_and_listed(
+    tmp_path: Path,
+) -> None:
+    """One ``created: 2024-02-30`` must not cost search and listing their answer.
+
+    PyYAML raises a plain ValueError for it, which escaped the malformed
+    frontmatter handling, so the note could not be read: its old rows were kept,
+    and every search or listing that re-read it failed as a whole. The repair
+    runs before each search here; with a throttled repair, any edit leaves rows
+    that describe older bytes, and how search treats those is its own concern.
+    """
+    ids = {
+        "a.md": "01J00000000000000000000121",
+        "b.md": "01J00000000000000000000122",
+        "c.md": "01J00000000000000000000123",
+    }
+    settings = Settings(
+        vault_root=tmp_path,
+        read_paths=[tmp_path],
+        write_paths=[tmp_path],
+        repair_min_interval_seconds=0,
+    )
+    app = build_app(settings=settings, vault_root=tmp_path)
+    for name, note_id in ids.items():
+        (tmp_path / name).write_text(
+            "---\nid: " + note_id + "\n---\n# " + name + "\n\nbudget review\n", encoding="utf-8"
+        )
+
+    async def call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        result = await create_server(app).call_tool(tool, arguments)
+        text = cast("Any", result).content[0].text
+        return cast("dict[str, Any]", json.loads(text))
+
+    await app.store.open(sidecar_index_db(tmp_path))
+    try:
+        first = await call("search_text", {"query": "budget"})
+        assert "error" not in first, first
+        (tmp_path / "b.md").write_text(
+            "---\nid: " + ids["b.md"] + "\ncreated: 2024-02-30\n---\n# b.md\n\nbudget review\n",
+            encoding="utf-8",
+        )
+        for _attempt in range(2):
+            found = await call("search_text", {"query": "budget"})
+            assert "error" not in found, found
+            assert "b.md" in {item["note_rel_path"] for item in found["results"]}
+        listed = await call("list_notes", {})
+    finally:
+        await app.store.close()
+
+    assert "error" not in listed, listed
+    assert {note["rel_path"] for note in listed["notes"]} == set(ids)
+
+
+_IMPOSSIBLE_DATE_NOTE = (
+    "---\nid: 01J00000000000000000000124\ncreated: 2024-02-30\n---\n"
+    "# Dated\n\n## Journal\n\n- first\n"
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        ("append_journal", {"heading": "Journal", "entry": "- second"}),
+        ("set_frontmatter", {"confidence": "high"}),
+    ],
+)
+async def test_a_write_to_a_note_with_an_impossible_date_is_never_an_internal_error(
+    tmp_path: Path,
+    tool: str,
+    arguments: dict[str, Any],
+) -> None:
+    """The write path parses frontmatter too, and met the same bare ValueError.
+
+    A write must either land, keeping the invalid key's bytes, or be refused with
+    a typed error; an internal error tells the caller nothing it can act on.
+    """
+    note = tmp_path / "dated.md"
+    note.write_text(_IMPOSSIBLE_DATE_NOTE, encoding="utf-8", newline="\n")
+    settings = Settings(
+        vault_root=tmp_path,
+        read_paths=[tmp_path],
+        write_paths=[tmp_path],
+        repair_min_interval_seconds=0,
+    )
+    app = build_app(settings=settings, vault_root=tmp_path)
+    await app.store.open(sidecar_index_db(tmp_path))
+    try:
+        result = await create_server(app).call_tool(tool, {"rel_path": "dated.md", **arguments})
+        payload = cast("dict[str, Any]", json.loads(cast("Any", result).content[0].text))
+    finally:
+        await app.store.close()
+
+    error = payload.get("error")
+    if error is None:
+        assert "created: 2024-02-30" in note.read_text(encoding="utf-8")
+    else:
+        assert error.get("code") != "internal_error", error
+        assert error.get("type") == "FrontmatterError", error
+        assert note.read_text(encoding="utf-8") == _IMPOSSIBLE_DATE_NOTE
 
 
 class TestBuildAppReadPaths:
@@ -1423,6 +1528,62 @@ class TestStartupRecovery:
 
         assert writer.recovery_blocked[0].operation_id == record.operation_id
         assert "Startup operation-log recovery blocked" in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "directory",
+        [("oplog", "pending"), ("oplog", "batches", "pending"), ("oplog", "batches", "stage")],
+    )
+    async def test_a_stray_entry_degrades_startup_instead_of_aborting_it(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        directory: tuple[str, ...],
+    ) -> None:
+        """One file Datacron did not write must not cost the client every tool.
+
+        Shell metadata is ignored outright. Any other entry lets tools register and
+        reads run, while writes are refused with ``recovery_required`` naming it and
+        ``get_health`` reports it.
+        """
+        from datacron.mcp.health import build_health
+        from datacron.mcp.tools.write import _append_journal_impl
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "n.md").write_text("# N\n\n## Journal\n\nx\n", encoding="utf-8", newline="\n")
+        stray_dir = vault.joinpath(".datacron", *directory)
+        stray_dir.mkdir(parents=True)
+        (stray_dir / ".DS_Store").write_bytes(b"\x00")
+        (stray_dir / "desktop.ini").write_text("[.ShellClassInfo]\n", encoding="ascii")
+        settings = Settings(read_paths=[vault], write_paths=[vault], vault_root=vault)
+        app = build_app(settings=settings, vault_root=vault)
+        await app.store.open(sidecar_index_db(vault))
+        try:
+            await _startup_recover_operations(app)
+            written = await _append_journal_impl(
+                app, rel_path="n.md", heading="Journal", entry="metadata ignored"
+            )
+            assert "error" not in written, written
+
+            (stray_dir / "stray.txt").write_text("left by hand\n", encoding="ascii")
+            await _startup_recover_operations(app)
+            assert "Startup operation-log recovery blocked" in caplog.text
+
+            refused = await _append_journal_impl(
+                app, rel_path="n.md", heading="Journal", entry="refused"
+            )
+            health = await build_health(app, detail="summary", limit=10)
+        finally:
+            await app.store.close()
+
+        entry = "/".join((".datacron", *directory, "stray.txt"))
+        assert refused["error"]["code"] == "recovery_required"
+        assert entry in refused["error"]["message"]
+        assert "refused" not in (vault / "n.md").read_text(encoding="utf-8")
+        assert health["status"] != "healthy"
+        assert health["recovery"]["required"] is True
+        assert health["recovery"]["unexpected_entries"] == [entry]
 
 
 class TestBatchReconcileIsGated:

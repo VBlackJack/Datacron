@@ -252,10 +252,10 @@ read, advisory, and operational tools remain exposed.
 | Advisory | `contradiction_scan` | Deterministic candidates and a proposed write call; never writes |
 | Operational | `get_health` | Freshness, integrity, checksum, durability, and invariant evidence |
 | Write | `create_note_ai` | Creates a memory note without overwrite |
-| Write | `append_journal` | Appends an entry under a heading in an existing note |
+| Write | `append_journal` | Appends an entry under a heading in an existing note, after the heading's own content and before its first subsection |
 | Write | `set_frontmatter` | Changes allowed lifecycle fields, the monotone `last_id` counter, and `updated` |
 | Write | `patch_note_preamble` | Replaces or removes the preamble before the first recognized Markdown heading |
-| Write | `patch_note_section` | Replaces content under an existing heading while preserving its heading line |
+| Write | `patch_note_section` | Replaces content under an existing heading while preserving its heading line; refuses a section that contains subsections |
 | Write | `delete_note_section` | Explicitly deletes an H2-H6 section and its subtree |
 | Write | `rename_note_section` | Renames an H2-H6 heading without changing its content |
 | Write | `move_note_section` | Previews or commits an exact subtree move within a note with mandatory CAS |
@@ -356,6 +356,11 @@ hash. A retry of the same validated manifest returns the durable receipt without
 failure or differing planner oracle returns `committed_index_incomplete` or
 `committed_report_mismatch`, respectively, with `already_committed: true|false` depending on replay;
 it is never reported as though no mutation occurred.
+`validate` consults the durable receipt first: a manifest already committed returns
+`status: already_committed` with its receipt's `confirmation_token`. When the receipt's notes have
+changed since (a move undone by hand, a later edit), both modes refuse with the error code
+`manifest_already_committed_state_diverged`: nothing is corrupt and no recovery is needed; plan a new
+manifest from the current vault instead of replaying this one.
 
 ---
 

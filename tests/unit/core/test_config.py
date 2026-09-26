@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -316,6 +317,28 @@ excluded_files:
         assert config is not None
         assert config.excluded_folders == ["_attachments", "custom-trash"]
         assert config.excluded_files == ["00_INDEX.md", "custom-index.md"]
+
+    @pytest.mark.parametrize("entry", ["Private/", "Private\\", " Private / "])
+    def test_an_exclusion_keeps_its_name_without_the_trailing_separator(self, entry: str) -> None:
+        """'Private/' is how a folder is often written; it used to exclude nothing."""
+        config = VaultConfig.model_validate({"excluded_folders": [entry]})
+
+        assert config.excluded_folders == ["Private"]
+
+    @pytest.mark.parametrize(
+        ("field", "entry"),
+        [
+            ("excluded_folders", "Clients/Confidential"),
+            ("excluded_folders", "Clients\\Confidential"),
+            ("excluded_folders", "/"),
+            ("excluded_files", "sub/blocked.md"),
+            ("excluded_files", "/blocked.md"),
+        ],
+    )
+    def test_an_exclusion_holding_a_path_is_refused_by_name(self, field: str, entry: str) -> None:
+        """Matching is per path component, so such an entry was silently ineffective."""
+        with pytest.raises(ValidationError, match=re.escape(repr(entry))):
+            VaultConfig.model_validate({field: [entry]})
 
     def test_load_vault_config_symmetrizes_query_expansion(self, tmp_path: Path) -> None:
         path = tmp_path / "VAULT.yaml"

@@ -51,7 +51,7 @@ from datacron.mcp.tools.retrieval import (
     protect_chunk_metadata,
     protect_note_title,
 )
-from datacron.mcp.tools.search import _repair_index_on_read
+from datacron.mcp.tools.search import _repair_clock, _repair_index_on_read
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -65,6 +65,9 @@ _CHUNK_ID_SEPARATOR: Final[str] = "::"
 # its maximum row count.
 _ALL_NOTE_PATHS: Final[int] = 2**31 - 1
 _MAX_HEADING_PATH_DEPTH: Final[int] = 6
+# Unknown note IDs remembered between walks; a caller cycling through fresh IDs
+# empties the cache rather than growing it.
+MISSING_NOTE_ID_CACHE_SIZE: Final[int] = 1024
 
 
 class StaleChunkError(ValueError):
@@ -544,7 +547,26 @@ async def _resolve_note_from_unindexed_notes(app: DatacronApp, note_id: str) -> 
     Datacron is none of them. That is the gate ``reconcile`` already applies, and like
     ``reconcile`` it trusts the mtime only to decide whether to look, never to decide
     what the content is.
+
+    An ID the walk did not find is remembered for the repair interval, so repeating
+    it answers at once instead of walking again (2.7 s at 5000 notes each time).
     """
+    missing = app.repair_state.missing_note_ids
+    interval = app.settings.repair_min_interval_seconds
+    now = _repair_clock()
+    missed_at = missing.get(note_id)
+    if missed_at is not None and interval > 0.0 and now - missed_at < interval:
+        return None
+    note = await _walk_for_unindexed_note(app, note_id)
+    if note is None and interval > 0.0:
+        if len(missing) >= MISSING_NOTE_ID_CACHE_SIZE:
+            missing.clear()
+        missing[note_id] = now
+    return note
+
+
+async def _walk_for_unindexed_note(app: DatacronApp, note_id: str) -> Note | None:
+    """Walk the vault for ``note_id`` among the notes the index has not seen as they are."""
     try:
         indexed = await app.store.list_indexed_notes_with_mtime()
     except RuntimeError:
@@ -749,11 +771,18 @@ def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
     for chunk in chunks:
         if chunk.chunk_type is not ChunkType.HEADING:
             continue
+        # The chunker and this map share one heading model, so a match always
+        # exists; a disagreement must drop one entry, not raise StopIteration.
         selected = next(
-            item
-            for item in reversed(selected_headings)
-            if item.start < chunk.line_start - line_offset
+            (
+                item
+                for item in reversed(selected_headings)
+                if item.start < chunk.line_start - line_offset
+            ),
+            None,
         )
+        if selected is None:
+            continue
         level = selected.level
         headings.append(
             {

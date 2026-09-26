@@ -39,7 +39,8 @@ from typing import TypedDict
 
 from datacron.core.logger import get_logger
 from datacron.core.protocols import ASTChunker, FTS5Store, VaultReader
-from datacron.core.vault import DuplicateNoteIdentityError
+from datacron.core.vault import DuplicateNoteIdentityError, IdentitySidecarError
+from datacron.indexing.chunker import CHUNKER_VERSION
 
 __all__ = ["IndexProgress", "ReconcileStats", "reconcile"]
 
@@ -73,6 +74,7 @@ async def reconcile(
     mtime_gate: bool,
     progress: IndexProgress | None = None,
     live: dict[str, tuple[Path, int]] | None = None,
+    rechunk_paths: frozenset[str] = frozenset(),
 ) -> ReconcileStats:
     """Reconcile the FTS index in ``store`` with the live vault behind ``reader``.
 
@@ -89,6 +91,11 @@ async def reconcile(
         live: The walk this pass reconciles against, when the caller has already
             performed it. ``None`` walks here. The read repair passes its own, so
             one sweep never walks the vault twice.
+        rechunk_paths: Notes read and re-chunked even when the mtime gate or an
+            unchanged hash would skip them. A read that found a note's indexed
+            chunks differ from a fresh chunking passes it here: an edit can land
+            without moving the mtime, and a chunker change leaves the hash equal
+            while the stored chunks no longer match, which no sweep ever healed.
 
     Returns:
         Per-pass counts. ``skipped_notes`` covers both mtime-gated skips and
@@ -97,10 +104,17 @@ async def reconcile(
     indexed = await store.list_indexed_notes_with_mtime()
     if live is None:
         live = await reader.stat_notes()
+    # An index written by another chunker holds chunks this one would not produce
+    # for the same bytes, and neither the mtime nor the hash can tell. Every note
+    # is re-chunked once, and only a note whose chunks actually differ is written.
+    upgrade = await store.get_chunker_version() != CHUNKER_VERSION
+    if upgrade:
+        rechunk_paths = frozenset(live)
     gated = frozenset(
         rel_path
         for rel_path, (_path, st_mtime_ns) in live.items()
-        if _gate_holds(indexed.get(rel_path), st_mtime_ns, mtime_gate=mtime_gate)
+        if rel_path not in rechunk_paths
+        and _gate_holds(indexed.get(rel_path), st_mtime_ns, mtime_gate=mtime_gate)
     )
     # A note advances the counter once, when its index state is settled: during the
     # pre-pass when its content is unchanged, at commit when it is new or changed.
@@ -123,7 +137,12 @@ async def reconcile(
     try:
         async with reader.defer_identity_writes():
             prepared, owners, unreadable, undecodable = await _prepare_live_identities(
-                reader, live, indexed, gated=gated, on_settled=advance
+                reader,
+                live,
+                indexed,
+                gated=gated,
+                rechunk=rechunk_paths,
+                on_settled=advance,
             )
             async with store.bulk_writes():
                 await _apply_pass(
@@ -139,6 +158,7 @@ async def reconcile(
                     indexed=indexed,
                     prepared=prepared,
                     gated=gated,
+                    rechunk=rechunk_paths,
                     unreadable=unreadable,
                     owners=owners,
                     advance=advance,
@@ -156,6 +176,8 @@ async def reconcile(
             await _advance_generation_after_failure(store)
         raise
     deleted, reindexed, skipped = counts.deleted, counts.reindexed, counts.skipped
+    if upgrade:
+        await store.set_chunker_version(CHUNKER_VERSION)
 
     if unreadable:
         _LOGGER.warning(
@@ -227,6 +249,7 @@ async def _apply_pass(
     indexed: dict[str, tuple[str, str, int | None]],
     prepared: dict[str, tuple[str, str]],
     gated: frozenset[str],
+    rechunk: frozenset[str],
     unreadable: frozenset[str],
     owners: dict[str, str],
     advance: Callable[[], Awaitable[None]],
@@ -252,7 +275,12 @@ async def _apply_pass(
 
         note_id, content_hash = prepared[rel_path]
 
-        if entry is not None and entry[0] == note_id and entry[1] == content_hash:
+        if (
+            entry is not None
+            and entry[0] == note_id
+            and entry[1] == content_hash
+            and rel_path not in rechunk
+        ):
             # Content unchanged. If only the mtime moved, refresh the stored
             # mtime so the next pass can skip this note via the gate above.
             if entry[2] != st_mtime_ns:
@@ -272,7 +300,20 @@ async def _apply_pass(
         if note.id != note_id and owners.get(note.id, rel_path) != rel_path:
             raise DuplicateNoteIdentityError(note.id, owners[note.id], rel_path)
         owners[note.id] = rel_path
-        await store.upsert_note(note, chunker.chunk(note), fs_mtime_ns=st_mtime_ns)
+        chunks = chunker.chunk(note)
+        if (
+            rel_path in rechunk
+            and entry is not None
+            and entry[:2] == (note.id, note.content_hash)
+            and await store.list_chunks_for_note(note.id) == chunks
+        ):
+            # Re-chunked only to check it: the stored chunks are already these.
+            if entry[2] != st_mtime_ns:
+                await store.record_mtime(note.id, st_mtime_ns)
+            counts.skipped += 1
+            await advance()
+            continue
+        await store.upsert_note(note, chunks, fs_mtime_ns=st_mtime_ns)
         counts.reindexed += 1
         await advance()
 
@@ -321,6 +362,7 @@ async def _prepare_live_identities(
     indexed: dict[str, tuple[str, str, int | None]],
     *,
     gated: frozenset[str],
+    rechunk: frozenset[str],
     on_settled: Callable[[], Awaitable[None]],
 ) -> tuple[dict[str, tuple[str, str]], dict[str, str], frozenset[str], frozenset[str]]:
     """Validate projected identities before deleting or replacing any index rows.
@@ -334,8 +376,9 @@ async def _prepare_live_identities(
     that could not be read, and the notes whose bytes could not be decoded.
 
     The last two are kept apart because they call for opposite index states. A
-    read error is transient (a Windows share lock, an antivirus scan), so the
-    rows of the last good read are kept. A decoding error is a property of the
+    read error is transient (a Windows share lock, an antivirus scan, a damaged
+    identity sidecar), so the rows of the last good read are kept. A decoding
+    error, or any other ValueError from the note itself, is a property of the
     bytes on disk, and keeping the rows kept serving content the file no longer
     holds: every later list or search then re-read that note for redaction or
     paging, hit the same error and failed as a whole, and no pass ever healed it.
@@ -350,7 +393,11 @@ async def _prepare_live_identities(
         else:
             try:
                 note = await reader.read_note(path)
-            except OSError as exc:
+            except (OSError, IdentitySidecarError) as exc:
+                # A damaged ``ulids.json`` is state the note depends on, not the
+                # note: every note without a frontmatter id fails on it, and
+                # purging on that emptied the index of intact notes. So those
+                # keep their rows, like a locked file.
                 _LOGGER.warning("Skipping unreadable note %s: %s", path, exc)
                 unreadable.add(rel_path)
                 await on_settled()
@@ -363,7 +410,11 @@ async def _prepare_live_identities(
             prepared[rel_path] = (note.id, note.content_hash)
             note_id = note.id
             entry = indexed.get(rel_path)
-            settled = entry is not None and entry[:2] == (note.id, note.content_hash)
+            settled = (
+                entry is not None
+                and entry[:2] == (note.id, note.content_hash)
+                and rel_path not in rechunk
+            )
             del note
             if settled:
                 await on_settled()

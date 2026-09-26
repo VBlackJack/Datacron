@@ -39,6 +39,8 @@ _NOTE_REFERENCE_MAX_CHARS: Final[int] = 1024
 _REQUEST_ID_MAX_CHARS: Final[int] = 128
 _REQUEST_ID_PATTERN: Final[str] = rf"^[A-Za-z0-9][A-Za-z0-9_.-]{{0,{_REQUEST_ID_MAX_CHARS - 1}}}$"
 _CONTENT_HASH_PATTERN: Final[str] = rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$"
+_NEXT_ACTION_REPLAY_WITH_EXPECTED_HASH: Final[str] = "replay_identical_arguments_with_expected_hash"
+_NEXT_ACTION_NEW_REQUEST_ID: Final[str] = "retry_with_new_request_id_and_expected_hash"
 
 
 class WriteReference(BaseModel):
@@ -163,10 +165,19 @@ async def _inspect_target(
             # The write was undone, not overwritten. Telling the caller not to repeat it
             # would leave the note without the write and the caller believing it landed,
             # which is how a reverted follow-up entry disappears for good. The writer
-            # accepts the same request id again once the call carries expected_hash.
+            # accepts the same request id again only when the identical arguments
+            # carry an expected_hash matching the note: the request fingerprint
+            # includes expected_hash, so a request first made without one cannot be
+            # replayed with one, and one made with another hash would fail its CAS.
+            # Anything else has to be written again under a new request id.
+            replayable = expected_hash is not None and expected_hash == note.content_hash
             item.update(
                 status="committed_reverted",
-                next_action="replay_identical_arguments_with_expected_hash",
+                next_action=(
+                    _NEXT_ACTION_REPLAY_WITH_EXPECTED_HASH
+                    if replayable
+                    else _NEXT_ACTION_NEW_REQUEST_ID
+                ),
             )
         elif note.content_hash != receipt.after_hash:
             item.update(status="committed_changed", next_action="read_current_note_do_not_repeat")

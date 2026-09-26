@@ -37,7 +37,9 @@ La réponse contient :
   pas la preuve que les ACL, l'espace libre, l'état de récupération ou une E/S concrète
   autoriseront l'écriture ;
 - `recovery` : besoin éventuel de réparer explicitement des opérations bloquées, leur nombre et,
-  avec `detail=full`, des preuves bornées sans contenu de note ;
+  avec `detail=full`, des preuves bornées sans contenu de note, ainsi que `unexpected_entries`,
+  les chemins relatifs au vault des fichiers d'un répertoire de reprise que la reprise ne sait pas
+  classer (voir plus bas) ;
 - `scrubber` : dernier scrub terminé, passe et génération d'index courantes, couverture, octets
   vérifiés, état des sentinelles et preuves d'anomalies chemin/type ;
 - `invariants` : I1 à I15 depuis le `reliability_evidence.json` packagé.
@@ -63,6 +65,24 @@ vérifiée comme un seul rollback de maintenance hors ligne. Sans cette sauvegar
 préserve les preuves pour une récupération manuelle ; ne force ni ne mets en quarantaine un seul
 membre. Redémarre Datacron, relance `datacron ops inspect`, puis réconcilie ou réindexe et vérifie
 `get_health` avant de reprendre les écritures.
+
+### Entrées inattendues dans les répertoires de reprise
+
+La reprise lit `.datacron/oplog/pending` et les répertoires `pending` et `stage` des batchs
+d'organisation. Les fichiers de métadonnées du système (`desktop.ini`, `.DS_Store`, `Thumbs.db`,
+AppleDouble `._*`) y sont ignorés. Toute autre entrée, comme un fichier déposé à la main ou la
+copie de conflit d'un manifeste pending créée par un client de synchronisation, n'est pas
+devinée : le serveur démarre quand même et sert les lectures, chaque écriture est refusée avec
+`recovery_required` en nommant l'entrée, et `get_health` la liste sous
+`recovery.unexpected_entries`. `datacron ops inspect` liste chacune de ces entrées à côté des
+opérations bloquées. Sans aucun writer Datacron en cours, examine chaque entrée, déplace-la hors
+du répertoire `.datacron`, puis réessaie.
+
+Une dernière ligne de l'operation log coupée par un arrêt brutal ou une coupure de courant est
+réparée par la reprise : un fragment qui n'est pas du JSON valide est coupé jusqu'au dernier
+enregistrement complet et sauvegardé à côté du journal sous `operations.jsonl.torn-<horodatage>`.
+Un enregistrement complet qui n'a perdu que son retour à la ligne est laissé en place pour un
+opérateur.
 
 ### Définition de l'obsolescence d'index
 
@@ -198,9 +218,9 @@ du corps sont préservés quand les fins de ligne sont uniformes. Une note qui m
 au contraire normalisée vers son EOL dominant, exactement comme n'importe quelle autre écriture
 structurée de note la normalise. Dans le frontmatter, seules les valeurs `id` et `updated` sont
 modifiées ; toutes les autres lignes, commentaires compris, sont conservées telles qu'écrites.
-Quand cette modification ne peut pas être vérifiée (une ancre YAML, un mapping en style flow), le
-bloc est re-sérialisé dans l'ordre de clés canonique, comme le fait toute écriture structurée dans
-ce cas.
+Quand cette modification ne peut pas être faite précisément (une ancre ou un alias YAML sur `id`
+ou `updated`, un mapping en style flow), la réparation est refusée et la note reste inchangée,
+comme le fait toute écriture structurée dans ce cas : le bloc n'est jamais re-sérialisé.
 
 `--action adopt-frontmatter` promeut l'ID propre à la note au rang de canonique et réaligne le
 sidecar et l'index à la place. Il ne touche pas à la note, et il est refusé quand l'ID du

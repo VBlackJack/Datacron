@@ -34,7 +34,12 @@ from datacron.core.config import (
     OPLOG_PENDING_DIR_NAME,
     SIDECAR_DIR_NAME,
 )
-from datacron.core.durability import atomic_durable_write, durable_flush_directory
+from datacron.core.durability import (
+    UnexpectedRecoveryEntryError,
+    atomic_durable_write,
+    durable_flush_directory,
+    is_os_metadata_file,
+)
 from datacron.core.hashing import sha256_bytes
 from datacron.core.logger import get_logger
 
@@ -50,6 +55,11 @@ _REVERSE_READ_CHUNK_BYTES: Final[int] = 64 * 1024
 One step holds well over a hundred records, so the common baseline lookup,
 whose match is within the last few writes, reads the journal once.
 """
+_UNEXPECTED_PENDING_PROBLEM: Final[str] = "unexpected entry in the pending operation directory"
+_INVALID_PENDING_PROBLEM: Final[str] = "invalid pending operation manifest"
+_TORN_TAIL_BACKUP_INFIX: Final[str] = ".torn-"
+"""Joins the journal name to the timestamp of a torn fragment saved beside it."""
+_TORN_TAIL_BACKUP_STAMP: Final[str] = "%Y%m%dT%H%M%S%fZ"
 _PENDING_TEMP_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\..+\.json\.[0-9a-f]{32}\.tmp$")
 _REQUEST_KEY_MARKER: Final[bytes] = b'"request_key_hash"'
 _REQUEST_KEY_PATTERN: Final[re.Pattern[bytes]] = re.compile(b'"request_key_hash":"([0-9a-f]{64})"')
@@ -110,12 +120,12 @@ def _write_all(stream: BinaryIO, payload: bytes) -> None:
 def _truncate_to_committed_length(stream: BinaryIO, committed_size: int) -> None:
     """Cut the journal back to its last complete record, on the raw descriptor.
 
-    A partial write leaves the journal ending mid-line, and that is unrecoverable
-    in practice: every append, every recovery scan and every read refuse a tail
-    that does not end at a JSONL boundary, and no command repairs one. So the
-    rollback is not allowed to fail quietly. When the cut itself cannot be made,
-    the caller learns the journal is torn, by name, instead of discovering it at
-    the next write.
+    A partial write leaves the journal ending mid-line, and every append and every
+    read refuse a tail that does not end at a JSONL boundary until the next
+    recovery cuts it off (:meth:`OperationJournal.repair_torn_tail`). Until then
+    the vault refuses writes, so the rollback is not allowed to fail quietly. When
+    the cut itself cannot be made, the caller learns the journal is torn, by name,
+    instead of discovering it at the next write.
 
     A cut that lands but cannot be flushed is a different thing and is not
     reported as torn. The file already holds the last complete record; only the
@@ -515,37 +525,66 @@ class OperationJournal:
         try:
             with safe_path.open("rb") as handle:
                 snapshot = handle.read(_MAX_PENDING_RECORD_BYTES + 1)
-            if len(snapshot) > _MAX_PENDING_RECORD_BYTES:
-                raise OperationLogError(
-                    f"pending operation manifest exceeds {_MAX_PENDING_RECORD_BYTES} bytes"
-                )
-            payload = _strict_json_loads(snapshot.decode("ascii", errors="strict"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, _StrictJsonError) as exc:
+        except OSError as exc:
             raise OperationLogError(f"invalid pending operation manifest: {safe_path}") from exc
-        record = OperationRecord.from_dict(payload)
+        # Bytes that are not a manifest bound to their own filename are not
+        # evidence recovery can act on. A sync client's conflict copy is the usual
+        # one: it has the suffix and a real manifest's content under another name.
+        # They block writes by name rather than abort the server.
+        entry = (self.entry_label(safe_path),)
+        if len(snapshot) > _MAX_PENDING_RECORD_BYTES:
+            raise UnexpectedRecoveryEntryError(
+                entry, f"pending operation manifest exceeds {_MAX_PENDING_RECORD_BYTES} bytes"
+            )
+        try:
+            payload = _strict_json_loads(snapshot.decode("ascii", errors="strict"))
+            record = OperationRecord.from_dict(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError, _StrictJsonError) as exc:
+            raise UnexpectedRecoveryEntryError(entry, _INVALID_PENDING_PROBLEM) from exc
+        except OperationLogError as exc:
+            raise UnexpectedRecoveryEntryError(entry, _INVALID_PENDING_PROBLEM) from exc
         expected_name = f"{record.operation_id}.json"
         if safe_path.name != expected_name:
-            raise OperationLogError(
-                "pending operation filename does not match operation_id: "
-                f"expected {expected_name!r}, actual {safe_path.name!r}"
+            raise UnexpectedRecoveryEntryError(
+                entry, f"pending operation filename does not match operation_id {expected_name!r}"
             )
         return record, snapshot
 
     def pending_paths(self) -> list[Path]:
+        """Return every pending manifest, refusing an entry that is not one by name."""
+        paths, unexpected = self.scan_pending()
+        if unexpected:
+            raise UnexpectedRecoveryEntryError(unexpected, _UNEXPECTED_PENDING_PROBLEM)
+        return paths
+
+    def scan_pending(self) -> tuple[list[Path], list[str]]:
+        """Split the pending directory into manifests and entries recovery cannot use.
+
+        Atomic-write temporaries and shell metadata are skipped. Anything else that
+        is not a ``.json`` file is returned by its vault-relative path in the second
+        list, for :meth:`pending_paths` to refuse and for inspection to report
+        without stopping at the first one.
+        """
         pending_dir = self._guard_pending_root()
         if not pending_dir.is_dir():
-            return []
+            return [], []
         paths: list[Path] = []
+        unexpected: list[str] = []
         for candidate in sorted(pending_dir.iterdir()):
             path = self._guard_pending_target(candidate)
             if _PENDING_TEMP_PATTERN.fullmatch(path.name) and path.is_file():
                 continue
+            if is_os_metadata_file(path):
+                continue
             if path.suffix != ".json" or not path.is_file():
-                raise OperationLogError(
-                    f"unexpected entry in pending operation directory: {path.name!r}"
-                )
+                unexpected.append(self.entry_label(path))
+                continue
             paths.append(path)
-        return paths
+        return paths, unexpected
+
+    def entry_label(self, path: Path) -> str:
+        """Name a sidecar entry by its vault-relative POSIX path, for an operator."""
+        return Path(os.path.abspath(path)).relative_to(self._vault_root).as_posix()
 
     def pending_path(self, operation_id: str) -> Path:
         return self._guard_pending_target(self._pending_dir / f"{operation_id}.json")
@@ -625,6 +664,70 @@ class OperationJournal:
         self._tail_hash = sha256_bytes(line)
         self._tail_loaded = True
         return True
+
+    def repair_torn_tail(self) -> Path | None:
+        """Cut a torn final fragment off the journal, keeping a copy beside it.
+
+        A kill or a power loss between the first byte of an append and its newline
+        leaves the journal ending mid-line. Every later read and append refuses
+        such a tail, so the vault stayed unwritable, with nothing to repair it. The
+        caller holds the oplog lock, so no cooperating writer is appending while
+        this looks at the tail.
+
+        Only a fragment that does not parse as JSON is cut, back to the last
+        newline. A final line that parses is a complete record that lost its
+        newline, not debris: cutting it would delete committed evidence, so it is
+        left in place and reported. The cut bytes are saved next to the log first,
+        and the path of that copy is returned; ``None`` means nothing was cut.
+        """
+        operations_path = self._guard_operations_path()
+        if not operations_path.is_file():
+            return None
+        try:
+            with operations_path.open("r+b", buffering=0) as stream:
+                end = stream.seek(0, os.SEEK_END)
+                if end == 0:
+                    return None
+                stream.seek(end - 1)
+                if stream.read(1) == b"\n":
+                    return None
+                cut = _last_line_end(stream, end)
+                stream.seek(cut)
+                fragment = stream.read(end - cut)
+                if len(fragment) != end - cut:
+                    raise OperationLogError(
+                        "operation log changed size while it was being repaired"
+                    )
+                if _parses_as_json(fragment):
+                    _LOGGER.error(
+                        "The operation log ends with a complete record that has no trailing "
+                        "newline at byte offset %d; it was left in place for an operator",
+                        cut,
+                    )
+                    return None
+                backup = self._torn_tail_backup_path(operations_path)
+                _atomic_write(backup, fragment)
+                os.ftruncate(stream.fileno(), cut)
+                os.fsync(stream.fileno())
+        except OSError as exc:
+            raise OperationLogError("failed to repair the torn operation log tail") from exc
+        self._tail_loaded = False
+        _LOGGER.warning(
+            "Cut a torn %d-byte fragment off the end of the operation log at byte offset %d; "
+            "the fragment was saved to %s",
+            len(fragment),
+            cut,
+            backup,
+        )
+        return backup
+
+    def _torn_tail_backup_path(self, operations_path: Path) -> Path:
+        stamp = datetime.now(tz=UTC).strftime(_TORN_TAIL_BACKUP_STAMP)
+        name = f"{operations_path.name}{_TORN_TAIL_BACKUP_INFIX}{stamp}"
+        target = self._guard_path(operations_path.with_name(name))
+        if target.parent != self._guard_oplog_root():
+            raise OperationLogError("torn fragment copy escapes the operation log directory")
+        return target
 
     def remove_pending(self, operation_id: str) -> None:
         path = self.pending_path(operation_id)
@@ -1193,6 +1296,31 @@ def _read_tail_records(path: Path) -> list[tuple[OperationRecord, bytes]]:
             raise OperationLogError("invalid operation log tail record") from exc
         records.append((OperationRecord.from_dict(payload), line + b"\n"))
     return records
+
+
+def _last_line_end(stream: BinaryIO, end: int) -> int:
+    """Return the offset just past the last newline before ``end``, or zero."""
+    position = end
+    while position > 0:
+        read_size = min(_REVERSE_READ_CHUNK_BYTES, position)
+        position -= read_size
+        stream.seek(position)
+        chunk = stream.read(read_size)
+        if len(chunk) != read_size:
+            raise OperationLogError("operation log changed size while it was being read")
+        newline = chunk.rfind(b"\n")
+        if newline != -1:
+            return position + newline + 1
+    return 0
+
+
+def _parses_as_json(fragment: bytes) -> bool:
+    """Report whether ``fragment`` is one whole JSON value, as a complete record line is."""
+    try:
+        _strict_json_loads(fragment.decode("ascii", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError, _StrictJsonError):
+        return False
+    return True
 
 
 def _strict_json_loads(text: str) -> object:

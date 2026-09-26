@@ -55,7 +55,14 @@ déjà exister ; enregistrer d'abord le compte rendu via les writers habituels. 
 d'historique cible doit exister exactement une fois à un niveau H2-H6.
 
 Le préparateur contrôle identités, hashes frais, extrait exact et chaîne de révisions.
-Il refuse les secrets détectés, y compris les sources contenant un secret. Il ne prouve pas
+Il refuse aussi une source qui est la note cible elle-même (par ID ou chemin), un
+`source_excerpt` de moins de 20 caractères non blancs, un `event_date` postérieur à demain
+(UTC) et un `due_date` antérieur à `event_date`. Ces refus portent le code
+`follow_up_validation_failed` et un `next_action` ; dépasser la limite d'enregistrements par
+appel retourne `follow_up_record_count_exceeded`. Quand le masquage en lecture est actif, il
+refuse un texte ressemblant à un secret dans les champs persistés (`follow_up_sensitive_content`,
+champ nommé) plutôt que de modifier la preuve ; le reste de la note source n'est pas examiné.
+Il ne prouve pas
 qu'une synthèse est vraie, qu'une date a été convenue ou qu'une attribution est correcte.
 Les nouvelles fiches suivent les conventions existantes ; aucun dossier/tag n'est créé ici.
 

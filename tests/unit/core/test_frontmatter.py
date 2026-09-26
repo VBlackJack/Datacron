@@ -73,6 +73,28 @@ class TestParse:
         with pytest.raises(FrontmatterError, match="while parsing"):
             parse(raw)
 
+    def test_an_impossible_date_raises_the_typed_error(self) -> None:
+        """PyYAML reports ``2024-02-30`` with a plain ValueError, not a YAMLError.
+
+        Uncaught, it escaped every reader that degrades malformed frontmatter to
+        empty metadata, so the note could not be read at all.
+        """
+        raw = "---\ncreated: 2024-02-30\n---\nbody\n"
+
+        with pytest.raises(FrontmatterError, match="day is out of range"):
+            parse(raw)
+
+    def test_the_write_path_block_check_does_not_leak_an_impossible_date(self) -> None:
+        """The write tools' delimiter check loads the YAML itself.
+
+        It caught only YAMLError, so the constructor's plain ValueError escaped a
+        check whose contract is to answer, not to raise. A block that cannot be
+        loaded is ambiguous, whatever the loader raises for it.
+        """
+        raw = "---\ncreated: 2024-02-30\n---\nbody\n"
+
+        assert has_ambiguous_leading_delimiter_block(raw) is True
+
     def test_lifecycle_dates_are_parsed_as_iso_strings(self) -> None:
         raw = (
             "---\n"
@@ -342,6 +364,18 @@ class TestLeadingDelimiterBlockThatIsNotFrontmatter:
 
         assert metadata == {}
         assert body == "\n# Title\n"
+
+    @pytest.mark.parametrize(
+        "raw",
+        ["---\nIntro para\n\n## A\n\nb\n  \n", "\ufeff---\r\n\r\n# N\r\n\r\nbody\r\n"],
+    )
+    def test_an_unclosed_opening_delimiter_keeps_the_exact_text_as_body(self, raw: str) -> None:
+        """The stripped python-frontmatter text lost the leading and trailing whitespace."""
+        metadata, body, has_bom = parse_preserving_bom_and_body_eols(raw)
+
+        assert metadata == {}
+        assert body == raw.removeprefix("\ufeff")
+        assert has_bom is raw.startswith("\ufeff")
 
 
 class TestHasAmbiguousLeadingDelimiterBlock:

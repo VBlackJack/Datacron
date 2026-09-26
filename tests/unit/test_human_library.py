@@ -567,6 +567,29 @@ def test_resolve_link_covers_every_outcome_with_case_collisions() -> None:
     assert resolve("", True, index) == ("note", "notes/alpha.md")
 
 
+def test_wikilink_names_are_matched_literally_not_as_urls() -> None:
+    """A colon or a question mark in a wikilink is part of the note name.
+
+    Read as a URL, [[Project: Alpha]] was external, a broken [[Missing: thing]]
+    was never reported, and [[What is X?]] was looked up as "What is X".
+    """
+    notes = [
+        _indexed_note("notes/project.md", "Project: Alpha", "# Project\n\n## Scope\n"),
+        _indexed_note("notes/question.md", "What is X?", "# Question\n"),
+        _indexed_note("notes/percent.md", "100% done", "# Percent\n"),
+    ]
+    index = build_link_index(notes)
+    resolve = partial(resolve_link, "notes/question.md")
+
+    assert resolve("Project: Alpha", True, index) == ("note", "notes/project.md")
+    assert resolve("Project: Alpha#Scope", True, index) == ("note", "notes/project.md")
+    assert resolve("Project: Alpha|label", True, index) == ("note", "notes/project.md")
+    assert resolve("Missing: thing", True, index) == ("local_unresolved", "Missing: thing")
+    assert resolve("What is X?", True, index) == ("note", "notes/question.md")
+    assert resolve("100% done", True, index) == ("note", "notes/percent.md")
+    assert resolve("https://example.com/x?y", False, index)[0] == "external"
+
+
 def test_every_wikilink_parser_agrees_on_the_probe() -> None:
     from datacron.core.models import ChunkType
     from datacron.indexing.wikilinks import extract_wikilink_targets

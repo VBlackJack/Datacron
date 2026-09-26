@@ -248,6 +248,14 @@ class FTS5Store(Protocol):
         """Return the completed index generation counter."""
         ...
 
+    async def get_chunker_version(self) -> int | None:
+        """Return the chunker version that wrote the index, ``None`` when unrecorded."""
+        ...
+
+    async def set_chunker_version(self, version: int) -> None:
+        """Record the chunker version every indexed note is now chunked with."""
+        ...
+
     async def set_generation(self, generation: int) -> None:
         """Set generation while preparing an offline replacement index."""
         ...
@@ -389,6 +397,11 @@ class VaultWriter(Protocol):
     @property
     def recovery_blocked(self) -> tuple[BlockedOperation, ...]:
         """Return blocked operations observed by the latest complete scan."""
+        ...
+
+    @property
+    def recovery_unexpected_entries(self) -> tuple[str, ...]:
+        """Return recovery-directory entries the latest scan could not classify."""
         ...
 
     async def write_note_atomic(

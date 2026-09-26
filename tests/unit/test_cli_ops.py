@@ -110,6 +110,38 @@ class TestOpsInspect:
         assert not (vault / ".datacron" / "oplog" / "operations.jsonl").exists()
         assert not (vault / ".datacron" / "index").exists()
 
+    def test_inspect_names_an_unexpected_entry_and_still_lists_blockers(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """A stray file is the operator's to remove, so inspection has to name it.
+
+        It must also go on reporting the blocked operation beside it rather than
+        stopping at the first entry it cannot classify.
+        """
+        vault, writer, record, _disk_hash = _blocked_operation(tmp_path)
+        pending_dir = writer._operation_journal.pending_path(record.operation_id).parent
+        (pending_dir / "desktop.ini").write_text("[.ShellClassInfo]\n", encoding="ascii")
+        (pending_dir / "notes.txt").write_text("left by hand\n", encoding="ascii")
+        conflict = pending_dir / f"{record.operation_id}.sync-conflict-20260925-101010-AB.json"
+        conflict.write_bytes(
+            writer._operation_journal.pending_path(record.operation_id).read_bytes()
+        )
+
+        result = runner.invoke(app, ["ops", "inspect", "--vault", str(vault)])
+
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert "Recovery inspection: 1 blocked operation" in result.stdout
+        assert f"operation_id: {record.operation_id}" in result.stdout
+        assert "2 unexpected entries" in result.stdout
+        assert "entry: .datacron/oplog/pending/notes.txt" in result.stdout
+        assert f"entry: .datacron/oplog/pending/{conflict.name}" in result.stdout
+        assert "desktop.ini" not in result.stdout
+        assert "No changes made." in result.stdout
+        assert (pending_dir / "notes.txt").is_file()
+        assert conflict.is_file()
+
     def test_inspect_reports_clean_state(
         self,
         runner: CliRunner,

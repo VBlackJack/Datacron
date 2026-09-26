@@ -57,8 +57,13 @@ before preparing its follow-up. Target history headings must exist exactly once 
 Use existing creation conventions for new subjects; this tool does not create files or folders.
 
 The preparer verifies live IDs, hashes, exact excerpts, history headings and revision chains.
-It refuses detected secrets, including secret-bearing source notes, rather than silently
-changing evidence. It does not establish that a summary follows logically from its excerpt,
+It also refuses a record whose source note is the target note itself (by ID or path), a
+`source_excerpt` shorter than 20 non-blank characters, an `event_date` later than tomorrow
+(UTC), and a `due_date` earlier than the `event_date`. These refusals carry code
+`follow_up_validation_failed` and a `next_action`; more than the per-call record limit returns
+`follow_up_record_count_exceeded`. When retrieval redaction is on, it refuses secret-shaped
+text in the persisted fields (`follow_up_sensitive_content`, naming the field) rather than
+silently changing evidence; the rest of the source note is not examined. It does not establish that a summary follows logically from its excerpt,
 that a caller-supplied deadline was agreed, or that identity confirmation is truthful.
 
 Prepared plans group records by target note and provide `append_journal` arguments, a fresh

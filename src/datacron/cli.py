@@ -53,6 +53,7 @@ from datacron.core.config import (
     load_vault_config,
 )
 from datacron.core.durability import WritePolicy, probe_directory_durability
+from datacron.core.error_text import describe_config_error
 from datacron.core.frontmatter import FrontmatterError
 from datacron.core.logger import configure_logging, get_logger
 from datacron.core.models import EvalPipeline, EvalTransport
@@ -105,6 +106,7 @@ from datacron.setup_wizard import (
     SetupPlan,
     SetupResult,
     _scopes_for,
+    existing_client_settings,
     get_user_write_env,
     run_setup,
 )
@@ -280,6 +282,15 @@ def _explain(prompt: _SetupPrompt, **values: str) -> None:
         _print(f"  {line.format_map(values)}")
 
 
+def _explain_current(current: bool | None) -> None:
+    """Say which setting this vault already holds, when there is one."""
+    if current is not None:
+        _print(
+            f"  Current setting for this vault: {'yes' if current else 'no'}. "
+            "Press Enter to keep it."
+        )
+
+
 def _error(message: str, *, exit_code: int = 1) -> NoReturn:
     typer.secho(message, fg=typer.colors.RED, err=True)
     raise typer.Exit(code=exit_code)
@@ -334,6 +345,22 @@ def _settings_for_cli_vault(settings: Settings, vault_root: Path) -> Settings:
 
 def _load_vault_yaml(vault_root: Path) -> VaultConfig | None:
     return load_vault_config(sidecar_vault_config(vault_root))
+
+
+def _load_vault_yaml_or_exit(vault_root: Path) -> VaultConfig | None:
+    """Load VAULT.yaml, or exit with a configuration error naming what is wrong.
+
+    A malformed file used to end ``status`` and ``index`` in a raw parser or
+    pydantic traceback. The description keeps the location and the rule and drops
+    the offending value, which may be a secret pasted into the wrong key.
+    """
+    try:
+        return _load_vault_yaml(vault_root)
+    except (ValueError, yaml.YAMLError) as exc:
+        _error(
+            f"{sidecar_vault_config(vault_root)} does not load: {describe_config_error(exc)}",
+            exit_code=_EXIT_CONFIGURATION_ERROR,
+        )
 
 
 def _log_invocation(name: str, **details: object) -> float:
@@ -401,7 +428,7 @@ def status(
     vault_root = _resolve_vault_root(vault, settings)
     started = _log_invocation("status", vault=str(vault_root))
 
-    config = _load_vault_yaml(vault_root)
+    config = _load_vault_yaml_or_exit(vault_root)
     initialized = config is not None
 
     if config is not None:
@@ -477,10 +504,21 @@ def ops_inspect(
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
     started = _log_invocation("ops.inspect", vault=str(vault_root))
+    writer = _ops_writer(vault_root, settings)
     try:
-        blocked = asyncio.run(_ops_writer(vault_root, settings).inspect_recovery())
+        blocked = asyncio.run(writer.inspect_recovery())
     except (OSError, OperationLogError, ValueError, VaultLockBusyError) as exc:
         _error(f"Recovery inspection failed: {exc}")
+    unexpected = writer.recovery_unexpected_entries
+    if unexpected:
+        noun = "entry" if len(unexpected) == 1 else "entries"
+        _print(
+            f"Recovery inspection: {len(unexpected)} unexpected {noun} block every write. "
+            "With no Datacron writer running, inspect each one and move it out of the "
+            ".datacron directory:"
+        )
+        for entry in unexpected:
+            _print(f"  entry: {entry}")
     if not blocked:
         _print("Recovery inspection: no blocked operations.")
         _print("No changes made.")
@@ -1310,7 +1348,7 @@ async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
 
     db_path = sidecar_index_db(vault_root)
     settings = get_settings()
-    config = _load_vault_yaml(vault_root) or VaultConfig()
+    config = _load_vault_yaml_or_exit(vault_root) or VaultConfig()
     if drop_first:
         started = time.perf_counter()
         with _index_progress() as progress:
@@ -1590,10 +1628,13 @@ def setup(
         "--scope",
         help=f"For --client all, config scope ({', '.join(INSTALL_SCOPE_CHOICES)}).",
     ),
-    enable_write: bool = typer.Option(
-        False,
-        "--enable-write",
-        help="Enable the confined write tools on a subfolder.",
+    enable_write: bool | None = typer.Option(
+        None,
+        "--enable-write/--no-write",
+        help=(
+            "Enable the confined write tools on a subfolder, or remove an existing "
+            "write allowlist. Omitted, a rerun keeps what the client config holds."
+        ),
     ),
     write_path: Path | None = typer.Option(
         None,
@@ -1610,10 +1651,13 @@ def setup(
         "--durability",
         help="Durability mode (best-effort or strict).",
     ),
-    read_only: bool = typer.Option(
-        False,
-        "--read-only",
-        help="Configure the server for certified read-only mode.",
+    read_only: bool | None = typer.Option(
+        None,
+        "--read-only/--no-read-only",
+        help=(
+            "Configure the server for certified read-only mode, or remove it. "
+            "Omitted, a rerun keeps what the client config holds."
+        ),
     ),
     build_index: bool = typer.Option(
         True,
@@ -1670,8 +1714,18 @@ def setup(
     resolved_client = _prompt_client(client, assume_yes)
     resolved_scope = _prompt_scope(scope, resolved_client, assume_yes)
     resolved_durability = _prompt_durability(durability, assume_yes)
+    # Interactive prompts default to what this vault's client entry already holds,
+    # so Enter on a rerun keeps it. They defaulted to "no", and a "no" now removes
+    # the setting, so Enter silently took write access away.
+    current: tuple[bool, bool] | None = None
+    if not assume_yes and ((enable_write is None and write_path is None) or read_only is None):
+        current = existing_client_settings(resolved_vault, resolved_client, resolved_scope)
     resolved_enable_write, resolved_write_paths = _prompt_write(
-        enable_write, write_path, resolved_vault, assume_yes
+        enable_write,
+        write_path,
+        resolved_vault,
+        assume_yes,
+        current_write=None if current is None else current[0],
     )
     resolved_machine_wide_write, replace_existing_write_env = _prompt_machine_wide_write(
         machine_wide_write,
@@ -1679,11 +1733,17 @@ def setup(
         resolved_write_paths,
         assume_yes,
     )
-    if read_only or assume_yes:
+    resolved_read_only: bool | None
+    if read_only is not None or assume_yes:
         resolved_read_only = read_only
     else:
         _explain(_SetupPrompt.READ_ONLY)
-        resolved_read_only = typer.confirm("Configure certified read-only mode?", default=False)
+        current_read_only = None if current is None else current[1]
+        _explain_current(current_read_only)
+        answer = typer.confirm(
+            "Configure certified read-only mode?", default=bool(current_read_only)
+        )
+        resolved_read_only = _kept_or_answer(answer, current_read_only)
     if protocol_enabled or assume_yes:
         resolved_protocol = protocol_enabled
     else:
@@ -1721,7 +1781,15 @@ def setup(
         # after the vault was already initialized; it used to end in a traceback.
         _error(f"Could not resolve the datacron-mcp command: {exc}")
 
-    _render_setup_result(result)
+    # A client that could not be registered is a failed setup. The run used to exit
+    # 0 with an "[err]" line, and the Windows installer runs setup hidden and trusts
+    # the exit code, so it reported success while no client could reach the vault.
+    # A Claude Desktop write that failed, or a launch command that could not be
+    # resolved for --client all, was only a warning, with "setup complete" above it.
+    clients_failed = bool(result.client_errors) or any(
+        not outcome.installed for outcome in result.client_installs
+    )
+    _render_setup_result(result, failed=clients_failed)
     protocol_failed = False
     if resolved_protocol:
         protocol_outcomes = _install_setup_protocol(
@@ -1731,10 +1799,6 @@ def setup(
         )
         protocol_failed = _render_protocol_outcomes(protocol_outcomes, operation="install")
     _log_completion("setup", started)
-    # A client that could not be registered is a failed setup. The run used to exit
-    # 0 with an "[err]" line, and the Windows installer runs setup hidden and trusts
-    # the exit code, so it reported success while no client could reach the vault.
-    clients_failed = any(not outcome.installed for outcome in result.client_installs)
     if protocol_failed or clients_failed:
         raise typer.Exit(code=1)
 
@@ -1832,24 +1896,46 @@ def _prompt_durability(durability: str | None, assume_yes: bool) -> str:
 
 
 def _prompt_write(
-    enable_write: bool,
+    enable_write: bool | None,
     write_path: Path | None,
     vault_root: Path,
     assume_yes: bool,
-) -> tuple[bool, list[Path]]:
+    *,
+    current_write: bool | None = None,
+) -> tuple[bool | None, list[Path]]:
+    """Resolve the write choice: ``None`` keeps what the client config holds.
+
+    ``current_write`` is the setting an existing entry holds for this vault, or
+    ``None`` without one; it is the prompt default, and answering it keeps the
+    entry as it is, write paths included.
+    """
     if write_path is not None:
+        if enable_write is False:
+            _error("--write-path cannot be combined with --no-write.")
         return True, [write_path.expanduser().resolve()]
-    if enable_write:
+    if enable_write is not None:
+        if not enable_write:
+            return False, []
         return True, _prompt_write_paths(vault_root, assume_yes)
     if assume_yes:
-        return False, []
+        return None, []
     _explain(_SetupPrompt.WRITE)
-    if not typer.confirm(
+    _explain_current(current_write)
+    answer = typer.confirm(
         "Let my AI assistants write notes (in 3 dedicated subfolders only)?",
-        default=False,
-    ):
-        return False, []
+        default=bool(current_write),
+    )
+    decision = _kept_or_answer(answer, current_write)
+    if not decision:
+        return decision, []
     return True, _prompt_write_paths(vault_root, assume_yes)
+
+
+def _kept_or_answer(answer: bool, current: bool | None) -> bool | None:
+    """Return ``None`` (keep) when the answer repeats an existing setting."""
+    if current is not None and answer == current:
+        return None
+    return answer
 
 
 def _prompt_write_paths(vault_root: Path, assume_yes: bool) -> list[Path]:
@@ -1873,7 +1959,7 @@ def _prompt_write_paths(vault_root: Path, assume_yes: bool) -> list[Path]:
 
 def _prompt_machine_wide_write(
     requested: bool,
-    enable_write: bool,
+    enable_write: bool | None,
     write_paths: list[Path],
     assume_yes: bool,
 ) -> tuple[bool, bool]:
@@ -1956,9 +2042,17 @@ def _render_unapplied_action(result: SetupResult, suffix: str) -> None:
     )
 
 
-def _render_setup_result(result: SetupResult) -> None:
+def _render_setup_problems(result: SetupResult) -> None:
+    """Print client configurations that failed, then non-fatal warnings."""
+    for client_error in result.client_errors:
+        typer.secho(f"  error: {client_error}", fg=typer.colors.RED, err=True)
+    for warning in result.warnings:
+        typer.secho(f"  warning: {warning}", fg=typer.colors.YELLOW, err=True)
+
+
+def _render_setup_result(result: SetupResult, *, failed: bool = False) -> None:
     _print("")
-    _print("Datacron setup complete.")
+    _print("Datacron setup finished with errors." if failed else "Datacron setup complete.")
     _print(f"  vault:      {result.bootstrap.vault_path}")
     if result.reset_result is not None:
         config_status = "removed" if result.reset_result.config_removed else "not present"
@@ -2000,8 +2094,7 @@ def _render_setup_result(result: SetupResult) -> None:
                 f"  [{mark}] {outcome.display_name} ({outcome.scope}): "
                 f"{outcome.config_path}{detail}"
             )
-    for warning in result.warnings:
-        typer.secho(f"  warning: {warning}", fg=typer.colors.YELLOW, err=True)
+    _render_setup_problems(result)
     if result.machine_write_env is not None:
         _print("Restart all already-open MCP clients to inherit the user environment.")
     _print("Verify from your client with get_health, or run `datacron status`.")

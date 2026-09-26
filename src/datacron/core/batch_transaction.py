@@ -24,20 +24,32 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path, PurePosixPath
-from typing import Any, Final, Literal, NoReturn, TypeAlias, final
+from typing import (
+    Any,
+    Concatenate,
+    Final,
+    Literal,
+    NoReturn,
+    ParamSpec,
+    TypeAlias,
+    TypeVar,
+    final,
+)
 
+from datacron.core.case_folding import case_folding_for, fold_path_key
 from datacron.core.config import SIDECAR_DIR_NAME, VaultConfig
 from datacron.core.durability import (
     RecoveryRequiredError,
+    UnexpectedRecoveryEntryError,
     atomic_durable_write,
     durable_flush_directory,
+    is_os_metadata_file,
 )
 from datacron.core.frontmatter import (
     FrontmatterError,
@@ -123,6 +135,8 @@ _BATCHES_DIR_NAME: Final[str] = "batches"
 _PENDING_DIR_NAME: Final[str] = "pending"
 _STAGE_DIR_NAME: Final[str] = "stage"
 _COMMITTED_DIR_NAME: Final[str] = "committed"
+_UNEXPECTED_PENDING_PROBLEM: Final[str] = "unexpected organization batch pending entry"
+_UNEXPECTED_STAGE_PROBLEM: Final[str] = "unexpected organization batch stage entry"
 _CONFIG_REL_PATH: Final[str] = ".datacron/VAULT.yaml"
 _IDENTITY_SIDECAR_REL_PATH: Final[str] = f"{SIDECAR_DIR_NAME}/{ULID_SIDECAR_FILENAME}"
 _MIGRATED_IDENTITY_SIDECAR_REL_PATH: Final[str] = (
@@ -238,6 +252,18 @@ _LOGGER = get_logger(__name__)
 
 class BatchConflictError(ValueError):
     """Raised when exact batch preconditions no longer match disk state."""
+
+
+class CommittedBatchDivergedError(BatchConflictError):
+    """Raised when a committed batch's files no longer hold its receipt's bytes.
+
+    The receipt is written only after every member has rolled forward, so a
+    difference found afterwards is a later edit (a note moved back by hand, a
+    rewrite through another tool), not a torn batch. Nothing needs recovering;
+    the manifest simply describes a vault that no longer exists.
+    """
+
+    code: Final[str] = "manifest_already_committed_state_diverged"
 
 
 @dataclass(frozen=True)
@@ -392,6 +418,25 @@ class _PathState:
     is_source: bool
 
 
+_Params = ParamSpec("_Params")
+_Result = TypeVar("_Result")
+
+
+def _following_vault_case(
+    method: Callable[Concatenate[OrganizationBatchTransaction, _Params], _Result],
+) -> Callable[Concatenate[OrganizationBatchTransaction, _Params], _Result]:
+    """Run ``method`` with path keys folded as the vault's own filesystem folds them."""
+
+    @wraps(method)
+    def wrapper(
+        self: OrganizationBatchTransaction, /, *args: _Params.args, **kwargs: _Params.kwargs
+    ) -> _Result:
+        with case_folding_for(self._vault_root):
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 @final
 class OrganizationBatchTransaction:
     """Apply and recover one validated organization manifest transaction."""
@@ -450,16 +495,16 @@ class OrganizationBatchTransaction:
         for member in result.members:
             target_hash = self._disk_hash(member.target_rel_path)
             if target_hash != member.after_hash:
-                raise RecoveryRequiredError(
-                    "Recovery required: committed organization batch target differs from "
-                    f"receipt: {member.target_rel_path}"
+                raise CommittedBatchDivergedError(
+                    "manifest is already committed and its target changed since: "
+                    f"{member.target_rel_path}"
                 )
             if (
                 member.source_rel_path is not None
                 and self._disk_hash(member.source_rel_path) is not None
             ):
-                raise RecoveryRequiredError(
-                    "Recovery required: committed organization batch move source reappeared: "
+                raise CommittedBatchDivergedError(
+                    "manifest is already committed and its move source reappeared since: "
                     f"{member.source_rel_path}"
                 )
 
@@ -469,6 +514,7 @@ class OrganizationBatchTransaction:
         self._verify_result_disk_state(result)
         return tuple(item.stale_id for item in result.identity_sidecar_case_canonicalizations)
 
+    @_following_vault_case
     def validate_capacity(
         self,
         bundle: ValidatedOrganizationBundle,
@@ -504,9 +550,19 @@ class OrganizationBatchTransaction:
             )
 
     def has_pending_batches(self) -> bool:
-        """Return whether a durable organization batch is pending recovery."""
+        """Return whether a durable organization batch is pending recovery.
+
+        A stray entry in the stage root is refused here too, as in the pending
+        root: an ordinary write checks for batches through this alone, and a
+        stray that blocked only the batch path would vanish from health on the
+        next ordinary write while still sitting in the sidecar.
+        """
+        stray_stages = self._unexpected_stage_root_entries()
+        if stray_stages:
+            raise UnexpectedRecoveryEntryError(stray_stages, _UNEXPECTED_STAGE_PROBLEM)
         return bool(self._pending_paths())
 
+    @_following_vault_case
     def apply(
         self,
         bundle: ValidatedOrganizationBundle,
@@ -603,6 +659,7 @@ class OrganizationBatchTransaction:
                     self._remove_stage(pending.batch_id)
                 raise
 
+    @_following_vault_case
     def recover(self) -> BatchRecoveryOutcome:
         """Roll every safe pending batch forward, or return exact-hash blockers."""
         snapshots = tuple(self._read_pending_snapshot(path) for path in self._pending_paths())
@@ -659,7 +716,14 @@ class OrganizationBatchTransaction:
         return BatchRecoveryOutcome(recovered=recovered)
 
     def inspect(self) -> tuple[BlockedOperation, ...]:
-        """Inspect pending batches without changing vault or sidecar bytes."""
+        """Inspect pending batches without changing vault or sidecar bytes.
+
+        A stray entry in the pending or the stage root is refused by name, as
+        recovery would refuse it, rather than reported as a blocked batch.
+        """
+        stray_stages = self._unexpected_stage_root_entries()
+        if stray_stages:
+            raise UnexpectedRecoveryEntryError(stray_stages, _UNEXPECTED_STAGE_PROBLEM)
         batches = tuple(self._read_pending_stable(path) for path in self._pending_paths())
         records = {record.operation_id: record for record in self._read_records()}
         return (
@@ -1570,6 +1634,8 @@ class OrganizationBatchTransaction:
             safe_entry = self._assert_internal_path(entry, allow_missing=False)
             if not safe_entry.is_file():
                 return f"unexpected non-file stage entry: {safe_entry.name}"
+            if is_os_metadata_file(safe_entry):
+                continue
             actual_names.add(safe_entry.name)
         if actual_names != expected_names:
             return "batch stage members differ from pending receipt"
@@ -2459,16 +2525,38 @@ class OrganizationBatchTransaction:
         if not pending_root.is_dir():
             raise RecoveryRequiredError("Recovery required: batch pending root is not a directory")
         paths: list[Path] = []
+        unexpected: list[str] = []
         for path in sorted(pending_root.iterdir()):
             safe_path = self._assert_internal_path(path, allow_missing=False)
             if _ATOMIC_RECEIPT_TEMP_PATTERN.fullmatch(safe_path.name) and safe_path.is_file():
                 continue
+            if is_os_metadata_file(safe_path):
+                continue
             if not safe_path.is_file() or safe_path.suffix != ".json":
-                raise RecoveryRequiredError(
-                    f"Recovery required: unexpected batch pending entry {safe_path.name}"
-                )
+                unexpected.append(self._entry_label(safe_path))
+                continue
             paths.append(safe_path)
+        if unexpected:
+            raise UnexpectedRecoveryEntryError(unexpected, _UNEXPECTED_PENDING_PROBLEM)
         return tuple(paths)
+
+    def _entry_label(self, path: Path) -> str:
+        """Name a sidecar entry by its vault-relative POSIX path, for an operator."""
+        return path.relative_to(self._vault_root).as_posix()
+
+    def _unexpected_stage_root_entries(self) -> list[str]:
+        """Return the stage-root entries that are neither a stage nor shell metadata."""
+        stage_root = self._assert_internal_path(self._stage_root, allow_missing=True)
+        if not stage_root.is_dir():
+            return []
+        unexpected: list[str] = []
+        for stage_dir in sorted(stage_root.iterdir()):
+            safe_stage_dir = self._assert_internal_path(stage_dir, allow_missing=False)
+            if is_os_metadata_file(safe_stage_dir):
+                continue
+            if not _HASH_PATTERN.fullmatch(safe_stage_dir.name):
+                unexpected.append(self._entry_label(safe_stage_dir))
+        return unexpected
 
     def _cleanup_atomic_receipt_temps(self) -> None:
         for root in (self._pending_root, self._committed_root):
@@ -2508,7 +2596,11 @@ class OrganizationBatchTransaction:
         for path in sorted(stage_dir.iterdir()):
             safe_path = self._assert_internal_path(path, allow_missing=False)
             if not safe_path.is_file():
-                raise OperationLogError(f"unexpected batch stage entry: {path}")
+                raise UnexpectedRecoveryEntryError(
+                    (self._entry_label(safe_path),), "unexpected non-file batch stage entry"
+                )
+            # Shell metadata inside a stage is deleted with the stage it sits in:
+            # the directory is Datacron's own and is about to be removed.
             safe_path.unlink()
         durable_flush_directory(stage_dir)
         stage_dir.rmdir()
@@ -2520,12 +2612,13 @@ class OrganizationBatchTransaction:
             return
         if not stage_root.is_dir():
             raise RecoveryRequiredError("Recovery required: batch stage root is not a directory")
+        unexpected = self._unexpected_stage_root_entries()
+        if unexpected:
+            raise UnexpectedRecoveryEntryError(unexpected, _UNEXPECTED_STAGE_PROBLEM)
         for stage_dir in sorted(stage_root.iterdir()):
             safe_stage_dir = self._assert_internal_path(stage_dir, allow_missing=False)
             if not _HASH_PATTERN.fullmatch(safe_stage_dir.name):
-                raise RecoveryRequiredError(
-                    "Recovery required: unexpected organization batch stage directory"
-                )
+                continue
             if not safe_stage_dir.is_dir() or safe_stage_dir.name in pending_ids:
                 continue
             self._remove_stage(safe_stage_dir.name)
@@ -3766,7 +3859,7 @@ def _yaml_values_equal_exact(before: object, after: object) -> bool:
 
 def _platform_path_key(rel_path: str) -> str:
     normalized = PurePosixPath(rel_path.replace("\\", "/")).as_posix()
-    return normalized.casefold() if os.name == "nt" else normalized
+    return fold_path_key(normalized)
 
 
 def _rel_path_belongs_to_scope(rel_path: str, scope: str) -> bool:

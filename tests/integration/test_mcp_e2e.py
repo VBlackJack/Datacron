@@ -530,6 +530,66 @@ class TestMcpE2E:
         finally:
             await app.store.close()
 
+    async def test_organization_validate_consults_the_committed_receipt(
+        self,
+        vault: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Validate reports a committed manifest, and a later edit is a conflict.
+
+        Validate never looked at the receipt. With the move undone by hand, it
+        answered validated with the original token, and apply then answered
+        recovery_required, telling the operator to stop writers over a vault
+        that was not corrupt.
+        """
+        manifest_path, manifest_sha256, source, target, _payload = _write_organization_bundle(
+            vault, tmp_path / "organization-undo-bundle"
+        )
+        settings = Settings(read_paths=[vault], write_paths=[vault], vault_root=vault)
+        app = build_app(settings=settings, vault_root=vault)
+        await app.store.open(sidecar_index_db(vault))
+        manifest = str(manifest_path.resolve())
+
+        async def validate() -> dict[str, Any]:
+            return await _apply_organization_manifest_impl(
+                app,
+                manifest_path=manifest,
+                expected_manifest_sha256=manifest_sha256,
+                mode="validate",
+            )
+
+        async def apply(token: str) -> dict[str, Any]:
+            return await _apply_organization_manifest_impl(
+                app,
+                manifest_path=manifest,
+                expected_manifest_sha256=manifest_sha256,
+                mode="apply",
+                confirmation_token=token,
+            )
+
+        try:
+            token = (await validate())["confirmation_token"]
+            assert (await apply(token))["status"] == "applied"
+
+            again = await validate()
+            assert again["status"] == "already_committed"
+            assert again["mode"] == "validate"
+            assert again["already_committed"] is True
+            assert again["confirmation_token"] == token
+
+            target.replace(source)
+
+            revalidated = await validate()
+            reapplied = await apply(token)
+        finally:
+            await app.store.close()
+
+        for response in (revalidated, reapplied):
+            assert response["error"]["code"] == "manifest_already_committed_state_diverged"
+            assert "no recovery is needed" in response["error"]["next_action"]
+        assert source.is_file()
+        assert not target.exists()
+
     async def test_lists_expected_resources(self, vault: Path, tmp_path: Path) -> None:
         session, streams = await _open_session(vault, tmp_path)
         try:
