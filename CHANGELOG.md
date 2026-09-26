@@ -9,6 +9,30 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.0926.00] - 2026-09-26
+
+This release closes the third audit in a row. Its four most serious findings were silent: write
+tools could edit notes in excluded folders, frontmatter edits could rewrite keys nobody asked to
+change, one journal append could erase a note's id, and a single note edited in another editor
+could turn every search into an internal error. Each fix was also reviewed against the others
+before merge, which caught five regressions the fixes themselves had introduced.
+
+Upgrade notes:
+
+- The index now records the version of the chunker. The first `datacron index`, or the first
+  search after the upgrade, reads every note once and rewrites only the notes whose chunks
+  changed.
+- `patch_note_section` now refuses a section that has subsections, and the section tools refuse
+  content that would open a code fence or HTML block without closing it. Both refusals name
+  what to do instead.
+- A frontmatter edit that cannot keep the other keys byte for byte is now refused instead of
+  rewritten, for example when the edited key carries a YAML anchor.
+- `append_journal` on a heading with subsections now writes before the first subsection, not
+  inside the last one.
+- `datacron setup` keeps the existing write and read-only settings unless `--no-write` or
+  `--no-read-only` is given, and the interactive prompts default to the current setting.
+- `get_follow_up` applies the configured redaction policy like the other read tools.
+
 ### Added
 
 - `datacron setup --no-write` and `--no-read-only` remove an existing write allowlist or
