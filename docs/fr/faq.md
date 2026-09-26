@@ -92,6 +92,34 @@ aucun fichier d'instructions globales. Le [deeplink du README](../../README.fr.m
 est une alternative manuelle pour les installations Python, mais ses placeholders
 `<YOUR_VAULT>` doivent être remplacés dans l'éditeur MCP.
 
+## Pourquoi l'installation du protocole mémoire échoue-t-elle pour Windsurf ?
+
+Windsurf garde ses règles globales dans `~/.codeium/windsurf/memories/global_rules.md` et
+n'accepte pas plus de 6000 caractères dans ce fichier. Le bloc de protocole Datacron en occupe
+à lui seul environ 5900 : il reste moins de 100 caractères pour tes propres règles. Dès que le
+fichier en contient davantage, l'installation est refusée pour Windsurf.
+
+Ce qui se passe :
+
+- le fichier reste exactement tel qu'il était : Datacron ne tronque jamais le bloc ni tes règles ;
+- l'enregistrement MCP est une étape distincte et n'est pas touché : Windsurf voit toujours les
+  outils de Datacron, seules les instructions mémoire manquent ;
+- `datacron protocol install` (et l'installeur Windows, qui l'exécute) signale l'échec pour
+  Windsurf, avec la taille du bloc, la taille de tes règles existantes et le nombre de caractères
+  en trop. Les autres clients sont installés normalement.
+
+Pour libérer la place, sors tes propres règles globales de `global_rules.md`, par exemple dans
+une règle d'espace de travail sous `.windsurf/rules/` du projet qui en a besoin, jusqu'à ce que le
+fichier contienne moins d'environ 60 caractères de ton texte. Relance ensuite l'installation :
+
+```bash
+datacron protocol install --client windsurf
+```
+
+Si tu préfères garder tes règles globales où elles sont, laisse le protocole hors de Windsurf :
+les outils continuent de fonctionner, et les autres clients reçoivent toujours le protocole. Un
+bloc de protocole plus court, propre à Windsurf, n'existe pas encore.
+
 ## Pourquoi la CLI répond-elle "Unknown client X" alors que la documentation le mentionne ?
 
 La documentation peut provenir d'une révision du dépôt plus récente que l'exécutable présent sur

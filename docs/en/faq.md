@@ -86,6 +86,34 @@ because the official documentation defines no global instruction file. The
 [README deeplink](../../README.md#add-to-lm-studio) is a manual alternative for Python
 installations, but its `<YOUR_VAULT>` placeholders must be replaced in the MCP editor.
 
+## Why did the memory protocol install fail for Windsurf?
+
+Windsurf keeps its global rules in `~/.codeium/windsurf/memories/global_rules.md` and accepts at
+most 6000 characters in that file. The Datacron protocol block alone takes about 5900 of them, so
+fewer than 100 characters remain for your own rules. As soon as the file already holds more than
+that, the install is refused for Windsurf.
+
+What happens:
+
+- the file is left exactly as it was: Datacron never truncates the block or your rules;
+- the MCP registration is a separate step and is not affected: Windsurf still sees Datacron's
+  tools, only the memory instructions are missing;
+- `datacron protocol install` (and the Windows installer, which runs it) reports the failure for
+  Windsurf, with the size of the block, the size of your existing rules, and how many characters
+  are over the limit. The other clients are installed normally.
+
+To free the space, move your own global rules out of `global_rules.md`, for example into a
+workspace rule under `.windsurf/rules/` of the project that needs them, until the file holds
+less than about 60 characters of your text. Then run the install again:
+
+```bash
+datacron protocol install --client windsurf
+```
+
+If you prefer to keep your global rules where they are, leave the protocol out of Windsurf: the
+tools keep working, and the other clients still receive the protocol. A shorter
+Windsurf-specific protocol block is not available yet.
+
 ## Why does the CLI say "Unknown client X" when the documentation lists it?
 
 The documentation may come from a newer repository revision than the executable on your `PATH`.

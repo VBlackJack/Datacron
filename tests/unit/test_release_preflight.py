@@ -98,6 +98,10 @@ def _preflight(
     ]
     if phase in {"clean", "committed"}:
         command.extend(("--version", _VERSION, "--base-sha", base_sha or repo.base_sha))
+    elif phase == "merged":
+        command.extend(("--version", _VERSION))
+    elif phase == "attribution":
+        command.extend(("--base-sha", base_sha or repo.base_sha))
     if tag is not None:
         command.extend(("--tag", tag))
     return _run(command, cwd=repo.root, env=env, check=False)
@@ -119,10 +123,36 @@ def _stage_version_changes(repo: _ReleaseRepo) -> None:
     _git(repo.root, "add", *_VERSION_PATHS)
 
 
-def _commit_and_tag(repo: _ReleaseRepo) -> None:
+def _commit_release(repo: _ReleaseRepo, env: dict[str, str] | None = None) -> None:
     _stage_version_changes(repo)
-    _git(repo.root, "commit", "-m", f"chore(version): {_VERSION}")
-    _git(repo.root, "tag", "-a", f"v{_VERSION}", "-m", f"Datacron {_VERSION}")
+    _git(repo.root, "commit", "-m", f"chore(version): {_VERSION}", env=env)
+
+
+def _tag(repo: _ReleaseRepo, target: str = "HEAD", env: dict[str, str] | None = None) -> None:
+    _git(repo.root, "tag", "-a", f"v{_VERSION}", target, "-m", f"Datacron {_VERSION}", env=env)
+
+
+def _commit_and_tag(repo: _ReleaseRepo) -> None:
+    """A tag on the bump commit: what the publish workflow's ``tagged`` phase reads."""
+    _commit_release(repo)
+    _tag(repo)
+
+
+def _merge_through_pull_request(repo: _ReleaseRepo, tmp_path: Path) -> str:
+    """Push the bump to its release branch and merge it into origin main with --no-ff.
+
+    This is what the pull request does on GitHub: main's new tip is a merge commit
+    whose second parent is the bump. Returns that tip.
+    """
+    branch = f"release/v{_VERSION}"
+    _git(repo.root, "push", "origin", f"HEAD:refs/heads/{branch}")
+    reviewer = tmp_path / "reviewer"
+    _git(tmp_path, "clone", "--branch", "main", str(repo.remote), str(reviewer))
+    _git(reviewer, "config", "user.name", "Merge Tester")
+    _git(reviewer, "config", "user.email", "fixture.invalid")
+    _git(reviewer, "merge", "--no-ff", f"origin/{branch}", "-m", f"Merge pull request #1 {branch}")
+    _git(reviewer, "push", "origin", "main")
+    return _git(reviewer, "rev-parse", "HEAD").stdout.strip()
 
 
 @pytest.fixture
@@ -322,14 +352,36 @@ def test_staged_phase_rejects_non_exact_status(
     assert "staged phase" in result.stderr
 
 
-def test_committed_phase_accepts_exact_release_commit_and_tag(
+def test_committed_phase_accepts_exact_release_commit_without_a_tag(
     release_repo: _ReleaseRepo,
 ) -> None:
-    _commit_and_tag(release_repo)
+    _commit_release(release_repo)
 
     result = _preflight(release_repo, "committed")
 
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("location", ["local", "remote"])
+def test_committed_phase_refuses_a_tag_on_the_bump_commit(
+    release_repo: _ReleaseRepo, location: str
+) -> None:
+    """The tag belongs on the merge commit of the release pull request.
+
+    The release script used to tag the bump commit before pushing its branch, and
+    this phase required it; the last three releases were tagged on main's merge
+    commit instead, the only commit the Quality gate approves as main.
+    """
+    _commit_and_tag(release_repo)
+    if location == "remote":
+        _git(release_repo.root, "push", "origin", f"v{_VERSION}")
+        _git(release_repo.root, "tag", "-d", f"v{_VERSION}")
+
+    result = _preflight(release_repo, "committed")
+
+    assert result.returncode == 1
+    expected = "exists locally" if location == "local" else "exists on origin"
+    assert expected in result.stderr
 
 
 def test_committed_phase_rejects_an_extra_committed_path(
@@ -339,7 +391,6 @@ def test_committed_phase_rejects_an_extra_committed_path(
     (release_repo.root / "README.md").write_text("changed\n", encoding="utf-8")
     _git(release_repo.root, "add", *_VERSION_PATHS, "README.md")
     _git(release_repo.root, "commit", "-m", f"chore(version): {_VERSION}")
-    _git(release_repo.root, "tag", "-a", f"v{_VERSION}", "-m", f"Datacron {_VERSION}")
 
     result = _preflight(release_repo, "committed")
 
@@ -353,7 +404,7 @@ def test_committed_phase_rejects_a_parent_other_than_measured_main(
     (release_repo.root / "README.md").write_text("intermediate\n", encoding="utf-8")
     _git(release_repo.root, "add", "README.md")
     _git(release_repo.root, "commit", "-m", "test: insert intermediate commit")
-    _commit_and_tag(release_repo)
+    _commit_release(release_repo)
 
     result = _preflight(release_repo, "committed")
 
@@ -361,35 +412,147 @@ def test_committed_phase_rejects_a_parent_other_than_measured_main(
     assert "parent is not the measured origin main" in result.stderr
 
 
-@pytest.mark.parametrize("object_kind", ["commit", "tag"])
-def test_committed_phase_rejects_and_hides_object_emails(
-    release_repo: _ReleaseRepo, object_kind: str
-) -> None:
+def test_committed_phase_rejects_and_hides_commit_emails(release_repo: _ReleaseRepo) -> None:
     sentinel = "private-object-sentinel.invalid"
     _stage_version_changes(release_repo)
-    if object_kind == "commit":
-        _git(release_repo.root, "config", "user.email", sentinel)
+    _git(release_repo.root, "config", "user.email", sentinel)
     _git(release_repo.root, "commit", "-m", f"chore(version): {_VERSION}")
-    if object_kind == "tag":
-        _git(release_repo.root, "config", "user.email", sentinel)
-    _git(release_repo.root, "tag", "-a", f"v{_VERSION}", "-m", f"Datacron {_VERSION}")
     _git(release_repo.root, "config", "user.email", _EXPECTED_EMAIL)
 
     result = _preflight(release_repo, "committed")
 
     combined = result.stdout + result.stderr
     assert result.returncode == 1
-    assert object_kind in result.stderr
+    assert "commit" in result.stderr
     assert sentinel not in combined
 
 
-def test_release_batch_wires_all_phases_and_pushes_a_side_branch() -> None:
-    """Every phase in order, and the bump reaching main through a pull request.
+def _released_through_pull_request(
+    repo: _ReleaseRepo, tmp_path: Path, tag_env: dict[str, str] | None = None
+) -> str:
+    """The whole arbitrated flow: bump, merge the release PR, fetch, tag main's tip."""
+    _commit_release(repo)
+    tip = _merge_through_pull_request(repo, tmp_path)
+    _git(repo.root, "fetch", "origin")
+    _tag(repo, "origin/main", env=tag_env)
+    return tip
+
+
+def test_merged_phase_accepts_the_tag_on_the_merge_commit(
+    release_repo: _ReleaseRepo, tmp_path: Path
+) -> None:
+    tip = _released_through_pull_request(release_repo, tmp_path)
+
+    result = _preflight(release_repo, "merged")
+
+    assert result.returncode == 0, result.stderr
+    tagged = _git(release_repo.root, "rev-parse", f"v{_VERSION}^{{commit}}").stdout.strip()
+    assert tagged == tip
+
+
+def test_merged_phase_refuses_the_tag_on_the_bump_commit(
+    release_repo: _ReleaseRepo, tmp_path: Path
+) -> None:
+    """The old flow: the tag created on the bump commit before the merge."""
+    _commit_and_tag(release_repo)
+    _merge_through_pull_request(release_repo, tmp_path)
+    _git(release_repo.root, "fetch", "origin")
+
+    result = _preflight(release_repo, "merged")
+
+    assert result.returncode == 1
+    assert "does not target origin main's tip" in result.stderr
+
+
+def test_merged_phase_requires_the_merge_to_be_fetched(
+    release_repo: _ReleaseRepo, tmp_path: Path
+) -> None:
+    _commit_and_tag(release_repo)
+    _merge_through_pull_request(release_repo, tmp_path)
+
+    result = _preflight(release_repo, "merged")
+
+    assert result.returncode == 1
+    assert "not fetched" in result.stderr
+
+
+def test_merged_phase_refuses_a_main_that_does_not_carry_the_bump(
+    release_repo: _ReleaseRepo,
+) -> None:
+    """Tagging origin/main before the release PR merged tags the previous version."""
+    _commit_release(release_repo)
+    _tag(release_repo, "origin/main")
+
+    result = _preflight(release_repo, "merged")
+
+    assert result.returncode == 1
+    assert "does not carry the release version" in result.stderr
+
+
+def test_merged_phase_requires_the_release_commit_in_main(
+    release_repo: _ReleaseRepo, tmp_path: Path
+) -> None:
+    """The version file alone is not proof: the bump commit must be in main's history."""
+    _write_version_changes(release_repo)
+    _git(release_repo.root, "add", *_VERSION_PATHS)
+    _git(release_repo.root, "commit", "-m", "chore: unrelated edit of the version files")
+    _merge_through_pull_request(release_repo, tmp_path)
+    _git(release_repo.root, "fetch", "origin")
+    _tag(release_repo, "origin/main")
+
+    result = _preflight(release_repo, "merged")
+
+    assert result.returncode == 1
+    assert "does not contain the release commit" in result.stderr
+
+
+@pytest.mark.parametrize("state", ["missing", "lightweight", "pushed"])
+def test_merged_phase_requires_one_local_annotated_unpushed_tag(
+    release_repo: _ReleaseRepo, tmp_path: Path, state: str
+) -> None:
+    _commit_release(release_repo)
+    _merge_through_pull_request(release_repo, tmp_path)
+    _git(release_repo.root, "fetch", "origin")
+    if state == "lightweight":
+        _git(release_repo.root, "tag", f"v{_VERSION}", "origin/main")
+    elif state == "pushed":
+        _tag(release_repo, "origin/main")
+        _git(release_repo.root, "push", "origin", f"v{_VERSION}")
+
+    result = _preflight(release_repo, "merged")
+
+    assert result.returncode == 1
+    expected = {
+        "missing": "does not exist locally",
+        "lightweight": "not annotated",
+        "pushed": "already exists on origin",
+    }[state]
+    assert expected in result.stderr
+
+
+@pytest.mark.parametrize(
+    "email", ["", "private@example.com", "malformed", "123+foreign@users.noreply.github.com"]
+)
+def test_merged_phase_requires_the_configured_noreply_tagger(
+    release_repo: _ReleaseRepo, tmp_path: Path, email: str
+) -> None:
+    _released_through_pull_request(release_repo, tmp_path, tag_env={"GIT_COMMITTER_EMAIL": email})
+
+    result = _preflight(release_repo, "merged")
+
+    assert result.returncode == 1
+    assert "release tagger" in result.stderr
+    if email:
+        assert email not in result.stdout + result.stderr
+
+
+def test_release_batch_wires_all_phases_and_tags_after_the_merge() -> None:
+    """Every phase in order, the bump reaching main through a pull request, and no tag.
 
     A direct push cannot satisfy the branch ruleset, which requires the Quality
-    gate to have passed on the exact SHA. The refusal used to arrive only after
-    the local commit and tag already existed, leaving the operator to undo both by
-    hand, so the script pushes a side branch and prints the remaining steps.
+    gate to have passed on the exact SHA, so the script pushes a side branch. The
+    tag used to be created on the bump commit here; it now goes on main's merge
+    commit, so the script only prints the post-merge commands.
     """
     content = _RELEASE_BATCH.read_text(encoding="utf-8")
     clean = content.index("scripts\\release_preflight.py clean")
@@ -398,20 +561,24 @@ def test_release_batch_wires_all_phases_and_pushes_a_side_branch() -> None:
     stage = content.index("git add src\\datacron\\__init__.py server.json")
     staged = content.index("scripts\\release_preflight.py staged")
     commit = content.index('git commit -m "chore(version): %VER%"')
-    tag = content.index('git tag -a "v%VER%"')
     committed = content.index("scripts\\release_preflight.py committed")
     push = content.index('git push origin "HEAD:refs/heads/release/v%VER%"')
+    fetch = content.index("echo     git fetch origin")
+    tag = content.index('echo     git tag -a v%VER% origin/main -m "Datacron %VER%"')
+    merged = content.index("scripts\\release_preflight.py merged --version %VER%")
+    push_tag = content.index("echo     git push origin v%VER%")
 
-    assert clean < bump < bumped < stage < staged < commit < tag < committed < push
+    assert clean < bump < bumped < stage < staged < commit < committed < push
+    assert push < fetch < tag < merged < push_tag
+    # The only tag command is the one printed for after the merge.
+    assert content.count("git tag") == 1
+    assert "git tag -d" not in content
     assert "git add src\\datacron\\__init__.py server.json CHANGELOG.md" not in content
     assert "--force" not in content
     assert "core.hooksPath" not in content
     assert "refs/heads/main" not in content
     assert "--atomic" not in content
     assert "gh pr create --base main --head release/v%VER%" in content
-    # The tag stays local until main carries the merge, so it lands on the commit
-    # the gate approved.
-    assert content.index("Tag v%VER% exists locally and is not pushed yet") > push
 
 
 @pytest.mark.parametrize("phase", ["clean", "committed"])
@@ -423,7 +590,7 @@ def test_effective_identity_requires_exact_configured_noreply(
     release_repo: _ReleaseRepo, phase: str, variable: str, email: str
 ) -> None:
     if phase == "committed":
-        _commit_and_tag(release_repo)
+        _commit_release(release_repo)
     result = _preflight(release_repo, phase, env={variable: email})
     assert result.returncode == 1
     assert "effective" in result.stderr
@@ -432,25 +599,18 @@ def test_effective_identity_requires_exact_configured_noreply(
         assert email not in result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("role", ["author", "committer", "tagger"])
+@pytest.mark.parametrize("role", ["author", "committer"])
 @pytest.mark.parametrize(
     "email", ["", "private@example.com", "malformed", "123+foreign@users.noreply.github.com"]
 )
 def test_committed_objects_require_exact_configured_noreply(
     release_repo: _ReleaseRepo, role: str, email: str
 ) -> None:
-    _stage_version_changes(release_repo)
-    commit_env = {}
-    if role != "tagger":
-        commit_env[f"GIT_{role.upper()}_EMAIL"] = email
-    _git(release_repo.root, "commit", "-m", f"chore(version): {_VERSION}", env=commit_env)
-    tag_env = {"GIT_COMMITTER_EMAIL": email} if role == "tagger" else {}
-    _git(release_repo.root, "tag", "-a", f"v{_VERSION}", "-m", f"Datacron {_VERSION}", env=tag_env)
+    # The tagger case moved to the merged phase with the tag itself.
+    _commit_release(release_repo, env={f"GIT_{role.upper()}_EMAIL": email})
     result = _preflight(release_repo, "committed")
     assert result.returncode == 1
-    assert (
-        "release tagger" in result.stderr if role == "tagger" else "release commit" in result.stderr
-    )
+    assert "release commit" in result.stderr
     if email:
         assert email not in result.stdout + result.stderr
 
@@ -568,7 +728,7 @@ def test_tagged_phase_fails_closed_on_an_unreadable_package_version(
     assert "package version could not be read" in result.stderr
 
 
-def test_committed_phase_rejects_a_tag_that_does_not_name_the_committed_version(
+def test_committed_phase_rejects_a_version_that_does_not_name_the_committed_version(
     release_repo: _ReleaseRepo,
 ) -> None:
     _stage_version_changes(release_repo)
@@ -577,9 +737,69 @@ def test_committed_phase_rejects_a_tag_that_does_not_name_the_committed_version(
     )
     _git(release_repo.root, "add", *_VERSION_PATHS)
     _git(release_repo.root, "commit", "-m", f"chore(version): {_VERSION}")
-    _git(release_repo.root, "tag", "-a", f"v{_VERSION}", "-m", f"Datacron {_VERSION}")
 
     result = _preflight(release_repo, "committed")
 
     assert result.returncode == 1
     assert "does not match datacron.__version__" in result.stderr
+
+
+_ASSISTANT_TRAILER = "Co-Authored-By: Claude <noreply@anthropic.com>"
+
+
+@pytest.mark.parametrize(
+    ("message", "credited"),
+    [
+        (f"fix: thing\n\n{_ASSISTANT_TRAILER}\n", True),
+        ("fix: thing\n\nco-authored-by: Codex <codex@openai.com>\n", True),
+        ("fix: thing\n\nCo-Authored-By: ChatGPT <bot@example.invalid>\n", True),
+        ("fix: thing\n\nCo-authored-by: Anthropic Bot <bot@example.invalid>\n", True),
+        ("docs: thing\n\n\U0001f916 Generated with [Claude Code](https://claude.com)\n", True),
+        ("docs: thing\n\nGenerated with [Codex](https://example.invalid)\n", True),
+        ("fix: thing\n\nCo-Authored-By: OpenAI Bot <bot@example.invalid>\n", True),
+        ("fix: thing\n\nCo-Authored-By: GitHub Copilot <copilot@example.invalid>\n", True),
+        ("fix: thing\n\nCo-Authored-By: Jane Doe <jane@example.invalid>\n", False),
+        ("docs: regenerated with the new template\n", False),
+        ("docs: tables generated with mkdocs\n", False),
+        ("docs: thing\n\nThe tables are generated with mkdocs from the notes.\n", False),
+        ("fix(search): match Claude-style notes\n", False),
+    ],
+)
+def test_credits_an_assistant_reads_trailers_and_footers(message: str, credited: bool) -> None:
+    assert _preflight_module().credits_an_assistant(message) is credited
+
+
+def test_attribution_phase_accepts_a_clean_range(release_repo: _ReleaseRepo) -> None:
+    _commit_release(release_repo)
+
+    result = _preflight(release_repo, "attribution")
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_attribution_phase_refuses_a_credited_commit_after_the_base(
+    release_repo: _ReleaseRepo,
+) -> None:
+    """Twenty-two historical commits carry such a trailer; none may be added."""
+    _commit_release(release_repo)
+    (release_repo.root / "README.md").write_text("changed\n", encoding="utf-8")
+    _git(release_repo.root, "add", "README.md")
+    _git(release_repo.root, "commit", "-m", f"docs: change\n\n{_ASSISTANT_TRAILER}")
+    credited = _git(release_repo.root, "rev-parse", "HEAD").stdout.strip()
+
+    result = _preflight(release_repo, "attribution")
+
+    assert result.returncode == 1
+    assert credited[:12] in result.stderr
+
+
+def test_attribution_phase_ignores_commits_before_the_base(release_repo: _ReleaseRepo) -> None:
+    (release_repo.root / "README.md").write_text("changed\n", encoding="utf-8")
+    _git(release_repo.root, "add", "README.md")
+    _git(release_repo.root, "commit", "-m", f"docs: change\n\n{_ASSISTANT_TRAILER}")
+    base = _git(release_repo.root, "rev-parse", "HEAD").stdout.strip()
+    _commit_release(release_repo)
+
+    result = _preflight(release_repo, "attribution", base_sha=base)
+
+    assert result.returncode == 0, result.stderr

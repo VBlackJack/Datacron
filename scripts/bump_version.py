@@ -56,12 +56,17 @@ def next_calver(current: str, today: date) -> str:
     return f"{date_part}.{counter:02d}"
 
 
+def parse_version_text(text: str, source: str) -> str:
+    """Read the ``__version__`` literal from the text of ``__init__.py``."""
+    match = _VERSION_RE.search(text)
+    if match is None:
+        raise ValueError(f"No __version__ assignment found in {source}")
+    return match["value"]
+
+
 def read_current_version(init_path: Path) -> str:
     """Read the ``__version__`` literal from ``init_path``."""
-    match = _VERSION_RE.search(init_path.read_text(encoding="utf-8"))
-    if match is None:
-        raise ValueError(f"No __version__ assignment found in {init_path}")
-    return match["value"]
+    return parse_version_text(init_path.read_text(encoding="utf-8"), str(init_path))
 
 
 def write_version(init_path: Path, new_version: str) -> None:
@@ -113,8 +118,15 @@ def main(argv: list[str] | None = None) -> int:
     write_version(_INIT_PATH, new_version)
     write_server_version(_SERVER_JSON_PATH, new_version)
     print(f"Bumped __version__: {current} -> {new_version}")
-    print(f"Now release: git tag -a v{new_version} -m 'Datacron {new_version}'")
-    print(f"            then: git push origin v{new_version}")
+    # The tag is not created here: it goes on the merge commit of the release
+    # pull request, once main carries the bump, because the main ruleset only
+    # accepts a SHA the Quality gate has already passed.
+    print("Now commit the bump on a release branch and merge it through a pull request.")
+    print("Once main carries the merge, tag main's tip:")
+    print("    git fetch origin")
+    print(f"    git tag -a v{new_version} origin/main -m 'Datacron {new_version}'")
+    print(f"    python scripts/release_preflight.py merged --version {new_version}")
+    print(f"    git push origin v{new_version}")
     return 0
 
 

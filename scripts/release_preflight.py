@@ -22,12 +22,12 @@ import tomllib
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
-from re import Pattern
+from re import IGNORECASE, MULTILINE, Pattern
 from re import compile as re_compile
 from shutil import which
 from typing import Final
 
-from bump_version import read_current_version
+from bump_version import parse_version_text, read_current_version
 
 from datacron.core.versioning import normalize_calver
 
@@ -35,6 +35,7 @@ _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[1]
 _VERSION_INIT_PATH: Final[str] = "src/datacron/__init__.py"
 _EXPECTED_PATHS: Final[frozenset[str]] = frozenset({"server.json", _VERSION_INIT_PATH})
 _TAG_PREFIX: Final[str] = "v"
+_BUMP_SUBJECT_PREFIX: Final[str] = "chore(version): "
 _VERSION_RE: Final[Pattern[str]] = re_compile(
     r"(?P<year>\d{4})\.(?P<month>\d{2})(?P<day>\d{2})\.(?P<counter>\d{2})"
 )
@@ -44,6 +45,17 @@ _NOREPLY_EMAIL_RE: Final[Pattern[str]] = re_compile(
     r"[0-9]+\+[A-Za-z0-9][A-Za-z0-9-]*@users\.noreply\.github\.com"
 )
 _GIT_EXECUTABLE: Final[str | None] = which("git")
+# A commit message that credits a code assistant, in the two forms the tools write:
+# a co-author trailer naming one, or the "Generated with [Tool](link)" footer. The
+# footer needs its opening bracket, so prose such as "tables generated with mkdocs"
+# is not refused.
+_ASSISTANT_ATTRIBUTION_RE: Final[Pattern[str]] = re_compile(
+    r"^[ \t]*co-authored-by:[^\n]*(?:claude|anthropic|codex|gpt|openai|copilot)"
+    r"|\bgenerated with \[",
+    IGNORECASE | MULTILINE,
+)
+_COMMIT_RECORD_SEPARATOR: Final[str] = "\x1e"
+_SHORT_SHA_LENGTH: Final[int] = 12
 
 
 class ReleasePreflightError(RuntimeError):
@@ -246,9 +258,14 @@ def _check_tagged(repo_root: Path, tag: str) -> None:
 
 
 def _check_committed(repo_root: Path, version: str, base_sha: str) -> None:
+    """Validate the bump commit before it leaves for its release branch.
+
+    The tag is not checked here, it is refused: it belongs on the merge commit of
+    the release pull request, which does not exist yet (see ``_check_merged``).
+    """
     _require_status(repo_root, frozenset(), "committed")
     _check_tagged(repo_root, f"{_TAG_PREFIX}{version}")
-    head_sha = _git_output(repo_root, ("rev-parse", "--verify", "HEAD")).casefold()
+    _require_tag_absent(repo_root, version)
     parent_sha = _git_output(repo_root, ("rev-parse", "--verify", "HEAD^")).casefold()
     if parent_sha != base_sha:
         raise ReleasePreflightError(
@@ -275,21 +292,107 @@ def _check_committed(repo_root: Path, version: str, base_sha: str) -> None:
             "The release commit author and committer emails must match "
             "the project release identity."
         )
-    tag_ref = f"refs/tags/v{version}"
+    _require_identity(repo_root, "GIT_AUTHOR_IDENT", "author", expected_email)
+    _require_identity(repo_root, "GIT_COMMITTER_IDENT", "committer", expected_email)
+
+
+def _version_at(repo_root: Path, commit: str) -> str:
+    completed = _run_git(
+        repo_root,
+        ("show", f"{commit}:{_VERSION_INIT_PATH}"),
+        allowed_returncodes=frozenset({0, 128}),
+    )
+    if completed.returncode != 0:
+        raise ReleasePreflightError("The package version could not be read at origin main.")
+    try:
+        return parse_version_text(completed.stdout, _VERSION_INIT_PATH)
+    except ValueError as exc:
+        raise ReleasePreflightError(
+            "The package version could not be read at origin main."
+        ) from exc
+
+
+def _check_merged(repo_root: Path, version: str) -> None:
+    """Validate the release tag after the release pull request has merged.
+
+    The tag goes on the merge commit, which is origin main's tip once the pull
+    request lands: the main ruleset only accepts a SHA the Quality gate has
+    passed, so the bump commit itself is never main's tip, and a tag created on
+    it before the merge pointed at a commit the gate had not approved as main.
+    The tip must also carry the bump, so the tag cannot name a version that
+    main does not ship.
+    """
+    tip = _remote_main_sha(repo_root)
+    fetched = _run_git(
+        repo_root,
+        ("cat-file", "-e", f"{tip}^{{commit}}"),
+        allowed_returncodes=frozenset({0, 1, 128}),
+    )
+    if fetched.returncode != 0:
+        raise ReleasePreflightError("Origin main's tip is not fetched; run git fetch origin.")
+    if _version_at(repo_root, tip) != version:
+        raise ReleasePreflightError("Origin main's tip does not carry the release version.")
+    bump_subject = f"{_BUMP_SUBJECT_PREFIX}{version}"
+    history = _run_git(
+        repo_root,
+        ("log", "--fixed-strings", f"--grep={bump_subject}", "--format=%s", tip),
+    ).stdout.splitlines()
+    if bump_subject not in history:
+        raise ReleasePreflightError("Origin main's tip does not contain the release commit.")
+    tag_ref = f"refs/tags/{_TAG_PREFIX}{version}"
+    local = _run_git(
+        repo_root,
+        ("show-ref", "--verify", "--quiet", tag_ref),
+        allowed_returncodes=frozenset({0, 1}),
+    )
+    if local.returncode != 0:
+        raise ReleasePreflightError("The release tag does not exist locally.")
+    remote = _run_git(
+        repo_root,
+        ("ls-remote", "--exit-code", "--tags", "origin", tag_ref),
+        allowed_returncodes=frozenset({0, 2}),
+    )
+    if remote.returncode == 0:
+        raise ReleasePreflightError("The release tag already exists on origin.")
     if _git_output(repo_root, ("cat-file", "-t", tag_ref)) != "tag":
         raise ReleasePreflightError("The release tag is not annotated.")
     tag_object = _run_git(repo_root, ("cat-file", "-p", tag_ref)).stdout
     tagger_lines = [line for line in tag_object.splitlines() if line.startswith("tagger ")]
     if len(tagger_lines) != 1:
         raise ReleasePreflightError("The release tag does not contain one tagger identity.")
-    _require_identity_text(tagger_lines[0], "release tagger", expected_email)
+    _require_identity_text(tagger_lines[0], "release tagger", _expected_email(repo_root))
     tag_target = _git_output(
         repo_root, ("rev-parse", "--verify", f"{tag_ref}^{{commit}}")
     ).casefold()
-    if tag_target != head_sha:
-        raise ReleasePreflightError("The release tag does not target the release commit.")
-    _require_identity(repo_root, "GIT_AUTHOR_IDENT", "author", expected_email)
-    _require_identity(repo_root, "GIT_COMMITTER_IDENT", "committer", expected_email)
+    if tag_target != tip:
+        raise ReleasePreflightError("The release tag does not target origin main's tip.")
+
+
+def credits_an_assistant(message: str) -> bool:
+    """True when a commit message carries a code-assistant co-author or footer."""
+    return _ASSISTANT_ATTRIBUTION_RE.search(message) is not None
+
+
+def _check_attribution(repo_root: Path, base_sha: str) -> None:
+    """Refuse any commit after ``base_sha`` whose message credits a code assistant.
+
+    Twenty-two commits already in the history carry such a trailer. History is not
+    rewritten for them; this check, run on every pull request, keeps the count
+    from growing.
+    """
+    log = _run_git(
+        repo_root,
+        ("log", f"--format=%H%x00%B{_COMMIT_RECORD_SEPARATOR}", f"{base_sha}..HEAD"),
+    ).stdout
+    offenders: list[str] = []
+    for record in log.split(_COMMIT_RECORD_SEPARATOR):
+        sha, _, message = record.strip().partition("\0")
+        if sha and credits_an_assistant(message):
+            offenders.append(sha[:_SHORT_SHA_LENGTH])
+    if offenders:
+        raise ReleasePreflightError(
+            "These commits credit a code assistant in their message: " + ", ".join(offenders)
+        )
 
 
 def run_phase(
@@ -319,6 +422,10 @@ def run_phase(
             _validated_version(version),
             _validated_base_sha(base_sha),
         )
+    elif phase == "merged":
+        _check_merged(repo_root, _validated_version(version))
+    elif phase == "attribution":
+        _check_attribution(repo_root, _validated_base_sha(base_sha))
     else:
         raise ReleasePreflightError("Unknown release preflight phase.")
 
@@ -326,7 +433,10 @@ def run_phase(
 def main(argv: list[str] | None = None) -> int:
     """Run one fail-closed release preflight phase."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("clean", "bumped", "staged", "tagged", "committed"))
+    parser.add_argument(
+        "phase",
+        choices=("clean", "bumped", "staged", "tagged", "committed", "merged", "attribution"),
+    )
     parser.add_argument("--version")
     parser.add_argument("--tag")
     parser.add_argument("--base-sha")

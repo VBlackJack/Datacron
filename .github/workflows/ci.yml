@@ -5,6 +5,12 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 name: ci
 
 on:
@@ -43,6 +49,12 @@ jobs:
         env:
           FORCE_FULL: ${{ inputs.force-full }}
         run: python scripts/ci_scope.py
+      - name: Refuse commits that credit a code assistant
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PYTHONPATH: src
+        run: python scripts/release_preflight.py attribution --base-sha "$BASE_SHA"
 
   lint-type-test:
     name: Invariant gate (Py${{ matrix.python-version }} / ${{ matrix.os }})
@@ -65,9 +77,12 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ripgrep
 
+      # The macOS leg runs without ripgrep: Homebrew cannot pin a formula version,
+      # and the ripgrep route is exercised on the two other systems. The regex
+      # tests that need the binary skip themselves when it is absent.
       - name: Install ripgrep (Windows)
         if: runner.os == 'Windows'
-        run: choco install ripgrep --no-progress -y
+        run: choco install ripgrep --version 15.2.0 --no-progress -y
 
       - name: Install project
         run: |
@@ -119,12 +134,47 @@ jobs:
         run: uv sync --frozen --extra dev --extra build --python 3.12
 
       - name: Audit dependencies for known CVEs
-        run: uv run --python 3.12 --with pip-audit pip-audit
+        run: uv run --python 3.12 --with pip-audit==2.10.1 pip-audit
+
+  # The lock file tests the newest versions; nothing tested the oldest ones the
+  # package metadata accepts. Two floors had been below what the code imports:
+  # pydantic-settings 2.2 lacks NoDecode, and typer 0.12 crashed on every command.
+  lowest-direct:
+    name: Declared dependency floors
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install uv==0.11.3
+
+      - name: Install every direct dependency at its declared floor
+        run: |
+          uv venv --python 3.11 .venv-floors
+          uv pip install --python .venv-floors/bin/python --resolution lowest-direct -e ".[dev]"
+          uv pip list --python .venv-floors/bin/python
+
+      - name: Smoke-test the command line and the server at the floors
+        run: |
+          .venv-floors/bin/datacron --help
+          .venv-floors/bin/python -c "import datacron.cli, datacron.mcp.server"
+
+      - name: Fast test subset at the floors
+        run: >-
+          .venv-floors/bin/python -m pytest -q
+          tests/unit/test_cli.py tests/unit/test_human_library.py
+          tests/unit/core tests/unit/installers tests/unit/mcp/test_resources.py
 
   quality-gate:
     name: Quality gate
     if: always()
-    needs: [scope, lint-type-test, shellcheck, dependency-audit]
+    needs: [scope, lint-type-test, shellcheck, dependency-audit, lowest-direct]
     runs-on: ubuntu-latest
     steps:
       - name: Require every validation job to succeed

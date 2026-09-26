@@ -7,9 +7,16 @@ REM You may obtain a copy of the License at
 REM
 REM     http://www.apache.org/licenses/LICENSE-2.0
 REM
+REM Unless required by applicable law or agreed to in writing, software
+REM distributed under the License is distributed on an "AS IS" BASIS,
+REM WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+REM See the License for the specific language governing permissions and
+REM limitations under the License.
+REM
 REM One-click Datacron release (Windows): compute the next CalVer, bump
-REM __init__.py, commit, tag v<version>, and push. The tag push triggers the
-REM GitHub release workflow that builds the multi-OS binaries.
+REM __init__.py, commit, and push the bump to a release branch. The tag is
+REM created after the release pull request merges, on main's merge commit;
+REM its push triggers the GitHub release workflow that builds the binaries.
 
 setlocal EnableExtensions
 
@@ -45,7 +52,7 @@ if "%BASE%"=="" (echo Could not resolve the current Git commit. & exit /b 1)
 echo.
 echo   Next Datacron release: %VER%
 echo.
-choice /c YN /m "Bump, commit, tag v%VER% and push"
+choice /c YN /m "Bump, commit and push release/v%VER%"
 if errorlevel 2 (echo Aborted, nothing changed. & exit /b 0)
 
 "%PY%" scripts\bump_version.py || (echo Bump failed. & exit /b 1)
@@ -53,19 +60,17 @@ if errorlevel 2 (echo Aborted, nothing changed. & exit /b 0)
 git add src\datacron\__init__.py server.json || (echo git add failed. & exit /b 1)
 "%PY%" scripts\release_preflight.py staged || (echo Staged state is unsafe. & exit /b 1)
 git commit -m "chore(version): %VER%" || (echo git commit failed. & exit /b 1)
-git tag -a "v%VER%" -m "Datacron %VER%" || (echo git tag failed. & exit /b 1)
 "%PY%" scripts\release_preflight.py committed --version "%VER%" --base-sha "%BASE%" || (
     echo Committed release state is unsafe; nothing was pushed.
     exit /b 1
 )
 REM The main ruleset requires the Quality gate to have passed on the exact SHA, which
-REM a direct push cannot satisfy: it is refused, and before this the refusal arrived
-REM only after the commit and tag already existed locally, leaving the operator to
-REM undo both by hand. The bump goes to a side branch, its PR carries the SHA through
-REM the gate, and the tag is pushed once main holds it.
+REM a direct push cannot satisfy. The bump goes to a side branch and its PR carries the
+REM SHA through the gate. No tag is created here: the release tag goes on the merge
+REM commit of that PR, main's tip once it lands, which does not exist yet.
 git push origin "HEAD:refs/heads/release/v%VER%" || (
-    echo Pushing the release branch failed; the local commit and tag are still here.
-    echo   git reset --hard %BASE%  ^&^&  git tag -d v%VER%
+    echo Pushing the release branch failed; the local commit is still here.
+    echo   git reset --hard %BASE%
     exit /b 1
 )
 
@@ -74,8 +79,11 @@ echo   Pushed release/v%VER%. Finish the release with:
 echo.
 echo     gh pr create --base main --head release/v%VER% --fill
 echo     gh pr merge --merge ^<number^>          (or merge it from the web UI)
-echo     git fetch origin ^&^& git push origin "refs/tags/v%VER%:refs/tags/v%VER%"
 echo.
-echo   Tag v%VER% exists locally and is not pushed yet; push it once main carries
-echo   the merge, so the tag lands on the commit the Quality gate approved.
+echo   Once main carries the merge, tag its tip and push the tag:
+echo.
+echo     git fetch origin
+echo     git tag -a v%VER% origin/main -m "Datacron %VER%"
+echo     "%PY%" scripts\release_preflight.py merged --version %VER%
+echo     git push origin v%VER%
 endlocal

@@ -23,6 +23,8 @@ are on disk.
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
@@ -195,35 +197,131 @@ def test_every_documentation_page_is_listed_by_its_index(directory: Path) -> Non
     assert not orphans, f"docs/{directory.name}/index.md does not list: {orphans}"
 
 
-_LICENCE_HEADER: Final[tuple[str, ...]] = (
-    "# Copyright 2026 Julien Bombled",
-    "#",
-    '# Licensed under the Apache License, Version 2.0 (the "License");',
-    "# you may not use this file except in compliance with the License.",
-    "# You may obtain a copy of the License at",
-    "#",
-    "#     http://www.apache.org/licenses/LICENSE-2.0",
-    "#",
-    "# Unless required by applicable law or agreed to in writing, software",
-    '# distributed under the License is distributed on an "AS IS" BASIS,',
-    "# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.",
-    "# See the License for the specific language governing permissions and",
-    "# limitations under the License.",
+_LICENCE_BODY: Final[tuple[str, ...]] = (
+    "Copyright 2026 Julien Bombled",
+    "",
+    'Licensed under the Apache License, Version 2.0 (the "License");',
+    "you may not use this file except in compliance with the License.",
+    "You may obtain a copy of the License at",
+    "",
+    "    http://www.apache.org/licenses/LICENSE-2.0",
+    "",
+    "Unless required by applicable law or agreed to in writing, software",
+    'distributed under the License is distributed on an "AS IS" BASIS,',
+    "WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.",
+    "See the License for the specific language governing permissions and",
+    "limitations under the License.",
 )
+# The comment marker each tracked source type writes its header with.
+_COMMENT_MARKERS: Final[dict[str, str]] = {
+    ".py": "#",
+    ".yml": "#",
+    ".yaml": "#",
+    ".toml": "#",
+    ".sh": "#",
+    ".ps1": "#",
+    ".bat": "REM",
+    ".iss": ";",
+}
+# A first line that must stay first for the file to work: an interpreter line,
+# or the batch echo switch. The header follows it.
+_LEADING_DIRECTIVES: Final[tuple[str, ...]] = ("#!", "@echo off")
+_GIT_TIMEOUT_SECONDS: Final[int] = 60
 
 
-def test_every_shipped_module_carries_the_whole_licence_header() -> None:
+def licence_header(marker: str) -> tuple[str, ...]:
+    """The whole licence block written with one comment marker."""
+    return tuple(f"{marker} {line}" if line else marker for line in _LICENCE_BODY)
+
+
+def _tracked_source_files() -> list[Path]:
+    """Every tracked file whose type carries a header, listed by Git rather than a glob.
+
+    Globbing ``src`` alone let 45 files drift: the workflows, ``pyproject.toml``,
+    the scripts and most of the tests had lost the disclaimer, and the empty
+    package markers had no header at all. Asking Git keeps an ignored scratch
+    file out and a new directory in.
+    """
+    git = shutil.which("git")
+    assert git is not None, "the licence guard needs Git to list the tracked files"
+    listing = subprocess.run(
+        [git, "ls-files", "-z"],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        check=True,
+        timeout=_GIT_TIMEOUT_SECONDS,
+    ).stdout.decode("utf-8")
+    return [
+        _REPO_ROOT / name
+        for name in sorted(filter(None, listing.split("\0")))
+        if Path(name).suffix in _COMMENT_MARKERS and (_REPO_ROOT / name).is_file()
+    ]
+
+
+def licence_header_offenders(paths: list[Path], root: Path) -> list[str]:
+    """The files, relative to ``root``, whose opening block is not the whole header."""
+    offenders: list[str] = []
+    for path in paths:
+        expected = licence_header(_COMMENT_MARKERS[path.suffix])
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if lines and lines[0].startswith(_LEADING_DIRECTIVES):
+            lines = lines[1:]
+        if tuple(lines[: len(expected)]) != expected:
+            offenders.append(path.relative_to(root).as_posix())
+    return offenders
+
+
+def test_every_tracked_source_file_carries_the_whole_licence_header() -> None:
     """Nine files stopped after the licence URL, dropping the disclaimer.
 
-    The header is the one legal statement the package makes about itself, and
+    The header is the one legal statement the project makes about itself, and
     it drifted silently because nothing compared it: three files had lost the
     blank comment lines as well, so the copyright, the grant and the URL had
     been run together. Comparing the whole block rather than looking for one
-    phrase is what keeps the next paragraph from going the same way.
+    phrase is what keeps the next paragraph from going the same way. An empty
+    package marker is not exempt: it carries the header like any other file.
     """
-    offenders: list[str] = []
-    for path in sorted((_REPO_ROOT / "src").rglob("*.py")):
-        lines = path.read_text(encoding="utf-8").splitlines()[: len(_LICENCE_HEADER)]
-        if tuple(lines) != _LICENCE_HEADER:
-            offenders.append(path.relative_to(_REPO_ROOT).as_posix())
+    offenders = licence_header_offenders(_tracked_source_files(), _REPO_ROOT)
     assert not offenders, "incomplete or altered licence header:\n" + "\n".join(offenders)
+
+
+def test_licence_guard_reaches_every_type_and_nested_directories() -> None:
+    """The guard is only as good as the files it sees, so its reach is asserted."""
+    scanned = {path.relative_to(_REPO_ROOT).as_posix() for path in _tracked_source_files()}
+    assert {Path(name).suffix for name in scanned} >= {".py", ".yml", ".toml", ".bat", ".iss"}
+    for nested in (
+        "tests/unit/core/__init__.py",
+        ".github/workflows/ci.yml",
+        "packaging/windows/datacron-installer.iss",
+        "src/datacron/core/config.py",
+    ):
+        assert nested in scanned, f"the licence guard does not reach {nested}"
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        ("truncated.py", "\n".join(licence_header("#")[:7]) + "\n"),
+        ("empty.py", ""),
+        ("wrong-marker.bat", "@echo off\n" + "\n".join(licence_header("#")) + "\n"),
+        ("stub.yml", "# Copyright 2026 Julien Bombled\n# Licensed under the Apache License.\n"),
+    ],
+)
+def test_licence_guard_refuses_an_incomplete_header(
+    tmp_path: Path, name: str, content: str
+) -> None:
+    probe = tmp_path / name
+    probe.write_text(content, encoding="utf-8")
+    assert licence_header_offenders([probe], tmp_path) == [name]
+
+
+@pytest.mark.parametrize(
+    ("name", "directive", "marker"),
+    [("hook.sh", "#!/usr/bin/env sh", "#"), ("release.bat", "@echo off", "REM")],
+)
+def test_licence_guard_accepts_the_header_after_a_leading_directive(
+    tmp_path: Path, name: str, directive: str, marker: str
+) -> None:
+    probe = tmp_path / name
+    probe.write_text("\n".join((directive, *licence_header(marker), "")), encoding="utf-8")
+    assert licence_header_offenders([probe], tmp_path) == []

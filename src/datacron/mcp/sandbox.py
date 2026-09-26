@@ -26,9 +26,8 @@ Every MCP tool that returns raw vault text MUST route it through
    ``[escaped: <match>]`` with HTML-special characters made inert.
 
 This is intentionally light-weight: no ML classifier, no streaming
-parsing - just deterministic regex substitution. See
-``docs/decisions-tranchees-v2.1.md`` §4.7 for the rationale (single-user
-threat model, classifier rejected as latency theater).
+parsing - just deterministic regex substitution. The threat model is a single
+local user, and a classifier would add latency without a matching gain in safety.
 """
 
 from __future__ import annotations
