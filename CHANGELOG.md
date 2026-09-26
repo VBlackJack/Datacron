@@ -9,25 +9,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- The declared dependency floors were below what the code needs: `pydantic-settings>=2.2`
-  could not import `NoDecode` (added in 2.7), and `typer>=0.12` crashed on every command. The
-  floors are now `pydantic-settings>=2.7` and `typer>=0.16`, and `click>=8.2` is declared
-  because the CLI imports it directly. A new CI job installs every direct dependency at its
-  floor (`--resolution lowest-direct`) and runs a smoke test and a test subset there.
-- The release script tagged the version bump commit and asked for that tag to be pushed after
-  the merge, while the last three releases were tagged on the merge commit of the release pull
-  request. `release.bat` no longer creates the tag: it prints the post-merge commands, and a
-  new `release_preflight.py merged` phase checks that the tag points at origin main's tip and
-  that the tip contains the version bump. `bump_version.py` prints the same steps.
-- The Windows release build picked the Inno Setup compiler by sorting folder names as text,
-  so `Inno Setup 10` would lose to `Inno Setup 7`. It now compares the parsed version.
-- Documentation fixes: a script message named `datacron index --rebuild` instead of
-  `datacron reindex`; a source comment pointed to a design note that is not in the repository;
-  the architecture pages cited a README section that does not exist (it is "Privacy and
-  security"); three pages carried their translation link at the bottom instead of under the
-  title.
+- `datacron setup --no-write` and `--no-read-only` remove an existing write allowlist or
+  read-only mode from the client configs. Without either form, a rerun keeps what each config
+  already holds, as before. In interactive setup, the write and read-only prompts default to
+  the setting this vault's existing client entry holds, so pressing Enter keeps it; only an
+  explicit answer changes it.
 
 ### Changed
 
@@ -47,15 +35,28 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   removed; CI is the gate.
 - The Windsurf global rules limit (6000 characters, of which the protocol block takes about
   5900) is documented in the FAQ and the Windows installation guide, with how to free space.
-### Security
-
-- `get_follow_up` returned the stored `summary` (up to 4000 characters) and `identity_basis`
-  bare, with only the control-token escape, and stripped the envelope older entries were
-  stored with, so vault text reached later sessions as plain instructions. Both now come back
-  inside a `vault_content` envelope, like `source_excerpt`.
+- `search_regex` documents that both of its paths search note bodies only: a match inside
+  frontmatter is not returned.
 
 ### Fixed
 
+- The declared dependency floors were below what the code needs: `pydantic-settings>=2.2`
+  could not import `NoDecode` (added in 2.7), and `typer>=0.12` crashed on every command. The
+  floors are now `pydantic-settings>=2.7` and `typer>=0.16`, and `click>=8.2` is declared
+  because the CLI imports it directly. A new CI job installs every direct dependency at its
+  floor (`--resolution lowest-direct`) and runs a smoke test and a test subset there.
+- The release script tagged the version bump commit and asked for that tag to be pushed after
+  the merge, while the last three releases were tagged on the merge commit of the release pull
+  request. `release.bat` no longer creates the tag: it prints the post-merge commands, and a
+  new `release_preflight.py merged` phase checks that the tag points at origin main's tip and
+  that the tip contains the version bump. `bump_version.py` prints the same steps.
+- The Windows release build picked the Inno Setup compiler by sorting folder names as text,
+  so `Inno Setup 10` would lose to `Inno Setup 7`. It now compares the parsed version.
+- Documentation fixes: a script message named `datacron index --rebuild` instead of
+  `datacron reindex`; a source comment pointed to a design note that is not in the repository;
+  the architecture pages cited a README section that does not exist (it is "Privacy and
+  security"); three pages carried their translation link at the bottom instead of under the
+  title.
 - `prepare_follow_up` scanned the whole source note for secret-shaped text, whatever the
   redaction policy, so an ordinary meeting line the record did not even quote ("We moved to
   token-based authentication.", "Password: reset via the helpdesk portal.") refused every
@@ -68,8 +69,6 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   one-character excerpt. These are refused now (the excerpt needs 20 non-blank characters,
   the event date may be at most one day ahead of today in UTC), and every validation refusal,
   including too many records in one call, carries a code and a next action.
-### Fixed
-
 - One stray file in a recovery directory stopped the server. A `desktop.ini`, `.DS_Store`
   or sync-conflict copy in `.datacron/oplog/pending` or the organization batch directories
   aborted startup, so the client saw no tool at all, and failed every write with an opaque
@@ -128,44 +127,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   `move_note_section` could carry a heading out of a `<pre>` block and leave an orphan opener
   that swallowed the next section. They are now masked like comments; an unclosed block still
   masks nothing.
-### Security
-
-- Note writes checked confinement only, never note admission. Every write tool created,
-  appended to, patched or reverted a note under an `excluded_folders` folder or with an
-  `excluded_files` name, although no read would ever serve it, and `patch_note_section` with
-  a wrong heading answered with that excluded note's headings. A junction or symlink inside
-  the vault also carried a write into an excluded folder. Every write now passes the read
-  admission on both the given and the resolved path before the note is opened, refuses a
-  path crossing a symlink or junction below the vault root (a OneDrive cloud placeholder
-  is not a link and stays writable), and refuses identically whether the note exists or
-  not.
-- `audit_query` and `get_note_history` returned the path, the heading and the restore
-  availability of writes to excluded notes: journal records were filtered by confinement
-  only. Records naming a Markdown note are now filtered by note admission, as the security
-  boundary document says. Recovery state keeps every record, so a blocked operation on a
-  sidecar or an excluded note still makes `get_health` degraded.
-- `excluded_folders` and `excluded_files` entries holding a path separator, such as
-  `Clients/Confidential`, `Private/` or `sub/blocked.md`, were accepted and excluded nothing,
-  because matching is per path component. A trailing separator is now dropped, and any
-  other separator is refused at startup with an error naming the entry.
-- On Windows, a colon in a read path opened an NTFS alternate data stream: `get_note` served
-  `a.md:evil.md`, and `blocked.md:x.md` read a stream of an excluded file. A colon in any
-  path component is now refused on Windows.
-- A path refused by confinement was reported with the absolute host path and every allowed
-  root, user name included. The MCP client now gets the vault-relative path it sent; the
-  resolved path is only logged locally.
-- `audit_query` and `get_note_history` redacted the note path only: an organization move
-  kept a secret-shaped source path in `parameters.source_rel_path`. Every string in the
-  parameters is now redacted.
-
-### Fixed
-
 - The write tools refused a Windows reserved device name (`projects/Con.md`) and a colon
   (`Meetings/10:30 standup.md`) on every platform, although Linux and macOS store and read
   such notes. Both rules now apply on Windows only, like the trailing dot and space rule;
   the hidden folder rule still applies everywhere.
-### Fixed
-
 - Frontmatter kept as written, for every edit this time: when the key-by-key edit gave up,
   the whole block was still re-dumped through PyYAML, so `14:30`, `01234`, `NO` and `1.10`
   came back as `870`, `668`, `false` and `1.1` and comments went. That happened on every
@@ -185,16 +150,6 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   value is now replaced whole.
 - A note opening with a `---` that is never closed lost its leading and trailing whitespace
   and its final newline on the first section edit.
-### Added
-
-- `datacron setup --no-write` and `--no-read-only` remove an existing write allowlist or
-  read-only mode from the client configs. Without either form, a rerun keeps what each config
-  already holds, as before. In interactive setup, the write and read-only prompts default to
-  the setting this vault's existing client entry holds, so pressing Enter keeps it; only an
-  explicit answer changes it.
-
-### Fixed
-
 - An organization manifest could name a replace target or a move source with a file name
   spelled in another case than on disk. On a case-insensitive filesystem it validated and
   committed, then answered `committed_report_mismatch` on every retry. Only the folders were
@@ -226,8 +181,6 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   a malformed `VAULT.yaml`; they now exit 2 with a message that names the problem without
   echoing the offending value. `datacron setup` refuses such a vault instead of reporting
   success.
-### Fixed
-
 - One note edited outside Datacron (Obsidian, a sync client) inside the 30 s repair window
   made `search_text`, `search_regex` and `get_backlinks` fail with `internal_error` whenever
   that note ranked, and a read-only server kept failing until `datacron index`. A hit whose
@@ -267,13 +220,39 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - The first index-backed call on a cold index resolved each note path about thirteen times;
   it now resolves it about seven times (2000 notes: 16.5 s to 14.2 s).
 
-### Changed
-
-- `search_regex` documents that both of its paths search note bodies only: a match inside
-  frontmatter is not returned.
-
 ### Security
 
+- `get_follow_up` returned the stored `summary` (up to 4000 characters) and `identity_basis`
+  bare, with only the control-token escape, and stripped the envelope older entries were
+  stored with, so vault text reached later sessions as plain instructions. Both now come back
+  inside a `vault_content` envelope, like `source_excerpt`.
+- Note writes checked confinement only, never note admission. Every write tool created,
+  appended to, patched or reverted a note under an `excluded_folders` folder or with an
+  `excluded_files` name, although no read would ever serve it, and `patch_note_section` with
+  a wrong heading answered with that excluded note's headings. A junction or symlink inside
+  the vault also carried a write into an excluded folder. Every write now passes the read
+  admission on both the given and the resolved path before the note is opened, refuses a
+  path crossing a symlink or junction below the vault root (a OneDrive cloud placeholder
+  is not a link and stays writable), and refuses identically whether the note exists or
+  not.
+- `audit_query` and `get_note_history` returned the path, the heading and the restore
+  availability of writes to excluded notes: journal records were filtered by confinement
+  only. Records naming a Markdown note are now filtered by note admission, as the security
+  boundary document says. Recovery state keeps every record, so a blocked operation on a
+  sidecar or an excluded note still makes `get_health` degraded.
+- `excluded_folders` and `excluded_files` entries holding a path separator, such as
+  `Clients/Confidential`, `Private/` or `sub/blocked.md`, were accepted and excluded nothing,
+  because matching is per path component. A trailing separator is now dropped, and any
+  other separator is refused at startup with an error naming the entry.
+- On Windows, a colon in a read path opened an NTFS alternate data stream: `get_note` served
+  `a.md:evil.md`, and `blocked.md:x.md` read a stream of an excluded file. A colon in any
+  path component is now refused on Windows.
+- A path refused by confinement was reported with the absolute host path and every allowed
+  root, user name included. The MCP client now gets the vault-relative path it sent; the
+  resolved path is only logged locally.
+- `audit_query` and `get_note_history` redacted the note path only: an organization move
+  kept a secret-shaped source path in `parameters.source_rel_path`. Every string in the
+  parameters is now redacted.
 - A `search_text` query had no size bound: 50 000 terms held the shared index connection for
   seconds and the echoed query escaped the result budget. A query is now refused above 2048
   characters or 64 terms, with the code `search_query_too_large`, and is not echoed back.
