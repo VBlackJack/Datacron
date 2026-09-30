@@ -19,7 +19,7 @@ from hashlib import sha256
 from typing import Final
 
 CONTRACT_ID: Final[str] = "datacron-memory"
-CONTRACT_VERSION: Final[str] = "1.1.0"
+CONTRACT_VERSION: Final[str] = "1.2.0"
 SESSION_DEFAULT_PATHS: Final[tuple[str, ...]] = ("_memory/INIT.md",)
 # No section is selected by default: the headings of an orientation note belong to the
 # vault, not to this package. A vault declares its own through session_context_sections.
@@ -67,6 +67,8 @@ MEMORY_DISCIPLINE: Final[str] = "\n".join(
         "updated timestamp alone "
         "does not establish the current state. Preserve superseded decisions and "
         "completed actions.",
+        "A state note is a runbook, not a journal: also fold each durable change into it, "
+        "as a dated line linking the evidence note.",
         "Enrich people records continuously: role/team, shared projects, dated sourced "
         "interactions, reciprocal commitments, next discussion. Read the existing record first. "
         "Resolve identity from name, organization and context; clarify ambiguous "
@@ -113,9 +115,8 @@ LEGACY_PROTOCOL_BLOCK: Final[str] = "\n".join(
         "- Use `create_note_ai` for a new durable topic.",
         "- Use `append_journal` when new information extends an existing topic.",
         "- Use `patch_note_preamble` only for content strictly before the first Markdown heading; "
-        "pass the exact expected_hash. The shared AST selector supports ATX and Setext "
-        "headings, normalizes closing hashes, and ignores headings inside fenced code. "
-        "Uniform-EOL suffix bytes stay exact; mixed-EOL notes follow dominant-EOL policy.",
+        "pass the exact expected_hash. Uniform-EOL suffix bytes stay exact; "
+        "mixed-EOL notes follow dominant-EOL policy.",
         "- Use `patch_note_section` only to replace a known outdated section.",
         "- Use `rename_note_section` only for an outdated H2-H6 section title; "
         "selection and collision checks follow the shared AST selector. H1/note title "
@@ -144,7 +145,7 @@ LEGACY_PROTOCOL_BLOCK: Final[str] = "\n".join(
 )
 
 WRITE_SAFETY: Final[str] = (
-    "The current write selector supports Setext; fenced-code headings are ignored; "
+    "The current write selector supports ATX and Setext; fenced-code headings are ignored; "
     "closing hashes are normalized. Use 1-based heading_occurrence in document order. "
     "For apply_organization_manifest use mode='validate', review hashes, then apply the same "
     "bundle with confirmation_token. Stop other Datacron clients and servers first: the batch "
