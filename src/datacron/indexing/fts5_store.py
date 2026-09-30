@@ -634,6 +634,19 @@ SELECT rel_path, frontmatter_json
 ORDER BY sort_key COLLATE BINARY;
 """
 
+_LIST_TAGGED_NOTES_SQL: Final[str] = """
+SELECT rel_path, tags_json, frontmatter_json
+FROM notes
+WHERE tags_json IS NOT NULL
+  AND sort_key IS NOT NULL
+  AND EXISTS (
+      SELECT 1
+      FROM json_each(notes.tags_json) AS actual
+      WHERE actual.value = ?
+  )
+ORDER BY sort_key COLLATE BINARY;
+"""
+
 _LIST_INDEXED_NOTES_WITH_MTIME_SQL: Final[str] = """
 SELECT rel_path, note_id, content_hash, fs_mtime
 FROM notes
@@ -1224,6 +1237,30 @@ class SQLiteFTS5Store:
         ) as cursor:
             rows = await cursor.fetchall()
         return [str(row[0]) for row in rows], total
+
+    async def list_tagged_notes(self, tag: str) -> list[tuple[str, list[str], dict[str, object]]]:
+        """Return ``(rel_path, tags, frontmatter)`` of every indexed note carrying ``tag``.
+
+        One query, no note read: the tags and the frontmatter come from the columns
+        the index already keeps, so a subject of several hundred notes costs one scan
+        of the notes table instead of one file read per note.
+        """
+        normalized = normalize_tag_filter([tag])
+        if not normalized:
+            return []
+        connection = self._require_connection()
+        async with connection.execute(_LIST_TAGGED_NOTES_SQL, (normalized[0],)) as cursor:
+            rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+        tagged: list[tuple[str, list[str], dict[str, object]]] = []
+        for row in rows:
+            tags_raw = json.loads(str(row["tags_json"]))
+            metadata_raw = json.loads(str(row["frontmatter_json"]))
+            tags = [str(item) for item in tags_raw] if isinstance(tags_raw, list) else []
+            metadata = (
+                cast("dict[str, object]", metadata_raw) if isinstance(metadata_raw, dict) else {}
+            )
+            tagged.append((str(row["rel_path"]), tags, metadata))
+        return tagged
 
     async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
         """Return ``rel_path -> (note_id, content_hash)`` for the current index."""
