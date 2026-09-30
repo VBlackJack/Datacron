@@ -36,11 +36,14 @@ from datacron.core.scope import NoteAdmissionError
 from datacron.core.temporal import rerank_temporal
 from datacron.indexing.ripgrep import ripgrep_available
 from datacron.mcp.tools.payloads import (
+    _LOGGER,
     _audit,
     _error_response,
     _internal_error_response,
 )
 from datacron.mcp.tools.read import _build_full_payload, _build_section_payload
+from datacron.mcp.tools.subject_state import load_subject_notes, subject_state_payload
+from datacron.organization.subject_state import resolve_subject_tag, summarize_subject
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -128,7 +131,9 @@ async def session_context(
         return _budget_refusal(started, kernel_size)
     try:
         paths = list(dict.fromkeys([*(note_paths or []), *app.settings.session_context_paths]))
+        pinned_paths = list(note_paths or [])
         if subject and subject.strip():
+            pinned_paths.extend(await _attach_subject_state(app, subject, result, maximum))
             # The store tokenizes plain text and implements its own AND/OR fallback.
             # Scoping by the domain tag keeps the bounded candidate list from being
             # consumed by notes that the domain filter would discard afterwards.
@@ -147,9 +152,9 @@ async def session_context(
                     hit.chunk.note_rel_path
                 ):
                     ranked_paths.append(hit.chunk.note_rel_path)
-            paths = list(dict.fromkeys([*(note_paths or []), *ranked_paths, *paths]))
+            paths = list(dict.fromkeys([*pinned_paths, *ranked_paths, *paths]))
             result["coverage"] = "ranked_candidates_not_exhaustive"
-        matched_people, loaded_notes = await _load_sources(app, paths, note_paths, domain, result)
+        matched_people, loaded_notes = await _load_sources(app, paths, pinned_paths, domain, result)
         result["identity"] = "clarification_required" if matched_people > 1 else "not_resolved"
         _fit_sources(app, result, maximum, loaded_notes)
         result["truncated"] = bool(
@@ -169,6 +174,40 @@ async def session_context(
         return result
     except Exception:
         return _internal_error_response("session_context", started)
+
+
+async def _attach_subject_state(
+    app: DatacronApp, subject: str, result: dict[str, Any], maximum: int
+) -> list[str]:
+    """Attach the state of a registered subject and return its state-note paths.
+
+    A registered subject is answered from its state note first: a text search
+    ranks by term weight, and a long journal or a stale excerpt can outrank the
+    one note meant to hold the current state. The returned paths are pinned
+    ahead of the search candidates.
+
+    ``subject_state`` is fitted before any source is loaded, listing fewer state
+    notes (counted in ``state_notes_omitted``) and finally none, so the extra
+    field can never turn a budget that held the contract into a refusal. It is
+    advisory: a failure to measure it is logged and the session continues on the
+    plain search.
+    """
+    try:
+        subject_tag = resolve_subject_tag(subject, app.organization)
+        if subject_tag is None:
+            return []
+        state = summarize_subject(subject_tag, await load_subject_notes(app, subject_tag))
+    except Exception:
+        _LOGGER.warning("Subject state unavailable for session_context", exc_info=True)
+        return []
+    listed = min(len(state.state_notes), SESSION_MAX_NOTES)
+    for allowance in range(listed, -1, -1):
+        result["subject_state"] = subject_state_payload(app, state, allowance)
+        if rendered_size(result) <= maximum:
+            break
+    else:
+        result.pop("subject_state")
+    return [item.rel_path for item in state.state_notes[:listed]]
 
 
 def _fit_sources(

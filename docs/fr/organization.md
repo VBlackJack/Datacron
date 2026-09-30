@@ -156,6 +156,11 @@ Trois surfaces appliquent la même évaluation :
   possible.
 - `datacron reorganize` rapporte les trois natures d'écart décrites plus bas.
 
+Une création conforme à la politique peut encore atterrir dans le mauvais dossier ou laisser
+en retard la note d'état de son sujet. `create_note_ai` ne la refuse pas : sa réponse porte
+un objet `organization` qui nomme le dossier attendu par la règle et les notes d'état du
+sujet, comme décrit dans [discipline mémoire](memory-discipline.md).
+
 Un vault sans ce bloc n'est pas jugé ; rien de tout cela n'existe tant que le vault ne le
 déclare pas. La politique exige au moins une règle de placement, chaque marqueur et chaque
 tag exempté doit être un tag de règle de placement, les tags de règle doivent être en

@@ -9,6 +9,33 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- `session_context(subject=...)` loads the state note of a registered subject first, whatever
+  the domain filter, and reports it in a new `subject_state` field with the number of subject
+  notes dated after its `last_verified`. A subject resolves by its registered tag, the tag's
+  last segment or an alias; an ambiguous or unknown subject keeps the plain search.
+- `create_note_ai` answers a creation with an `organization` object: the folder the vault's
+  rule expects when the note is elsewhere, and for a note of a registered subject, its state
+  notes, whether the new note links one of them, and a reminder to fold the change into it.
+  It never refuses a write.
+
+### Changed
+
+- Memory protocol contract `1.2.0`: a state note is a runbook, not a journal, and each durable
+  change is also folded into it as a dated line linking the evidence note. The duplicate
+  selector sentence of the `patch_note_preamble` line is removed so the installed block keeps
+  its size; the same rule stays in the contract's write-safety paragraph. Refresh installed
+  client blocks with `datacron protocol install`.
+
+### Security
+
+- The locked `pyjwt` moves from 2.13.0 to 2.15.0. Eleven advisories published after the last
+  release (CVE-2026-101917 and CVE-2026-102265 to CVE-2026-102274) name 2.14.0 as fixed, and
+  CVE-2026-101918 names 2.15.0. It is a transitive dependency of `mcp[crypto]`, so only the
+  lockfile changes, and it moves to the exact version the advisories name rather than to the
+  newest release. The dependency scan turned red on unchanged code.
+
 ## [2026.0926.00] - 2026-09-26
 
 This release closes the third audit in a row. Its four most serious findings were silent: write

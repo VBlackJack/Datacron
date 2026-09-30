@@ -224,6 +224,14 @@ class FTS5Store(Protocol):
         """Return a paginated discovery-order path page and total count."""
         ...
 
+    async def list_tagged_notes(self, tag: str) -> list[tuple[str, list[str], dict[str, object]]]:
+        """Return ``(rel_path, tags, frontmatter)`` of every indexed note carrying ``tag``.
+
+        The match is exact on the stored lowercase tag, in discovery order, with the
+        frontmatter as its JSON round trip (dates are ISO strings).
+        """
+        ...
+
     async def list_indexed_notes(self) -> dict[str, tuple[str, str]]:
         """Return ``rel_path -> (note_id, content_hash)`` for index freshness checks."""
         ...

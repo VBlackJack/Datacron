@@ -49,6 +49,7 @@ from datacron.core.markdown_sections import (
     section_replacement_block,
     verify_spliced_headings,
 )
+from datacron.core.memory_protocol import SESSION_MAX_NOTES
 from datacron.core.operation_log import (
     HistoryUnavailableError,
     OperationContext,
@@ -71,6 +72,7 @@ from datacron.mcp.tools.search import (
     _invalidate_alias_cache_if_index_changed,
     _reconcile_note_serialized,
 )
+from datacron.mcp.tools.subject_state import placement_guidance
 from datacron.mcp.tools.write_requests import replayable_write
 from datacron.mcp.tools.write_validation import (
     _RENAME_H1_REFUSAL_MESSAGE,
@@ -253,6 +255,30 @@ def _enforce_tag_policy(app: DatacronApp, rel_path: str, tags: list[str], body: 
         raise TagPolicyError(rel_path, violations)
 
 
+async def _organization_guidance_after_commit(
+    app: DatacronApp, rel_path: str, tags: list[str], body: str
+) -> dict[str, Any] | None:
+    """Return placement and state-note guidance, without failing a committed write.
+
+    The note is durable and indexed when this runs. Guidance is advice: an error
+    while computing it is logged and the response simply carries none, because
+    reporting a committed creation as failed would invite a duplicate retry.
+    """
+    try:
+        return await placement_guidance(
+            app,
+            rel_path=rel_path,
+            tags=extract_tags({"tags": tags}, body),
+            body=body,
+            max_state_notes=SESSION_MAX_NOTES,
+        )
+    except Exception:
+        _LOGGER.warning(
+            "Organization guidance failed after a committed create of %s", rel_path, exc_info=True
+        )
+        return None
+
+
 @replayable_write
 async def _create_note_ai_impl(
     app: DatacronApp,
@@ -339,6 +365,11 @@ async def _create_note_ai_impl(
             "content_hash": content_hash,
             "indexed": True,
         }
+        guidance = await _organization_guidance_after_commit(
+            app, cleaned["rel_path"], cleaned["tags"], body
+        )
+        if guidance is not None:
+            payload["organization"] = guidance
         _audit(
             "create_note_ai",
             started,

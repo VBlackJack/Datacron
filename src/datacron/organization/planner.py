@@ -49,6 +49,15 @@ from datacron.core.scope import NoteAdmissionError, SingleTenantVaultScope
 from datacron.core.vault import SKIPPED_FOLDERS, NoteAdmissionPolicy
 from datacron.indexing.wikilinks import extract_wikilink_targets
 from datacron.organization.rules import matches_naming, resolve_rule
+from datacron.organization.subject_state import (
+    LAST_VERIFIED_KEY,
+    frontmatter_aliases,
+    frontmatter_calendar_date,
+    frontmatter_day,
+    frontmatter_title,
+    has_state_note_tag,
+    is_history_stem,
+)
 from datacron.organization.tags import evaluate_tag_policy
 
 __all__ = [
@@ -77,19 +86,13 @@ PLAN_SCHEMA_VERSION: Final[str] = "organization-plan-v2"
 STATE_NOTE_NAMESPACE: Final[str] = DEFAULT_STATE_NOTE_NAMESPACE
 _STATE_NOTE_PREFIX: Final[str] = STATE_NOTE_NAMESPACE + "/"
 _STATE_NOTE_EXPECTED: Final[str] = f"one note carrying any {_STATE_NOTE_PREFIX}* tag"
-# A split history note is named ``<subject>-history-<period>`` and never has
-# to link back to the state note it was split from.
-_HISTORY_STEM_MARKER: Final[str] = "-history-"
 _FENCE_MARKER: Final[str] = "```"
 # CommonMark admits up to three spaces of indentation before a code fence.
 _FENCE_MAX_INDENT: Final[int] = 3
 _FENCE_EXPECTED: Final[str] = "even number of fence lines"
-_LAST_VERIFIED_KEY: Final[str] = "last_verified"
 _CRLF: Final[str] = "\r\n"
 _CR: Final[str] = "\r"
 _LF: Final[str] = "\n"
-_TITLE_KEY: Final[str] = "title"
-_ALIASES_KEY: Final[str] = "aliases"
 
 
 def _filesystem_parts(path: PurePosixPath, *, fold_case: bool) -> tuple[str, ...]:
@@ -184,7 +187,7 @@ class OrganizationNoteSnapshot:
     @property
     def is_state_note(self) -> bool:
         """True when the note carries a tag of the state-note namespace."""
-        return any(tag.startswith(_STATE_NOTE_PREFIX) for tag in self.tags)
+        return has_state_note_tag(self.tags)
 
     @property
     def stem(self) -> str:
@@ -475,58 +478,6 @@ def _iter_note_paths(
     return _authorize_note_paths(_discover_note_paths(context), context)
 
 
-def _frontmatter_day(value: object) -> str | None:
-    """Render a frontmatter date or datetime as ``YYYY-MM-DD``, else ``None``."""
-    if isinstance(value, datetime):
-        return value.date().isoformat()
-    if isinstance(value, date):
-        return value.isoformat()
-    if not isinstance(value, str) or not value.strip():
-        return None
-    candidate = value.strip()
-    try:
-        return datetime.fromisoformat(candidate).date().isoformat()
-    except ValueError:
-        try:
-            return date.fromisoformat(candidate).isoformat()
-        except ValueError:
-            return None
-
-
-def _frontmatter_calendar_date(metadata: Mapping[str, object]) -> str | None:
-    """Return the first usable local calendar date from created then updated."""
-    for key in ("created", "updated"):
-        rendered = _frontmatter_day(metadata.get(key))
-        if rendered is not None:
-            return rendered
-    return None
-
-
-def _frontmatter_title(metadata: Mapping[str, object]) -> str | None:
-    """Return the frontmatter title when it is a non-blank string."""
-    value = metadata.get(_TITLE_KEY)
-    if not isinstance(value, str) or not value.strip():
-        return None
-    return value.strip()
-
-
-def _frontmatter_aliases(metadata: Mapping[str, object]) -> tuple[str, ...]:
-    """Return the frontmatter aliases that are already strings, blanks dropped.
-
-    A number or a mapping in the list is not an alias: coercing it to text
-    would let ``[[123]]`` satisfy a link the author never declared.
-    """
-    value = metadata.get(_ALIASES_KEY)
-    candidates: tuple[object, ...]
-    if isinstance(value, str):
-        candidates = (value,)
-    elif isinstance(value, (list, tuple)):
-        candidates = tuple(value)
-    else:
-        return ()
-    return tuple(item.strip() for item in candidates if isinstance(item, str) and item.strip())
-
-
 def _normalize_line_endings(body: str) -> str:
     """Fold CRLF and lone CR to LF so both snapshot builders scan the same lines.
 
@@ -577,12 +528,12 @@ def snapshot_note(
         rel_path=rel_path,
         size_bytes=size_bytes,
         tags=tuple(extract_tags(dict(metadata), normalized)),
-        calendar_date=_frontmatter_calendar_date(metadata),
-        title=_frontmatter_title(metadata),
-        aliases=_frontmatter_aliases(metadata),
+        calendar_date=frontmatter_calendar_date(metadata),
+        title=frontmatter_title(metadata),
+        aliases=frontmatter_aliases(metadata),
         wikilink_targets=wikilink_targets,
         fence_lines=fence_lines,
-        last_verified=_frontmatter_day(metadata.get(_LAST_VERIFIED_KEY)),
+        last_verified=frontmatter_day(metadata.get(LAST_VERIFIED_KEY)),
     )
 
 
@@ -671,7 +622,7 @@ def _is_linking_candidate(note: OrganizationNoteSnapshot, since: str) -> bool:
         not note.is_state_note
         and note.calendar_date is not None
         and note.calendar_date >= since
-        and _HISTORY_STEM_MARKER not in note.stem
+        and not is_history_stem(note.stem)
     )
 
 

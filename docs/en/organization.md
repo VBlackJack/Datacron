@@ -149,6 +149,11 @@ Three surfaces apply the same evaluation:
   touch are not judged, so an incremental cleanup stays possible.
 - `datacron reorganize` reports the three policy kinds described below.
 
+A creation that passes the policy can still land in the wrong folder or leave its subject's
+state note behind. `create_note_ai` does not refuse it: its response carries an
+`organization` object naming the folder the rule expects and the subject's state notes, as
+described in [memory discipline](memory-discipline.md).
+
 A vault without the block is not judged; none of this exists until the vault declares it.
 The policy requires at least one placement rule, every marker and exempt tag must be a
 placement rule tag, rule tags must be lowercase (the rule resolver compares them exactly,

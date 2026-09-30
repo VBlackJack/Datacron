@@ -77,6 +77,7 @@ class SessionContextOutput(TypedDict, total=False):
     index_repaired: bool
     identity: str
     truncated: bool
+    subject_state: dict[str, Any] | None
 
 
 class PreparedFollowUpOutput(TypedDict, total=False):
@@ -484,6 +485,7 @@ class CreateNoteOutput(SuccessfulWriteOutput, total=False):
     """Successful ``create_note_ai`` payload."""
 
     created: CreatedNoteOutput | None
+    organization: dict[str, Any] | None
 
     operation_id: str | None
     committed: bool | None

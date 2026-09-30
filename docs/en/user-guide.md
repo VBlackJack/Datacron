@@ -30,7 +30,7 @@ returns only the relevant notes or fragments (chunks) to Claude. Concretely:
 
 | Tool | What it does |
 |---|---|
-| `session_context` | Bounded session context and versioned common protocol. |
+| `session_context` | Bounded session context and versioned common protocol; a registered subject's state note first. |
 | `prepare_follow_up` | Prepare sourced follow-up plans without writing. |
 | `get_follow_up` | Latest structured follow-up revisions. |
 | `list_notes` | Paginated list of notes, filterable by folder, tags, and top-level frontmatter; returns ULID, title, tags, aliases, and dates. |
@@ -51,7 +51,7 @@ atomic per file, versioned, and audited.
 
 | Tool | What it does |
 |---|---|
-| `create_note_ai` | Creates a new typed note without overwriting any existing file. |
+| `create_note_ai` | Creates a new typed note without overwriting any existing file, and says where it belongs and which state note to update. |
 | `append_journal` | Adds an entry under an existing heading of a note. |
 | `set_frontmatter` | Updates lifecycle fields without touching the Markdown body. |
 | `patch_note_preamble` | Replaces or removes the preamble before the first Markdown heading, with version control. |

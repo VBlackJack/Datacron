@@ -789,8 +789,9 @@ def test_protocol_block_has_single_marked_source() -> None:
     assert "Setext" in PROTOCOL_BLOCK
     assert "note title" in PROTOCOL_BLOCK
     assert "shared AST selector" in PROTOCOL_BLOCK
-    assert "ignores headings inside fenced code" in PROTOCOL_BLOCK
-    assert "normalizes closing hashes" in PROTOCOL_BLOCK
+    assert "fenced-code headings are ignored" in PROTOCOL_BLOCK
+    assert "closing hashes are normalized" in PROTOCOL_BLOCK
+    assert "not a journal" in PROTOCOL_BLOCK
     assert "request_id" in PROTOCOL_BLOCK
     assert "historical" in PROTOCOL_BLOCK
     assert "dominant-EOL" in PROTOCOL_BLOCK

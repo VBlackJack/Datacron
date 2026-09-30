@@ -31,7 +31,7 @@ il renvoie à Claude uniquement les notes ou fragments (chunks) pertinents. Conc
 
 | Outil | À quoi il sert |
 |---|---|
-| `session_context` | Contexte initial borné et protocole commun versionné. |
+| `session_context` | Contexte initial borné et protocole commun versionné ; la note d'état d'un sujet enregistré en premier. |
 | `prepare_follow_up` | Prépare les suivis sourcés sans écrire. |
 | `get_follow_up` | Dernières révisions des suivis structurés. |
 | `list_notes` | Liste paginée des notes, filtrable par dossier, par tags et par frontmatter de premier niveau ; renvoie ULID, titre, tags, alias et dates. |
@@ -53,7 +53,7 @@ sont confinées, atomiques par fichier, historisées et auditées.
 
 | Outil | À quoi il sert |
 |---|---|
-| `create_note_ai` | Crée une nouvelle note typée, sans écraser de fichier existant. |
+| `create_note_ai` | Crée une nouvelle note typée, sans écraser de fichier existant, et indique son dossier et la note d'état à mettre à jour. |
 | `append_journal` | Ajoute une entrée sous un titre existant d'une note. |
 | `set_frontmatter` | Met à jour les champs de cycle de vie sans toucher au corps Markdown. |
 | `patch_note_preamble` | Remplace ou supprime le préambule avant le premier titre Markdown, avec contrôle de version. |
