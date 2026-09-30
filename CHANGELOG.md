@@ -28,6 +28,14 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   its size; the same rule stays in the contract's write-safety paragraph. Refresh installed
   client blocks with `datacron protocol install`.
 
+### Security
+
+- The locked `pyjwt` moves from 2.13.0 to 2.15.0. Eleven advisories published after the last
+  release (CVE-2026-101917 and CVE-2026-102265 to CVE-2026-102274) name 2.14.0 as fixed, and
+  CVE-2026-101918 names 2.15.0. It is a transitive dependency of `mcp[crypto]`, so only the
+  lockfile changes, and it moves to the exact version the advisories name rather than to the
+  newest release. The dependency scan turned red on unchanged code.
+
 ## [2026.0926.00] - 2026-09-26
 
 This release closes the third audit in a row. Its four most serious findings were silent: write
