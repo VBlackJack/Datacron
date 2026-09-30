@@ -241,7 +241,7 @@ read, advisory, and operational tools remain exposed.
 
 | Category | Tool | Observable contract |
 |---|---|---|
-| Read | `session_context` | Bounded session context and versioned common protocol. |
+| Read | `session_context` | Bounded session context and versioned common protocol; a registered subject's state note first. |
 | Read | `prepare_follow_up` | Prepare sourced follow-up plans without writing. |
 | Read | `get_follow_up` | Latest structured follow-up revisions with snapshot-bound pagination. |
 | Read | `list_notes` | Paginated list, filterable by folder, tags, and top-level frontmatter |
@@ -251,7 +251,7 @@ read, advisory, and operational tools remain exposed.
 | Read | `get_backlinks` | Chunks whose wikilinks target a ULID or resolved alias |
 | Advisory | `contradiction_scan` | Deterministic candidates and a proposed write call; never writes |
 | Operational | `get_health` | Freshness, integrity, checksum, durability, and invariant evidence |
-| Write | `create_note_ai` | Creates a memory note without overwrite |
+| Write | `create_note_ai` | Creates a memory note without overwrite and returns placement and state-note guidance |
 | Write | `append_journal` | Appends an entry under a heading in an existing note, after the heading's own content and before its first subsection |
 | Write | `set_frontmatter` | Changes allowed lifecycle fields, the monotone `last_id` counter, and `updated` |
 | Write | `patch_note_preamble` | Replaces or removes the preamble before the first recognized Markdown heading |

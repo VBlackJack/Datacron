@@ -250,7 +250,7 @@ seuls les tools de lecture, advisory et opérationnels restent exposés.
 
 | Catégorie | Tool | Contrat observable |
 |---|---|---|
-| Lecture | `session_context` | Contexte initial borné et protocole commun versionné. |
+| Lecture | `session_context` | Contexte initial borné et protocole commun versionné ; la note d'état d'un sujet enregistré en premier. |
 | Lecture | `prepare_follow_up` | Prépare les suivis sourcés sans écrire. |
 | Lecture | `get_follow_up` | Dernières révisions des suivis structurés avec pagination liée à un instantané. |
 | Lecture | `list_notes` | Liste paginée, filtrable par dossier, tags et frontmatter de premier niveau |
@@ -260,7 +260,7 @@ seuls les tools de lecture, advisory et opérationnels restent exposés.
 | Lecture | `get_backlinks` | Chunks dont les wikilinks ciblent un ULID ou un alias résolu |
 | Advisory | `contradiction_scan` | Candidats déterministes et proposition de call d'écriture; n'écrit jamais |
 | Opérationnel | `get_health` | Fraîcheur, intégrité, checksum, durabilité et preuves d'invariants |
-| Écriture | `create_note_ai` | Crée une note mémoire sans overwrite |
+| Écriture | `create_note_ai` | Crée une note mémoire sans overwrite et indique rangement et note d'état |
 | Écriture | `append_journal` | Ajoute une entrée sous un heading d'une note existante, après le contenu propre du heading et avant sa première sous-section |
 | Écriture | `set_frontmatter` | Modifie les champs de cycle de vie autorisés, le compteur monotone `last_id` et `updated` |
 | Écriture | `patch_note_preamble` | Remplace ou supprime le préambule avant le premier titre Markdown reconnu |
