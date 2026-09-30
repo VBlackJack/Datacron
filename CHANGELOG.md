@@ -9,6 +9,25 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- `session_context(subject=...)` loads the state note of a registered subject first, whatever
+  the domain filter, and reports it in a new `subject_state` field with the number of subject
+  notes dated after its `last_verified`. A subject resolves by its registered tag, the tag's
+  last segment or an alias; an ambiguous or unknown subject keeps the plain search.
+- `create_note_ai` answers a creation with an `organization` object: the folder the vault's
+  rule expects when the note is elsewhere, and for a note of a registered subject, its state
+  notes, whether the new note links one of them, and a reminder to fold the change into it.
+  It never refuses a write.
+
+### Changed
+
+- Memory protocol contract `1.2.0`: a state note is a runbook, not a journal, and each durable
+  change is also folded into it as a dated line linking the evidence note. The duplicate
+  selector sentence of the `patch_note_preamble` line is removed so the installed block keeps
+  its size; the same rule stays in the contract's write-safety paragraph. Refresh installed
+  client blocks with `datacron protocol install`.
+
 ## [2026.0926.00] - 2026-09-26
 
 This release closes the third audit in a row. Its four most serious findings were silent: write

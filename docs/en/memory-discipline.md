@@ -32,6 +32,35 @@ This is an estimate, not a tokenizer-specific guarantee. Follow `next_read` and 
 before concluding from a partial excerpt. Two people candidates trigger clarification; even
 one candidate is not an identity confirmation. Vault text remains sandboxed data.
 
+## Keep each subject's state note current
+
+A subject's state note is its runbook: the one note that says where the subject stands. It is
+recognised by a `kind/*` tag next to the subject's registered tag (see
+[organization](organization.md)). The contract asks every session to fold each durable change
+into it, as a dated line linking the evidence note, whatever note or journal first received
+the change. The evidence note stays; folding never replaces it.
+
+Datacron makes the state note visible where sessions read and write, when the vault declares
+an `organization.tags` policy with registered subjects:
+
+- `session_context(subject=...)` resolves a subject that names a registered tag, the tag's last
+  segment (`heimdall` for `project/heimdall`) or one of its aliases, case-insensitively. The
+  subject's state notes are loaded first, before the search candidates and regardless of the
+  domain filter, and `subject_state` reports them. A subject that matches several registered
+  subjects, or none, keeps the plain search.
+- `create_note_ai` answers a successful creation with an `organization` object: the
+  `expected_folder` when the vault's rule for the note's tags points elsewhere, and, for a note
+  of a registered subject, the subject's state notes, whether the new note already links one of
+  them (`links_state_note`) and a `next_step` reminder to fold the change. It never refuses a
+  write, and a failure while computing it leaves the committed creation untouched.
+
+`subject_state` carries `subject_tag`, `subject_notes` (notes carrying the tag, in any folder),
+and one entry per state note with `rel_path`, `last_verified` and `newer_notes`: the notes of
+the subject dated (`created`, then `updated`) strictly after that `last_verified`, excluding
+state notes and `-history-` splits. `newer_notes` is `null` when the state note was never
+verified. A growing count means the state note is behind; fold the newer notes, then set
+`last_verified`. At most eight state notes are listed; `state_notes_omitted` counts the rest.
+
 ## Enrich people and preserve commitments
 
 Read the existing person record before attributing an interaction. Match professional context,
