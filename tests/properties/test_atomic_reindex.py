@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import stat
 import sys
 import tracemalloc
 from pathlib import Path
@@ -260,6 +261,49 @@ def test_publication_failure_unrelated_to_sharing_is_not_relabelled(tmp_path: Pa
         with pytest.raises(PermissionError):
             rebuild_module._publish_index(temp_path, db_path)
 
+    assert db_path.read_bytes() == b"live index"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="only Windows refuses to replace open files")
+def test_publication_over_an_index_a_server_holds_names_the_servers(tmp_path: Path) -> None:
+    """A server opening the index during the rebuild fails the swap with WinError 5.
+
+    Measured on 2026-10-01: a 14-minute rebuild of a 4410-note vault ended in a raw
+    traceback because two MCP servers respawned mid-run, and the swap reported
+    ERROR_ACCESS_DENIED rather than a sharing violation. No mock here: a real SQLite
+    connection holds the live index the way a running server does.
+    """
+    db_path = tmp_path / "datacron.db"
+    connection = sqlite3.connect(db_path)
+    connection.execute("CREATE TABLE live (x)")
+    connection.commit()
+    temp_path = tmp_path / "datacron.db.rebuild"
+    temp_path.write_bytes(b"rebuilt index")
+    try:
+        with pytest.raises(IndexRebuildError) as caught:
+            rebuild_module._publish_index(temp_path, db_path)
+    finally:
+        connection.close()
+
+    assert "held open by another process" in str(caught.value)
+    assert temp_path.read_bytes() == b"rebuilt index"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the read-only attribute is a Windows case")
+def test_publication_over_a_read_only_index_is_not_blamed_on_servers(tmp_path: Path) -> None:
+    """The same WinError 5 from a read-only attribute is re-raised, not relabelled."""
+    db_path = tmp_path / "datacron.db"
+    db_path.write_bytes(b"live index")
+    temp_path = tmp_path / "datacron.db.rebuild"
+    temp_path.write_bytes(b"rebuilt index")
+    db_path.chmod(stat.S_IREAD)
+    try:
+        with pytest.raises(PermissionError) as caught:
+            rebuild_module._publish_index(temp_path, db_path)
+    finally:
+        db_path.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+    assert not isinstance(caught.value, IndexRebuildError)
     assert db_path.read_bytes() == b"live index"
 
 
