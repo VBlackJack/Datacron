@@ -107,6 +107,11 @@ that still has to be written, so it counts in `broken_wikilinks` without blockin
 writing convention pins `status` to `degraded` forever, and the only field meant to
 alert becomes the field readers learn to ignore.
 
+A link resolves as the reader resolves it for `get_backlinks`: by title, then file stem,
+then alias, and only when all three miss, by vault path, with or without the `.md` suffix
+and a leading `/`, case-insensitively (`[[_memory/subjects/perso/heimdall/heimdall]]`).
+A path relative to the linking note is not resolved.
+
 A scrubber anomaly is different: top-level health becomes `critical`. A readable checkpoint can
 carry anomalies from a direct primary-filesystem byte comparison or a configured canary check. If
 the checkpoint cannot be read or validated, health instead synthesizes a transient

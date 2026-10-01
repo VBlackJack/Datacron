@@ -118,6 +118,12 @@ marquer une note qui reste à écrire, donc il compte dans `broken_wikilinks` sa
 d'écriture légitime fige `status` sur `degraded` en permanence, et le seul champ censé alerter
 devient un champ qu'on apprend à ignorer.
 
+Un lien se résout comme le lecteur le résout pour `get_backlinks` : par titre, puis par nom de
+fichier, puis par alias, et seulement quand les trois échouent, par chemin dans le vault, avec ou
+sans le suffixe `.md` et un `/` initial, sans tenir compte de la casse
+(`[[_memory/subjects/perso/heimdall/heimdall]]`). Un chemin relatif à la note qui pointe n'est
+pas résolu.
+
 Une anomalie du scrubber est différente : la santé de haut niveau devient `critical`. Un point de
 contrôle lisible peut porter des anomalies issues d'une comparaison directe d'octets du filesystem
 primaire ou d'un contrôle de sentinelle configuré. Si le point de contrôle ne peut pas être lu ou

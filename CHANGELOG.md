@@ -9,6 +9,13 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Fixed
+
+- `get_health` no longer reports a wikilink that names its note by vault
+  path, or with the `.md` suffix, as broken. The reader already resolved those forms for
+  `get_backlinks`; the read-only scan stopped after the title, stem and alias tiers. On a live
+  vault of 4410 notes, 672 of 688 reported broken links were such paths to existing notes.
+
 ### Added
 
 - `session_context(subject=...)` loads the state note of a registered subject first, whatever

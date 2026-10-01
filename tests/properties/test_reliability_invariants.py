@@ -601,6 +601,32 @@ def test_prop_09_misdirected_links_separate_from_intent_links(tmp_path: Path) ->
     assert [item.target for item in scan.misdirected_wikilinks] == ["Cafe-Runbook"]
 
 
+def test_prop_09_vault_path_links_resolve_like_the_reader(tmp_path: Path) -> None:
+    """PROP-09: a link naming its note by vault path or with ``.md`` is not broken.
+
+    The reader's ``resolve_alias`` tries those forms after the title, stem and
+    alias tiers; the scan reported them as nonexistent, 672 false findings on a
+    live vault of 4410 notes.
+    """
+    vault = _fresh_vault(tmp_path)
+    _write_note(vault, "_memory/subjects/runbook.md", _NOTE_ID_A, "Runbook", "# Runbook\n")
+    _write_note(
+        vault,
+        "source.md",
+        _NOTE_ID_B,
+        "Source",
+        (
+            "# Source\n\n[[_memory/subjects/runbook|State]]\n\n"
+            "[[_Memory/Subjects/Runbook.md]]\n\n[[/_memory/subjects/runbook]]\n\n"
+            "[[runbook.md]]\n\n[[_memory/subjects/missing]]\n"
+        ),
+    )
+
+    scan = scan_vault_read_only(vault)
+
+    assert [item.target for item in scan.broken_wikilinks] == ["_memory/subjects/missing"]
+
+
 def test_checked_in_reliability_policy_tracks_expected_legacy_counts() -> None:
     """The publishable policy tracks exactly the declared 4 ID and 35 link debts."""
     policy_path = Path(__file__).parents[1] / "fixtures" / "reliability_baseline.json"
