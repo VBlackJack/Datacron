@@ -53,6 +53,12 @@ Upgrade notes:
   read-only scan stopped after the title, stem and alias tiers. On a live vault of 4410 notes,
   672 of 688 reported broken links were such paths to existing notes, which hid the 16 real
   ones.
+- `datacron reindex` on Windows names the running servers again when one opens the index
+  during the rebuild. The swap fails with `ERROR_ACCESS_DENIED`, not a sharing violation,
+  when a SQLite connection holds the destination, so the actionable message only covered the
+  up-front check and a 14-minute rebuild ended in a raw traceback. The swap now asks the same
+  exclusive-open probe as the up-front check; a read-only attribute or denied ACL is still
+  re-raised as it came.
 
 ### Security
 

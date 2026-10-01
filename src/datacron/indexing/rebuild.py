@@ -48,9 +48,9 @@ __all__ = [
 
 _LOGGER = get_logger(__name__)
 # ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION only. ERROR_ACCESS_DENIED (5) is
-# deliberately absent: it is what MoveFileEx reports for a denied ACL or a read-only
-# attribute, neither of which is another process holding the file, and treating it as
-# one refuses rebuilds that would have succeeded.
+# deliberately absent: MoveFileEx reports it for a denied ACL or a read-only attribute,
+# and also for a destination another process holds open, so the code alone names no
+# cause. The exclusive-open probe (``_windows_index_is_held``) tells them apart.
 _WINDOWS_SHARING_ERRORS: Final[frozenset[int]] = frozenset({32, 33})
 _INDEX_HELD_MESSAGE: Final[str] = (
     "the live index at {db_path} is held open by another process, so it cannot be "
@@ -247,12 +247,18 @@ def _publish_index(temp_path: Path, db_path: Path) -> None:
     try:
         os.replace(temp_path, db_path)
     except PermissionError as exc:
-        if sys.platform != "win32" or exc.winerror not in _WINDOWS_SHARING_ERRORS:
-            # POSIX replaces open files, and a denied ACL is not a held file. Naming a
-            # cause the platform cannot have would send the operator hunting servers
-            # that are not the problem.
+        if sys.platform != "win32":
+            # POSIX replaces open files: a refusal there is never a held index.
             raise
-        raise IndexRebuildError(_INDEX_HELD_MESSAGE.format(db_path=db_path)) from exc
+        # MoveFileEx reports a destination another process holds open as
+        # ERROR_ACCESS_DENIED, the same code as a denied ACL or a read-only attribute
+        # (measured 2026-10-01: a SQLite connection on the live index, which is what a
+        # running server keeps, fails the swap with WinError 5, never 32). The code
+        # alone cannot tell them apart, so the exclusive-open probe decides: only a
+        # sharing violation names the servers, anything else is re-raised as it came.
+        if exc.winerror in _WINDOWS_SHARING_ERRORS or _windows_index_is_held(db_path):
+            raise IndexRebuildError(_INDEX_HELD_MESSAGE.format(db_path=db_path)) from exc
+        raise
 
 
 def _assert_index_replaceable(db_path: Path) -> None:
@@ -281,6 +287,13 @@ if sys.platform == "win32":
 
     def _assert_windows_index_replaceable(db_path: Path) -> None:
         """Refuse only when another process is genuinely holding the index open."""
+        if _windows_index_is_held(db_path):
+            raise IndexRebuildError(_INDEX_HELD_MESSAGE.format(db_path=db_path))
+        # Any other reason to fail an exclusive open is not this defect -- a denied ACL
+        # is not a held file. Let the rebuild proceed and report its own error.
+
+    def _windows_index_is_held(db_path: Path) -> bool:
+        """Return whether an exclusive open of the index fails on a sharing violation."""
         delete_and_read = 0x00010000 | 0x80000000  # DELETE | GENERIC_READ
         open_existing = 3
         invalid_handle = ctypes.c_void_p(-1).value
@@ -309,16 +322,17 @@ if sys.platform == "win32":
         )
         if handle != invalid_handle:
             kernel32.CloseHandle(handle)
-            return
-        if ctypes.get_last_error() in _WINDOWS_SHARING_ERRORS:
-            raise IndexRebuildError(_INDEX_HELD_MESSAGE.format(db_path=db_path))
-        # Any other reason to fail an exclusive open is not this defect -- a denied ACL
-        # is not a held file. Let the rebuild proceed and report its own error.
+            return False
+        return ctypes.get_last_error() in _WINDOWS_SHARING_ERRORS
 
 else:
 
     def _assert_windows_index_replaceable(db_path: Path) -> None:
         """POSIX replaces an open file happily, so there is nothing to detect."""
+
+    def _windows_index_is_held(db_path: Path) -> bool:
+        """POSIX has no sharing violation: an open file is never held against a swap."""
+        return False
 
 
 def _assert_no_sqlite_sidecars(db_path: Path) -> None:
