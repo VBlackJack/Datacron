@@ -9,12 +9,23 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
-### Fixed
+## [2026.1001.00] - 2026-10-01
 
-- `get_health` no longer reports a wikilink that names its note by vault
-  path, or with the `.md` suffix, as broken. The reader already resolved those forms for
-  `get_backlinks`; the read-only scan stopped after the title, stem and alias tiers. On a live
-  vault of 4410 notes, 672 of 688 reported broken links were such paths to existing notes.
+This release makes each subject's state note the place a session meets first. A vault measured
+on 2026-09-30 had drifted by 67 organization deviations in 17 days while its own report was
+never run, and the largest subject's state note had become a journal missing its latest
+decision. Datacron now shows the state note where sessions read and write a subject, and says
+how far behind it is.
+
+Upgrade notes:
+
+- The new `session_context` and `create_note_ai` fields appear only in a vault that declares an
+  `organization.tags` policy with registered subjects; other vaults see no change.
+- The memory protocol contract moves to `1.2.0`. Refresh each installed client block with
+  `datacron protocol install` so clients read the new sentence.
+- No reindex is needed: the subject lookup reads columns the index already keeps.
+- `get_health` reports fewer `broken_wikilinks` on a vault that links notes by vault path. The
+  status does not move on that account: a link classified `nonexistent` never blocked `healthy`.
 
 ### Added
 
@@ -34,6 +45,14 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   selector sentence of the `patch_note_preamble` line is removed so the installed block keeps
   its size; the same rule stays in the contract's write-safety paragraph. Refresh installed
   client blocks with `datacron protocol install`.
+
+### Fixed
+
+- `get_health` no longer reports a wikilink that names its note by vault path, or with the
+  `.md` suffix, as broken. The reader already resolved those forms for `get_backlinks`; the
+  read-only scan stopped after the title, stem and alias tiers. On a live vault of 4410 notes,
+  672 of 688 reported broken links were such paths to existing notes, which hid the 16 real
+  ones.
 
 ### Security
 
