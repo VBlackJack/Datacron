@@ -247,18 +247,18 @@ def _publish_index(temp_path: Path, db_path: Path) -> None:
     try:
         os.replace(temp_path, db_path)
     except PermissionError as exc:
-        if sys.platform != "win32":
-            # POSIX replaces open files: a refusal there is never a held index.
-            raise
+        # POSIX replaces open files: a refusal there is never a held index. On Windows,
         # MoveFileEx reports a destination another process holds open as
         # ERROR_ACCESS_DENIED, the same code as a denied ACL or a read-only attribute
         # (measured 2026-10-01: a SQLite connection on the live index, which is what a
         # running server keeps, fails the swap with WinError 5, never 32). The code
         # alone cannot tell them apart, so the exclusive-open probe decides: only a
         # sharing violation names the servers, anything else is re-raised as it came.
-        if exc.winerror in _WINDOWS_SHARING_ERRORS or _windows_index_is_held(db_path):
-            raise IndexRebuildError(_INDEX_HELD_MESSAGE.format(db_path=db_path)) from exc
-        raise
+        if sys.platform != "win32" or not (
+            exc.winerror in _WINDOWS_SHARING_ERRORS or _windows_index_is_held(db_path)
+        ):
+            raise
+        raise IndexRebuildError(_INDEX_HELD_MESSAGE.format(db_path=db_path)) from exc
 
 
 def _assert_index_replaceable(db_path: Path) -> None:
