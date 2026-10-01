@@ -76,6 +76,8 @@ __all__ = [
 ]
 
 WIKILINK_NONEXISTENT: Final[str] = "nonexistent"
+_MARKDOWN_SUFFIX: Final[str] = ".md"
+_PATH_SEPARATOR: Final[str] = "/"
 """Target resolves to no note at all: an intent link toward a note yet to be written."""
 
 WIKILINK_EXISTING_UNDER_OTHER_TITLE_OR_ALIAS: Final[str] = "existing_under_other_title_or_alias"
@@ -451,6 +453,7 @@ def _scan_id_coherence(
 
 def _scan_broken_wikilinks(notes: Sequence[ReliabilityNote]) -> list[ReliabilityViolation]:
     aliases = _build_alias_index(notes)
+    path_links = _build_path_link_index(notes)
     aggressive_aliases = _build_aggressive_alias_index(notes)
     chunker = MarkdownChunker()
     violations: list[ReliabilityViolation] = []
@@ -476,6 +479,7 @@ def _scan_broken_wikilinks(notes: Sequence[ReliabilityNote]) -> list[Reliability
                     violations,
                     occurrences,
                     aliases,
+                    path_links,
                     aggressive_aliases,
                     note.rel_path,
                     target,
@@ -487,12 +491,12 @@ def _append_broken_wikilink(
     violations: list[ReliabilityViolation],
     occurrences: dict[tuple[str, str], int],
     aliases: Mapping[str, str | None],
+    path_links: Mapping[str, str | None],
     aggressive_aliases: Mapping[str, set[str]],
     rel_path: str,
     target: str,
 ) -> None:
-    normalized = _normalize_alias(target)
-    if normalized in aliases and aliases[normalized] is not None:
+    if _resolves(target, aliases, path_links):
         return
     occurrence_key = (rel_path, target)
     occurrences[occurrence_key] += 1
@@ -514,6 +518,37 @@ def _append_broken_wikilink(
             details=details,
         )
     )
+
+
+def _resolves(
+    target: str,
+    aliases: Mapping[str, str | None],
+    path_links: Mapping[str, str | None],
+) -> bool:
+    """Resolve a wikilink target the way the vault reader's ``resolve_alias`` does.
+
+    The title -> stem -> alias tiers come first. A target that names its note by
+    vault path, or with the ``.md`` suffix Obsidian writes when two notes share a
+    stem, is tried only after every tier has missed. Without that second step the
+    scan reported every path-qualified link as nonexistent although the reader,
+    and therefore ``get_backlinks``, resolved it.
+    """
+    normalized = _normalize_alias(target)
+    if aliases.get(normalized) is not None:
+        return True
+    without_suffix = normalized.removesuffix(_MARKDOWN_SUFFIX)
+    if aliases.get(without_suffix) is not None:
+        return True
+    return path_links.get(without_suffix.lstrip(_PATH_SEPARATOR)) is not None
+
+
+def _build_path_link_index(notes: Sequence[ReliabilityNote]) -> dict[str, str | None]:
+    """Map each admitted note's lowercased vault path, without suffix, to that note."""
+    index: dict[str, str | None] = {}
+    for note in notes:
+        key = note.rel_path.lower().removesuffix(_MARKDOWN_SUFFIX)
+        index[key] = None if key in index else note.rel_path
+    return index
 
 
 def _build_alias_index(notes: Sequence[ReliabilityNote]) -> dict[str, str | None]:
