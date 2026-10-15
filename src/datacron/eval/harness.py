@@ -44,6 +44,7 @@ from datacron.eval.metrics import (
     recall_at_k,
     reciprocal_rank,
 )
+from datacron.i18n import t
 from datacron.mcp.server import DatacronApp
 from datacron.mcp.tools import _search_text_impl
 
@@ -149,24 +150,30 @@ class LocalEvalHarness:
         results = report.results
         summary = report.summary
         if not results:
-            self._console.print("[yellow]No eval questions supplied.[/yellow]")
+            self._console.print(t("eval.harness.no_questions"))
             return
 
         if summary.empty_accuracy is not None:
-            self._console.print(f"Empty-query accuracy: {summary.empty_accuracy:.2%}")
+            self._console.print(
+                t("eval.harness.empty_query_accuracy", accuracy=summary.empty_accuracy)
+            )
         table = Table(
-            title=f"Datacron Eval Summary ({summary.pipeline.value}/{summary.transport.value})"
+            title=t(
+                "eval.harness.table_title",
+                pipeline=summary.pipeline.value,
+                transport=summary.transport.value,
+            )
         )
-        table.add_column("ID", no_wrap=True)
-        table.add_column("Notes", justify="right")
+        table.add_column(t("eval.harness.col_id"), no_wrap=True)
+        table.add_column(t("eval.harness.col_notes"), justify="right")
         for k in summary.note_recall_at_k:
             table.add_column(f"R{k}", justify="right")
-        table.add_column("MRR", justify="right")
-        table.add_column("nDCG10", justify="right")
-        table.add_column("P", justify="right")
-        table.add_column("Fresh", justify="right")
-        table.add_column("ms", justify="right")
-        table.add_column("Tok", justify="right")
+        table.add_column(t("eval.harness.col_mrr"), justify="right")
+        table.add_column(t("eval.harness.col_ndcg10"), justify="right")
+        table.add_column(t("eval.harness.col_precision"), justify="right")
+        table.add_column(t("eval.harness.col_fresh"), justify="right")
+        table.add_column(t("eval.harness.col_ms"), justify="right")
+        table.add_column(t("eval.harness.col_tok"), justify="right")
 
         for result in results:
             freshness = "FAIL" if result.forbidden_violation else "ok"

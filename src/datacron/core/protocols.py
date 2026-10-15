@@ -35,6 +35,7 @@ from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from datacron.core.config import DEFAULT_MAX_RESULT_COUNT
 from datacron.core.models import (
     Chunk,
     EvalPipeline,
@@ -150,7 +151,7 @@ class FTS5Store(Protocol):
     async def search(
         self,
         query: str,
-        limit: int = 20,
+        limit: int = DEFAULT_MAX_RESULT_COUNT,
         *,
         folder: str | None = None,
         tags: Sequence[str] | None = None,
@@ -296,7 +297,7 @@ class RipgrepWrapper(Protocol):
         pattern: str,
         vault_root: Path,
         glob: str | None = None,
-        limit: int = 20,
+        limit: int = DEFAULT_MAX_RESULT_COUNT,
         store: FTS5Store | None = None,
         rg_path: str | None = None,
         fallback_max_pattern_length: int | None = None,

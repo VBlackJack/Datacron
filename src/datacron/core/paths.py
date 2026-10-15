@@ -22,6 +22,8 @@ configured roots is rejected before it reaches the filesystem.
 from __future__ import annotations
 
 import json
+import os
+import stat
 import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -30,6 +32,7 @@ from typing import Final, Literal
 from datacron.core.config import (
     INDEX_DB_FILENAME,
     INDEX_DIR_NAME,
+    MEMORY_SUBFOLDER_NAME,
     SIDECAR_DIR_NAME,
     VAULT_CONFIG_FILENAME,
     Settings,
@@ -37,17 +40,28 @@ from datacron.core.config import (
 )
 
 __all__ = [
+    "ASCII_CONTROL_CHAR_BOUNDARY",
+    "FILE_ATTRIBUTE_REPARSE_POINT",
+    "IO_REPARSE_TAG_MOUNT_POINT",
+    "IO_REPARSE_TAG_SYMLINK",
+    "LINK_REPARSE_TAGS",
+    "WINDOWS_RESERVED_NAMES",
     "PathConfinementError",
     "assert_vault_rel_path",
     "assert_within_paths",
     "assert_within_read_paths",
     "assert_within_resolved_roots",
     "assert_within_write_paths",
+    "effective_memory_root",
+    "is_link_stat",
+    "is_memory_rel_path",
     "is_within",
     "read_ulid_mappings",
     "read_ulid_sidecar_strict",
     "reject_duplicate_json_keys",
     "reject_nonfinite_json_constant",
+    "resolve_sidecar_root",
+    "resolve_vault_rel_target",
     "sidecar_dir",
     "sidecar_index_db",
     "sidecar_index_dir",
@@ -64,6 +78,50 @@ class PathConfinementError(PermissionError):
 
 _EXTENDED_LENGTH_PREFIX: Final = "\\\\?\\"
 _EXTENDED_LENGTH_UNC_PREFIX: Final = "\\\\?\\UNC\\"
+ASCII_CONTROL_CHAR_BOUNDARY: Final[int] = 32
+FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = 0x0400
+# The documented Win32 tag values. The stat module defines them on every platform,
+# but its type stubs only on Windows, and the check below runs everywhere.
+IO_REPARSE_TAG_SYMLINK: Final[int] = 0xA000000C
+IO_REPARSE_TAG_MOUNT_POINT: Final[int] = 0xA0000003
+LINK_REPARSE_TAGS: Final[frozenset[int]] = frozenset(
+    {IO_REPARSE_TAG_SYMLINK, IO_REPARSE_TAG_MOUNT_POINT}
+)
+WINDOWS_RESERVED_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "aux",
+        "clock$",
+        "con",
+        "conin$",
+        "conout$",
+        "nul",
+        "prn",
+        *(f"com{number}" for number in range(1, 10)),
+        *(f"com{number}" for number in "¹²³"),
+        *(f"lpt{number}" for number in range(1, 10)),
+        *(f"lpt{number}" for number in "¹²³"),
+    }
+)
+
+
+def is_link_stat(component_stat: os.stat_result) -> bool:
+    """Return whether one ``lstat`` result is a symlink, a junction or a mount point.
+
+    Only those redirect a path elsewhere. Any reparse point is not: OneDrive
+    Files-On-Demand marks every cloud placeholder with the reparse attribute and a
+    cloud tag, so refusing the attribute alone refused every write to such a vault.
+    When ``st_reparse_tag`` is absent on a mocked stat object, fall back to
+    refusing ``FILE_ATTRIBUTE_REPARSE_POINT`` fail-closed.
+    """
+    if stat.S_ISLNK(component_stat.st_mode):
+        return True
+    attributes = getattr(component_stat, "st_file_attributes", 0)
+    if not attributes & FILE_ATTRIBUTE_REPARSE_POINT:
+        return False
+    reparse_tag = getattr(component_stat, "st_reparse_tag", None)
+    if reparse_tag is None:
+        return True
+    return reparse_tag in LINK_REPARSE_TAGS
 
 
 def assert_vault_rel_path(rel_path: str) -> str:
@@ -93,7 +151,7 @@ def assert_vault_rel_path(rel_path: str) -> str:
     """
     if not rel_path:
         return rel_path
-    if any(ord(character) < 32 for character in rel_path):
+    if any(ord(character) < ASCII_CONTROL_CHAR_BOUNDARY for character in rel_path):
         raise PathConfinementError("Vault-relative path must not contain control characters.")
     normalized = rel_path.replace("\\", "/")
     if normalized.startswith("//"):
@@ -330,21 +388,113 @@ def assert_within_write_paths(path: Path, settings: Settings | None = None) -> P
     return assert_within_paths(path, resolved_settings.write_paths, kind="write")
 
 
-def sidecar_dir(vault_root: Path) -> Path:
-    """Return the ``.datacron/`` sidecar directory under ``vault_root``."""
-    return _resolve(vault_root) / SIDECAR_DIR_NAME
+def is_memory_rel_path(rel_path: str) -> bool:
+    """Return whether ``rel_path`` lies under the ``_memory`` namespace."""
+    normalized = rel_path.strip().replace("\\", "/").lstrip("/")
+    if not normalized:
+        return False
+    first_part = normalized.split("/", 1)[0]
+    return first_part.casefold() == MEMORY_SUBFOLDER_NAME.casefold()
 
 
-def sidecar_index_dir(vault_root: Path) -> Path:
-    """Return the ``.datacron/index/`` directory under ``vault_root``."""
-    return sidecar_dir(vault_root) / INDEX_DIR_NAME
+def effective_memory_root(
+    vault_root: Path,
+    *,
+    memory_root: Path | None = None,
+    settings: Settings | None = None,
+) -> Path | None:
+    """Return the resolved distinct memory vault root when dual-vault mode is active."""
+    resolved_vault = _resolve(vault_root)
+    if memory_root is not None:
+        resolved_memory = _resolve(memory_root)
+        return None if resolved_memory == resolved_vault else resolved_memory
+    resolved_settings = settings or get_settings()
+    if resolved_settings.memory_root is None:
+        return None
+    if (
+        resolved_settings.vault_root is not None
+        and _resolve(resolved_settings.vault_root) != resolved_vault
+    ):
+        return None
+    resolved_memory = _resolve(resolved_settings.memory_root)
+    return None if resolved_memory == resolved_vault else resolved_memory
 
 
-def sidecar_index_db(vault_root: Path) -> Path:
-    """Return the canonical SQLite index path under ``vault_root``."""
-    return sidecar_index_dir(vault_root) / INDEX_DB_FILENAME
+def resolve_sidecar_root(
+    vault_root: Path,
+    *,
+    memory_root: Path | None = None,
+    settings: Settings | None = None,
+) -> Path:
+    """Return the physical root directory that hosts ``.datacron/``."""
+    return effective_memory_root(
+        vault_root,
+        memory_root=memory_root,
+        settings=settings,
+    ) or _resolve(vault_root)
 
 
-def sidecar_vault_config(vault_root: Path) -> Path:
-    """Return the ``.datacron/VAULT.yaml`` path under ``vault_root``."""
-    return sidecar_dir(vault_root) / VAULT_CONFIG_FILENAME
+def resolve_vault_rel_target(
+    vault_root: Path,
+    rel_path: str,
+    *,
+    memory_root: Path | None = None,
+    settings: Settings | None = None,
+) -> Path:
+    """Map a vault-relative path to its physical root (``memory_root`` for ``_memory/...``)."""
+    mem_root = effective_memory_root(
+        vault_root,
+        memory_root=memory_root,
+        settings=settings,
+    )
+    if mem_root is not None and is_memory_rel_path(rel_path):
+        return mem_root / rel_path
+    return _resolve(vault_root) / rel_path
+
+
+def sidecar_dir(
+    vault_root: Path,
+    *,
+    memory_root: Path | None = None,
+    settings: Settings | None = None,
+) -> Path:
+    """Return the ``.datacron/`` sidecar directory for ``vault_root`` (or its ``memory_root``)."""
+    return (
+        resolve_sidecar_root(vault_root, memory_root=memory_root, settings=settings)
+        / SIDECAR_DIR_NAME
+    )
+
+
+def sidecar_index_dir(
+    vault_root: Path,
+    *,
+    memory_root: Path | None = None,
+    settings: Settings | None = None,
+) -> Path:
+    """Return the ``.datacron/index/`` directory for ``vault_root``."""
+    return sidecar_dir(vault_root, memory_root=memory_root, settings=settings) / INDEX_DIR_NAME
+
+
+def sidecar_index_db(
+    vault_root: Path,
+    *,
+    memory_root: Path | None = None,
+    settings: Settings | None = None,
+) -> Path:
+    """Return the canonical SQLite index path for ``vault_root``."""
+    return (
+        sidecar_index_dir(vault_root, memory_root=memory_root, settings=settings)
+        / INDEX_DB_FILENAME
+    )
+
+
+def sidecar_vault_config(
+    vault_root: Path,
+    *,
+    memory_root: Path | None = None,
+    settings: Settings | None = None,
+) -> Path:
+    """Return the ``.datacron/VAULT.yaml`` path for ``vault_root``."""
+    return (
+        sidecar_dir(vault_root, memory_root=memory_root, settings=settings) / VAULT_CONFIG_FILENAME
+    )

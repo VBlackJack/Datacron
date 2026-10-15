@@ -21,6 +21,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import (
+    CANONICAL_ULID_PATTERN,
     GROUPED_OVERFETCH_GROWTH,
     GROUPED_OVERFETCH_MAX_CHUNKS,
     MAX_SEARCH_QUERY_CHARS,
@@ -61,7 +62,7 @@ from datacron.mcp.tools.retrieval import SearchIndexStaleError, bound_results, p
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
-_ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+_ULID_PATTERN: Final[re.Pattern[str]] = CANONICAL_ULID_PATTERN
 SEARCH_QUERY_TOO_LARGE_CODE: Final[str] = "search_query_too_large"
 
 

@@ -1,0 +1,88 @@
+{
+  "contradiction": {
+    "provenance": {
+      "contradiction": "CORRECTION",
+      "refinement": "UPDATE",
+      "open_question": "OPEN QUESTION",
+      "source_connector": "See"
+    }
+  },
+  "library": {
+    "home": "Knowledge library",
+    "folder_title": "Navigation: {subject}",
+    "subjects": "Subjects and folders",
+    "active": "Current references (validity to verify)",
+    "historical": "History and replaced references",
+    "review": "References to verify",
+    "tasks": "Open checkboxes in the sources",
+    "people": "People",
+    "procedures": "Procedures and references",
+    "sources": "Sources",
+    "empty": "No matching item in this snapshot.",
+    "snapshot": "Snapshot: {date}. Scope: {scope}. Follow source links for authoritative details.",
+    "notice": "This page is maintained by Datacron. Edit the source notes; refresh this index afterwards.",
+    "offline": "Open this folder as an Obsidian vault. Navigation uses ordinary Markdown links. External websites require a connection; missing local attachments are listed in the review report.",
+    "template": "Subject note template",
+    "template_body": "# Subject\n\nBrief description.\n\n## Current situation\n\nVerified state, verification date and source links.\n\n## Open actions\n\nAction, owner, known due date and source. Keep one authoritative action.\n\n## Decisions in force\n\nDecision, reason and source.\n\n## Useful documents\n\nProcedures and references.\n\n## History\n\nLinks to replaced decisions and earlier states.\n",
+    "report": "Library review",
+    "evidence": "Mechanical checks only. Editorial proposals require source-by-source review; hashes do not establish truth. Original source paths and bodies are retained. No vault files have been changed by preparation.",
+    "next": "Review preview and changes.diff; run library check against the live vault. Apply only through apply_organization_manifest (validate, then apply the same bundle/token), with other writers stopped and a verified backup. Verify receipts, reread notes and verify incoming links afterwards."
+  },
+  "guidance": {
+    "errors": {
+      "duplicate_note_identity": "Inspect the conflicting note IDs; choose their identities explicitly, then retry indexing.",
+      "StaleChunkError": "Read the parent note and refresh the index before requesting a new chunk ID.",
+      "search_index_stale": "Retry the same read: it refreshes the changed notes first. On a read-only server, run `datacron index` before retrying.",
+      "search_query_too_large": "Shorten the query to the few distinctive words that matter; use search_regex for an exact passage.",
+      "WriteConflictError": "Read the current target and original request receipt; reprepare only uncommitted work.",
+      "recovery_required": "Stop writers and inspect recovery. Preserve the operation journal and pending files.",
+      "manifest_already_committed_state_diverged": "This manifest is already committed and the vault changed since; nothing is corrupt and no recovery is needed. Do not replay it: plan a new manifest from the current vault state.",
+      "context_budget_too_small": "Retry with required_tokens or read _memory/INIT.md. Reuse a known contract hash only when its instructions remain in context.",
+      "committed_index_incomplete": "The note is already committed. Repair indexing and reread it; do not create a new write request.",
+      "internal_error": "Use the correlation_id to locate the local diagnostic. Inspect the original receipt before retrying a write.",
+      "follow_up_offset_invalid": "Restart at offset 0, or continue with the next_offset and snapshot_hash returned by the previous page.",
+      "follow_up_validation_failed": "Correct the record as the message states, rereading the target and source notes for fresh hashes and an exact excerpt, then prepare again. Nothing was written.",
+      "follow_up_sensitive_content": "The field named in the message holds secret-shaped text. Quote an excerpt and write a summary, owner and identity basis that leave the secret value out, then prepare again. Nothing was written.",
+      "follow_up_record_count_exceeded": "Split the records into several calls of at most {max_records} each and apply each call's plans before preparing the next. Nothing was written.",
+      "heading_ambiguous": "Several sections match the selector named in the error. Use get_note format=map to inspect the headings, then pass the level for inter-level matches, or the level, the occurrence and expected_hash for same-level duplicates.",
+      "frontmatter_edit_refused": "Nothing was written. The frontmatter key named in the error cannot be changed without rewriting keys the request did not touch. Read the note with get_note, edit that key by hand (for example remove its YAML anchor or alias), then retry with the new content_hash.",
+      "section_has_subsections": "Nothing was written. Patch one of the listed subsections with its level and occurrence, or remove it explicitly with delete_note_section first, then patch the section again with the new expected_hash.",
+      "section_structure_changed": "Nothing was written. Close every code fence, HTML comment or raw HTML block the new content opens, or repair the note's existing structure after reading it with get_note, then retry with the current expected_hash."
+    },
+    "health": {
+      "index_stale": "After resolving identity and recovery blockers, reconcile or rebuild the index, then verify health.",
+      "identity_mismatch": "Run ops inspect-id and review each authority before selecting an explicit repair.",
+      "writes_disabled": "Check read-only mode, configured write paths and durability policy before enabling writes.",
+      "integrity_review": "Read full health findings and resolve the reported integrity or scrubber anomalies before maintenance."
+    }
+  },
+  "cli": {
+    "help": {
+      "vault_root": "Vault root. Fallback: DATACRON_VAULT_ROOT, then cwd containing VAULT.yaml under .datacron."
+    },
+    "library": {
+      "app_help": "Prepare readable offline navigation and sourced consolidation reviews.",
+      "options_help": "JSON file with the library options: scope, home, tags, language, areas and limits.",
+      "output_help": "New directory, outside the vault, that receives the review bundle.",
+      "recipe_help": "Optional JSON editorial recipe of sourced consolidation notes.",
+      "source_help": "Vault-relative path of the note to split into H2 section notes.",
+      "missing_required_note_field": "Missing required note field: {field}",
+      "source_not_admitted": "Source is not an admitted note in the selected scope"
+    }
+  },
+  "eval": {
+    "harness": {
+      "no_questions": "[yellow]No eval questions supplied.[/yellow]",
+      "empty_query_accuracy": "Empty-query accuracy: {accuracy:.2%}",
+      "table_title": "Datacron Eval Summary ({pipeline}/{transport})",
+      "col_id": "ID",
+      "col_notes": "Notes",
+      "col_mrr": "MRR",
+      "col_ndcg10": "nDCG10",
+      "col_precision": "P",
+      "col_fresh": "Fresh",
+      "col_ms": "ms",
+      "col_tok": "Tok"
+    }
+  }
+}

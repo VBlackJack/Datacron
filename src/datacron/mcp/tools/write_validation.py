@@ -25,6 +25,7 @@ from typing import Any, Final
 import yaml
 from ulid import ULID
 
+from datacron.core.config import CANONICAL_ULID_PATTERN
 from datacron.core.frontmatter import (
     FRONTMATTER_BOUNDARY_PATTERN,
     FrontmatterError,
@@ -33,7 +34,7 @@ from datacron.core.frontmatter import (
     serialize_preserving_bom,
 )
 from datacron.core.hashing import HASH_HEX_LENGTH
-from datacron.core.paths import PathConfinementError
+from datacron.core.paths import WINDOWS_RESERVED_NAMES, PathConfinementError
 
 # The exact-bytes helpers live in core.frontmatter; the write tools of this package
 # keep importing them under the names they have always used.
@@ -46,15 +47,11 @@ _MEMORY_CONFIDENCE_LEVELS: Final[frozenset[str]] = frozenset(
 )
 _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9a-f]{{{HASH_HEX_LENGTH}}}$")
 _BACKLOG_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"BL-[0-9]{4,}")
-_ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+_ULID_PATTERN: Final[re.Pattern[str]] = CANONICAL_ULID_PATTERN
 _ATX_CLOSING_SEQUENCE: Final[re.Pattern[str]] = re.compile(r"[ \t]#+$")
 _ATX_LEVEL_MARKER: Final[re.Pattern[str]] = re.compile(r"#{1,6}(?:[ \t]|$)")
 _MARKDOWN_SUFFIX: Final[str] = ".md"
-_WINDOWS_RESERVED_NAMES: Final[frozenset[str]] = frozenset(
-    {"CON", "PRN", "AUX", "NUL"}
-    | {f"COM{index}" for index in range(1, 10)}
-    | {f"LPT{index}" for index in range(1, 10)}
-)
+_WINDOWS_RESERVED_NAMES: Final[frozenset[str]] = WINDOWS_RESERVED_NAMES
 _WRITES_DISABLED_MESSAGE: Final[str] = "writes disabled -- set DATACRON_WRITE_PATHS"
 # Markdown ATX headings run from one to six hash marks; every heading selector shares it.
 MAX_HEADING_LEVEL: Final[int] = 6
@@ -503,7 +500,7 @@ def _assert_markdown_rel_path(cleaned_rel_path: str) -> None:
         # as written, and the reader admits them there.
         if sys.platform == "win32" and ":" in part:
             raise ValueError("rel_path must not contain ':'")
-        if sys.platform == "win32" and part.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:
+        if sys.platform == "win32" and part.split(".", 1)[0].casefold() in _WINDOWS_RESERVED_NAMES:
             raise ValueError(f"rel_path must not use the reserved device name {part!r}")
 
 

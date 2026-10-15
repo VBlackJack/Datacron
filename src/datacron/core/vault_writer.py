@@ -41,7 +41,14 @@ from datacron.core.batch_transaction import (
     BatchRecoveryOutcome,
     OrganizationBatchTransaction,
 )
-from datacron.core.config import SIDECAR_DIR_NAME, Settings, VaultConfig
+from datacron.core.config import (
+    CANONICAL_ULID_PATTERN,
+    MEMORY_SUBFOLDER_NAME,
+    SIDECAR_DIR_NAME,
+    ULID_LENGTH,
+    Settings,
+    VaultConfig,
+)
 from datacron.core.durability import (
     RecoveryRequiredError,
     UnexpectedRecoveryEntryError,
@@ -63,7 +70,10 @@ from datacron.core.paths import (
     PathConfinementError,
     assert_vault_rel_path,
     assert_within_write_paths,
+    effective_memory_root,
+    is_memory_rel_path,
     read_ulid_mappings,
+    resolve_vault_rel_target,
     sidecar_dir,
     sidecar_index_db,
     strip_extended_length_prefix,
@@ -115,9 +125,9 @@ OPERATION_FAULT_POINTS: Final[tuple[str, ...]] = (
     "after_oplog_write",
     "after_pending_cleanup",
 )
-_ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+_ULID_PATTERN: Final[re.Pattern[str]] = CANONICAL_ULID_PATTERN
 _FRONTMATTER_ID_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"(?m)^id:[ \t]*['\"]?([0-9A-HJKMNP-TV-Z]{26})['\"]?[ \t]*$"
+    rf"(?m)^id:[ \t]*['\"]?([0-9A-HJKMNP-TV-Z]{{{ULID_LENGTH}}})['\"]?[ \t]*$"
 )
 _CONTENT_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{64}$")
 _OPERATION_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -175,21 +185,23 @@ class FilesystemVaultWriter:
     ) -> None:
         self._vault_root = vault_root.expanduser().resolve()
         self._settings = settings
+        self._memory_root = effective_memory_root(self._vault_root, settings=settings)
+        self._sidecar_root = self._memory_root or self._vault_root
         self._vault_config = vault_config or VaultConfig()
         self._operation_fault_injector = operation_fault_injector
         self._write_policy = write_policy or WritePolicy(
             settings,
-            probe_directory_durability(self._vault_root),
+            probe_directory_durability(self._sidecar_root),
         )
         self._secret_redactor = SecretRedactor.from_settings(settings)
         self._operation_journal = OperationJournal(
-            self._vault_root,
+            self._sidecar_root,
             retention_days=self._vault_config.history_retention_days,
             history_mode=self._vault_config.history_mode,
             purge_min_interval_seconds=(settings.operation_history_purge_min_interval_seconds),
         )
         self._batch_transaction = OrganizationBatchTransaction(
-            self._vault_root,
+            self._sidecar_root,
             self._operation_journal,
             write_paths=settings.write_paths,
         )
@@ -461,6 +473,7 @@ class FilesystemVaultWriter:
         )
 
     def _sanitize_organization_operation(self, operation: OperationContext) -> OperationContext:
+        redacted_parameters = self._secret_redactor.redact_value(operation.parameters)
         return OperationContext(
             op=operation.op,
             tool=operation.tool,
@@ -468,10 +481,7 @@ class FilesystemVaultWriter:
                 self._secret_redactor.redact_text(operation.actor.strip())
                 or "mcp-client:unidentified"
             ),
-            parameters={
-                key: (self._secret_redactor.redact_text(value) if isinstance(value, str) else value)
-                for key, value in operation.parameters.items()
-            },
+            parameters=redacted_parameters,
         )
 
     def _get_organization_batch_result_sync(
@@ -583,6 +593,11 @@ class FilesystemVaultWriter:
                 raise UlidCollisionError(f"ULID collision: {note_id} already exists")
 
             target.parent.mkdir(parents=True, exist_ok=True)
+            assert_path_chain_without_links(
+                target.parent,
+                anchor=self._anchor_for_rel_path(rel_path),
+                allow_missing=False,
+            )
             emitted = self._encode_with_eol_policy(content, current_bytes)
             if operation is not None:
                 with self._advisory_lock("oplog"):
@@ -839,6 +854,7 @@ class FilesystemVaultWriter:
                 "request_fingerprint": request.fingerprint,
             }
         )
+        redacted_parameters = self._secret_redactor.redact_value(operation.parameters)
         record = OperationRecord(
             operation_id=uuid4().hex,
             timestamp=self._operation_journal.next_timestamp(),
@@ -851,12 +867,7 @@ class FilesystemVaultWriter:
             actor=self._secret_redactor.redact_text(operation.actor.strip())
             or "mcp-client:unidentified",
             parameters={
-                **{
-                    key: self._secret_redactor.redact_text(value)
-                    if isinstance(value, str)
-                    else value
-                    for key, value in operation.parameters.items()
-                },
+                **redacted_parameters,
                 **request_parameters,
             },
             history_stored=history_stored,
@@ -954,9 +965,10 @@ class FilesystemVaultWriter:
         blocked: list[BlockedOperation] = []
         pending_paths = self._operation_journal.pending_paths()
         pending_paths.sort(key=self._recovery_order)
+        cached_records: list[OperationRecord] | None = None
         for pending_path in pending_paths:
             record, pending_snapshot = self._operation_journal.read_pending_snapshot(pending_path)
-            candidate = (self._vault_root / record.rel_path).expanduser().resolve()
+            candidate = self._resolve_record_candidate(record.rel_path)
             safe_rel_path = self._safe_relative_path(candidate)
             with (
                 self._advisory_lock(f"note:{self._lock_key(candidate)}"),
@@ -973,7 +985,9 @@ class FilesystemVaultWriter:
                 record = current_record
                 current_bytes = candidate.read_bytes() if candidate.is_file() else None
                 current_hash = sha256_bytes(current_bytes) if current_bytes is not None else None
-                records = self._operation_journal.read_records()
+                if cached_records is None:
+                    cached_records = self._operation_journal.read_records()
+                records = cached_records
                 resolution = self._resolution_record(records, record.operation_id)
                 if resolution is not None:
                     if current_hash == resolution.after_hash:
@@ -1000,9 +1014,9 @@ class FilesystemVaultWriter:
                         )
                         continue
                 elif current_hash == record.after_hash:
-                    self._operation_journal.append_record(
-                        self._operation_journal.restamped_past_tail(record)
-                    )
+                    restamped = self._operation_journal.restamped_past_tail(record)
+                    self._operation_journal.append_record(restamped)
+                    cached_records.append(restamped)
                     recovered += 1
                     _LOGGER.warning(
                         "recovered committed operation id=%s rel_path=%s after_hash=%s",
@@ -1082,7 +1096,7 @@ class FilesystemVaultWriter:
             except UnexpectedRecoveryEntryError as exc:
                 unexpected.extend(exc.entries)
                 continue
-            candidate = (self._vault_root / record.rel_path).expanduser().resolve()
+            candidate = self._resolve_record_candidate(record.rel_path)
             safe_rel_path = self._safe_relative_path(candidate)
             current_bytes = candidate.read_bytes() if candidate.is_file() else None
             current_hash = sha256_bytes(current_bytes) if current_bytes is not None else None
@@ -1147,7 +1161,7 @@ class FilesystemVaultWriter:
         if not pending_path.is_file():
             raise FileNotFoundError(f"pending operation not found: {cleaned_operation_id}")
         initial = self._operation_journal.read_pending(pending_path)
-        candidate = (self._vault_root / initial.rel_path).expanduser().resolve()
+        candidate = self._resolve_record_candidate(initial.rel_path)
         safe_rel_path = self._safe_relative_path(candidate)
         with (
             self._advisory_lock(f"note:{self._lock_key(candidate)}"),
@@ -1463,7 +1477,14 @@ class FilesystemVaultWriter:
             match = _FRONTMATTER_ID_PATTERN.search(frontmatter_block)
             if match is not None:
                 return match.group(1)
-        sidecar_path = sidecar_dir(self._vault_root) / ULID_SIDECAR_FILENAME
+        sidecar_path = (
+            sidecar_dir(
+                self._vault_root,
+                memory_root=self._memory_root,
+                settings=self._settings,
+            )
+            / ULID_SIDECAR_FILENAME
+        )
         if not sidecar_path.is_file():
             return None
         try:
@@ -1508,20 +1529,59 @@ class FilesystemVaultWriter:
             record.rel_path,
         )
 
+    def _anchor_for_rel_path(self, rel_path: str) -> Path:
+        if self._memory_root is not None and is_memory_rel_path(rel_path):
+            return self._memory_root
+        return self._vault_root
+
+    def _resolve_record_candidate(self, rel_path: str) -> Path:
+        return (
+            resolve_vault_rel_target(
+                self._vault_root,
+                rel_path,
+                memory_root=self._memory_root,
+                settings=self._settings,
+            )
+            .expanduser()
+            .resolve()
+        )
+
     def _resolve_target(self, rel_path: str) -> tuple[Path, Path]:
         assert_vault_rel_path(rel_path)
-        candidate = (self._vault_root / rel_path).expanduser().resolve()
+        candidate = self._resolve_record_candidate(rel_path)
         target = assert_within_write_paths(candidate, self._settings)
         return target, self._safe_relative_path(target)
 
     def _safe_relative_path(self, target: Path) -> Path:
         plain_target = strip_extended_length_prefix(target)
+        if self._memory_root is not None:
+            plain_memory = strip_extended_length_prefix(self._memory_root)
+            try:
+                rel_memory = plain_target.relative_to(plain_memory)
+            except ValueError:
+                rel_memory = None
+            if rel_memory is not None:
+                if rel_memory.parts and rel_memory.parts[0] == MEMORY_SUBFOLDER_NAME:
+                    return rel_memory
+                raise PathConfinementError(
+                    f"Path {plain_target} is outside the memory subfolder in {self._memory_root}."
+                )
         try:
-            return plain_target.relative_to(strip_extended_length_prefix(self._vault_root))
+            rel_vault = plain_target.relative_to(strip_extended_length_prefix(self._vault_root))
         except ValueError as exc:
             raise PathConfinementError(
                 f"Path {plain_target} is outside the bound vault root {self._vault_root}."
             ) from exc
+        if (
+            self._memory_root is not None
+            and rel_vault.parts
+            and rel_vault.parts[0] == MEMORY_SUBFOLDER_NAME
+        ):
+            raise PathConfinementError(
+                f"Path {plain_target} cannot target {MEMORY_SUBFOLDER_NAME} in the docs vault "
+                f"when memory_root {self._memory_root} is active."
+            )
+        return rel_vault
 
     def _encode_with_eol_policy(self, content: str, current_bytes: bytes | None) -> bytes:
         eol = (
@@ -1537,20 +1597,25 @@ class FilesystemVaultWriter:
     @contextmanager
     def _advisory_lock(self, key: str) -> Iterator[None]:
         lock_dir = assert_path_chain_without_links(
-            sidecar_dir(self._vault_root) / "locks",
-            anchor=self._vault_root,
+            sidecar_dir(
+                self._vault_root,
+                memory_root=self._memory_root,
+                settings=self._settings,
+            )
+            / "locks",
+            anchor=self._sidecar_root,
             allow_missing=True,
         )
         lock_dir.mkdir(parents=True, exist_ok=True)
         lock_dir = assert_path_chain_without_links(
             lock_dir,
-            anchor=self._vault_root,
+            anchor=self._sidecar_root,
             allow_missing=False,
         )
         lock_name = f"{sha256_bytes(key.encode('utf-8'))}.lock"
         lock_path = assert_path_chain_without_links(
             lock_dir / lock_name,
-            anchor=self._vault_root,
+            anchor=self._sidecar_root,
             allow_missing=True,
         )
         with lock_path.open("a+b") as lock_file:
@@ -1578,12 +1643,23 @@ class FilesystemVaultWriter:
         2^-80 collision risk of every freshly generated ULID.
         """
         authority_consulted = False
-        db_path = sidecar_index_db(self._vault_root)
+        db_path = sidecar_index_db(
+            self._vault_root,
+            memory_root=self._memory_root,
+            settings=self._settings,
+        )
         if db_path.is_file():
             authority_consulted = True
             if self._ulid_exists_in_index(note_id):
                 return True
-        sidecar_path = sidecar_dir(self._vault_root) / ULID_SIDECAR_FILENAME
+        sidecar_path = (
+            sidecar_dir(
+                self._vault_root,
+                memory_root=self._memory_root,
+                settings=self._settings,
+            )
+            / ULID_SIDECAR_FILENAME
+        )
         if sidecar_path.is_file():
             authority_consulted = True
             if self._ulid_exists_in_sidecar(note_id):
@@ -1593,7 +1669,11 @@ class FilesystemVaultWriter:
         return self._ulid_exists_in_frontmatter(note_id)
 
     def _ulid_exists_in_index(self, note_id: str) -> bool:
-        db_path = sidecar_index_db(self._vault_root)
+        db_path = sidecar_index_db(
+            self._vault_root,
+            memory_root=self._memory_root,
+            settings=self._settings,
+        )
         if not db_path.is_file():
             return False
         try:
@@ -1611,7 +1691,14 @@ class FilesystemVaultWriter:
         return row is not None
 
     def _ulid_exists_in_sidecar(self, note_id: str) -> bool:
-        sidecar_path = sidecar_dir(self._vault_root) / ULID_SIDECAR_FILENAME
+        sidecar_path = (
+            sidecar_dir(
+                self._vault_root,
+                memory_root=self._memory_root,
+                settings=self._settings,
+            )
+            / ULID_SIDECAR_FILENAME
+        )
         if not sidecar_path.is_file():
             return False
         try:
@@ -1627,29 +1714,45 @@ class FilesystemVaultWriter:
         return note_id in payload.values()
 
     def _ulid_exists_in_frontmatter(self, note_id: str) -> bool:
-        for current_dir, dirnames, filenames in os.walk(self._vault_root):
-            dirnames[:] = sorted(
-                name for name in dirnames if name != SIDECAR_DIR_NAME and not name.startswith(".")
-            )
-            for filename in filenames:
-                if not filename.lower().endswith(".md"):
-                    continue
-                path = Path(current_dir) / filename
-                try:
-                    raw = path.read_bytes().decode("utf-8", errors="strict")
-                except (OSError, UnicodeDecodeError) as exc:
-                    _LOGGER.warning(
-                        "Skipping unreadable note during fallback ULID scan path=%s error=%s",
-                        path,
-                        exc,
+        roots: list[Path] = [self._vault_root]
+        if self._memory_root is not None:
+            mem_sub = self._memory_root / MEMORY_SUBFOLDER_NAME
+            if mem_sub.is_dir():
+                roots.append(mem_sub)
+        for scan_root in roots:
+            for current_dir, dirnames, filenames in os.walk(scan_root):
+                current_path = Path(current_dir)
+                dirnames[:] = sorted(
+                    name
+                    for name in dirnames
+                    if name != SIDECAR_DIR_NAME
+                    and not name.startswith(".")
+                    and not (
+                        self._memory_root is not None
+                        and scan_root == self._vault_root
+                        and current_path == self._vault_root
+                        and name == MEMORY_SUBFOLDER_NAME
                     )
-                    continue
-                frontmatter_block = _frontmatter_block(raw)
-                if frontmatter_block is None:
-                    continue
-                match = _FRONTMATTER_ID_PATTERN.search(frontmatter_block)
-                if match is not None and match.group(1) == note_id:
-                    return True
+                )
+                for filename in filenames:
+                    if not filename.lower().endswith(".md"):
+                        continue
+                    path = current_path / filename
+                    try:
+                        raw = path.read_bytes().decode("utf-8", errors="strict")
+                    except (OSError, UnicodeDecodeError) as exc:
+                        _LOGGER.warning(
+                            "Skipping unreadable note during fallback ULID scan path=%s error=%s",
+                            path,
+                            exc,
+                        )
+                        continue
+                    frontmatter_block = _frontmatter_block(raw)
+                    if frontmatter_block is None:
+                        continue
+                    match = _FRONTMATTER_ID_PATTERN.search(frontmatter_block)
+                    if match is not None and match.group(1) == note_id:
+                        return True
         return False
 
 

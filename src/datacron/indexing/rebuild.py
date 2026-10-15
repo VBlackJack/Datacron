@@ -284,6 +284,9 @@ def _assert_index_replaceable(db_path: Path) -> None:
 
 
 if sys.platform == "win32":
+    _WIN32_DELETE_ACCESS: Final[int] = 0x00010000
+    _WIN32_GENERIC_READ: Final[int] = 0x80000000
+    _WIN32_OPEN_EXISTING: Final[int] = 3
 
     def _assert_windows_index_replaceable(db_path: Path) -> None:
         """Refuse only when another process is genuinely holding the index open."""
@@ -294,8 +297,8 @@ if sys.platform == "win32":
 
     def _windows_index_is_held(db_path: Path) -> bool:
         """Return whether an exclusive open of the index fails on a sharing violation."""
-        delete_and_read = 0x00010000 | 0x80000000  # DELETE | GENERIC_READ
-        open_existing = 3
+        delete_and_read = _WIN32_DELETE_ACCESS | _WIN32_GENERIC_READ
+        open_existing = _WIN32_OPEN_EXISTING
         invalid_handle = ctypes.c_void_p(-1).value
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)

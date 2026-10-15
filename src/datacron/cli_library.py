@@ -25,19 +25,18 @@ import typer
 from datacron.cli_help import VAULT_ROOT_HELP
 from datacron.core.config import Settings, get_settings
 from datacron.core.frontmatter import FrontmatterError
+from datacron.i18n import t
 from datacron.organization.library import audit_library, read_library
 from datacron.organization.library_models import EditorialRecipe, LibraryOptions
 from datacron.organization.library_workbench import check_library, prepare_library, propose_split
 
 _EXIT_INPUT_ERROR: Final[int] = 2
-_OPTIONS_HELP: Final[str] = (
-    "JSON file with the library options: scope, home, tags, language, areas and limits."
-)
-_OUTPUT_HELP: Final[str] = "New directory, outside the vault, that receives the review bundle."
-_RECIPE_HELP: Final[str] = "Optional JSON editorial recipe of sourced consolidation notes."
-_SOURCE_HELP: Final[str] = "Vault-relative path of the note to split into H2 section notes."
+_OPTIONS_HELP: Final[str] = t("cli.library.options_help")
+_OUTPUT_HELP: Final[str] = t("cli.library.output_help")
+_RECIPE_HELP: Final[str] = t("cli.library.recipe_help")
+_SOURCE_HELP: Final[str] = t("cli.library.source_help")
 
-app = typer.Typer(help="Prepare readable offline navigation and sourced consolidation reviews.")
+app = typer.Typer(help=t("cli.library.app_help"))
 VaultArgument = Annotated[
     Path | None, typer.Option("--vault", exists=True, file_okay=False, help=VAULT_ROOT_HELP)
 ]
@@ -57,7 +56,7 @@ def _options(path: Path) -> LibraryOptions:
 
 def _failure_message(exc: Exception) -> str:
     if isinstance(exc, KeyError):
-        return f"Missing required note field: {exc.args[0]}"
+        return t("cli.library.missing_required_note_field", field=exc.args[0])
     return str(exc)
 
 
@@ -150,7 +149,7 @@ def split(options: OptionsArgument, source: SourceArgument, vault: VaultArgument
         notes = asyncio.run(read_library(vault_root, config))
         note = next((n for n in notes if n.rel_path == source), None)
         if note is None:
-            raise ValueError("Source is not an admitted note in the selected scope")
+            raise ValueError(t("cli.library.source_not_admitted"))
         typer.echo(propose_split(note, config).model_dump_json(indent=2))
     except (OSError, ValueError, FrontmatterError) as exc:
         typer.echo(str(exc), err=True)

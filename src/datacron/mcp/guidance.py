@@ -18,82 +18,14 @@ from __future__ import annotations
 from typing import Any, Final
 
 from datacron.core.memory_protocol import FOLLOW_UP_MAX_RECORDS
+from datacron.i18n import get_section, t
 
+_RAW_ERROR_ACTIONS = get_section("guidance.errors")
 ERROR_ACTIONS: Final[dict[str, str]] = {
-    "duplicate_note_identity": (
-        "Inspect the conflicting note IDs; choose their identities explicitly, then retry indexing."
-    ),
-    "StaleChunkError": (
-        "Read the parent note and refresh the index before requesting a new chunk ID."
-    ),
-    "search_index_stale": (
-        "Retry the same read: it refreshes the changed notes first. On a read-only "
-        "server, run `datacron index` before retrying."
-    ),
-    "search_query_too_large": (
-        "Shorten the query to the few distinctive words that matter; use search_regex "
-        "for an exact passage."
-    ),
-    "WriteConflictError": (
-        "Read the current target and original request receipt; reprepare only uncommitted work."
-    ),
-    "recovery_required": (
-        "Stop writers and inspect recovery. Preserve the operation journal and pending files."
-    ),
-    "manifest_already_committed_state_diverged": (
-        "This manifest is already committed and the vault changed since; nothing is corrupt "
-        "and no recovery is needed. Do not replay it: plan a new manifest from the current "
-        "vault state."
-    ),
-    "context_budget_too_small": (
-        "Retry with required_tokens or read _memory/INIT.md. Reuse a known "
-        "contract hash only when its instructions remain in context."
-    ),
-    "committed_index_incomplete": (
-        "The note is already committed. Repair indexing and reread it; do not "
-        "create a new write request."
-    ),
-    "internal_error": (
-        "Use the correlation_id to locate the local diagnostic. Inspect the "
-        "original receipt before retrying a write."
-    ),
-    "follow_up_offset_invalid": (
-        "Restart at offset 0, or continue with the next_offset and snapshot_hash "
-        "returned by the previous page."
-    ),
-    "follow_up_validation_failed": (
-        "Correct the record as the message states, rereading the target and source notes "
-        "for fresh hashes and an exact excerpt, then prepare again. Nothing was written."
-    ),
-    "follow_up_sensitive_content": (
-        "The field named in the message holds secret-shaped text. Quote an excerpt and "
-        "write a summary, owner and identity basis that leave the secret value out, then "
-        "prepare again. Nothing was written."
-    ),
-    "follow_up_record_count_exceeded": (
-        f"Split the records into several calls of at most {FOLLOW_UP_MAX_RECORDS} each and "
-        "apply each call's plans before preparing the next. Nothing was written."
-    ),
-    "heading_ambiguous": (
-        "Several sections match the selector named in the error. Use get_note format=map to "
-        "inspect the headings, then pass the level for inter-level matches, or the level, "
-        "the occurrence and expected_hash for same-level duplicates."
-    ),
-    "frontmatter_edit_refused": (
-        "Nothing was written. The frontmatter key named in the error cannot be changed "
-        "without rewriting keys the request did not touch. Read the note with get_note, "
-        "edit that key by hand (for example remove its YAML anchor or alias), then retry "
-        "with the new content_hash."
-    ),
-    "section_has_subsections": (
-        "Nothing was written. Patch one of the listed subsections with its level and "
-        "occurrence, or remove it explicitly with delete_note_section first, then patch "
-        "the section again with the new expected_hash."
-    ),
-    "section_structure_changed": (
-        "Nothing was written. Close every code fence, HTML comment or raw HTML block the "
-        "new content opens, or repair the note's existing structure after reading it with "
-        "get_note, then retry with the current expected_hash."
+    **_RAW_ERROR_ACTIONS,
+    "follow_up_record_count_exceeded": t(
+        "guidance.errors.follow_up_record_count_exceeded",
+        max_records=FOLLOW_UP_MAX_RECORDS,
     ),
 }
 
@@ -114,10 +46,7 @@ def health_guidance(payload: dict[str, Any]) -> list[dict[str, str]]:
             {
                 "code": "index_stale",
                 "severity": "warning",
-                "action": (
-                    "After resolving identity and recovery blockers, reconcile or"
-                    " rebuild the index, then verify health."
-                ),
+                "action": t("guidance.health.index_stale"),
             }
         )
     if payload["integrity"].get("id_mismatches"):
@@ -125,10 +54,7 @@ def health_guidance(payload: dict[str, Any]) -> list[dict[str, str]]:
             {
                 "code": "identity_mismatch",
                 "severity": "warning",
-                "action": (
-                    "Run ops inspect-id and review each authority before "
-                    "selecting an explicit repair."
-                ),
+                "action": t("guidance.health.identity_mismatch"),
             }
         )
     if not payload["durability"].get("effective_writes_enabled"):
@@ -136,10 +62,7 @@ def health_guidance(payload: dict[str, Any]) -> list[dict[str, str]]:
             {
                 "code": "writes_disabled",
                 "severity": "information",
-                "action": (
-                    "Check read-only mode, configured write paths and durability "
-                    "policy before enabling writes."
-                ),
+                "action": t("guidance.health.writes_disabled"),
             }
         )
     if payload["status"] != "healthy" and not guidance:
@@ -147,10 +70,7 @@ def health_guidance(payload: dict[str, Any]) -> list[dict[str, str]]:
             {
                 "code": "integrity_review",
                 "severity": "warning",
-                "action": (
-                    "Read full health findings and resolve the reported integrity"
-                    " or scrubber anomalies before maintenance."
-                ),
+                "action": t("guidance.health.integrity_review"),
             }
         )
     return guidance

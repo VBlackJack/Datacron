@@ -21,7 +21,7 @@ import json
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Final
 
 from ulid import ULID
 
@@ -205,13 +205,17 @@ def _archived_note(raw: str, destinations: list[str], captured: str) -> str:
     return serialize_preserving_bom(meta, body, has_bom=bom)
 
 
+_SPLIT_HEADING_LEVEL: Final[int] = 2
+_MIN_SPLIT_SECTIONS: Final[int] = 2
+
+
 def propose_split(source: Note, options: LibraryOptions) -> EditorialRecipe:
     """Draft exact H2 section notes, retaining the original and its incoming anchors."""
     if links_and_tasks(source.content)[1]:
         raise ValueError("Resolve open checkboxes or prepare a sourced editorial recipe manually")
     lines = source.content.splitlines(keepends=True)
-    headings = [h for h in markdown_headings(lines) if h.level == 2]
-    if len(headings) < 2:
+    headings = [h for h in markdown_headings(lines) if h.level == _SPLIT_HEADING_LEVEL]
+    if len(headings) < _MIN_SPLIT_SECTIONS:
         raise ValueError("Automatic split requires at least two H2 sections")
     entries = []
     for index, heading in enumerate(headings):

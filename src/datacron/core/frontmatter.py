@@ -21,6 +21,7 @@ same normalization rules.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import date
@@ -29,10 +30,13 @@ from typing import Any, Final, TypeVar
 
 import frontmatter
 import yaml
+from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 __all__ = [
     "FRONTMATTER_BOUNDARY_PATTERN",
     "FrontmatterError",
+    "assert_finite_yaml_values",
+    "assert_unique_yaml_mapping_keys",
     "build_tiered_alias_index",
     "coerce_string_list",
     "extract_tags",
@@ -45,6 +49,7 @@ __all__ = [
     "resolve_note_title",
     "serialize",
     "serialize_preserving_bom",
+    "strict_frontmatter_block",
 ]
 
 _ItemT = TypeVar("_ItemT")
@@ -422,3 +427,58 @@ def extract_tags(metadata: dict[str, Any], body: str) -> list[str]:
         seen.add(normalized)
         ordered.append(normalized)
     return ordered
+
+
+def assert_unique_yaml_mapping_keys(text: str) -> None:
+    """Reject aliases, non-string keys, and duplicate keys in safe YAML."""
+    root = yaml.compose(text, Loader=yaml.SafeLoader)
+    pending: list[Node] = [] if root is None else [root]
+    visited: set[int] = set()
+    while pending:
+        node = pending.pop()
+        node_identity = id(node)
+        if node_identity in visited:
+            raise yaml.YAMLError("YAML aliases are forbidden")
+        visited.add(node_identity)
+        if isinstance(node, MappingNode):
+            seen: set[tuple[str, str]] = set()
+            for key_node, value_node in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    raise yaml.YAMLError("YAML merge keys are forbidden")
+                if not isinstance(key_node, ScalarNode) or key_node.tag != (
+                    "tag:yaml.org,2002:str"
+                ):
+                    raise yaml.YAMLError("YAML mapping keys must be strings")
+                key = (key_node.tag, key_node.value)
+                if key in seen:
+                    raise yaml.YAMLError(f"found duplicate mapping key {key_node.value!r}")
+                seen.add(key)
+                pending.extend((key_node, value_node))
+        elif isinstance(node, SequenceNode):
+            pending.extend(node.value)
+
+
+def assert_finite_yaml_values(value: object) -> None:
+    """Reject non-finite YAML float values recursively."""
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, float) and not math.isfinite(item):
+            raise ValueError("YAML non-finite floats are forbidden")
+        if isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+
+
+def strict_frontmatter_block(text: str) -> str | None:
+    """Return frontmatter YAML for duplicate-key validation, when present."""
+    parseable = text[1:] if text.startswith(_BOM) else text
+    lines = parseable.lstrip().splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            return "\n".join(lines[1:index])
+    return None

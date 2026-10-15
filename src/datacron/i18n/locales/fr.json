@@ -1,0 +1,88 @@
+{
+  "contradiction": {
+    "provenance": {
+      "contradiction": "CORRECTION",
+      "refinement": "MISE A JOUR",
+      "open_question": "QUESTION OUVERTE",
+      "source_connector": "Voir"
+    }
+  },
+  "library": {
+    "home": "Bibliothèque de connaissances",
+    "folder_title": "Navigation : {subject}",
+    "subjects": "Sujets et dossiers",
+    "active": "Références courantes (validité à vérifier)",
+    "historical": "Historique et références remplacées",
+    "review": "Références à vérifier",
+    "tasks": "Cases ouvertes dans les sources",
+    "people": "Personnes",
+    "procedures": "Procédures et références",
+    "sources": "Sources",
+    "empty": "Aucun élément correspondant dans cet instantané.",
+    "snapshot": "Instantané : {date}. Périmètre : {scope}. Suivre les liens vers les sources pour le détail faisant foi.",
+    "notice": "Cette page est entretenue par Datacron. Modifier les notes sources, puis actualiser cet index.",
+    "offline": "Ouvrir ce dossier comme vault Obsidian. La navigation utilise des liens Markdown ordinaires. Les sites externes nécessitent une connexion ; les pièces jointes locales manquantes figurent dans le rapport de revue.",
+    "template": "Modèle de fiche sujet",
+    "template_body": "# Sujet\n\nDescription courte.\n\n## Situation actuelle\n\nÉtat vérifié, date de vérification et liens vers les sources.\n\n## Actions ouvertes\n\nAction, responsable, échéance connue et source. Conserver une seule action faisant foi.\n\n## Décisions en vigueur\n\nDécision, raison et source.\n\n## Documents utiles\n\nProcédures et références.\n\n## Historique\n\nLiens vers les décisions remplacées et les anciens états.\n",
+    "report": "Revue de la bibliothèque",
+    "evidence": "Contrôles mécaniques uniquement. Les propositions éditoriales demandent une revue source par source ; les empreintes ne prouvent pas la vérité. Les chemins et corps des notes sources sont conservés. La préparation n'a modifié aucun fichier du vault.",
+    "next": "Relire preview et changes.diff ; exécuter library check sur le vault courant. Appliquer uniquement par apply_organization_manifest (validate, puis apply du même bundle/token), autres writers arrêtés et sauvegarde vérifiée. Vérifier les reçus, relire les notes et contrôler les liens entrants après application."
+  },
+  "guidance": {
+    "errors": {
+      "duplicate_note_identity": "Inspecter les identifiants de notes en conflit ; choisir explicitement leurs identités, puis relancer l'indexation.",
+      "StaleChunkError": "Lire la note parente et rafraîchir l'index avant de demander un nouvel identifiant de fragment.",
+      "search_index_stale": "Relancer la même lecture : elle actualise d'abord les notes modifiées. Sur un serveur en lecture seule, exécuter `datacron index` avant de réessayer.",
+      "search_query_too_large": "Raccourcir la requête aux quelques mots distinctifs essentiels ; utiliser search_regex pour un passage exact.",
+      "WriteConflictError": "Lire la cible actuelle et le reçu de la requête d'origine ; ne repréparer que le travail non validé.",
+      "recovery_required": "Arrêter les processus d'écriture et inspecter la récupération. Préserver le journal d'opérations et les fichiers en attente.",
+      "manifest_already_committed_state_diverged": "Ce manifeste est déjà appliqué et le vault a changé depuis ; rien n'est corrompu et aucune récupération n'est requise. Ne pas le rejouer : planifier un nouveau manifeste à partir de l'état actuel du vault.",
+      "context_budget_too_small": "Réessayer avec required_tokens ou lire _memory/INIT.md. Ne réutiliser une empreinte de contrat connue que si ses instructions restent en contexte.",
+      "committed_index_incomplete": "La note est déjà enregistrée. Réparer l'indexation et la relire ; ne pas créer une nouvelle requête d'écriture.",
+      "internal_error": "Utiliser le correlation_id pour localiser le diagnostic local. Inspecter le reçu d'origine avant de retenter une écriture.",
+      "follow_up_offset_invalid": "Redémarrer à l'offset 0, ou continuer avec le next_offset et le snapshot_hash renvoyés par la page précédente.",
+      "follow_up_validation_failed": "Corriger l'enregistrement comme indiqué dans le message, relire les notes cible et source pour obtenir des empreintes à jour et un extrait exact, puis préparer à nouveau. Rien n'a été écrit.",
+      "follow_up_sensitive_content": "Le champ nommé dans le message contient un texte ressemblant à un secret. Citer un extrait et rédiger un résumé, un responsable et une base d'identité sans la valeur secrète, puis préparer à nouveau. Rien n'a été écrit.",
+      "follow_up_record_count_exceeded": "Diviser les enregistrements en plusieurs appels d'au plus {max_records} chacun et appliquer les plans de chaque appel avant de préparer le suivant. Rien n'a été écrit.",
+      "heading_ambiguous": "Plusieurs sections correspondent au sélecteur nommé dans l'erreur. Utiliser get_note format=map pour inspecter les titres, puis passer le niveau pour les correspondances inter-niveaux, ou le niveau, l'occurrence et expected_hash pour les doublons de même niveau.",
+      "frontmatter_edit_refused": "Rien n'a été écrit. La clé de frontmatter nommée dans l'erreur ne peut pas être modifiée sans réécrire des clés non touchées par la requête. Lire la note avec get_note, modifier cette clé manuellement, puis réessayer avec le nouveau content_hash.",
+      "section_has_subsections": "Rien n'a été écrit. Modifier l'une des sous-sections listées avec son niveau et son occurrence, ou la supprimer explicitement avec delete_note_section d'abord, puis modifier à nouveau la section avec le nouvel expected_hash.",
+      "section_structure_changed": "Rien n'a été écrit. Fermer chaque bloc de code, commentaire HTML ou bloc HTML brut ouvert par le nouveau contenu, ou réparer la structure existante de la note après l'avoir lue avec get_note, puis réessayer avec l'expected_hash actuel."
+    },
+    "health": {
+      "index_stale": "Après résolution des blocages d'identité et de récupération, réconcilier ou reconstruire l'index, puis vérifier l'état de santé.",
+      "identity_mismatch": "Exécuter ops inspect-id et examiner chaque autorité avant de sélectionner une réparation explicite.",
+      "writes_disabled": "Vérifier le mode lecture seule, les chemins d'écriture configurés et la politique de durabilité avant d'activer les écritures.",
+      "integrity_review": "Lire les résultats complets d'état de santé et résoudre les anomalies d'intégrité ou du scrubber signalées avant toute maintenance."
+    }
+  },
+  "cli": {
+    "help": {
+      "vault_root": "Racine du vault. Repli : DATACRON_VAULT_ROOT, puis le dossier courant contenant VAULT.yaml sous .datacron."
+    },
+    "library": {
+      "app_help": "Préparer une navigation hors ligne lisible et des revues de consolidation sourcées.",
+      "options_help": "Fichier JSON avec les options de bibliothèque : périmètre, accueil, tags, langue, domaines et limites.",
+      "output_help": "Nouveau répertoire, hors du vault, recevant le bundle de revue.",
+      "recipe_help": "Recette éditoriale JSON optionnelle de notes de consolidation sourcées.",
+      "source_help": "Chemin relatif au vault de la note à découper en notes de sections H2.",
+      "missing_required_note_field": "Champ de note requis manquant : {field}",
+      "source_not_admitted": "La source n'est pas une note admise dans le périmètre sélectionné"
+    }
+  },
+  "eval": {
+    "harness": {
+      "no_questions": "[yellow]Aucune question d'évaluation fournie.[/yellow]",
+      "empty_query_accuracy": "Précision sur requête vide : {accuracy:.2%}",
+      "table_title": "Résumé d'évaluation Datacron ({pipeline}/{transport})",
+      "col_id": "ID",
+      "col_notes": "Notes",
+      "col_mrr": "MRR",
+      "col_ndcg10": "nDCG10",
+      "col_precision": "P",
+      "col_fresh": "Fraîcheur",
+      "col_ms": "ms",
+      "col_tok": "Tok"
+    }
+  }
+}

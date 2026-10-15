@@ -24,6 +24,9 @@ from typing import TYPE_CHECKING, Any, Final
 
 from datacron import __version__
 from datacron.core.hashing import index_generation_hash
+from datacron.core.paths import resolve_vault_rel_target
+from datacron.core.scope import SingleTenantVaultScope
+from datacron.core.vault import FilesystemVaultReader
 from datacron.mcp.bounds import bounded_count
 from datacron.mcp.guidance import health_guidance
 from datacron.mcp.sandbox import sanitize_metadata_value, sanitize_payload_strings
@@ -31,6 +34,8 @@ from datacron.reliability import scan_vault_read_only
 from datacron.scrubber import read_scrubber_health
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from datacron.mcp.server import DatacronApp
     from datacron.mcp.tool_contract import HealthDetail
     from datacron.reliability import ReliabilityScan, ReliabilityViolation
@@ -46,6 +51,67 @@ _VALID_INVARIANT_STATUSES: Final[frozenset[str]] = frozenset(
 )
 
 
+def _can_reuse_scan_rows(app: DatacronApp, scan: ReliabilityScan) -> bool:
+    if scan.admission_policy is None:
+        return False
+    reader = app.vault_reader
+    reader_vars = vars(reader) if hasattr(reader, "__dict__") else {}
+    if "list_notes" in reader_vars or "stat_notes" in reader_vars:
+        return False
+    delegate = reader_vars.get("_delegate", reader)
+    if not isinstance(delegate, FilesystemVaultReader):
+        return False
+    delegate_vars = vars(delegate)
+    if "list_notes" in delegate_vars or "stat_notes" in delegate_vars:
+        return False
+    return delegate.admission_policy == scan.admission_policy
+
+
+async def _live_vault_rows(
+    app: DatacronApp,
+    root: Path,
+    scan: ReliabilityScan,
+) -> tuple[dict[str, str], list[int]]:
+    if _can_reuse_scan_rows(app, scan):
+        if (
+            type(app.scope) is SingleTenantVaultScope
+            and app.scope.admission_policy == scan.admission_policy
+        ):
+            return (
+                dict(scan.admitted_content_hashes),
+                [mtime_ns for _rel_path, mtime_ns in scan.admitted_mtimes_ns],
+            )
+        admitted_paths = {
+            rel_path
+            for rel_path, _hash in scan.admitted_content_hashes
+            if app.scope.admits_walked_note(
+                rel_path,
+                resolve_vault_rel_target(root, rel_path, settings=app.settings),
+            )
+        }
+        return (
+            {
+                rel_path: content_hash
+                for rel_path, content_hash in scan.admitted_content_hashes
+                if rel_path in admitted_paths
+            },
+            [
+                mtime_ns
+                for rel_path, mtime_ns in scan.admitted_mtimes_ns
+                if rel_path in admitted_paths
+            ],
+        )
+
+    notes, stat_rows = await asyncio.gather(
+        app.vault_reader.list_notes(),
+        app.vault_reader.stat_notes(),
+    )
+    return (
+        {note.rel_path: note.content_hash for note in notes},
+        [mtime_ns for _path, mtime_ns in stat_rows.values()],
+    )
+
+
 async def build_health(
     app: DatacronApp,
     *,
@@ -57,20 +123,19 @@ async def build_health(
         raise ValueError(_INVALID_DETAIL_MESSAGE)
     bounded_limit = bounded_count(limit, app.settings.max_result_count) if detail == "full" else 0
     root = app.scope.authorize_path(app.vault_root, "read")
-    scan_task = asyncio.to_thread(scan_vault_read_only, root)
-    notes_task = app.vault_reader.list_notes()
-    stat_task = app.vault_reader.stat_notes()
+    scan_task = asyncio.to_thread(
+        scan_vault_read_only,
+        root,
+        memory_root=app.settings.memory_root,
+    )
     stats_task = app.store.stats()
     indexed_task = app.store.list_indexed_notes()
-    scan, notes, stat_rows, stats, indexed = await asyncio.gather(
+    scan, stats, indexed = await asyncio.gather(
         scan_task,
-        notes_task,
-        stat_task,
         stats_task,
         indexed_task,
     )
-
-    live_rows = {note.rel_path: note.content_hash for note in notes}
+    live_rows, mtimes_ns = await _live_vault_rows(app, root, scan)
     indexed_rows = {rel_path: row[1] for rel_path, row in indexed.items()}
     stale_paths = sorted(
         rel_path
@@ -85,7 +150,7 @@ async def build_health(
     staleness_seconds = _staleness_seconds(
         exact=not stale_paths,
         last_reindex=stats.last_indexed_at,
-        mtimes_ns=[mtime_ns for _path, mtime_ns in stat_rows.values()],
+        mtimes_ns=mtimes_ns,
     )
     evidence = _load_reliability_evidence()
     statuses = evidence["invariants"]
@@ -128,7 +193,7 @@ async def build_health(
                 stats.last_indexed_at.isoformat() if stats.last_indexed_at is not None else None
             ),
             "notes_count": stats.note_count,
-            "vault_notes_count": len(notes),
+            "vault_notes_count": len(live_rows),
             "chunks_count": stats.chunk_count,
             "consistent_with_vault": not stale_paths,
             "stale_entries": len(stale_paths),

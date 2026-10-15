@@ -45,7 +45,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
-from datacron.core.config import VaultConfig, load_vault_config
+from datacron.core.config import MEMORY_SUBFOLDER_NAME, VaultConfig, load_vault_config
 from datacron.core.frontmatter import (
     FrontmatterError,
     build_tiered_alias_index,
@@ -56,7 +56,12 @@ from datacron.core.frontmatter import (
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
-from datacron.core.paths import read_ulid_mappings, sidecar_vault_config
+from datacron.core.paths import (
+    effective_memory_root,
+    read_ulid_mappings,
+    sidecar_dir,
+    sidecar_vault_config,
+)
 from datacron.core.vault import (
     MIGRATED_ULID_SIDECAR_FILENAME,
     SKIPPED_FOLDERS,
@@ -107,6 +112,8 @@ class ReliabilityNote:
     aliases: tuple[str, ...]
     mixed_eol: bool
     content_hash: str
+    mtime_ns: int = 0
+    is_symlink: bool = False
 
     @property
     def frontmatter_id(self) -> str | None:
@@ -160,6 +167,9 @@ class ReliabilityScan:
     mixed_eol_notes: tuple[str, ...]
     content_hashes: tuple[tuple[str, str], ...]
     parse_errors: tuple[str, ...]
+    admitted_content_hashes: tuple[tuple[str, str], ...] = ()
+    admitted_mtimes_ns: tuple[tuple[str, int], ...] = ()
+    admission_policy: NoteAdmissionPolicy | None = None
 
     @property
     def violations(self) -> tuple[ReliabilityViolation, ...]:
@@ -211,20 +221,26 @@ class BaselineComparison:
         return not self.new_violations
 
 
-def scan_vault_read_only(vault_root: Path) -> ReliabilityScan:
+def scan_vault_read_only(
+    vault_root: Path,
+    *,
+    memory_root: Path | None = None,
+) -> ReliabilityScan:
     """Scan all Markdown notes without mutating the vault or its sidecars."""
     root = vault_root.expanduser().resolve()
     if not root.is_dir():
         raise FileNotFoundError(f"vault root does not exist: {root}")
+    resolved_memory_root = effective_memory_root(root, memory_root=memory_root)
 
-    every_note, every_parse_error = _load_notes(root)
-    policy = _admission_policy(root)
+    every_note, every_parse_error = _load_notes(root, memory_root=resolved_memory_root)
+    policy = _admission_policy(root, memory_root=resolved_memory_root)
     notes = [note for note in every_note if _is_admitted(note.rel_path, policy)]
+    non_symlink_notes = [note for note in notes if not note.is_symlink]
     parse_errors = [
         entry for entry in every_parse_error if _is_admitted(entry.split(":", 1)[0], policy)
     ]
-    sidecar_ids = _load_sidecar_ids(root)
-    sqlite_ids = _load_sqlite_ids(root)
+    sidecar_ids = _load_sidecar_ids(root, memory_root=resolved_memory_root)
+    sqlite_ids = _load_sqlite_ids(root, memory_root=resolved_memory_root)
     canonical_ids = {
         note.rel_path: sqlite_ids.get(note.rel_path)
         or sidecar_ids.get(note.rel_path)
@@ -242,6 +258,11 @@ def scan_vault_read_only(vault_root: Path) -> ReliabilityScan:
         mixed_eol_notes=tuple(note.rel_path for note in notes if note.mixed_eol),
         content_hashes=tuple((note.rel_path, note.content_hash) for note in every_note),
         parse_errors=tuple(parse_errors),
+        admitted_content_hashes=tuple(
+            (note.rel_path, note.content_hash) for note in non_symlink_notes
+        ),
+        admitted_mtimes_ns=tuple((note.rel_path, note.mtime_ns) for note in non_symlink_notes),
+        admission_policy=policy,
     )
     _logger().info(
         "reliability scan complete "
@@ -278,7 +299,11 @@ def compare_with_baseline(
     )
 
 
-def _admission_policy(root: Path) -> NoteAdmissionPolicy:
+def _admission_policy(
+    root: Path,
+    *,
+    memory_root: Path | None = None,
+) -> NoteAdmissionPolicy:
     """Return the same admission policy the vault reader builds for ``root``.
 
     The ``or VaultConfig()`` fallback is the whole point and not a formality: with no
@@ -286,7 +311,7 @@ def _admission_policy(root: Path) -> NoteAdmissionPolicy:
     scan that fell back to "exclude nothing" would disagree with the reader on
     exactly the vaults that never configured anything.
     """
-    config = load_vault_config(sidecar_vault_config(root)) or VaultConfig()
+    config = load_vault_config(sidecar_vault_config(root, memory_root=memory_root)) or VaultConfig()
     return NoteAdmissionPolicy(
         excluded_folders=SKIPPED_FOLDERS | frozenset(config.excluded_folders),
         excluded_files=frozenset(config.excluded_files),
@@ -303,12 +328,18 @@ def _is_admitted(rel_path: str, policy: NoteAdmissionPolicy) -> bool:
     return parts[-1].casefold() not in policy.excluded_files
 
 
-def _load_notes(root: Path) -> tuple[list[ReliabilityNote], list[str]]:
+def _load_notes(
+    root: Path,
+    *,
+    memory_root: Path | None = None,
+) -> tuple[list[ReliabilityNote], list[str]]:
     notes: list[ReliabilityNote] = []
     parse_errors: list[str] = []
-    for path in _iter_markdown(root):
-        rel_path = path.relative_to(root).as_posix()
+    for base_root, path in _iter_markdown(root, memory_root=memory_root):
+        rel_path = path.relative_to(base_root).as_posix()
         try:
+            is_symlink = path.is_symlink()
+            stat_result = path.stat()
             raw = path.read_bytes()
             text = raw.decode("utf-8-sig", errors="strict")
         except (OSError, UnicodeDecodeError) as exc:
@@ -328,8 +359,12 @@ def _load_notes(root: Path) -> tuple[list[ReliabilityNote], list[str]]:
                 aliases=tuple(coerce_string_list(metadata.get("aliases"))),
                 mixed_eol=_has_mixed_eol(raw),
                 content_hash=hashlib.sha256(raw).hexdigest(),
+                mtime_ns=stat_result.st_mtime_ns,
+                is_symlink=is_symlink,
             )
         )
+    notes.sort(key=lambda item: item.rel_path)
+    parse_errors.sort()
     return notes, parse_errors
 
 
@@ -341,25 +376,53 @@ def _has_mixed_eol(raw: bytes) -> bool:
     return sum((has_crlf, has_lf, has_cr)) > 1
 
 
-def _iter_markdown(root: Path) -> list[Path]:
-    paths: list[Path] = []
+def _iter_markdown(
+    root: Path,
+    *,
+    memory_root: Path | None = None,
+) -> list[tuple[Path, Path]]:
+    paths: list[tuple[Path, Path]] = []
     for current_raw, dirnames, filenames in os.walk(root):
         current = Path(current_raw)
         dirnames[:] = [
             name
             for name in sorted(dirnames)
-            if name not in _SKIPPED_DIRECTORIES and not name.startswith(".")
+            if name not in _SKIPPED_DIRECTORIES
+            and not name.startswith(".")
+            and not (memory_root is not None and current == root and name == MEMORY_SUBFOLDER_NAME)
         ]
         paths.extend(
-            current / filename for filename in sorted(filenames) if filename.lower().endswith(".md")
+            (root, current / filename)
+            for filename in sorted(filenames)
+            if filename.lower().endswith(".md")
         )
+    if memory_root is not None:
+        mem_sub = memory_root / MEMORY_SUBFOLDER_NAME
+        if mem_sub.is_dir():
+            for current_raw, dirnames, filenames in os.walk(mem_sub):
+                current = Path(current_raw)
+                dirnames[:] = [
+                    name
+                    for name in sorted(dirnames)
+                    if name not in _SKIPPED_DIRECTORIES and not name.startswith(".")
+                ]
+                paths.extend(
+                    (memory_root, current / filename)
+                    for filename in sorted(filenames)
+                    if filename.lower().endswith(".md")
+                )
     return paths
 
 
-def _load_sidecar_ids(root: Path) -> dict[str, str]:
+def _load_sidecar_ids(
+    root: Path,
+    *,
+    memory_root: Path | None = None,
+) -> dict[str, str]:
     merged: dict[str, str] = {}
+    sidecar = sidecar_dir(root, memory_root=memory_root)
     for filename in (MIGRATED_ULID_SIDECAR_FILENAME, ULID_SIDECAR_FILENAME):
-        path = root / ".datacron" / filename
+        path = sidecar / filename
         if not path.is_file():
             continue
         try:
@@ -375,9 +438,14 @@ def _load_sidecar_ids(root: Path) -> dict[str, str]:
     return merged
 
 
-def _load_sqlite_ids(root: Path) -> dict[str, str]:
+def _load_sqlite_ids(
+    root: Path,
+    *,
+    memory_root: Path | None = None,
+) -> dict[str, str]:
     result: dict[str, str] = {}
-    for db_path in sorted((root / ".datacron").glob("**/*.db")):
+    sidecar = sidecar_dir(root, memory_root=memory_root)
+    for db_path in sorted(sidecar.glob("**/*.db")):
         uri = f"{db_path.resolve().as_uri()}?mode=ro"
         try:
             connection = sqlite3.connect(uri, uri=True)

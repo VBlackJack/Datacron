@@ -52,11 +52,15 @@ from datacron.core.config import (
     get_settings,
     load_vault_config,
 )
-from datacron.core.durability import WritePolicy, probe_directory_durability
+from datacron.core.durability import (
+    WritePolicy,
+    atomic_durable_write,
+    probe_directory_durability,
+)
 from datacron.core.error_text import describe_config_error
 from datacron.core.frontmatter import FrontmatterError
 from datacron.core.logger import configure_logging, get_logger
-from datacron.core.models import EvalPipeline, EvalTransport
+from datacron.core.models import EvalPipeline, EvalReport, EvalTransport
 from datacron.core.operation_log import (
     HistoryUnavailableError,
     OperationContext,
@@ -106,6 +110,7 @@ from datacron.setup_wizard import (
     SetupPlan,
     SetupResult,
     _scopes_for,
+    default_write_paths,
     existing_client_settings,
     get_user_write_env,
     run_setup,
@@ -336,10 +341,13 @@ def _resolve_vault_root(
 def _settings_for_cli_vault(settings: Settings, vault_root: Path) -> Settings:
     """Bind an explicit CLI vault without widening configured non-empty scopes."""
     updates: dict[str, object] = {"vault_root": vault_root}
+    roots: list[Path] = [vault_root]
+    if settings.memory_root is not None and settings.memory_root != vault_root:
+        roots.append(settings.memory_root)
     if not settings.read_paths:
-        updates["read_paths"] = [vault_root]
+        updates["read_paths"] = list(roots)
     if not settings.write_paths:
-        updates["write_paths"] = [vault_root]
+        updates["write_paths"] = list(roots)
     return settings.model_copy(update=updates)
 
 
@@ -887,9 +895,7 @@ def _realign_sidecar_entry(vault_root: Path, rel_path: str, note_id: str) -> Non
     payload[rel_path] = note_id
     serialized = json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(serialized, encoding="utf-8")
-    os.replace(temporary, path)
+    atomic_durable_write(path, serialized.encode("utf-8"))
 
 
 async def _realign_index_identity(
@@ -1468,7 +1474,7 @@ def eval_(
         raise typer.Exit(code=exit_code)
 
 
-async def _run_eval(  # noqa: PLR0912 -- command orchestration covers optional output modes
+async def _run_eval(
     vault_root: Path,
     questions_path: Path,
     settings: Settings,
@@ -1486,7 +1492,6 @@ async def _run_eval(  # noqa: PLR0912 -- command orchestration covers optional o
         compare_with_baseline,
         eval_config_hash,
         load_baseline,
-        save_baseline,
     )
     from datacron.eval.harness import LocalEvalHarness, load_eval_questions  # noqa: PLC0415
     from datacron.eval.transport import e2e_search_transport  # noqa: PLC0415
@@ -1540,14 +1545,40 @@ async def _run_eval(  # noqa: PLR0912 -- command orchestration covers optional o
         finally:
             await store.close()
 
-    comparison = None
-    if baseline is not None:
-        comparison = compare_with_baseline(
+    comparison = (
+        compare_with_baseline(
             report,
             baseline,
             tolerance=settings.eval_regression_tolerance,
             config_hash=eval_config_hash(settings, config),
         )
+        if baseline is not None
+        else None
+    )
+    return _finalize_eval_report(
+        report,
+        vault_root=vault_root,
+        settings=settings,
+        config=config,
+        comparison=comparison,
+        save_baseline_requested=save_baseline_requested,
+        json_output=json_output,
+    )
+
+
+def _finalize_eval_report(
+    report: EvalReport,
+    *,
+    vault_root: Path,
+    settings: Settings,
+    config: VaultConfig,
+    comparison: BaselineComparison | None,
+    save_baseline_requested: bool,
+    json_output: bool,
+) -> int:
+    """Validate completed eval results, optionally persist baseline, and print output."""
+    from datacron.eval.baseline import baseline_path, save_baseline  # noqa: PLC0415
+
     if report.failures:
         # Keeping the completed measurements is not the same as passing: a run
         # with a question the search layer could not answer is not a clean
@@ -1617,6 +1648,11 @@ def setup(
         "--vault",
         "-v",
         help="Vault root to set up. Prompted interactively if omitted.",
+    ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help="Dedicated memory vault root (.datacron/ and _memory/ live here).",
     ),
     client: str | None = typer.Option(
         None,
@@ -1702,6 +1738,7 @@ def setup(
     started = _log_invocation("setup", assume_yes=assume_yes)
 
     resolved_vault = _prompt_vault(vault, assume_yes)
+    resolved_memory_vault = _resolve_memory_vault_target(memory_vault)
     if reset and not assume_yes:
         _explain(_SetupPrompt.RESET)
         if not typer.confirm(
@@ -1726,6 +1763,7 @@ def setup(
         resolved_vault,
         assume_yes,
         current_write=None if current is None else current[0],
+        memory_root=resolved_memory_vault,
     )
     resolved_machine_wide_write, replace_existing_write_env = _prompt_machine_wide_write(
         machine_wide_write,
@@ -1755,6 +1793,7 @@ def setup(
 
     plan = SetupPlan(
         vault_path=resolved_vault,
+        memory_vault_path=resolved_memory_vault,
         build_index=build_index,
         enable_write=resolved_enable_write,
         write_paths=resolved_write_paths,
@@ -1772,9 +1811,7 @@ def setup(
 
     try:
         result = asyncio.run(run_setup(plan))
-    except (ResetGuardError, ResetExecutionError) as exc:
-        _error(str(exc))
-    except (ValueError, NotADirectoryError) as exc:
+    except (ResetGuardError, ResetExecutionError, ValueError, NotADirectoryError) as exc:
         _error(str(exc))
     except ClaudeDesktopConfigError as exc:
         # Raised when datacron-mcp cannot be located for the claude-code snippet,
@@ -1821,6 +1858,16 @@ def _guard_vault_target(vault_root: Path) -> Path:
             "Create a dedicated directory and pass it with --vault."
         )
     return vault_root
+
+
+def _resolve_memory_vault_target(memory_vault: Path | None) -> Path | None:
+    """Resolve an explicit or environment-configured memory vault root."""
+    if memory_vault is not None:
+        return _guard_vault_target(memory_vault.expanduser().resolve())
+    settings = get_settings()
+    if settings.memory_root is not None:
+        return _guard_vault_target(settings.memory_root.expanduser().resolve())
+    return None
 
 
 def _prompt_vault(vault: Path | None, assume_yes: bool) -> Path:
@@ -1902,6 +1949,7 @@ def _prompt_write(
     assume_yes: bool,
     *,
     current_write: bool | None = None,
+    memory_root: Path | None = None,
 ) -> tuple[bool | None, list[Path]]:
     """Resolve the write choice: ``None`` keeps what the client config holds.
 
@@ -1916,7 +1964,7 @@ def _prompt_write(
     if enable_write is not None:
         if not enable_write:
             return False, []
-        return True, _prompt_write_paths(vault_root, assume_yes)
+        return True, _prompt_write_paths(vault_root, assume_yes, memory_root=memory_root)
     if assume_yes:
         return None, []
     _explain(_SetupPrompt.WRITE)
@@ -1928,7 +1976,7 @@ def _prompt_write(
     decision = _kept_or_answer(answer, current_write)
     if not decision:
         return decision, []
-    return True, _prompt_write_paths(vault_root, assume_yes)
+    return True, _prompt_write_paths(vault_root, assume_yes, memory_root=memory_root)
 
 
 def _kept_or_answer(answer: bool, current: bool | None) -> bool | None:
@@ -1938,8 +1986,13 @@ def _kept_or_answer(answer: bool, current: bool | None) -> bool | None:
     return answer
 
 
-def _prompt_write_paths(vault_root: Path, assume_yes: bool) -> list[Path]:
-    default_paths = [vault_root / name for name in DEFAULT_WRITE_SUBFOLDERS]
+def _prompt_write_paths(
+    vault_root: Path,
+    assume_yes: bool,
+    *,
+    memory_root: Path | None = None,
+) -> list[Path]:
+    default_paths = default_write_paths(vault_root, memory_root)
     if assume_yes:
         return default_paths
     default_value = os.pathsep.join(str(path) for path in default_paths)
@@ -2054,6 +2107,8 @@ def _render_setup_result(result: SetupResult, *, failed: bool = False) -> None:
     _print("")
     _print("Datacron setup finished with errors." if failed else "Datacron setup complete.")
     _print(f"  vault:      {result.bootstrap.vault_path}")
+    if result.memory_vault_path is not None:
+        _print(f"  memory:     {result.memory_vault_path}")
     if result.reset_result is not None:
         config_status = "removed" if result.reset_result.config_removed else "not present"
         index_status = "removed" if result.reset_result.index_removed else "not present"

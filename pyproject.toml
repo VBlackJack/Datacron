@@ -152,9 +152,7 @@ select = [
     "RUF",   # ruff
 ]
 ignore = [
-    "S101",    # assert allowed in tests
     "PLR0913", # too many args
-    "PLR2004", # magic value comparison (covered case-by-case)
     "TC001",   # Pydantic resolves annotations at runtime
     "TC002",
     "TC003",
@@ -163,7 +161,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "PLR2004", "S603", "S607", "PLR0915", "PLC0415"]
-"src/datacron/cli.py" = ["B008", "PLR0915"]
+"src/datacron/cli.py" = ["B008"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["datacron"]

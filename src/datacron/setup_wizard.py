@@ -41,6 +41,7 @@ import yaml
 from datacron.bootstrap import BootstrapResult, initialize_vault
 from datacron.core.config import (
     INDEX_DIR_NAME,
+    MEMORY_SUBFOLDER_NAME,
     SIDECAR_DIR_NAME,
     VALID_DURABILITY_MODES,
     VAULT_CONFIG_FILENAME,
@@ -51,7 +52,13 @@ from datacron.core.config import (
 )
 from datacron.core.error_text import describe_config_error
 from datacron.core.logger import get_logger
-from datacron.core.paths import sidecar_index_db, sidecar_index_dir, sidecar_vault_config
+from datacron.core.paths import (
+    LINK_REPARSE_TAGS,
+    is_link_stat,
+    sidecar_index_db,
+    sidecar_index_dir,
+    sidecar_vault_config,
+)
 from datacron.core.vault import build_configured_reader
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
@@ -64,6 +71,7 @@ from datacron.installers.claude_desktop import (
     resolve_mcp_invocation,
 )
 from datacron.installers.env_merge import (
+    ENV_MEMORY_ROOT,
     ENV_READ_ONLY,
     ENV_READ_PATHS,
     ENV_VAULT_ROOT,
@@ -99,6 +107,7 @@ __all__ = [
     "SetupResult",
     "claude_code_stdio_config",
     "configure_user_write_env",
+    "default_write_paths",
     "existing_client_settings",
     "get_user_write_env",
     "reset_user_state",
@@ -134,6 +143,7 @@ DEFAULT_WRITE_SUBFOLDERS: Final[tuple[str, ...]] = ("_memory", "_drafts", "_jour
 # Settings derive these from the ``DATACRON_`` prefix; they are named
 # explicitly here because the client config is plain JSON, not a Settings load.
 _ENV_VAULT_ROOT: Final[str] = ENV_VAULT_ROOT
+_ENV_MEMORY_ROOT: Final[str] = ENV_MEMORY_ROOT
 _ENV_READ_PATHS: Final[str] = ENV_READ_PATHS
 _ENV_WRITE_PATHS: Final[str] = ENV_WRITE_PATHS
 _ENV_DURABILITY: Final[str] = "DATACRON_DURABILITY"
@@ -208,6 +218,9 @@ class SetupPlan:
 
     Attributes:
         vault_path: Markdown vault root to initialize and serve.
+        memory_vault_path: Optional dedicated memory vault root. When set,
+            ``.datacron/`` and ``_memory/`` live under this directory while
+            ``vault_path`` remains untouched by Datacron sidecars.
         build_index: Whether to build the FTS5 index during setup.
         enable_write: ``True`` enables the confined write tools, ``False``
             removes an existing write allowlist from the client config, and
@@ -231,6 +244,7 @@ class SetupPlan:
     """
 
     vault_path: Path
+    memory_vault_path: Path | None = None
     build_index: bool = True
     enable_write: bool | None = None
     write_paths: list[Path] = field(default_factory=list)
@@ -263,6 +277,7 @@ class SetupResult:
         read_only: Whether the written client config selects certified
             read-only mode, or whether it was requested when none was written.
         durability: The selected durability mode.
+        memory_vault_path: Resolved dedicated memory vault root, when configured.
         client_installs: Per-client registration outcomes for ``client=all``.
         reset_result: Surgical reset outcome, when reset was requested.
         warnings: Non-fatal messages surfaced to the operator.
@@ -277,6 +292,7 @@ class SetupResult:
     write_paths: list[Path]
     read_only: bool
     durability: str
+    memory_vault_path: Path | None = None
     machine_write_env: MachineWriteEnvResult | None = None
     stdio_config: str | None = None
     client_installs: list[InstallOutcome] = field(default_factory=list)
@@ -315,10 +331,11 @@ def _scopes_for(install_scope: str) -> tuple[str, ...]:
 
 
 def _is_linked_path(path: Path) -> bool:
-    """Return whether ``path`` is a symlink or Windows reparse point.
+    """Return whether ``path`` is a symlink or Windows link reparse point.
 
     Inspection is deliberately fail-closed: only a missing path is considered
-    safe. Any other inspection failure prevents the reset.
+    safe. Any other inspection failure prevents the reset. Cloud placeholders
+    (OneDrive Files-On-Demand) carry their own reparse tag and are not links.
     """
     try:
         path_stat = os.lstat(path)
@@ -333,8 +350,13 @@ def _is_linked_path(path: Path) -> bool:
         attributes = getattr(path_stat, "st_file_attributes", None)
         if attributes is None:
             raise ResetGuardError(f"Cannot read file attributes for '{path}' on Windows.")
-        return bool(attributes & _FILE_ATTRIBUTE_REPARSE_POINT)
-    return False
+        if not bool(attributes & _FILE_ATTRIBUTE_REPARSE_POINT):
+            return False
+        reparse_tag = getattr(path_stat, "st_reparse_tag", None)
+        if reparse_tag is None:
+            return True
+        return reparse_tag in LINK_REPARSE_TAGS
+    return is_link_stat(path_stat)
 
 
 def _guard_reset_paths(
@@ -421,17 +443,25 @@ def reset_user_state(
     return ResetResult(config_removed=config_removed, index_removed=index_removed)
 
 
-async def _build_index(vault_root: Path, settings: Settings) -> int:
+async def _build_index(
+    vault_root: Path,
+    settings: Settings,
+    *,
+    memory_root: Path | None = None,
+) -> int:
     """Reconcile the FTS5 index for ``vault_root`` and return notes indexed.
 
     Mirrors the incremental path of ``datacron index``: unchanged notes are
     skipped, changed ones re-chunked, vanished ones deleted.
     """
-    config = load_vault_config(sidecar_vault_config(vault_root)) or VaultConfig()
-    reader = build_configured_reader(vault_root)
+    config = (
+        load_vault_config(sidecar_vault_config(vault_root, memory_root=memory_root))
+        or VaultConfig()
+    )
+    reader = build_configured_reader(vault_root, memory_root=memory_root)
     chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
     store = SQLiteFTS5Store(term_map=config.query_expansion)
-    await store.open(sidecar_index_db(vault_root))
+    await store.open(sidecar_index_db(vault_root, memory_root=memory_root))
     try:
         stats = await reconcile(store, reader, chunker, mtime_gate=True)
     finally:
@@ -439,9 +469,25 @@ async def _build_index(vault_root: Path, settings: Settings) -> int:
     return int(stats["reindexed_notes"])
 
 
-def _resolve_write_paths(plan: SetupPlan, vault_root: Path) -> list[Path]:
+def default_write_paths(
+    vault_root: Path,
+    memory_root: Path | None = None,
+) -> list[Path]:
+    """Return the three confined default write subfolders for single- or dual-vault setups."""
+    return [
+        (memory_root if memory_root is not None and name == MEMORY_SUBFOLDER_NAME else vault_root)
+        / name
+        for name in DEFAULT_WRITE_SUBFOLDERS
+    ]
+
+
+def _resolve_write_paths(
+    plan: SetupPlan,
+    vault_root: Path,
+    memory_root: Path | None = None,
+) -> list[Path]:
     """Resolve explicit write roots or the three confined defaults."""
-    candidates = plan.write_paths or [vault_root / name for name in DEFAULT_WRITE_SUBFOLDERS]
+    candidates = plan.write_paths or default_write_paths(vault_root, memory_root)
     resolved: list[Path] = []
     seen: set[Path] = set()
     for candidate in candidates:
@@ -574,16 +620,21 @@ def _single_writer_warning(vault_root: Path) -> str | None:
 def _prepare_write_setup(
     plan: SetupPlan,
     vault_root: Path,
+    memory_root: Path | None,
     warnings: list[str],
 ) -> tuple[list[Path], MachineWriteEnvResult | None]:
     """Create opted-in write roots and optionally configure the user environment."""
     if not plan.enable_write:
         return [], None
 
-    write_paths = _resolve_write_paths(plan, vault_root)
+    write_paths = (
+        _resolve_write_paths(plan, vault_root)
+        if memory_root is None
+        else _resolve_write_paths(plan, vault_root, memory_root)
+    )
     for write_path in write_paths:
         write_path.mkdir(parents=True, exist_ok=True)
-    single_writer_warning = _single_writer_warning(vault_root)
+    single_writer_warning = _single_writer_warning(memory_root or vault_root)
     if single_writer_warning is not None:
         warnings.append(single_writer_warning)
     if not plan.machine_wide_write:
@@ -600,6 +651,42 @@ def _prepare_write_setup(
         return write_paths, None
     _LOGGER.info("cli.setup user environment action=%s", machine_write_env.action)
     return write_paths, machine_write_env
+
+
+def _ensure_docs_vault_dir(vault_path: Path) -> Path:
+    """Resolve and create the docs vault directory without initializing a sidecar."""
+    resolved = vault_path.expanduser().resolve()
+    if resolved.exists() and not resolved.is_dir():
+        raise NotADirectoryError(f"{resolved} exists and is not a directory.")
+    resolved.mkdir(parents=True, exist_ok=True)
+    return resolved
+
+
+def _bootstrap_setup_vaults(
+    plan: SetupPlan,
+) -> tuple[Path, Path | None, BootstrapResult, ResetResult | None]:
+    """Initialize single or dual vaults and optional reset state for ``plan``."""
+    reset_result: ResetResult | None = None
+    if plan.memory_vault_path is not None:
+        vault_root = _ensure_docs_vault_dir(plan.vault_path)
+        if plan.reset:
+            reset_result = reset_user_state(plan.memory_vault_path)
+        mem_bootstrap = initialize_vault(plan.memory_vault_path, force=plan.force)
+        memory_root = mem_bootstrap.vault_path
+        (memory_root / MEMORY_SUBFOLDER_NAME).mkdir(parents=True, exist_ok=True)
+        bootstrap = BootstrapResult(
+            vault_path=vault_root,
+            sidecar_path=mem_bootstrap.sidecar_path,
+            config_path=mem_bootstrap.config_path,
+            vault_id=mem_bootstrap.vault_id,
+            created=mem_bootstrap.created,
+        )
+        return vault_root, memory_root, bootstrap, reset_result
+
+    if plan.reset:
+        reset_result = reset_user_state(plan.vault_path)
+    bootstrap = initialize_vault(plan.vault_path, force=plan.force)
+    return bootstrap.vault_path, None, bootstrap, reset_result
 
 
 async def run_setup(plan: SetupPlan) -> SetupResult:
@@ -627,17 +714,22 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
     warnings: list[str] = []
     settings = get_settings()
 
-    _LOGGER.info("cli.setup started (vault=%s, client=%s)", plan.vault_path, plan.client)
-    reset_result: ResetResult | None = None
-    if plan.reset:
-        reset_result = reset_user_state(plan.vault_path)
-    bootstrap = initialize_vault(plan.vault_path, force=plan.force)
-    vault_root = bootstrap.vault_path
-    _require_loadable_vault_config(vault_root)
+    _LOGGER.info(
+        "cli.setup started (vault=%s, memory_vault=%s, client=%s)",
+        plan.vault_path,
+        plan.memory_vault_path,
+        plan.client,
+    )
+    vault_root, memory_root, bootstrap, reset_result = _bootstrap_setup_vaults(plan)
+    _require_loadable_vault_config(vault_root, memory_root=memory_root)
 
-    write_paths, machine_write_env = _prepare_write_setup(plan, vault_root, warnings)
+    write_paths, machine_write_env = _prepare_write_setup(plan, vault_root, memory_root, warnings)
 
-    extra_env = _build_extra_env(plan, write_paths)
+    extra_env = (
+        _build_extra_env(plan, write_paths)
+        if memory_root is None
+        else _build_extra_env(plan, write_paths, memory_root, vault_root)
+    )
     removed_env = _removed_env_keys(plan)
     client_config_path: Path | None = None
     stdio_config: str | None = None
@@ -692,7 +784,11 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
     index_error: str | None = None
     if plan.build_index:
         try:
-            indexed_notes = await _build_index(vault_root, settings)
+            indexed_notes = await (
+                _build_index(vault_root, settings)
+                if memory_root is None
+                else _build_index(vault_root, settings, memory_root=memory_root)
+            )
             _LOGGER.info("cli.setup indexed %d notes for %s", indexed_notes, vault_root)
         except Exception as exc:
             index_error = f"{type(exc).__name__}: {exc}"
@@ -706,6 +802,7 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
         write_paths=effective_write_paths,
         read_only=effective_read_only,
         durability=plan.durability,
+        memory_vault_path=memory_root,
         machine_write_env=machine_write_env,
         stdio_config=stdio_config,
         client_installs=client_installs,
@@ -715,7 +812,11 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
     )
 
 
-def _require_loadable_vault_config(vault_root: Path) -> None:
+def _require_loadable_vault_config(
+    vault_root: Path,
+    *,
+    memory_root: Path | None = None,
+) -> None:
     """Refuse to wire clients to a vault whose ``VAULT.yaml`` does not load.
 
     An existing, malformed config is kept by setup without ``--force``, and the
@@ -723,7 +824,7 @@ def _require_loadable_vault_config(vault_root: Path) -> None:
     exited 0 with "setup complete" on a vault that ``status`` and ``index``
     could not open.
     """
-    config_path = sidecar_vault_config(vault_root)
+    config_path = sidecar_vault_config(vault_root, memory_root=memory_root)
     try:
         load_vault_config(config_path)
     except (ValueError, yaml.YAMLError) as exc:
@@ -899,9 +1000,18 @@ def claude_code_stdio_config(vault_root: Path, extra_env: dict[str, str]) -> str
     return json.dumps(snippet, indent=2, sort_keys=True, ensure_ascii=False)
 
 
-def _build_extra_env(plan: SetupPlan, write_paths: list[Path]) -> dict[str, str]:
+def _build_extra_env(
+    plan: SetupPlan,
+    write_paths: list[Path],
+    memory_root: Path | None = None,
+    vault_root: Path | None = None,
+) -> dict[str, str]:
     """Build the extra client-config environment from the plan's options."""
     env: dict[str, str] = {_ENV_DURABILITY: plan.durability}
+    if memory_root is not None:
+        env[_ENV_MEMORY_ROOT] = str(memory_root)
+        if vault_root is not None and memory_root != vault_root:
+            env[_ENV_READ_PATHS] = _serialize_write_paths([vault_root, memory_root])
     if write_paths:
         env[_ENV_WRITE_PATHS] = _serialize_write_paths(write_paths)
     if plan.read_only:

@@ -219,8 +219,8 @@ def initialize_canaries(
 ) -> dict[str, int]:
     """Explicitly create missing canaries and refuse every overwrite."""
     write_policy.ensure_writable()
-    root = scope.authorize_path(vault_root, "read")
-    targets: list[tuple[Path, bytes]] = []
+    scope.authorize_path(vault_root, "read")
+    targets: list[tuple[str, Path, bytes]] = []
     existing = 0
     for name, content in sorted(settings.scrub_canaries.items()):
         rel_path = (settings.scrub_canary_dir / name).as_posix()
@@ -233,16 +233,16 @@ def initialize_canaries(
                     f"refusing to overwrite altered integrity canary: {rel_path}"
                 )
             existing += 1
-        targets.append((target, data))
+        targets.append((rel_path, target, data))
 
     created = 0
-    for target, data in targets:
+    for rel_path, target, data in targets:
         if target.exists():
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         atomic_durable_write(target, data)
         created += 1
-        _LOGGER.info("Initialized integrity canary %s", target.relative_to(root).as_posix())
+        _LOGGER.info("Initialized integrity canary %s", rel_path)
     return {"created": created, "existing": existing, "total": len(targets)}
 
 
@@ -629,7 +629,9 @@ def _checkpoint_path(
     *,
     access: Literal["read", "write"],
 ) -> Path:
-    return scope.authorize_path(root / settings.scrub_checkpoint_path, access)
+    if settings.scrub_checkpoint_path.is_absolute():
+        return scope.authorize_path(settings.scrub_checkpoint_path, access)
+    return scope.authorize_rel_path(settings.scrub_checkpoint_path.as_posix(), access)
 
 
 def _read_state_path(path: Path) -> ScrubState | None:

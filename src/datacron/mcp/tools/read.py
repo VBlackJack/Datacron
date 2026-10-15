@@ -21,7 +21,7 @@ import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Final
 
-from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
+from datacron.core.config import CANONICAL_ULID_PATTERN, TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.frontmatter import matches_frontmatter_filter, normalize_tag_filter
 from datacron.core.hashing import FRESHNESS_CONTRACT_ID
 from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
 _VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map", "chunk"})
-_ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+_ULID_PATTERN: Final[re.Pattern[str]] = CANONICAL_ULID_PATTERN
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
 _CHUNK_ID_SEPARATOR: Final[str] = "::"
 # Every admitted path is needed before the page can be cut, because

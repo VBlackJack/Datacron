@@ -42,11 +42,17 @@ from datacron.core.memory_protocol import (
     SESSION_NOTE_CHARS,
 )
 from datacron.core.query_expansion import default_query_expansion, normalize_term_map
+from datacron.i18n import t
 
+ULID_LENGTH: Final[int] = 26
+CANONICAL_ULID_REGEX: Final[str] = rf"^[0-9A-HJKMNP-TV-Z]{{{ULID_LENGTH}}}$"
+CANONICAL_ULID_PATTERN: Final[re.Pattern[str]] = re.compile(CANONICAL_ULID_REGEX)
+LEGACY_NOTE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9A-Z]{{{ULID_LENGTH}}}$")
 DEFAULT_LOG_LEVEL: Final[str] = "INFO"
 DEFAULT_LOG_DIR: Final[Path] = Path.home() / ".datacron" / "logs"
 DEFAULT_MAX_RESULT_TOKENS: Final[int] = 8000
 DEFAULT_MAX_RESULT_COUNT: Final[int] = 20
+DEFAULT_HISTORY_LIMIT: Final[int] = 100
 DEFAULT_REPAIR_MIN_INTERVAL_SECONDS: Final[float] = 30.0
 DEFAULT_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS: Final[float] = 30.0
 DEFAULT_EVAL_REGRESSION_TOLERANCE: Final[float] = 0.02
@@ -64,11 +70,13 @@ DEFAULT_CONTRADICTION_MAX_CANDIDATES: Final[int] = 20
 DEFAULT_CONTRADICTION_MAX_PER_NOTE_PAIR: Final[int] = 2
 DEFAULT_CONTRADICTION_SUMMARY_EVIDENCE_CHARS: Final[int] = 160
 DEFAULT_CONTRADICTION_PROVENANCE_LABELS: Final[dict[str, str]] = {
-    "contradiction": "CORRECTION",
-    "refinement": "MISE A JOUR",
-    "open_question": "QUESTION OUVERTE",
+    "contradiction": t("contradiction.provenance.contradiction", locale="fr"),
+    "refinement": t("contradiction.provenance.refinement", locale="fr"),
+    "open_question": t("contradiction.provenance.open_question", locale="fr"),
 }
-DEFAULT_CONTRADICTION_SOURCE_CONNECTOR: Final[str] = "Voir"
+DEFAULT_CONTRADICTION_SOURCE_CONNECTOR: Final[str] = t(
+    "contradiction.provenance.source_connector", locale="fr"
+)
 TOKEN_ESTIMATE_CHARS_PER_TOKEN: Final[int] = 4
 TEMPORAL_OVERFETCH_FACTOR: Final[int] = 3
 # group_by_note widens its window by this factor until it holds enough distinct notes,
@@ -153,6 +161,7 @@ DEFAULT_EXCLUDED_FOLDERS: Final[tuple[str, ...]] = (
 DEFAULT_EXCLUDED_FILES: Final[tuple[str, ...]] = ()
 
 SIDECAR_DIR_NAME: Final[str] = ".datacron"
+MEMORY_SUBFOLDER_NAME: Final[str] = "_memory"
 INDEX_DIR_NAME: Final[str] = "index"
 INDEX_DB_FILENAME: Final[str] = "datacron.db"
 HISTORY_DIR_NAME: Final[str] = "history"
@@ -761,6 +770,57 @@ def load_vault_config(path: Path) -> VaultConfig | None:
     return VaultConfig.model_validate(data)
 
 
+_BRACE_QUANTIFIER_RE: Final[re.Pattern[str]] = re.compile(r"^\{\d+(?:,\d*)?\}")
+_BACKREF_QUANTIFIER_RE: Final[re.Pattern[str]] = re.compile(r"\\[1-9]\d*(?:[+*]|\{\d)")
+
+
+def has_catastrophic_regex_shape(pattern: str) -> bool:
+    """Return True if ``pattern`` has nested repetition or quantified alternation."""
+    if _BACKREF_QUANTIFIER_RE.search(pattern):
+        return True
+    stack: list[bool] = []
+    in_char_class = False
+    index = 0
+    length = len(pattern)
+    while index < length:
+        char = pattern[index]
+        if char == "\\":
+            index += 2
+            continue
+        if in_char_class:
+            if char == "]":
+                in_char_class = False
+            index += 1
+            continue
+        if char == "[":
+            in_char_class = True
+            index += 1
+            continue
+        if char == "(":
+            stack.append(False)
+            index += 1
+            continue
+        if char == ")":
+            has_inner = stack.pop() if stack else False
+            next_slice = pattern[index + 1 :]
+            is_quantified = next_slice.startswith(("+", "*")) or bool(
+                _BRACE_QUANTIFIER_RE.match(next_slice)
+            )
+            if has_inner and is_quantified:
+                return True
+            if (has_inner or is_quantified) and stack:
+                stack[-1] = True
+            index += 1
+            continue
+        if stack and (
+            char in {"+", "*", "|"}
+            or (char == "{" and bool(_BRACE_QUANTIFIER_RE.match(pattern[index:])))
+        ):
+            stack[-1] = True
+        index += 1
+    return False
+
+
 def _split_path_list(value: str | list[str | Path] | None) -> list[Path]:
     """Parse the OS-dependent path separator into a list of resolved Paths.
 
@@ -802,6 +862,7 @@ class Settings(BaseSettings):
     read_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
     write_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
     vault_root: Path | None = Field(default=None)
+    memory_root: Path | None = Field(default=None)
     max_result_tokens: int = Field(default=DEFAULT_MAX_RESULT_TOKENS, ge=1)
     session_context_paths: list[str] = Field(
         default_factory=lambda: list(SESSION_DEFAULT_PATHS),
@@ -951,7 +1012,7 @@ class Settings(BaseSettings):
             return _split_path_list(value)
         raise TypeError(f"Unsupported type for write_paths: {type(value).__name__}")
 
-    @field_validator("vault_root", mode="before")
+    @field_validator("vault_root", "memory_root", mode="before")
     @classmethod
     def _expand_vault_root(cls, value: object) -> Path | None:
         if value is None or value == "":
@@ -985,6 +1046,12 @@ class Settings(BaseSettings):
             raise TypeError("secret_redaction_patterns must be a list of regex strings")
         patterns = [item for item in value if item]
         for pattern in patterns:
+            if len(pattern) > DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH:
+                raise ValueError(f"secret redaction regex exceeds max length: {pattern!r}")
+            if has_catastrophic_regex_shape(pattern):
+                raise ValueError(
+                    f"secret redaction regex rejected as potentially catastrophic: {pattern!r}"
+                )
             try:
                 re.compile(pattern)
             except re.error as exc:

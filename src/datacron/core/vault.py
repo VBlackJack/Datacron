@@ -34,12 +34,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Final, final
 
 from datacron.core.config import (
+    MEMORY_SUBFOLDER_NAME,
     SIDECAR_DIR_NAME,
-    VAULT_CONFIG_FILENAME,
     VaultConfig,
     load_vault_config,
 )
-from datacron.core.durability import read_bytes_with_windows_retry
+from datacron.core.durability import atomic_durable_write, read_bytes_with_windows_retry
 from datacron.core.frontmatter import (
     FrontmatterError,
     build_tiered_alias_index,
@@ -51,7 +51,13 @@ from datacron.core.frontmatter import (
 from datacron.core.hashing import NOTE_ID_LENGTH, derive_note_id, sha256_bytes
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
-from datacron.core.paths import read_ulid_mappings
+from datacron.core.paths import (
+    effective_memory_root,
+    is_memory_rel_path,
+    read_ulid_mappings,
+    sidecar_dir,
+    sidecar_vault_config,
+)
 
 __all__ = [
     "H1_PATTERN",
@@ -114,12 +120,14 @@ def build_configured_reader(
     id_store: JsonIdStore | None = None,
     read_only: bool = False,
     admission_policy: NoteAdmissionPolicy | None = None,
+    memory_root: Path | None = None,
 ) -> FilesystemVaultReader:
     """Build a reader honoring vault exclusions from ``.datacron/VAULT.yaml``."""
     resolved_root = vault_root.expanduser().resolve()
+    resolved_memory = effective_memory_root(resolved_root, memory_root=memory_root)
     effective_policy = admission_policy
     if effective_policy is None:
-        config_path = resolved_root / SIDECAR_DIR_NAME / VAULT_CONFIG_FILENAME
+        config_path = sidecar_vault_config(resolved_root, memory_root=resolved_memory)
         config = load_vault_config(config_path) or VaultConfig()
         effective_policy = NoteAdmissionPolicy(
             excluded_folders=SKIPPED_FOLDERS | frozenset(config.excluded_folders),
@@ -130,6 +138,7 @@ def build_configured_reader(
         id_store=id_store,
         read_only=read_only,
         admission_policy=effective_policy,
+        memory_root=resolved_memory,
     )
 
 
@@ -243,10 +252,8 @@ class JsonIdStore:
 
     def _write_sync(self, data: dict[str, str]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        serialized = json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False)
-        tmp_path = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp_path.write_text(serialized + "\n", encoding="utf-8")
-        os.replace(tmp_path, self._path)
+        serialized = json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+        atomic_durable_write(self._path, serialized.encode("utf-8"))
 
     async def _ensure_loaded(self) -> dict[str, str]:
         if self._cache is None:
@@ -368,9 +375,13 @@ class FilesystemVaultReader:
         excluded_folders: frozenset[str] | None = None,
         excluded_files: frozenset[str] | None = None,
         admission_policy: NoteAdmissionPolicy | None = None,
+        memory_root: Path | None = None,
     ) -> None:
         self._vault_root = vault_root.expanduser().resolve()
-        sidecar = self._vault_root / SIDECAR_DIR_NAME / ULID_SIDECAR_FILENAME
+        self._memory_root = effective_memory_root(self._vault_root, memory_root=memory_root)
+        sidecar = (
+            sidecar_dir(self._vault_root, memory_root=self._memory_root) / ULID_SIDECAR_FILENAME
+        )
         self._read_only = read_only
         self._id_store = id_store or JsonIdStore(sidecar, read_only=read_only)
         if admission_policy is not None and (
@@ -396,6 +407,10 @@ class FilesystemVaultReader:
         return self._vault_root
 
     @property
+    def memory_root(self) -> Path | None:
+        return self._memory_root
+
+    @property
     def id_store(self) -> JsonIdStore:
         return self._id_store
 
@@ -403,6 +418,26 @@ class FilesystemVaultReader:
     def admission_policy(self) -> NoteAdmissionPolicy:
         """Return the immutable note policy used by filesystem discovery."""
         return self._admission_policy
+
+    def _rel_path_for_resolved(self, resolved: Path) -> str:
+        if self._memory_root is not None:
+            if resolved.is_relative_to(self._memory_root):
+                rel = resolved.relative_to(self._memory_root)
+                if rel.parts and rel.parts[0].casefold() == MEMORY_SUBFOLDER_NAME.casefold():
+                    return str(PurePosixPath(*rel.parts))
+                raise ValueError(
+                    f"Path {resolved} is outside the _memory namespace in {self._memory_root}."
+                )
+            if resolved.is_relative_to(self._vault_root):
+                rel = resolved.relative_to(self._vault_root)
+                if rel.parts and rel.parts[0].casefold() == MEMORY_SUBFOLDER_NAME.casefold():
+                    raise ValueError(
+                        f"Path {resolved} in docs vault is masked by memory vault "
+                        f"{self._memory_root}."
+                    )
+                return str(PurePosixPath(*rel.parts))
+            raise ValueError(f"Path {resolved} is outside the vault root {self._vault_root}.")
+        return _walked_rel_path(resolved, self._vault_root)
 
     # ------------------------------------------------------------------ read
 
@@ -438,9 +473,7 @@ class FilesystemVaultReader:
             metadata = {}
             body = raw_text
 
-        # ``resolved`` is a realpath under the resolved root, so its relative spelling
-        # is arithmetic; resolving both sides again cost two realpaths per read.
-        rel_path = _walked_rel_path(resolved, self._vault_root)
+        rel_path = self._rel_path_for_resolved(resolved)
         note_id = await self._resolve_id(metadata, rel_path)
         title = resolve_note_title(
             metadata,
@@ -497,7 +530,7 @@ class FilesystemVaultReader:
 
     def _walk_markdown_paths(self) -> dict[str, Path]:
         return {
-            _walked_rel_path(path, self._vault_root): path
+            self._rel_path_for_resolved(path): path
             for path in self._collect_markdown_paths(self._vault_root)
         }
 
@@ -513,7 +546,7 @@ class FilesystemVaultReader:
     def _stat_markdown_paths(self) -> dict[str, tuple[Path, int]]:
         result: dict[str, tuple[Path, int]] = {}
         for path in self._collect_markdown_paths(self._vault_root):
-            rel_path = _walked_rel_path(path, self._vault_root)
+            rel_path = self._rel_path_for_resolved(path)
             result[rel_path] = (path, path.stat().st_mtime_ns)
         return result
 
@@ -543,6 +576,18 @@ class FilesystemVaultReader:
 
     def _is_inside_vault(self, path: Path) -> bool:
         try:
+            if self._memory_root is not None:
+                if path.is_relative_to(self._memory_root):
+                    rel = path.relative_to(self._memory_root)
+                    return not rel.parts or (
+                        rel.parts[0].casefold() == MEMORY_SUBFOLDER_NAME.casefold()
+                    )
+                if path.is_relative_to(self._vault_root):
+                    rel = path.relative_to(self._vault_root)
+                    return not rel.parts or (
+                        rel.parts[0].casefold() != MEMORY_SUBFOLDER_NAME.casefold()
+                    )
+                return False
             path.relative_to(self._vault_root)
         except ValueError:
             return False
@@ -551,7 +596,12 @@ class FilesystemVaultReader:
     def _scope_root(self, folder: str | None) -> Path:
         if folder is None:
             return self._vault_root
-        target = (self._vault_root / folder).resolve()
+        base_root = (
+            self._memory_root
+            if self._memory_root is not None and is_memory_rel_path(folder)
+            else self._vault_root
+        )
+        target = (base_root / folder).resolve()
         if not self._is_inside_vault(target):
             raise ValueError(f"Folder {folder!r} escapes vault root {self._vault_root}.")
         return target
@@ -569,6 +619,10 @@ class FilesystemVaultReader:
         """
         results: list[Path] = []
         self._collect_markdown_paths_into(root, results)
+        if self._memory_root is not None and root == self._vault_root:
+            memory_subtree = self._memory_root / MEMORY_SUBFOLDER_NAME
+            if memory_subtree.is_dir() and not memory_subtree.is_symlink():
+                self._collect_markdown_paths_into(memory_subtree, results)
         return results
 
     def _collect_markdown_paths_into(self, directory: Path, results: list[Path]) -> None:
@@ -586,6 +640,12 @@ class FilesystemVaultReader:
             except OSError:
                 continue
             if is_directory:
+                if (
+                    self._memory_root is not None
+                    and directory == self._vault_root
+                    and entry.name.casefold() == MEMORY_SUBFOLDER_NAME.casefold()
+                ):
+                    continue
                 if not self._should_skip_dir(entry.name):
                     subdirectories.append(Path(entry.path))
                 continue
@@ -638,7 +698,7 @@ class FilesystemVaultReader:
                 exc,
             )
             metadata, body = {}, raw_text
-        rel_path = _walked_rel_path(path, self._vault_root)
+        rel_path = self._rel_path_for_resolved(path)
         return _AliasRecord(
             note_id=await self._resolve_id(metadata, rel_path),
             title=resolve_note_title(
@@ -674,7 +734,7 @@ class FilesystemVaultReader:
         reused = self._alias_records
         records: dict[str, _AliasRecord] = {}
         for path, fingerprint in fingerprints.items():
-            rel_path = _walked_rel_path(path, self._vault_root)
+            rel_path = self._rel_path_for_resolved(path)
             known = reused.get(rel_path)
             if known is not None and known.fingerprint == fingerprint:
                 records[rel_path] = known

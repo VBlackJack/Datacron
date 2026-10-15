@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import os
-import stat
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path, PurePosixPath
@@ -33,8 +32,8 @@ from typing import (
 )
 
 from datacron.core.config import (
+    MEMORY_SUBFOLDER_NAME,
     SIDECAR_DIR_NAME,
-    VAULT_CONFIG_FILENAME,
     Settings,
     VaultConfig,
     load_vault_config,
@@ -43,10 +42,18 @@ from datacron.core.durability import RecoveryRequiredError, WritePolicy
 from datacron.core.models import Note
 from datacron.core.operation_log import OperationContext, OperationRecord
 from datacron.core.paths import (
+    FILE_ATTRIBUTE_REPARSE_POINT,
+    IO_REPARSE_TAG_MOUNT_POINT,
+    IO_REPARSE_TAG_SYMLINK,
+    LINK_REPARSE_TAGS,
     PathConfinementError,
     assert_vault_rel_path,
     assert_within_paths,
     assert_within_resolved_roots,
+    effective_memory_root,
+    is_link_stat,
+    is_memory_rel_path,
+    sidecar_vault_config,
 )
 from datacron.core.protocols import VaultReader, VaultWriter
 from datacron.core.recovery import (
@@ -65,6 +72,8 @@ if TYPE_CHECKING:
     from datacron.organization.manifest import ValidatedOrganizationBundle
 
 __all__ = [
+    "IO_REPARSE_TAG_MOUNT_POINT",
+    "IO_REPARSE_TAG_SYMLINK",
     "AccessMode",
     "ConjunctiveVaultScope",
     "LinkedPathError",
@@ -83,7 +92,8 @@ __all__ = [
 AccessMode = Literal["read", "write"]
 NoteMutation = Callable[[str], str]
 NotePathLookup = Callable[[str], Awaitable[str | None]]
-_FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = 0x0400
+_FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = FILE_ATTRIBUTE_REPARSE_POINT
+_LINK_REPARSE_TAGS: Final[frozenset[int]] = LINK_REPARSE_TAGS
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -154,34 +164,12 @@ def assert_path_chain_without_links(
             if allow_missing:
                 break
             raise
-        attributes = getattr(component_stat, "st_file_attributes", 0)
-        if stat.S_ISLNK(component_stat.st_mode) or bool(attributes & _FILE_ATTRIBUTE_REPARSE_POINT):
+        if _is_link(component_stat):
             raise LinkedPathError(f"Linked path component is forbidden: {component}")
     return absolute
 
 
-# The documented Win32 tag values. The stat module defines them on every platform,
-# but its type stubs only on Windows, and the check below runs everywhere.
-IO_REPARSE_TAG_SYMLINK: Final[int] = 0xA000000C
-IO_REPARSE_TAG_MOUNT_POINT: Final[int] = 0xA0000003
-_LINK_REPARSE_TAGS: Final[frozenset[int]] = frozenset(
-    {IO_REPARSE_TAG_SYMLINK, IO_REPARSE_TAG_MOUNT_POINT}
-)
-
-
-def _is_link(component_stat: os.stat_result) -> bool:
-    """Return whether one ``lstat`` result is a symlink, a junction or a mount point.
-
-    Only those redirect a path elsewhere. Any reparse point is not: OneDrive
-    Files-On-Demand marks every cloud placeholder with the reparse attribute and a
-    cloud tag, so refusing the attribute alone refused every write to such a vault.
-    """
-    if stat.S_ISLNK(component_stat.st_mode):
-        return True
-    attributes = getattr(component_stat, "st_file_attributes", 0)
-    if not attributes & _FILE_ATTRIBUTE_REPARSE_POINT:
-        return False
-    return getattr(component_stat, "st_reparse_tag", 0) in _LINK_REPARSE_TAGS
+_is_link = is_link_stat
 
 
 def _first_link_below(root: Path, parts: tuple[str, ...]) -> Path | None:
@@ -304,25 +292,70 @@ class SingleTenantVaultScope:
     ) -> None:
         self._vault_root = vault_root.expanduser().resolve()
         self._settings = settings
+        self._memory_root = effective_memory_root(self._vault_root, settings=settings)
         if admission_policy is None:
-            config_path = self._vault_root / SIDECAR_DIR_NAME / VAULT_CONFIG_FILENAME
+            config_path = sidecar_vault_config(
+                self._vault_root,
+                memory_root=self._memory_root,
+                settings=settings,
+            )
             config = load_vault_config(config_path) or VaultConfig()
             admission_policy = NoteAdmissionPolicy(
                 excluded_folders=SKIPPED_FOLDERS | frozenset(config.excluded_folders),
                 excluded_files=frozenset(config.excluded_files),
             )
         self._admission_policy = admission_policy
-        self._resolved_roots: tuple[Path, ...] = (self._vault_root,)
+        self._resolved_roots: tuple[Path, ...] = (
+            (self._vault_root,)
+            if self._memory_root is None
+            else (self._vault_root, self._memory_root)
+        )
 
     @property
     def admission_policy(self) -> NoteAdmissionPolicy:
         """Return the immutable note policy enforced by this scope."""
         return self._admission_policy
 
+    def _root_for_rel_path(self, rel_path: str) -> Path:
+        if self._memory_root is not None and (
+            is_memory_rel_path(rel_path)
+            or rel_path.strip().replace("\\", "/").lstrip("/").split("/", 1)[0].casefold()
+            == SIDECAR_DIR_NAME.casefold()
+        ):
+            return self._memory_root
+        return self._vault_root
+
+    def _canonical_rel_path_for_resolved(self, resolved: Path) -> Path:
+        if self._memory_root is not None:
+            if resolved.is_relative_to(self._memory_root):
+                rel = resolved.relative_to(self._memory_root)
+                if not rel.parts or rel.parts[0].casefold() in {
+                    MEMORY_SUBFOLDER_NAME.casefold(),
+                    SIDECAR_DIR_NAME.casefold(),
+                }:
+                    return rel
+                raise PathConfinementError(
+                    f"Path {resolved} is outside the _memory namespace in {self._memory_root}."
+                )
+            if resolved.is_relative_to(self._vault_root):
+                rel = resolved.relative_to(self._vault_root)
+                if rel.parts and rel.parts[0].casefold() in {
+                    MEMORY_SUBFOLDER_NAME.casefold(),
+                    SIDECAR_DIR_NAME.casefold(),
+                }:
+                    raise PathConfinementError(
+                        f"Path {resolved} in docs vault is masked by memory vault "
+                        f"{self._memory_root}."
+                    )
+                return rel
+        return resolved.relative_to(self._vault_root)
+
     def authorize_path(self, path: Path, access: AccessMode) -> Path:
         # The vault root was resolved when this scope was built, so re-resolving it
         # on every call bought nothing and cost a realpath per authorized path.
         resolved = assert_within_resolved_roots(path, self._resolved_roots, kind=access)
+        if self._memory_root is not None:
+            self._canonical_rel_path_for_resolved(resolved)
         if access == "write":
             return assert_within_paths(resolved, self._settings.write_paths, kind="write")
         return resolved
@@ -338,8 +371,9 @@ class SingleTenantVaultScope:
         spelling travels on.
         """
         assert_vault_rel_path(rel_path)
+        target_root = self._root_for_rel_path(rel_path)
         try:
-            return self.authorize_path(self._vault_root / rel_path, access)
+            return self.authorize_path(target_root / rel_path, access)
         except PathConfinementError as exc:
             _LOGGER.debug("Refused %s access to %r: %s", access, rel_path, exc)
             raise type(exc)(f"Path {rel_path!r} is outside the allowed {access} scope.") from exc
@@ -405,7 +439,8 @@ class SingleTenantVaultScope:
         assert_vault_rel_path(rel_path)
         lexical_parts = PurePosixPath(rel_path.replace("\\", "/")).parts
         self._assert_admitted_parts(lexical_parts, rel_path=rel_path)
-        linked = _first_link_below(self._vault_root, lexical_parts)
+        target_root = self._root_for_rel_path(rel_path)
+        linked = _first_link_below(target_root, lexical_parts)
         if linked is not None:
             _LOGGER.debug("Refused a write through the link %s for %r", linked, rel_path)
             raise PathConfinementError(
@@ -418,7 +453,7 @@ class SingleTenantVaultScope:
         lexical_parts = PurePosixPath(rel_path.replace("\\", "/")).parts
         self._assert_admitted_parts(lexical_parts, rel_path=rel_path)
         resolved = self.authorize_rel_path(rel_path, access)
-        canonical_rel_path = resolved.relative_to(self._vault_root)
+        canonical_rel_path = self._canonical_rel_path_for_resolved(resolved)
         self._assert_admitted_parts(canonical_rel_path.parts, rel_path=rel_path)
         return resolved
 
@@ -462,11 +497,10 @@ class SingleTenantVaultScope:
         """
         try:
             resolved = self.authorize_path(path, "read")
+            canonical_rel = self._canonical_rel_path_for_resolved(resolved)
         except PathConfinementError:
             return False
-        # authorize_path proved the resolved path is under this scope's only root,
-        # which is the vault root, so the relative spelling always exists.
-        canonical = str(PurePosixPath(*resolved.relative_to(self._vault_root).parts))
+        canonical = str(PurePosixPath(*canonical_rel.parts))
         if canonical != rel_path:
             return self._admits_resolved_pair(rel_path, resolved)
         try:

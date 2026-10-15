@@ -9,6 +9,43 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- Dual-Vault support (`DATACRON_MEMORY_ROOT` / `datacron setup --memory-vault PATH`): store the
+  `.datacron/` sidecar (`VAULT.yaml`, FTS5 index, operation log, history snapshots, integrity
+  scrubber state) and the `_memory/` subtree in a dedicated memory vault while keeping the user
+  documentation vault (`DATACRON_VAULT_ROOT`) free of `.datacron/` and `_memory/`. Residual
+  `_memory/` or `.datacron/` directories in the documentation vault are masked automatically,
+  while explicit documentation subfolders can still be allowlisted in `DATACRON_WRITE_PATHS`.
+- Lightweight zero-dependency localization helper (`datacron.i18n`) with English (`en.json`) and
+  French (`fr.json`) catalogs for library workbench, CLI help, evaluation reports, configuration
+  validation, and MCP guidance strings.
+
+### Changed
+
+- Re-enabled Ruff rules `PLR2004` (magic value comparison), `PLR0915` (too many statements), and
+  `S101` (assert usage) across `src/` and `scripts/`, extracting named constants and centralizing
+  shared validation helpers (`WINDOWS_RESERVED_NAMES`, `CANONICAL_ULID_PATTERN`,
+  `assert_unique_yaml_mapping_keys`, `assert_finite_yaml_values`, `is_link_stat`).
+- Added an indexed `chunk_lookup` SQLite table alongside `chunks_fts` so chunk deletions,
+  per-note chunk queries, and wikilink scans use B-tree lookups instead of full FTS5 table scans.
+- Cached indexed contradiction candidate discovery across calls for the same index generation and
+  reused `ReliabilityScan` content hashes and mtimes in `get_health` to avoid duplicate full-vault
+  reads.
+
+### Fixed
+
+- Unified Windows reparse-point checks via `is_link_stat` so OneDrive Files On-Demand cloud
+  placeholders are not rejected as symlinks while genuine symlinks and junctions remain blocked.
+- Enforced an explicit `asyncio.timeout` and guaranteed subprocess cleanup around `ripgrep`
+  invocations, and extended ReDoS heuristics (`has_catastrophic_regex_shape`) to reject nested
+  quantified groups and backreferences in both fallback and `ripgrep` regex paths.
+- Enabled SQLite `busy_timeout` and an `asyncio.Lock` around write transactions in `FTS5Store`,
+  switched `ulids.json` persistence to `atomic_durable_write`, cached operation log reads outside
+  the recovery loop, applied `redact_value` to persisted operation parameters, re-verified target
+  directory chains under the vault write lock after `mkdir`, and checked `.datacron-backup` paths
+  for symlinks before writing installer backups.
+
 ## [2026.1001.00] - 2026-10-01
 
 This release makes each subject's state note the place a session meets first. A vault measured

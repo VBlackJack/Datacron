@@ -43,7 +43,12 @@ from typing import (
 )
 
 from datacron.core.case_folding import case_folding_for, fold_path_key
-from datacron.core.config import SIDECAR_DIR_NAME, VaultConfig
+from datacron.core.config import (
+    CANONICAL_ULID_PATTERN,
+    LEGACY_NOTE_ID_PATTERN,
+    SIDECAR_DIR_NAME,
+    VaultConfig,
+)
 from datacron.core.durability import (
     RecoveryRequiredError,
     UnexpectedRecoveryEntryError,
@@ -66,7 +71,11 @@ from datacron.core.operation_log import (
     OperationLogError,
     OperationRecord,
 )
-from datacron.core.paths import PathConfinementError, assert_within_paths
+from datacron.core.paths import (
+    ASCII_CONTROL_CHAR_BOUNDARY,
+    PathConfinementError,
+    assert_within_paths,
+)
 from datacron.core.recovery import BlockedOperation
 from datacron.core.scope import assert_path_chain_without_links
 from datacron.core.vault import (
@@ -149,8 +158,8 @@ _STAGE_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9]{4}\.after$")
 _ATOMIC_RECEIPT_TEMP_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"^\.[0-9a-f]{64}\.json\.[0-9a-f]{32}\.tmp$"
 )
-_CANONICAL_NOTE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
-_EXISTING_NOTE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-Z]{26}$")
+_CANONICAL_NOTE_ID_PATTERN: Final[re.Pattern[str]] = CANONICAL_ULID_PATTERN
+_EXISTING_NOTE_ID_PATTERN: Final[re.Pattern[str]] = LEGACY_NOTE_ID_PATTERN
 _MAX_PENDING_MEMBERS: Final[int] = MAX_OPERATION_COUNT + 1
 _MAX_PENDING_BYTES: Final[int] = MAX_MANIFEST_BYTES
 _MAX_RESULT_BYTES: Final[int] = MAX_MANIFEST_BYTES
@@ -2252,7 +2261,7 @@ class OrganizationBatchTransaction:
         self,
         batches: tuple[_PendingBatch, ...],
     ) -> tuple[BlockedOperation, ...]:
-        if len(batches) < 2:
+        if len(batches) <= 1:
             return ()
         # One pending receipt authenticates a complete organization-scope
         # snapshot plus the config and both identity-sidecar baselines.  Any
@@ -3932,7 +3941,7 @@ def _optional_string_tuple(
             not isinstance(item, str)
             or not item
             or item != item.strip()
-            or any(ord(character) < 32 for character in item)
+            or any(ord(character) < ASCII_CONTROL_CHAR_BOUNDARY for character in item)
         ):
             raise OperationLogError(f"{key} contains an invalid alias")
         normalized = item.casefold()

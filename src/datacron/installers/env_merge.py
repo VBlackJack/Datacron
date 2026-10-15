@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Final
 
 __all__ = [
+    "ENV_MEMORY_ROOT",
     "ENV_READ_ONLY",
     "ENV_READ_PATHS",
     "ENV_VAULT_ROOT",
@@ -41,11 +42,12 @@ __all__ = [
 ]
 
 ENV_VAULT_ROOT: Final[str] = "DATACRON_VAULT_ROOT"
+ENV_MEMORY_ROOT: Final[str] = "DATACRON_MEMORY_ROOT"
 ENV_READ_PATHS: Final[str] = "DATACRON_READ_PATHS"
 ENV_WRITE_PATHS: Final[str] = "DATACRON_WRITE_PATHS"
 ENV_READ_ONLY: Final[str] = "DATACRON_READ_ONLY"
 
-# Allowlists that only make sense inside the vault they were written for.
+# Allowlists that only make sense inside the vault(s) they were written for.
 _VAULT_BOUND_PATH_KEYS: Final[tuple[str, ...]] = (ENV_WRITE_PATHS, ENV_READ_PATHS)
 # Spellings pydantic-settings accepts as a true boolean.
 _TRUE_ENV_VALUES: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on", "t", "y"})
@@ -72,9 +74,15 @@ def env_names_vault(env: Mapping[str, object], vault_root: Path) -> bool:
     return isinstance(value, str) and _normalized(value) == _normalized(str(vault_root))
 
 
-def _paths_inside(value: str, vault_root: str) -> list[str]:
-    root = _normalized(vault_root)
-    return [part for part in split_env_paths(value) if _normalized(part).is_relative_to(root)]
+def _paths_inside_any(value: str, vault_roots: Iterable[str]) -> list[str]:
+    roots = [_normalized(root) for root in vault_roots if root]
+    if not roots:
+        return []
+    return [
+        part
+        for part in split_env_paths(value)
+        if any(_normalized(part).is_relative_to(root) for root in roots)
+    ]
 
 
 def merge_server_env(
@@ -91,9 +99,9 @@ def merge_server_env(
         removed: Keys this run explicitly turns off; they are dropped from
             ``existing`` rather than kept.
 
-    When ``supplied`` names a vault root other than the one ``existing`` was
-    written for, preserved allowlist entries outside the new vault are dropped,
-    and the variable with them when nothing is left.
+    When ``supplied`` names a vault root or memory root other than the one
+    ``existing`` was written for, preserved allowlist entries outside the active
+    vault root(s) are dropped, and the variable with them when nothing is left.
     """
     removed_keys = frozenset(removed)
     merged: dict[str, object] = {
@@ -101,15 +109,29 @@ def merge_server_env(
     }
     new_root = supplied.get(ENV_VAULT_ROOT)
     old_root = existing.get(ENV_VAULT_ROOT)
+    new_memory_root = supplied.get(ENV_MEMORY_ROOT)
+    old_memory_root = existing.get(ENV_MEMORY_ROOT)
     vault_changed = new_root is not None and (
         not isinstance(old_root, str) or _normalized(old_root) != _normalized(new_root)
     )
-    if vault_changed and new_root is not None:
+    memory_changed = (
+        new_memory_root is not None
+        and (
+            not isinstance(old_memory_root, str)
+            or _normalized(old_memory_root) != _normalized(new_memory_root)
+        )
+    ) or (ENV_MEMORY_ROOT in removed_keys and old_memory_root is not None)
+    if (vault_changed or memory_changed) and new_root is not None:
+        active_roots: list[str] = [new_root]
+        if new_memory_root is not None:
+            active_roots.append(new_memory_root)
+        elif isinstance(old_memory_root, str) and ENV_MEMORY_ROOT not in removed_keys:
+            active_roots.append(old_memory_root)
         for key in _VAULT_BOUND_PATH_KEYS:
             value = merged.get(key)
             if key in supplied or not isinstance(value, str):
                 continue
-            kept = _paths_inside(value, new_root)
+            kept = _paths_inside_any(value, active_roots)
             if kept:
                 merged[key] = os.pathsep.join(kept)
             else:

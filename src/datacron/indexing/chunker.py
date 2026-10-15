@@ -409,6 +409,9 @@ def _segment_generic(raw_lines: list[str], max_chars: int) -> list[tuple[str, in
     return segments
 
 
+_MIN_TABLE_LINES: Final[int] = 3
+
+
 def _segment_table(raw_lines: list[str], max_chars: int) -> list[tuple[str, int, int]]:
     """Split a GFM table by data-row groups, repeating the header + separator.
 
@@ -418,7 +421,7 @@ def _segment_table(raw_lines: list[str], max_chars: int) -> list[tuple[str, int,
     chunk half again over the budget the class docstring promises and every
     downstream consumer is sized against.
     """
-    if len(raw_lines) < 3:
+    if len(raw_lines) < _MIN_TABLE_LINES:
         # Header and separator alone, with no data row to group by. There is
         # nothing table-shaped left to preserve, so fall back rather than
         # return a segment that ignores the budget.

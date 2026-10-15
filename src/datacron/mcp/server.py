@@ -61,6 +61,7 @@ from pydantic import AnyUrl
 
 from datacron import __version__
 from datacron.core.config import (
+    MEMORY_SUBFOLDER_NAME,
     OrganizationConfig,
     Settings,
     VaultConfig,
@@ -75,7 +76,13 @@ from datacron.core.durability import (
 )
 from datacron.core.logger import configure_logging, get_logger, shutdown_logging
 from datacron.core.memory_protocol import PROTOCOL_BLOCK
-from datacron.core.paths import assert_within_read_paths, sidecar_index_db, sidecar_vault_config
+from datacron.core.paths import (
+    assert_within_read_paths,
+    effective_memory_root,
+    resolve_sidecar_root,
+    sidecar_index_db,
+    sidecar_vault_config,
+)
 from datacron.core.protocols import (
     ASTChunker,
     FTS5Store,
@@ -322,11 +329,28 @@ def build_app(
     """
     resolved_settings = settings or get_settings()
     resolved_root = vault_root.expanduser().resolve()
+    resolved_memory_root = effective_memory_root(resolved_root, settings=resolved_settings)
+    sidecar_root = resolve_sidecar_root(
+        resolved_root,
+        memory_root=resolved_memory_root,
+        settings=resolved_settings,
+    )
     if resolved_settings.read_paths:
         # Empty read_paths keeps vault_root as the implicit boundary; an
-        # explicit allowlist must contain the served vault root.
+        # explicit allowlist must contain the served vault root(s).
         assert_within_read_paths(resolved_root, resolved_settings)
-    vault_config = load_vault_config(sidecar_vault_config(resolved_root)) or VaultConfig()
+        if resolved_memory_root is not None:
+            assert_within_read_paths(resolved_memory_root, resolved_settings)
+    vault_config = (
+        load_vault_config(
+            sidecar_vault_config(
+                resolved_root,
+                memory_root=resolved_memory_root,
+                settings=resolved_settings,
+            )
+        )
+        or VaultConfig()
+    )
     admission_policy = NoteAdmissionPolicy(
         excluded_folders=SKIPPED_FOLDERS | frozenset(vault_config.excluded_folders),
         excluded_files=frozenset(vault_config.excluded_files),
@@ -340,8 +364,8 @@ def build_app(
         canonical_scope if scope is None else ConjunctiveVaultScope(canonical_scope, scope)
     )
     resolved_durability = durability_status or (
-        probe_directory_durability(resolved_root)
-        if resolved_root.is_dir()
+        probe_directory_durability(sidecar_root)
+        if sidecar_root.is_dir()
         else DurabilityStatus(backend="unavailable", directory_flush_supported=False)
     )
     write_policy = WritePolicy(resolved_settings, resolved_durability)
@@ -349,6 +373,7 @@ def build_app(
         resolved_root,
         read_only=True,
         admission_policy=admission_policy,
+        memory_root=resolved_memory_root,
     )
     resolved_reader = ScopedVaultReader(
         base_reader,
@@ -468,19 +493,31 @@ def create_server(app: DatacronApp) -> MCPServer[DatacronApp]:
 
     @asynccontextmanager
     async def _lifespan(server: MCPServer[DatacronApp]) -> AsyncIterator[DatacronApp]:
+        memory_root = effective_memory_root(app.vault_root, settings=app.settings)
         _LOGGER.info(
-            "datacron-mcp v%s starting (vault_root=%s)",
+            "datacron-mcp v%s starting (vault_root=%s, memory_root=%s)",
             __version__,
             app.vault_root,
+            memory_root,
         )
         if not app.vault_root.is_dir():
             _LOGGER.error("Vault root %s does not exist or is not a directory", app.vault_root)
             raise FileNotFoundError(f"Vault root not found: {app.vault_root}")
+        if memory_root is not None:
+            if not memory_root.is_dir():
+                _LOGGER.error("Memory root %s does not exist or is not a directory", memory_root)
+                raise FileNotFoundError(f"Memory root not found: {memory_root}")
+            if app.write_policy.writes_allowed:
+                (memory_root / MEMORY_SUBFOLDER_NAME).mkdir(parents=True, exist_ok=True)
         if app.write_policy.writes_allowed:
             await _startup_recover_operations(app)
         else:
             _LOGGER.info("Writable startup recovery skipped by active write policy")
-        db_path = sidecar_index_db(app.vault_root)
+        db_path = sidecar_index_db(
+            app.vault_root,
+            memory_root=memory_root,
+            settings=app.settings,
+        )
         index_read_only = not app.write_policy.writes_allowed
         await app.store.open(db_path, read_only=index_read_only)
         _LOGGER.info(
