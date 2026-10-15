@@ -836,6 +836,77 @@ def _split_path_list(value: str | list[str | Path] | None) -> list[Path]:
     return [Path(p).expanduser().resolve() for p in value]
 
 
+def _validate_extra_vault_prefix(raw_prefix: object) -> str:
+    if not isinstance(raw_prefix, str):
+        raise TypeError("extra_read_vaults prefixes must be strings")
+    prefix = raw_prefix.strip().strip("/\\")
+    if (
+        not prefix
+        or "/" in prefix
+        or "\\" in prefix
+        or ":" in prefix
+        or prefix.startswith(".")
+        or any(char.isspace() for char in prefix)
+        or prefix.casefold() in {MEMORY_SUBFOLDER_NAME.casefold(), SIDECAR_DIR_NAME.casefold()}
+    ):
+        raise ValueError(
+            f"extra_read_vaults prefix must be a single safe folder name; got {raw_prefix!r}"
+        )
+    return prefix
+
+
+def _parse_extra_read_vaults_str(raw: str) -> dict[object, object]:
+    stripped = raw.strip()
+    if not stripped:
+        return {}
+    if stripped.startswith("{"):
+        try:
+            decoded = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "DATACRON_EXTRA_READ_VAULTS JSON must be a mapping of prefix to path"
+            ) from exc
+        if not isinstance(decoded, dict):
+            raise ValueError("DATACRON_EXTRA_READ_VAULTS JSON must be a mapping of prefix to path")
+        return decoded
+    mapping: dict[object, object] = {}
+    for entry in stripped.split(os.pathsep):
+        item = entry.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise ValueError(
+                f"DATACRON_EXTRA_READ_VAULTS entry must be 'prefix=path'; got {item!r}"
+            )
+        key, raw_path = item.split("=", 1)
+        mapping[key] = raw_path
+    return mapping
+
+
+def _parse_extra_read_vaults_value(value: object) -> dict[str, Path]:
+    if value is None or value == "":
+        return {}
+    if isinstance(value, str):
+        raw_mapping = _parse_extra_read_vaults_str(value)
+    elif isinstance(value, dict):
+        raw_mapping = value
+    else:
+        raise TypeError(f"Unsupported type for extra_read_vaults: {type(value).__name__}")
+    result: dict[str, Path] = {}
+    seen_folded: set[str] = set()
+    for raw_prefix, raw_target in raw_mapping.items():
+        prefix = _validate_extra_vault_prefix(raw_prefix)
+        folded = prefix.casefold()
+        if folded in seen_folded:
+            raise ValueError(f"Duplicate extra_read_vaults prefix: {prefix!r}")
+        seen_folded.add(folded)
+        target_str = str(raw_target).strip() if raw_target is not None else ""
+        if not target_str:
+            raise ValueError(f"extra_read_vaults path for {prefix!r} must not be empty")
+        result[prefix] = Path(target_str).expanduser().resolve()
+    return result
+
+
 @final
 class Settings(BaseSettings):
     """Datacron runtime settings.
@@ -863,6 +934,7 @@ class Settings(BaseSettings):
     write_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
     vault_root: Path | None = Field(default=None)
     memory_root: Path | None = Field(default=None)
+    extra_read_vaults: Annotated[dict[str, Path], NoDecode] = Field(default_factory=dict)
     max_result_tokens: int = Field(default=DEFAULT_MAX_RESULT_TOKENS, ge=1)
     session_context_paths: list[str] = Field(
         default_factory=lambda: list(SESSION_DEFAULT_PATHS),
@@ -1018,6 +1090,21 @@ class Settings(BaseSettings):
         if value is None or value == "":
             return None
         return Path(str(value)).expanduser().resolve()
+
+    @field_validator("extra_read_vaults", mode="before")
+    @classmethod
+    def _parse_extra_read_vaults(cls, value: object) -> dict[str, Path]:
+        return _parse_extra_read_vaults_value(value)
+
+    @model_validator(mode="after")
+    def _extend_read_paths_with_extra_vaults(self) -> Settings:
+        if self.read_paths and self.extra_read_vaults:
+            merged = list(self.read_paths)
+            for extra_root in self.extra_read_vaults.values():
+                if extra_root not in merged:
+                    merged.append(extra_root)
+            object.__setattr__(self, "read_paths", merged)
+        return self
 
     @field_validator("redact_secrets", mode="before")
     @classmethod

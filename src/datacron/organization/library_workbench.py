@@ -461,7 +461,7 @@ async def prepare_library(
     """Build an exact, externally reviewable navigation/consolidation bundle."""
     vault = vault.expanduser().absolute()
     output = output.expanduser().absolute()
-    notes = await read_library(vault, options)
+    notes = await read_library(vault, options, settings=settings)
     captured = datetime.now(tz=UTC)
     # Every body is parsed once here and shared by the editorial checks, the navigation
     # and the audit of the same note set.
@@ -473,7 +473,7 @@ async def prepare_library(
         list(projected.values()),
         options,
         captured.isoformat(),
-        archive_tags=vault_archive_tags(vault),
+        archive_tags=vault_archive_tags(vault, settings=settings),
         parsed_links=parsed_links,
     )
     for path, body in pages.items():
@@ -511,7 +511,7 @@ async def check_library(
         raise ValueError("Unsupported library snapshot")
     options = LibraryOptions.model_validate(snapshot["options"])
     if notes is None:
-        notes = await read_library(vault, options)
+        notes = await read_library(vault, options, settings=settings)
     current = {n.rel_path: n.content_hash for n in notes}
     if current != snapshot["sources"]:
         raise ValueError("Source set or bytes changed; prepare a fresh review bundle")

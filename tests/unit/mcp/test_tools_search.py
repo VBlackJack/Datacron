@@ -502,6 +502,7 @@ class _StubRipgrep:
         fallback_timeout_seconds: float | None = None,
         admit: Callable[[str], bool] | None = None,
         max_frame_bytes: int | None = None,
+        extra_roots: Any = None,
     ) -> list[SearchResult]:
         self.calls.append(
             {
@@ -737,6 +738,7 @@ class TestSearchRegex:
                 fallback_timeout_seconds: float | None = None,
                 admit: Callable[[str], bool] | None = None,
                 max_frame_bytes: int | None = None,
+                extra_roots: Any = None,
             ) -> list[SearchResult]:
                 raise RegexFallbackError("regex fallback timed out -- install ripgrep")
 

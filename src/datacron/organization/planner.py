@@ -44,7 +44,12 @@ from datacron.core.config import (
 )
 from datacron.core.frontmatter import FrontmatterError, extract_tags, parse
 from datacron.core.models import ChunkType
-from datacron.core.paths import PathConfinementError, assert_within_paths
+from datacron.core.paths import (
+    PathConfinementError,
+    assert_within_paths,
+    effective_memory_root,
+    is_memory_rel_path,
+)
 from datacron.core.scope import NoteAdmissionError, SingleTenantVaultScope
 from datacron.core.vault import SKIPPED_FOLDERS, NoteAdmissionPolicy
 from datacron.indexing.wikilinks import extract_wikilink_targets
@@ -295,6 +300,7 @@ class _OrganizationContext:
     """Validated canonical paths and admission policy for one planning pass."""
 
     vault_root: Path
+    effective_root: Path
     scope_root: Path
     scope_rel_path: str
     guard: SingleTenantVaultScope
@@ -335,6 +341,13 @@ def _prepare_context(
             f"organization scope is not a directory: {organization.scope!r}"
         )
 
+    mem_root = effective_memory_root(resolved_root, settings=settings)
+    effective_root = (
+        mem_root
+        if mem_root is not None and is_memory_rel_path(organization.scope)
+        else resolved_root
+    )
+
     targets: dict[str, str] = {}
     for rule in organization.rules:
         try:
@@ -362,12 +375,13 @@ def _prepare_context(
             raise OrganizationConfigurationError(
                 f"organization rule folder is not a directory: {rule.folder!r}"
             )
-        targets[rule.tag] = resolved_folder.relative_to(resolved_root).as_posix()
+        targets[rule.tag] = resolved_folder.relative_to(effective_root).as_posix()
 
     return _OrganizationContext(
         vault_root=resolved_root,
+        effective_root=effective_root,
         scope_root=scope_root,
-        scope_rel_path=scope_root.relative_to(resolved_root).as_posix(),
+        scope_rel_path=scope_root.relative_to(effective_root).as_posix(),
         guard=guard,
         target_folders=targets,
     )
@@ -406,7 +420,7 @@ def _discover_note_paths(context: _OrganizationContext) -> list[Path]:
             continue
         if canonical_directory in visited or _directory_is_excluded(
             canonical_directory,
-            context.vault_root,
+            context.effective_root,
             policy,
         ):
             continue
@@ -428,7 +442,7 @@ def _discover_note_paths(context: _OrganizationContext) -> list[Path]:
                     or candidate.name.casefold() in policy.excluded_folders
                     or _directory_is_excluded(
                         canonical_candidate,
-                        context.vault_root,
+                        context.effective_root,
                         policy,
                     )
                 ):
@@ -449,7 +463,7 @@ def _authorize_note_paths(
     seen: set[Path] = set()
     for candidate in candidates:
         try:
-            lexical_rel_path = candidate.relative_to(context.vault_root).as_posix()
+            lexical_rel_path = candidate.relative_to(context.effective_root).as_posix()
             authorized = context.guard.authorize_note_rel_path(lexical_rel_path)
             authorized = assert_within_paths(authorized, [context.scope_root], kind="read")
         except (OSError, NoteAdmissionError, PathConfinementError, RuntimeError, ValueError):
@@ -460,7 +474,7 @@ def _authorize_note_paths(
         admitted.append(authorized)
     return sorted(
         admitted,
-        key=lambda item: item.relative_to(context.vault_root).as_posix(),
+        key=lambda item: item.relative_to(context.effective_root).as_posix(),
     )
 
 
@@ -925,7 +939,7 @@ def plan_organization(
     snapshots: list[OrganizationNoteSnapshot] = []
     candidates = _discover_note_paths(context)
     for path in _authorize_note_paths(candidates, context):
-        relative = path.relative_to(context.vault_root)
+        relative = path.relative_to(context.effective_root)
         rel_path = relative.as_posix()
         try:
             raw = path.read_text(encoding="utf-8")

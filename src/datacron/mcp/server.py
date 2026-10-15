@@ -374,6 +374,7 @@ def build_app(
         read_only=True,
         admission_policy=admission_policy,
         memory_root=resolved_memory_root,
+        settings=resolved_settings,
     )
     resolved_reader = ScopedVaultReader(
         base_reader,

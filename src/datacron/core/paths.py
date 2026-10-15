@@ -25,7 +25,7 @@ import json
 import os
 import stat
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Final, Literal
 
@@ -52,10 +52,12 @@ __all__ = [
     "assert_within_read_paths",
     "assert_within_resolved_roots",
     "assert_within_write_paths",
+    "effective_extra_read_vaults",
     "effective_memory_root",
     "is_link_stat",
     "is_memory_rel_path",
     "is_within",
+    "note_source_vault",
     "read_ulid_mappings",
     "read_ulid_sidecar_strict",
     "reject_duplicate_json_keys",
@@ -70,6 +72,7 @@ __all__ = [
 ]
 
 AccessKind = Literal["read", "write"]
+VaultSourceKind = Literal["docs", "memory"]
 
 
 class PathConfinementError(PermissionError):
@@ -397,6 +400,11 @@ def is_memory_rel_path(rel_path: str) -> bool:
     return first_part.casefold() == MEMORY_SUBFOLDER_NAME.casefold()
 
 
+def note_source_vault(rel_path: str) -> VaultSourceKind:
+    """Return the logical source vault (``"memory"`` or ``"docs"``) for ``rel_path``."""
+    return "memory" if is_memory_rel_path(rel_path) else "docs"
+
+
 def effective_memory_root(
     vault_root: Path,
     *,
@@ -420,6 +428,34 @@ def effective_memory_root(
     return None if resolved_memory == resolved_vault else resolved_memory
 
 
+def effective_extra_read_vaults(
+    vault_root: Path,
+    *,
+    extra_read_vaults: Mapping[str, Path] | None = None,
+    settings: Settings | None = None,
+) -> dict[str, Path]:
+    """Return the resolved prefix-to-root mapping for mounted read-only doc vaults."""
+    resolved_vault = _resolve(vault_root)
+    source: Mapping[str, Path]
+    if extra_read_vaults is not None:
+        source = extra_read_vaults
+    else:
+        resolved_settings = settings or get_settings()
+        if not resolved_settings.extra_read_vaults:
+            return {}
+        if (
+            resolved_settings.vault_root is not None
+            and _resolve(resolved_settings.vault_root) != resolved_vault
+        ):
+            return {}
+        source = resolved_settings.extra_read_vaults
+    return {
+        prefix: _resolve(root)
+        for prefix, root in source.items()
+        if _resolve(root) != resolved_vault
+    }
+
+
 def resolve_sidecar_root(
     vault_root: Path,
     *,
@@ -441,7 +477,7 @@ def resolve_vault_rel_target(
     memory_root: Path | None = None,
     settings: Settings | None = None,
 ) -> Path:
-    """Map a vault-relative path to its physical root (``memory_root`` for ``_memory/...``)."""
+    """Map a vault-relative path to its physical root (``memory_root`` or mounted vault)."""
     mem_root = effective_memory_root(
         vault_root,
         memory_root=memory_root,
@@ -449,6 +485,15 @@ def resolve_vault_rel_target(
     )
     if mem_root is not None and is_memory_rel_path(rel_path):
         return mem_root / rel_path
+    extras = effective_extra_read_vaults(vault_root, settings=settings)
+    if extras:
+        normalized = rel_path.strip().replace("\\", "/").lstrip("/")
+        if normalized:
+            parts = normalized.split("/", 1)
+            first_folded = parts[0].casefold()
+            for prefix, extra_root in extras.items():
+                if prefix.casefold() == first_folded:
+                    return extra_root / parts[1] if len(parts) > 1 and parts[1] else extra_root
     return _resolve(vault_root) / rel_path
 
 

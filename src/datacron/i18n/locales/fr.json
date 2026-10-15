@@ -58,7 +58,36 @@
   },
   "cli": {
     "help": {
-      "vault_root": "Racine du vault. Repli : DATACRON_VAULT_ROOT, puis le dossier courant contenant VAULT.yaml sous .datacron."
+      "vault_root": "Racine du vault. Repli : DATACRON_VAULT_ROOT, puis le dossier courant contenant VAULT.yaml sous .datacron.",
+      "memory_vault": "Racine du vault mémoire dédié (.datacron/ et _memory/ y résident). Repli : DATACRON_MEMORY_ROOT.",
+      "dual_vault": "Demander interactivement le chemin d'un vault mémoire dédié pendant la configuration.",
+      "keep_source": "Conserver les répertoires .datacron/ et _memory/ d'origine dans le vault de documentation après migration."
+    },
+    "setup": {
+      "memory_vault_explain_1": "Le mode Dual-Vault sépare votre vault de documentation du sidecar Datacron (.datacron/) et de la mémoire agent (_memory/).",
+      "memory_vault_explain_2": "Défaut : désactivé (vide), ce qui conserve tout dans le vault principal.",
+      "memory_vault_explain_3": "Saisissez un chemin de dossier pour stocker .datacron/ et _memory/ dans un vault mémoire dédié.",
+      "memory_vault_prompt": "Chemin du vault mémoire (laisser vide pour un vault unique)"
+    },
+    "status": {
+      "memory_root": "  memory_root: {memory_root}",
+      "extra_vaults": "  extra_vaults: {extra_vaults}"
+    },
+    "migrate_memory": {
+      "help": "Migrer .datacron/ et _memory/ d'un vault unique vers un répertoire mémoire Dual-Vault dédié.",
+      "completed": "Migration mémoire Dual-Vault terminée.",
+      "vault_line": "  docs vault:   {vault}",
+      "memory_line": "  memory vault: {memory_vault}",
+      "copied_line": "  verified:     {verified} fichiers ({memory_files} mémoire, {sidecar_files} sidecar)",
+      "indexed_line": "  indexed:      {notes} notes ({chunks} fragments)",
+      "source_cleaned_line": "  source:       {state}",
+      "state_cleaned": "nettoyé (.datacron/ et _memory/ supprimés du vault de documentation)",
+      "state_kept": "conservé (--keep-source)",
+      "same_root": "Le vault mémoire doit être un répertoire différent du vault de documentation : {path}",
+      "overlapping_roots": "Le vault de documentation et le vault mémoire ne doivent pas se chevaucher : {vault} vs {memory_vault}",
+      "missing_source": "Le vault source ne contient ni .datacron/VAULT.yaml ni _memory/ à migrer : {vault}",
+      "target_conflict": "Le vault mémoire cible contient déjà un fichier différent à {rel_path} ; écrasement refusé.",
+      "hash_mismatch": "Échec de la vérification SHA-256 après copie de {rel_path} ; les fichiers sources ont été préservés."
     },
     "library": {
       "app_help": "Préparer une navigation hors ligne lisible et des revues de consolidation sourcées.",

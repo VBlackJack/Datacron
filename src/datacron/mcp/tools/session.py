@@ -239,6 +239,13 @@ def _fit_sources(
                     break
                 fitted.pop("selection_mode")
                 break
+            tight = _full_source(app, note, 1)
+            tight.pop("source_vault", None)
+            tight.pop("writable", None)
+            result["sources"] = [tight]
+            result["truncated"] = True
+            if rendered_size(result) <= maximum:
+                break
         result["sources"].pop()
         result["omitted"] += 1
 
@@ -290,6 +297,8 @@ def _full_source(app: DatacronApp, note: Note, limit: int | None = None) -> dict
             "content",
             "next_offset",
             "truncated",
+            "source_vault",
+            "writable",
         )
     }
     item["next_read"] = {
@@ -388,7 +397,17 @@ def _orientation_source(app: DatacronApp, note: Note) -> dict[str, Any]:
         return item
     summary = _build_full_payload(app, note, offset=0, limit=1)
     return {
-        **{key: summary[key] for key in ("id", "rel_path", "title", "content_hash")},
+        **{
+            key: summary[key]
+            for key in (
+                "id",
+                "rel_path",
+                "title",
+                "content_hash",
+                "source_vault",
+                "writable",
+            )
+        },
         "excerpts": excerpts,
         "section_selection": {
             "mode": "sections",

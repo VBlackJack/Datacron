@@ -31,7 +31,7 @@ if sys.platform == "win32":
 from datacron.core.config import Settings, VaultConfig
 from datacron.core.durability import WritePolicy, probe_directory_durability
 from datacron.core.logger import get_logger
-from datacron.core.paths import sidecar_index_db
+from datacron.core.paths import resolve_sidecar_root, sidecar_index_db
 from datacron.core.protocols import VaultReader
 from datacron.core.vault import build_configured_reader
 from datacron.core.vault_writer import durable_flush_directory
@@ -129,6 +129,22 @@ async def _advance_empty_rebuild_generation(
         await store.increment_generation()
 
 
+def _prepare_rebuild_roots(vault_root: Path, settings: Settings) -> tuple[Path, Path]:
+    root = vault_root.expanduser().resolve()
+    if not root.is_dir():
+        raise FileNotFoundError(f"vault root does not exist: {root}")
+    sidecar_root = resolve_sidecar_root(root, settings=settings)
+    if not sidecar_root.is_dir():
+        raise FileNotFoundError(f"sidecar root does not exist: {sidecar_root}")
+    durability = probe_directory_durability(sidecar_root)
+    WritePolicy(settings, durability).ensure_writable()
+    db_path = sidecar_index_db(root, settings=settings)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    _assert_no_sqlite_sidecars(db_path)
+    _assert_index_replaceable(db_path)
+    return root, db_path
+
+
 async def rebuild_index_atomic(
     vault_root: Path,
     settings: Settings,
@@ -138,22 +154,13 @@ async def rebuild_index_atomic(
     progress: IndexProgress | None = None,
 ) -> RebuildStats:
     """Build a complete temp index, validate it, then atomically replace live DB."""
-    root = vault_root.expanduser().resolve()
-    if not root.is_dir():
-        raise FileNotFoundError(f"vault root does not exist: {root}")
-    durability = probe_directory_durability(root)
-    WritePolicy(settings, durability).ensure_writable()
-
-    db_path = sidecar_index_db(root)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    _assert_no_sqlite_sidecars(db_path)
-    _assert_index_replaceable(db_path)
+    root, db_path = _prepare_rebuild_roots(vault_root, settings)
     previous_generation = await _read_generation(db_path)
     temp_path = db_path.with_name(f".{db_path.name}.{uuid4().hex}.rebuild")
     temp_store = SQLiteFTS5Store(
         term_map=vault_config.query_expansion, archive_tags=vault_config.archive_tags
     )
-    reader = build_configured_reader(root, read_only=True)
+    reader = build_configured_reader(root, read_only=True, settings=settings)
     chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
     published = False
 

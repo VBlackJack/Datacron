@@ -27,3 +27,4 @@ from typing import Final
 from datacron.i18n import t
 
 VAULT_ROOT_HELP: Final[str] = t("cli.help.vault_root")
+MEMORY_VAULT_HELP: Final[str] = t("cli.help.memory_vault")

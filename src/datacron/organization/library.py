@@ -27,11 +27,15 @@ from urllib.parse import quote, unquote, urlsplit
 
 from mistletoe import block_token
 
-from datacron.core.config import DEFAULT_ARCHIVE_TAGS, load_vault_config
+from datacron.core.config import DEFAULT_ARCHIVE_TAGS, Settings, load_vault_config
 from datacron.core.frontmatter import coerce_string_list, parse
 from datacron.core.markdown_headings import markdown_headings, token_text
 from datacron.core.models import ChunkType, Note
-from datacron.core.paths import sidecar_vault_config
+from datacron.core.paths import (
+    effective_extra_read_vaults,
+    effective_memory_root,
+    sidecar_vault_config,
+)
 from datacron.core.scope import assert_path_chain_without_links
 from datacron.core.vault import build_configured_reader
 from datacron.indexing.wikilinks import extract_wikilink_anchors
@@ -54,13 +58,29 @@ def in_scope(path: str, scope: str) -> bool:
     return path == scope or path.startswith(scope.rstrip("/") + "/")
 
 
-async def read_library(vault: Path, options: LibraryOptions) -> list[Note]:
+def _note_anchor(vault: Path, path: Path, settings: Settings | None) -> Path:
+    """Return the root anchor (`vault`, `memory_root`, or `extra_read_vaults`) containing `path`."""
+    mem_root = effective_memory_root(vault, settings=settings)
+    if mem_root is not None and path.is_relative_to(mem_root):
+        return mem_root
+    for ext_root in effective_extra_read_vaults(vault, settings=settings).values():
+        if path.is_relative_to(ext_root):
+            return ext_root
+    return vault
+
+
+async def read_library(
+    vault: Path,
+    options: LibraryOptions,
+    *,
+    settings: Settings | None = None,
+) -> list[Note]:
     """Read admitted notes strictly without writing IDs, an index or a cache."""
     normalize_vault_rel_path(options.scope + "/scope.md")
     normalize_vault_rel_path(options.home)
     assert_path_chain_without_links(vault.expanduser().absolute())
     vault = vault.resolve(strict=True)
-    reader = build_configured_reader(vault, read_only=True)
+    reader = build_configured_reader(vault, read_only=True, settings=settings)
     paths = await reader.stat_notes()
     selected = sorted(path for path in paths if in_scope(path, options.scope))
     if len(selected) > options.max_notes:
@@ -69,7 +89,7 @@ async def read_library(vault: Path, options: LibraryOptions) -> list[Note]:
     identities: dict[str, str] = {}
     for rel_path in selected:
         path = paths[rel_path][0]
-        assert_path_chain_without_links(path, anchor=vault)
+        assert_path_chain_without_links(path, anchor=_note_anchor(vault, path, settings))
         if path.stat().st_size > options.max_note_bytes:
             raise ValueError(f"Note exceeds max_note_bytes: {rel_path}")
         note = await reader.read_note(path)
@@ -234,9 +254,13 @@ def resolve_link(source: str, target: str, wiki: bool, index: LinkIndex) -> tupl
     return "note", selected
 
 
-def vault_archive_tags(vault: Path) -> frozenset[str]:
+def vault_archive_tags(
+    vault: Path,
+    *,
+    settings: Settings | None = None,
+) -> frozenset[str]:
     """Return the archive tags the vault's tag policy declares, else the shared defaults."""
-    config = load_vault_config(sidecar_vault_config(vault))
+    config = load_vault_config(sidecar_vault_config(vault, settings=settings))
     if config is None:
         return frozenset(tag.casefold() for tag in DEFAULT_ARCHIVE_TAGS)
     return config.archive_tags

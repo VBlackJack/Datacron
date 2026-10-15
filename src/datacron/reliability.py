@@ -57,6 +57,7 @@ from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.models import Note
 from datacron.core.paths import (
+    effective_extra_read_vaults,
     effective_memory_root,
     read_ulid_mappings,
     sidecar_dir,
@@ -225,14 +226,20 @@ def scan_vault_read_only(
     vault_root: Path,
     *,
     memory_root: Path | None = None,
+    extra_read_vaults: Mapping[str, Path] | None = None,
 ) -> ReliabilityScan:
     """Scan all Markdown notes without mutating the vault or its sidecars."""
     root = vault_root.expanduser().resolve()
     if not root.is_dir():
         raise FileNotFoundError(f"vault root does not exist: {root}")
     resolved_memory_root = effective_memory_root(root, memory_root=memory_root)
+    resolved_extras = effective_extra_read_vaults(root, extra_read_vaults=extra_read_vaults)
 
-    every_note, every_parse_error = _load_notes(root, memory_root=resolved_memory_root)
+    every_note, every_parse_error = _load_notes(
+        root,
+        memory_root=resolved_memory_root,
+        extra_read_vaults=resolved_extras,
+    )
     policy = _admission_policy(root, memory_root=resolved_memory_root)
     notes = [note for note in every_note if _is_admitted(note.rel_path, policy)]
     non_symlink_notes = [note for note in notes if not note.is_symlink]
@@ -332,11 +339,17 @@ def _load_notes(
     root: Path,
     *,
     memory_root: Path | None = None,
+    extra_read_vaults: Mapping[str, Path] | None = None,
 ) -> tuple[list[ReliabilityNote], list[str]]:
     notes: list[ReliabilityNote] = []
     parse_errors: list[str] = []
-    for base_root, path in _iter_markdown(root, memory_root=memory_root):
-        rel_path = path.relative_to(base_root).as_posix()
+    for prefix, base_root, path in _iter_markdown(
+        root,
+        memory_root=memory_root,
+        extra_read_vaults=extra_read_vaults,
+    ):
+        sub_rel = path.relative_to(base_root).as_posix()
+        rel_path = f"{prefix}/{sub_rel}" if prefix is not None else sub_rel
         try:
             is_symlink = path.is_symlink()
             stat_result = path.stat()
@@ -380,8 +393,12 @@ def _iter_markdown(
     root: Path,
     *,
     memory_root: Path | None = None,
-) -> list[tuple[Path, Path]]:
-    paths: list[tuple[Path, Path]] = []
+    extra_read_vaults: Mapping[str, Path] | None = None,
+) -> list[tuple[str | None, Path, Path]]:
+    paths: list[tuple[str | None, Path, Path]] = []
+    extra_folded = (
+        {prefix.casefold() for prefix in extra_read_vaults} if extra_read_vaults else set()
+    )
     for current_raw, dirnames, filenames in os.walk(root):
         current = Path(current_raw)
         dirnames[:] = [
@@ -390,9 +407,10 @@ def _iter_markdown(
             if name not in _SKIPPED_DIRECTORIES
             and not name.startswith(".")
             and not (memory_root is not None and current == root and name == MEMORY_SUBFOLDER_NAME)
+            and not (current == root and name.casefold() in extra_folded)
         ]
         paths.extend(
-            (root, current / filename)
+            (None, root, current / filename)
             for filename in sorted(filenames)
             if filename.lower().endswith(".md")
         )
@@ -407,7 +425,23 @@ def _iter_markdown(
                     if name not in _SKIPPED_DIRECTORIES and not name.startswith(".")
                 ]
                 paths.extend(
-                    (memory_root, current / filename)
+                    (None, memory_root, current / filename)
+                    for filename in sorted(filenames)
+                    if filename.lower().endswith(".md")
+                )
+    if extra_read_vaults:
+        for prefix, extra_root in extra_read_vaults.items():
+            if not extra_root.is_dir():
+                continue
+            for current_raw, dirnames, filenames in os.walk(extra_root):
+                current = Path(current_raw)
+                dirnames[:] = [
+                    name
+                    for name in sorted(dirnames)
+                    if name not in _SKIPPED_DIRECTORIES and not name.startswith(".")
+                ]
+                paths.extend(
+                    (prefix, extra_root, current / filename)
                     for filename in sorted(filenames)
                     if filename.lower().endswith(".md")
                 )

@@ -50,6 +50,7 @@ from datacron.core.paths import (
     assert_vault_rel_path,
     assert_within_paths,
     assert_within_resolved_roots,
+    effective_extra_read_vaults,
     effective_memory_root,
     is_link_stat,
     is_memory_rel_path,
@@ -293,6 +294,13 @@ class SingleTenantVaultScope:
         self._vault_root = vault_root.expanduser().resolve()
         self._settings = settings
         self._memory_root = effective_memory_root(self._vault_root, settings=settings)
+        self._extra_read_vaults = effective_extra_read_vaults(
+            self._vault_root,
+            settings=settings,
+        )
+        self._extra_read_by_folded: dict[str, tuple[str, Path]] = {
+            prefix.casefold(): (prefix, root) for prefix, root in self._extra_read_vaults.items()
+        }
         if admission_policy is None:
             config_path = sidecar_vault_config(
                 self._vault_root,
@@ -306,9 +314,9 @@ class SingleTenantVaultScope:
             )
         self._admission_policy = admission_policy
         self._resolved_roots: tuple[Path, ...] = (
-            (self._vault_root,)
-            if self._memory_root is None
-            else (self._vault_root, self._memory_root)
+            self._vault_root,
+            *((self._memory_root,) if self._memory_root is not None else ()),
+            *self._extra_read_vaults.values(),
         )
 
     @property
@@ -316,47 +324,65 @@ class SingleTenantVaultScope:
         """Return the immutable note policy enforced by this scope."""
         return self._admission_policy
 
-    def _root_for_rel_path(self, rel_path: str) -> Path:
+    def _target_for_rel_path(self, rel_path: str) -> tuple[Path, tuple[str, ...]]:
+        normalized = rel_path.strip().replace("\\", "/").lstrip("/")
+        parts = PurePosixPath(normalized).parts if normalized else ()
         if self._memory_root is not None and (
             is_memory_rel_path(rel_path)
-            or rel_path.strip().replace("\\", "/").lstrip("/").split("/", 1)[0].casefold()
-            == SIDECAR_DIR_NAME.casefold()
+            or (parts and parts[0].casefold() == SIDECAR_DIR_NAME.casefold())
         ):
-            return self._memory_root
-        return self._vault_root
+            return self._memory_root, parts
+        if parts and self._extra_read_by_folded:
+            extra_match = self._extra_read_by_folded.get(parts[0].casefold())
+            if extra_match is not None:
+                return extra_match[1], parts[1:]
+        return self._vault_root, parts
 
     def _canonical_rel_path_for_resolved(self, resolved: Path) -> Path:
-        if self._memory_root is not None:
-            if resolved.is_relative_to(self._memory_root):
-                rel = resolved.relative_to(self._memory_root)
-                if not rel.parts or rel.parts[0].casefold() in {
-                    MEMORY_SUBFOLDER_NAME.casefold(),
-                    SIDECAR_DIR_NAME.casefold(),
-                }:
-                    return rel
-                raise PathConfinementError(
-                    f"Path {resolved} is outside the _memory namespace in {self._memory_root}."
-                )
-            if resolved.is_relative_to(self._vault_root):
-                rel = resolved.relative_to(self._vault_root)
-                if rel.parts and rel.parts[0].casefold() in {
-                    MEMORY_SUBFOLDER_NAME.casefold(),
-                    SIDECAR_DIR_NAME.casefold(),
-                }:
-                    raise PathConfinementError(
-                        f"Path {resolved} in docs vault is masked by memory vault "
-                        f"{self._memory_root}."
-                    )
+        for prefix, extra_root in self._extra_read_vaults.items():
+            if resolved.is_relative_to(extra_root):
+                rel = resolved.relative_to(extra_root)
+                return Path(prefix, *rel.parts)
+        if self._memory_root is not None and resolved.is_relative_to(self._memory_root):
+            rel = resolved.relative_to(self._memory_root)
+            if not rel.parts or rel.parts[0].casefold() in {
+                MEMORY_SUBFOLDER_NAME.casefold(),
+                SIDECAR_DIR_NAME.casefold(),
+            }:
                 return rel
+            raise PathConfinementError(
+                f"Path {resolved} is outside the _memory namespace in {self._memory_root}."
+            )
+        if resolved.is_relative_to(self._vault_root):
+            rel = resolved.relative_to(self._vault_root)
+            if (
+                self._memory_root is not None
+                and rel.parts
+                and rel.parts[0].casefold()
+                in {MEMORY_SUBFOLDER_NAME.casefold(), SIDECAR_DIR_NAME.casefold()}
+            ):
+                raise PathConfinementError(
+                    f"Path {resolved} in docs vault is masked by memory vault {self._memory_root}."
+                )
+            if rel.parts and rel.parts[0].casefold() in self._extra_read_by_folded:
+                raise PathConfinementError(
+                    f"Path {resolved} in docs vault is masked by extra read vault {rel.parts[0]!r}."
+                )
+            return rel
         return resolved.relative_to(self._vault_root)
 
     def authorize_path(self, path: Path, access: AccessMode) -> Path:
         # The vault root was resolved when this scope was built, so re-resolving it
         # on every call bought nothing and cost a realpath per authorized path.
         resolved = assert_within_resolved_roots(path, self._resolved_roots, kind=access)
-        if self._memory_root is not None:
+        if self._memory_root is not None or self._extra_read_by_folded:
             self._canonical_rel_path_for_resolved(resolved)
         if access == "write":
+            if any(
+                resolved.is_relative_to(extra_root)
+                for extra_root in self._extra_read_vaults.values()
+            ):
+                raise PathConfinementError(f"Path {resolved} belongs to a read-only mounted vault.")
             return assert_within_paths(resolved, self._settings.write_paths, kind="write")
         return resolved
 
@@ -371,9 +397,9 @@ class SingleTenantVaultScope:
         spelling travels on.
         """
         assert_vault_rel_path(rel_path)
-        target_root = self._root_for_rel_path(rel_path)
+        target_root, target_parts = self._target_for_rel_path(rel_path)
         try:
-            return self.authorize_path(target_root / rel_path, access)
+            return self.authorize_path(target_root.joinpath(*target_parts), access)
         except PathConfinementError as exc:
             _LOGGER.debug("Refused %s access to %r: %s", access, rel_path, exc)
             raise type(exc)(f"Path {rel_path!r} is outside the allowed {access} scope.") from exc
@@ -439,8 +465,8 @@ class SingleTenantVaultScope:
         assert_vault_rel_path(rel_path)
         lexical_parts = PurePosixPath(rel_path.replace("\\", "/")).parts
         self._assert_admitted_parts(lexical_parts, rel_path=rel_path)
-        target_root = self._root_for_rel_path(rel_path)
-        linked = _first_link_below(target_root, lexical_parts)
+        target_root, target_parts = self._target_for_rel_path(rel_path)
+        linked = _first_link_below(target_root, target_parts)
         if linked is not None:
             _LOGGER.debug("Refused a write through the link %s for %r", linked, rel_path)
             raise PathConfinementError(

@@ -127,6 +127,7 @@ async def build_health(
         scan_vault_read_only,
         root,
         memory_root=app.settings.memory_root,
+        extra_read_vaults=app.settings.extra_read_vaults,
     )
     stats_task = app.store.stats()
     indexed_task = app.store.list_indexed_notes()
@@ -163,6 +164,13 @@ async def build_health(
     durability["write_paths_configured"] = app.write_policy.write_paths_configured
     durability["effective_writes_enabled"] = app.write_policy.effective_writes_enabled
     durability["read_only"] = app.settings.read_only
+    durability["vault_mode"] = (
+        "dual"
+        if app.settings.memory_root is not None and app.settings.memory_root.resolve() != root
+        else "single"
+    )
+    durability["memory_vault_configured"] = durability["vault_mode"] == "dual"
+    durability["extra_read_vault_prefixes"] = sorted(app.settings.extra_read_vaults.keys())
     scrubber = read_scrubber_health(
         root,
         app.settings,

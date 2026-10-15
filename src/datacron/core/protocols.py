@@ -304,6 +304,7 @@ class RipgrepWrapper(Protocol):
         fallback_timeout_seconds: float | None = None,
         admit: Callable[[str], bool] | None = None,
         max_frame_bytes: int | None = None,
+        extra_roots: Mapping[str, Path] | None = None,
     ) -> list[SearchResult]:
         """Run ripgrep against ``vault_root`` and resolve matches."""
         ...
