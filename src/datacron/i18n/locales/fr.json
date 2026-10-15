@@ -97,6 +97,120 @@
       "source_help": "Chemin relatif au vault de la note à découper en notes de sections H2.",
       "missing_required_note_field": "Champ de note requis manquant : {field}",
       "source_not_admitted": "La source n'est pas une note admise dans le périmètre sélectionné"
+    },
+    "graph_health": {
+      "summary": "Santé du graphe : {total_notes} notes, {total_links} liens ({resolved_links} résolus, {broken_links} cassés, {orphan_notes} orphelines, {cross_vault_links} inter-vaults).",
+      "broken_item": "  [cassé] {source_rel_path} -> [[{target_alias}]]",
+      "orphan_item": "  [orpheline] {rel_path} ({title})",
+      "hub_item": "  [hub] {rel_path} (entrants={incoming_count}, sortants={outgoing_count})"
+    },
+    "compact_memory": {
+      "dry_run_summary": "Aperçu de compaction mémoire (seuil < {cutoff_date}) : {candidate_count} notes de journal réparties sur {digest_count} digests mensuels ({superseded_count} notes remplacées détectées).",
+      "applied_summary": "Compaction mémoire terminée : {compacted_count} notes de journal consolidées dans {digests_written} digests mensuels.",
+      "digest_item": "  [digest] {digest_rel_path} ({source_note_count} notes sources)"
+    },
+    "config": {
+      "saved": "Configuration enregistrée ({config_path}, hash={content_hash})."
+    },
+    "companion": {
+      "launching": "Datacron Companion à l'écoute sur {url}",
+      "press_ctrl_c": "Appuyez sur Ctrl+C pour arrêter le serveur Companion."
+    }
+  },
+  "companion": {
+    "app": {
+      "title": "Datacron Companion",
+      "subtitle": "Panneau de contrôle local des vaults, de la mémoire et du MCP",
+      "connected": "Connecté à Datacron {version}",
+      "refresh": "Actualiser (F5)",
+      "save": "Enregistrer (Ctrl+S)",
+      "language_label": "Langue"
+    },
+    "nav": {
+      "home": "Accueil",
+      "vaults": "Vaults & Index",
+      "search": "Recherche",
+      "graph": "Graphe & Mémoire",
+      "mcp": "Clients MCP",
+      "history": "Historique & Audit",
+      "settings": "Réglages"
+    },
+    "home": {
+      "headline": "État de préparation et vue d'ensemble",
+      "status_ready": "Vault opérationnel",
+      "status_unconfigured": "Vault non configuré",
+      "status_dual": "Mode Dual-Vault actif (Docs + Mémoire)",
+      "status_single": "Mode Single-Vault",
+      "cta_configure": "Configurer le Vault",
+      "cta_sync": "Synchroniser et vérifier l'index",
+      "cta_search": "Tester la recherche hybride",
+      "card_notes": "Notes indexées",
+      "card_chunks": "Fragments indexés",
+      "card_generation": "Génération d'index",
+      "card_mode": "Topologie",
+      "getting_started_title": "Guide de démarrage en 4 étapes",
+      "step1_title": "1. Configurer le vault de documentation principal",
+      "step2_title": "2. Configurer le vault mémoire dédié (Dual-Vault optionnel)",
+      "step3_title": "3. Construire et vérifier l'index FTS5",
+      "step4_title": "4. Connecter les assistants IA (Clients MCP)"
+    },
+    "vaults": {
+      "headline": "Topologie des Vaults, Dual-Vault & Indexation",
+      "docs_vault_label": "Vault de documentation principal (DATACRON_VAULT_ROOT)",
+      "memory_vault_label": "Vault mémoire IA dédié (DATACRON_MEMORY_ROOT)",
+      "extra_vaults_label": "Vaults supplémentaires en lecture seule (prefix=chemin, un par ligne)",
+      "save_topology": "Enregistrer la topologie",
+      "sync_now": "Synchroniser l'index (incrémental)",
+      "rebuild_now": "Reconstruction complète atomique",
+      "migrate_title": "Migrer d'un Single-Vault vers Dual-Vault",
+      "migrate_desc": "Copie atomiquement .datacron/ et _memory/ vers le Vault Mémoire dédié avec vérification SHA-256 et nettoie le Vault Docs.",
+      "migrate_keep_source": "Conserver les fichiers sources dans le Vault Docs (--keep-source)",
+      "migrate_button": "Lancer la migration Dual-Vault"
+    },
+    "search": {
+      "headline": "Recherche interactive dans le Vault",
+      "query_placeholder": "Saisissez une requête FTS5 ou une expression régulière...",
+      "folder_placeholder": "Filtre de dossier optionnel (ex. _memory ou Architecture)",
+      "mode_fts": "FTS5 BM25",
+      "mode_regex": "Regex",
+      "run_button": "Rechercher (Entrée)",
+      "clear_button": "Effacer (Échap)",
+      "empty_state": "Aucun fragment correspondant trouvé. Essayez d'élargir la requête ou de synchroniser l'index.",
+      "preview_title": "Aperçu du fragment et provenance"
+    },
+    "graph": {
+      "headline": "Intégrité du graphe de connaissances & Compaction mémoire",
+      "analyze_button": "Analyser la santé du graphe",
+      "broken_links_title": "Wikilinks cassés",
+      "orphan_notes_title": "Notes orphelines",
+      "hub_notes_title": "Notes hubs principales",
+      "cross_vault_title": "Liens inter-vaults",
+      "compaction_title": "Compaction intelligente de la mémoire",
+      "compaction_days_label": "Compacter les journaux plus anciens que (jours)",
+      "compaction_preview_btn": "Aperçu de la compaction (Dry-Run)",
+      "compaction_apply_btn": "Appliquer la compaction mensuelle"
+    },
+    "mcp": {
+      "headline": "Assistants IA & Intégration des clients MCP",
+      "client_label": "Client MCP cible",
+      "scope_label": "Portée d'installation",
+      "enable_write_label": "Activer les outils d'écriture confinés (_memory, _drafts, _journal)",
+      "configure_button": "Configurer le client sélectionné"
+    },
+    "history": {
+      "headline": "Journal des opérations & Audit de fiabilité",
+      "reload_button": "Recharger l'historique des opérations",
+      "empty_log": "Aucune opération d'écriture enregistrée dans ce vault pour le moment."
+    },
+    "settings": {
+      "headline": "Configuration du Vault (.datacron/VAULT.yaml) & Préférences",
+      "excluded_folders_label": "Dossiers exclus (un par ligne)",
+      "archive_tags_label": "Tags d'archive / déclassés (un par ligne)",
+      "query_expansion_label": "Synonymes d'expansion de requêtes (objet JSON)",
+      "durability_label": "Mode de durabilité des écritures",
+      "timeout_label": "Délai d'expiration des opérations CLI (secondes)",
+      "save_vault_config_btn": "Enregistrer VAULT.yaml (Protection CAS)",
+      "cas_hash_label": "Hash CAS de la configuration active"
     }
   },
   "eval": {

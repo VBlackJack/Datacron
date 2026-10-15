@@ -112,6 +112,7 @@ french.ProtocolRemoveFailed=Datacron n'a pas pu retirer tous les blocs d'instruc
 Source: "..\..\dist\datacron.exe"; DestDir: "{app}"; DestName: "datacron.exe"; Flags: ignoreversion
 
 [Icons]
+Name: "{group}\Datacron Companion"; Filename: "{app}\datacron.exe"; Parameters: "companion"
 Name: "{group}\Datacron Status"; Filename: "{cmd}"; Parameters: "{code:StatusShortcutParameters}"
 Name: "{group}\Datacron Setup"; Filename: "{cmd}"; Parameters: "{code:SetupShortcutParameters}"
 

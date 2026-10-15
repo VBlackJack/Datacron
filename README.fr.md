@@ -192,8 +192,10 @@ Variables d'environnement utiles :
 
 | Variable | Défaut | Rôle |
 |---|---:|---|
-| `DATACRON_VAULT_ROOT` | non définie | fallback après `--vault` ; le répertoire courant n'est accepté que s'il contient `.datacron/VAULT.yaml` |
-| `DATACRON_READ_PATHS` | vide | allowlist de lecture ; le setup des clients la fixe au vault |
+| `DATACRON_VAULT_ROOT` | non définie | racine principale du vault documentaire utilisateur (fallback après `--vault`) |
+| `DATACRON_MEMORY_ROOT` | non définie | racine optionnelle dédiée au vault mémoire hébergeant `.datacron/` et `_memory/` (mode Dual-Vault) |
+| `DATACRON_EXTRA_READ_VAULTS` | vide | montages secondaires optionnels en lecture seule (`prefix=chemin` séparés par le séparateur OS ou objet JSON) |
+| `DATACRON_READ_PATHS` | vide | allowlist de lecture ; le setup des clients la fixe au(x) vault(s) |
 | `DATACRON_WRITE_PATHS` | vide | allowlist d'écriture ; vide = write tools désactivés |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | nombre max de résultats retournés |
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | budget token des résultats de recherche |
@@ -300,9 +302,11 @@ vault synchronisé les emporte partout. Passer `--scope user` pour en garder le 
 | Index | `datacron index` incrémental, `datacron reindex` complet, réparation conditionnelle à la lecture |
 | Organisation | Bloc `organization` facultatif dans `VAULT.yaml` ; `datacron reorganize --dry-run` mesure l'écart en lecture seule, `apply_organization_manifest` applique |
 | Évaluation | `datacron eval` sur le pipeline MCP réel : recall@k, MRR, nDCG, fraîcheur, latence et payload tokens |
-| Setup guidé | `datacron setup` : init + index + enregistrement MCP en une commande |
+| Setup guidé | `datacron setup` : init + index + enregistrement MCP en une commande (Single-Vault ou Dual-Vault via `--memory-vault`) |
+| Panneau graphique | `datacron companion` : panneau de contrôle graphique local (`127.0.0.1`) pour la topologie, la recherche, le graphe, la compaction, les clients MCP, l'audit et les réglages CAS |
 | Clients | Auto-détection et enregistrement via `datacron setup --client all` : Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, LM Studio, Codex CLI, Windsurf, VS Code |
 | Mémoire quotidienne | `session_context`, `prepare_follow_up`, `get_follow_up` : contexte borné, suivis sourcés et états structurés |
+| Graphe & Compaction | `datacron graph-health` (liens cassés, orphelins, hubs, liens inter-vaults) et `datacron compact-memory` (digests mensuels du journal) |
 | Protocole mémoire | Contrat commun versionné pour le serveur et les clients ; `protocol status` vérifie sa distribution, pas le comportement du modèle |
 | Distribution | Installeur Windows (`Datacron-Setup.exe`), exécutable autonome (PyInstaller) sans Python requis, ou installation depuis les sources |
 
@@ -416,9 +420,17 @@ le comportement sur tes propres notes, utilise `datacron eval` et un jeu de ques
 ## Commandes CLI
 
 ```bash
+datacron companion                  # lance le panneau de contrôle graphique local (127.0.0.1)
 datacron setup                      # parcours guidé : init + index + config client
 datacron setup --yes                # tout par défaut, sans question
 datacron setup --client all --scope both --vault /path/to/vault
+datacron setup --vault /path/to/docs --memory-vault /path/to/memory  # setup Dual-Vault
+datacron migrate-memory --vault /path/to/docs --memory-vault /path/to/memory
+datacron graph-health --vault /path/to/vault --json
+datacron compact-memory --vault /path/to/vault --older-than-days 30 --dry-run
+datacron compact-memory --vault /path/to/vault --older-than-days 30 --apply
+datacron config get /path/to/vault --json
+datacron config set /path/to/vault --expected-hash sha256:... --values-json '{"excluded_folders":[".git"]}'
 datacron setup --protocol           # installe aussi les règles mémoire des clients
 datacron protocol install --client all
 datacron protocol status --client all --scope user
@@ -443,7 +455,6 @@ datacron protocol uninstall --client all
 
 - Recherche lexicale : pas de recherche vectorielle ni d'embeddings.
 - Pas d'agent autonome : le client MCP orchestre.
-- Pas de GUI.
 - Pas de writes concurrents multi-machines.
 - La détection des clients par `datacron setup` est best-effort (présence d'un dossier de config
   ou d'un binaire sur le `PATH`) ; une installation dans un emplacement non standard peut être

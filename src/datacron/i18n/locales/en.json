@@ -97,6 +97,120 @@
       "source_help": "Vault-relative path of the note to split into H2 section notes.",
       "missing_required_note_field": "Missing required note field: {field}",
       "source_not_admitted": "Source is not an admitted note in the selected scope"
+    },
+    "graph_health": {
+      "summary": "Graph health: {total_notes} notes, {total_links} links ({resolved_links} resolved, {broken_links} broken, {orphan_notes} orphans, {cross_vault_links} cross-vault).",
+      "broken_item": "  [broken] {source_rel_path} -> [[{target_alias}]]",
+      "orphan_item": "  [orphan] {rel_path} ({title})",
+      "hub_item": "  [hub] {rel_path} (in={incoming_count}, out={outgoing_count})"
+    },
+    "compact_memory": {
+      "dry_run_summary": "Memory compaction preview (cutoff < {cutoff_date}): {candidate_count} journal notes across {digest_count} monthly digests ({superseded_count} superseded notes detected).",
+      "applied_summary": "Memory compaction complete: compacted {compacted_count} journal notes into {digests_written} monthly digests.",
+      "digest_item": "  [digest] {digest_rel_path} ({source_note_count} source notes)"
+    },
+    "config": {
+      "saved": "Configuration saved ({config_path}, hash={content_hash})."
+    },
+    "companion": {
+      "launching": "Datacron Companion listening on {url}",
+      "press_ctrl_c": "Press Ctrl+C to stop the Companion server."
+    }
+  },
+  "companion": {
+    "app": {
+      "title": "Datacron Companion",
+      "subtitle": "Local vault, memory & MCP control panel",
+      "connected": "Connected to Datacron {version}",
+      "refresh": "Refresh (F5)",
+      "save": "Save (Ctrl+S)",
+      "language_label": "Language"
+    },
+    "nav": {
+      "home": "Home",
+      "vaults": "Vaults & Index",
+      "search": "Search",
+      "graph": "Graph & Memory",
+      "mcp": "MCP Clients",
+      "history": "History & Audit",
+      "settings": "Settings"
+    },
+    "home": {
+      "headline": "Vault Readiness & Overview",
+      "status_ready": "Vault Ready",
+      "status_unconfigured": "Vault Not Configured",
+      "status_dual": "Dual-Vault Active (Docs + Memory)",
+      "status_single": "Single-Vault Mode",
+      "cta_configure": "Configure Vault",
+      "cta_sync": "Synchronize & Verify Index",
+      "cta_search": "Test Hybrid Search",
+      "card_notes": "Indexed Notes",
+      "card_chunks": "Indexed Chunks",
+      "card_generation": "Index Generation",
+      "card_mode": "Topology Mode",
+      "getting_started_title": "4-Step Getting Started Guide",
+      "step1_title": "1. Configure Primary Documentation Vault",
+      "step2_title": "2. Configure Dedicated Memory Vault (Optional Dual-Vault)",
+      "step3_title": "3. Build & Verify FTS5 Index",
+      "step4_title": "4. Connect AI Assistants (MCP Clients)"
+    },
+    "vaults": {
+      "headline": "Vault Topology, Dual-Vault & Indexing",
+      "docs_vault_label": "Primary Documentation Vault (DATACRON_VAULT_ROOT)",
+      "memory_vault_label": "Dedicated AI Memory Vault (DATACRON_MEMORY_ROOT)",
+      "extra_vaults_label": "Extra Read-Only Vault Mounts (prefix=path, one per line)",
+      "save_topology": "Save Topology",
+      "sync_now": "Synchronize Index (Incremental)",
+      "rebuild_now": "Atomic Full Rebuild",
+      "migrate_title": "Migrate Single-Vault to Dual-Vault",
+      "migrate_desc": "Atomically copy .datacron/ and _memory/ into the Dedicated Memory Vault with SHA-256 verification and clean the Docs Vault.",
+      "migrate_keep_source": "Keep source copies in Docs Vault (--keep-source)",
+      "migrate_button": "Run Dual-Vault Migration"
+    },
+    "search": {
+      "headline": "Interactive Vault Search",
+      "query_placeholder": "Enter FTS5 query or regex pattern...",
+      "folder_placeholder": "Optional folder filter (e.g. _memory or Architecture)",
+      "mode_fts": "FTS5 BM25",
+      "mode_regex": "Regex",
+      "run_button": "Search (Enter)",
+      "clear_button": "Clear (Esc)",
+      "empty_state": "No matching chunks found. Try broadening your query or synchronizing the index.",
+      "preview_title": "Chunk & Provenance Preview"
+    },
+    "graph": {
+      "headline": "Knowledge Graph Integrity & Smart Memory Compaction",
+      "analyze_button": "Analyze Graph Health",
+      "broken_links_title": "Broken Wikilinks",
+      "orphan_notes_title": "Orphan Notes",
+      "hub_notes_title": "Top Hub Notes",
+      "cross_vault_title": "Cross-Vault Links",
+      "compaction_title": "Smart Memory Compaction",
+      "compaction_days_label": "Compact journals older than (days)",
+      "compaction_preview_btn": "Preview Compaction (Dry-Run)",
+      "compaction_apply_btn": "Apply Monthly Compaction"
+    },
+    "mcp": {
+      "headline": "AI Assistants & MCP Client Integration",
+      "client_label": "Target MCP Client",
+      "scope_label": "Installation Scope",
+      "enable_write_label": "Enable confined write tools (_memory, _drafts, _journal)",
+      "configure_button": "Configure Selected Client"
+    },
+    "history": {
+      "headline": "Operation Log & Reliability Audit",
+      "reload_button": "Reload Operation History",
+      "empty_log": "No recorded write operations in this vault yet."
+    },
+    "settings": {
+      "headline": "Vault Configuration (.datacron/VAULT.yaml) & Preferences",
+      "excluded_folders_label": "Excluded Folders (one per line)",
+      "archive_tags_label": "Archive / Demoted Tags (one per line)",
+      "query_expansion_label": "Query Expansion Synonyms (JSON object)",
+      "durability_label": "Write Durability Mode",
+      "timeout_label": "CLI Operation Timeout (seconds)",
+      "save_vault_config_btn": "Save VAULT.yaml (CAS Protected)",
+      "cas_hash_label": "Active Config CAS Hash"
     }
   },
   "eval": {

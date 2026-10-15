@@ -2669,6 +2669,312 @@ def mcp_install(
     )
 
 
+@app.command("graph-health")
+def graph_health_cmd(
+    vault: Path | None = typer.Argument(
+        None,
+        help=VAULT_ROOT_HELP,
+    ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
+    hub_limit: int = typer.Option(
+        10,
+        "--hub-limit",
+        min=1,
+        max=100,
+        help="Maximum number of top hub notes to report.",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable JSON output.",
+    ),
+) -> None:
+    """Analyze wikilink integrity, orphan notes, hub notes, and cross-vault links."""
+    from datacron.graph_health import analyze_vault_graph  # noqa: PLC0415
+
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    settings = _settings_for_cli_vault(settings, vault_root, memory_root=memory_vault)
+    try:
+        report = asyncio.run(
+            analyze_vault_graph(vault_root, settings=settings, hub_limit=hub_limit)
+        )
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        _error(str(exc))
+
+    if as_json:
+        _print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+        return
+
+    _print(
+        t(
+            "cli.graph_health.summary",
+            total_notes=report.total_notes,
+            total_links=report.total_links,
+            resolved_links=report.resolved_links,
+            broken_links=report.broken_link_count,
+            orphan_notes=report.orphan_note_count,
+            cross_vault_links=report.cross_vault_link_count,
+        )
+    )
+    for broken in report.broken_links:
+        _print(
+            t(
+                "cli.graph_health.broken_item",
+                source_rel_path=broken.source_rel_path,
+                target_alias=broken.target_alias,
+            )
+        )
+    for orphan in report.orphan_notes:
+        _print(
+            t(
+                "cli.graph_health.orphan_item",
+                rel_path=orphan.rel_path,
+                title=orphan.title,
+            )
+        )
+    for hub in report.hub_notes:
+        _print(
+            t(
+                "cli.graph_health.hub_item",
+                rel_path=hub.rel_path,
+                incoming_count=hub.incoming_count,
+                outgoing_count=hub.outgoing_count,
+            )
+        )
+
+
+@app.command("compact-memory")
+def compact_memory_cmd(
+    vault: Path | None = typer.Argument(
+        None,
+        help=VAULT_ROOT_HELP,
+    ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
+    older_than_days: int = typer.Option(
+        30,
+        "--older-than-days",
+        min=0,
+        help="Consolidate journal notes older than this number of days.",
+    ),
+    apply: bool = typer.Option(
+        False,
+        "--apply/--dry-run",
+        help="Write monthly digests and tag compacted source journals (default: --dry-run).",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable JSON output.",
+    ),
+) -> None:
+    """Consolidate historical _memory/journal/ notes into monthly archive digests."""
+    from datacron.memory_compaction import compact_vault_memory  # noqa: PLC0415
+
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    settings = _settings_for_cli_vault(settings, vault_root, memory_root=memory_vault)
+    try:
+        report = asyncio.run(
+            compact_vault_memory(
+                vault_root,
+                settings=settings,
+                older_than_days=older_than_days,
+                dry_run=not apply,
+            )
+        )
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        _error(str(exc))
+
+    if as_json:
+        _print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+        return
+
+    if report.dry_run:
+        _print(
+            t(
+                "cli.compact_memory.dry_run_summary",
+                cutoff_date=report.cutoff_date,
+                candidate_count=len(report.candidate_journals),
+                digest_count=len(report.digests_planned),
+                superseded_count=len(report.superseded_notes),
+            )
+        )
+    else:
+        _print(
+            t(
+                "cli.compact_memory.applied_summary",
+                compacted_count=report.compacted_count,
+                digests_written=report.digests_written,
+            )
+        )
+    for digest in report.digests_planned:
+        _print(
+            t(
+                "cli.compact_memory.digest_item",
+                digest_rel_path=digest.digest_rel_path,
+                source_note_count=digest.source_note_count,
+            )
+        )
+
+
+config_app = typer.Typer(
+    name="config",
+    help="Inspect or update .datacron/VAULT.yaml under Compare-And-Swap (CAS) protection.",
+    no_args_is_help=True,
+)
+app.add_typer(config_app, name="config")
+
+
+@config_app.command("get")
+def config_get_cmd(
+    vault: Path | None = typer.Argument(
+        None,
+        help=VAULT_ROOT_HELP,
+    ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable CAS configuration snapshot.",
+    ),
+) -> None:
+    """Read `.datacron/VAULT.yaml` and its SHA-256 Compare-And-Swap hash."""
+    from datacron.config_contract import read_vault_config_snapshot  # noqa: PLC0415
+
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    settings = _settings_for_cli_vault(settings, vault_root, memory_root=memory_vault)
+    snap = read_vault_config_snapshot(vault_root, settings=settings)
+    if as_json:
+        _print(json.dumps(snap.to_dict(), indent=2, sort_keys=True))
+        return
+    _print(f"config_path: {snap.config_path}")
+    _print(f"present: {snap.present}")
+    _print(f"content_hash: {snap.content_hash}")
+    _print(f"valid: {snap.valid}")
+
+
+@config_app.command("set")
+def config_set_cmd(
+    values_json: str = typer.Option(
+        ...,
+        "--values-json",
+        help="JSON object containing VAULT.yaml fields to write.",
+    ),
+    vault: Path | None = typer.Argument(
+        None,
+        help=VAULT_ROOT_HELP,
+    ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
+    expected_hash: str | None = typer.Option(
+        None,
+        "--expected-hash",
+        help="Expected SHA-256 content_hash from `datacron config get`.",
+    ),
+    expect_absent: bool = typer.Option(
+        False,
+        "--expect-absent",
+        help="Require VAULT.yaml not to exist before writing.",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable CAS configuration snapshot.",
+    ),
+) -> None:
+    """Atomically write `.datacron/VAULT.yaml` with Compare-And-Swap verification."""
+    from datacron.config_contract import (  # noqa: PLC0415
+        EXIT_VALIDATION_ERROR,
+        ConfigContractError,
+        write_vault_config_cas,
+    )
+
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    settings = _settings_for_cli_vault(settings, vault_root, memory_root=memory_vault)
+    try:
+        decoded = json.loads(values_json)
+        if not isinstance(decoded, dict):
+            raise ValueError("--values-json must decode to a JSON object")
+    except (json.JSONDecodeError, ValueError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=EXIT_VALIDATION_ERROR) from exc
+
+    try:
+        snap = write_vault_config_cas(
+            vault_root,
+            decoded,
+            settings=settings,
+            expected_hash=expected_hash,
+            expect_absent=expect_absent,
+        )
+    except ConfigContractError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+
+    if as_json:
+        _print(json.dumps(snap.to_dict(), indent=2, sort_keys=True))
+        return
+    _print(
+        t(
+            "cli.config.saved",
+            config_path=snap.config_path,
+            content_hash=snap.content_hash,
+        )
+    )
+
+
+@app.command("companion")
+def companion_cmd(
+    port: int = typer.Option(
+        0,
+        "--port",
+        min=0,
+        max=65535,
+        help="Localhost TCP port (0 selects an ephemeral free port).",
+    ),
+    no_browser: bool = typer.Option(
+        False,
+        "--no-browser",
+        help="Start the Companion server without opening a desktop window.",
+    ),
+) -> None:
+    """Launch the Datacron Companion graphical control panel on 127.0.0.1."""
+    from datacron.companion import (  # noqa: PLC0415
+        create_companion_server,
+        launch_companion_window,
+    )
+
+    server, url, _token = create_companion_server(port=port)
+    _print(t("cli.companion.launching", url=url))
+    _print(t("cli.companion.press_ctrl_c"))
+    if not no_browser:
+        launch_companion_window(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
 def mcp_entry() -> None:
     """``datacron-mcp`` script entry -- direct stdio MCP server.
 
