@@ -195,3 +195,14 @@ def test_each_installer_finding_has_a_scenario_that_would_catch_it() -> None:
         "silent_without_vault_refused",
     } <= names
     assert "RESETCONFIG" in module._MANUAL_STEP, "the wizard step is still owed and must say so"
+
+
+def test_dual_vault_memory_field_is_exposed_and_wired() -> None:
+    """The Windows installer wizard exposes and wires the optional Dual-Vault memory folder."""
+    body = _source()
+    assert "english.MemoryVaultLabel=" in body
+    assert "french.MemoryVaultLabel=" in body
+    assert "VaultPage.Add(CustomMessage('PrimaryVaultLabel'));" in body
+    assert "VaultPage.Add(CustomMessage('MemoryVaultLabel'));" in body
+    assert "MemoryVaultPath := NormalizePathEntry(SelectedMemoryVaultPath);" in body
+    assert "' --memory-vault ' + AddQuotes(MemoryVaultPath)" in body
