@@ -22,15 +22,17 @@ consulte les [questions fréquentes](faq.md).
 1. Télécharge `Datacron-Setup.exe` depuis la page **Releases** du dépôt.
 2. Double-clique dessus. L'installation est **par utilisateur** : aucun droit
    administrateur, aucune élévation (UAC).
-3. **Choisis ton vault** : le dossier de notes Markdown que tu ouvres déjà dans
-   Obsidian. Datacron y créera un sous-dossier `.datacron/` (index, config, audit).
+3. **Choisis ton vault (Single-Vault ou Dual-Vault)** :
+   - **Vault de documentation principal** : le dossier de notes Markdown que tu ouvres déjà dans Obsidian.
+   - **Vault Mémoire dédié (mode Dual-Vault optionnel)** : laisse ce second champ vide pour tout garder dans un seul dossier, ou choisis un second dossier dédié pour que Datacron y stocke `.datacron/` (index, config, audit) et `_memory/` séparément sans jamais toucher à ton dossier de documentation.
 4. Laisse cochée la case **Indexer maintenant** pour construire l'index tout de
    suite (recommandé), ou décoche-la pour le faire plus tard.
 5. **Autoriser l'écriture de notes** (facultatif) : par défaut, tes assistants IA peuvent
    lire tes notes mais jamais les modifier, et les deux cases sont décochées. Coche
    **Autoriser mes assistants IA à écrire des notes (dans 3 sous-dossiers dédiés
    uniquement)** pour leur permettre de créer et mettre à jour des notes uniquement dans
-   `_memory`, `_drafts` et `_journal` ; tout le reste reste intouchable. Coche **Retenir
+   `_memory`, `_drafts` et `_journal` (en mode Dual-Vault, `_memory` est placé dans ton
+   Vault Mémoire dédié) ; tout le reste reste intouchable. Coche **Retenir
    cette autorisation pour les assistants IA installés plus tard** pour réutiliser la même
    autorisation avec les assistants ajoutés à l'avenir. Dans le doute, laisse les deux
    cases décochées ; tu pourras activer l'écriture plus tard en relançant Datacron Setup.
@@ -48,9 +50,10 @@ serveur Datacron.
 
 ## 2. Le choix du vault
 
-Le vault est **ton dossier de notes** : la source de vérité. L'installeur n'y touche
-pas, il ajoute seulement `.datacron/`. Si tu pointes vers un dossier qui n'existe pas
-encore, il est créé.
+Le vault est **ton dossier de notes** : la source de vérité. En mode Single-Vault,
+l'installeur ajoute seulement `.datacron/` ; en mode Dual-Vault, `.datacron/` et `_memory/`
+sont placés dans le Vault Mémoire dédié pour que ton dossier de notes principal reste
+100 % intact. Si tu pointes vers un dossier qui n'existe pas encore, il est créé.
 
 ## 3. Réinstaller (Garder ou Réinitialiser)
 
@@ -85,6 +88,7 @@ Datacron-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /VAULT="C:\Users\moi\Notes"
 
 Options :
 
+- `/MEMORYVAULT="C:\Users\moi\Datacron-Memory"` : racine optionnelle du Vault Mémoire dédié pour le mode Dual-Vault.
 - `/RESETCONFIG` : réinitialise la config et l'index (au lieu de garder).
 - `/INDEX` : indexe pendant l'installation. Sans ce commutateur, l'index n'est pas
   construit à ce moment-là.

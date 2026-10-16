@@ -22,14 +22,16 @@ see the [frequently asked questions](faq.md).
 1. Download `Datacron-Setup.exe` from the repository's **Releases** page.
 2. Double-click it. The install is **per-user**: no administrator rights, no
    elevation (UAC).
-3. **Choose your vault**: the Markdown notes folder you already open in Obsidian.
-   Datacron creates a `.datacron/` subfolder there (index, config, audit).
+3. **Choose your vault (Single-Vault or Dual-Vault)**:
+   - **Primary documentation vault**: the Markdown notes folder you already open in Obsidian.
+   - **Dedicated Memory Vault (optional Dual-Vault mode)**: leave empty to keep everything in one folder, or pick a second folder so Datacron stores `.datacron/` (index, config, audit) and `_memory/` separately while keeping your documentation folder completely untouched.
 4. Leave **Index now** checked to build the index immediately (recommended), or
    uncheck it to do it later.
 5. **Allow note writing** (optional): by default, your AI assistants can read your notes
    but never change them, and both boxes are unchecked. Check **Let my AI assistants
    write notes (in 3 dedicated subfolders only)** to let them create and update notes
-   only in `_memory`, `_drafts`, and `_journal`; everything else stays untouched. Check
+   only in `_memory`, `_drafts`, and `_journal` (in Dual-Vault mode, `_memory` lives in
+   your dedicated Memory Vault); everything else stays untouched. Check
    **Remember this permission for AI assistants installed later** to reuse the same
    permission for assistants added in the future. If unsure, leave both boxes unchecked;
    you can enable writing later by running Datacron Setup again. Leaving the second box
@@ -47,9 +49,10 @@ server.
 
 ## 2. About the vault
 
-The vault is **your notes folder**: the source of truth. The installer does not touch
-it; it only adds `.datacron/`. If you point at a folder that does not exist yet, it is
-created.
+The vault is **your notes folder**: the source of truth. In Single-Vault mode the installer
+only adds `.datacron/`; in Dual-Vault mode `.datacron/` and `_memory/` are placed in the
+dedicated Memory Vault so your primary notes folder stays completely untouched. If you point
+at a folder that does not exist yet, it is created.
 
 ## 3. Reinstalling (Keep or Reset)
 
@@ -83,6 +86,7 @@ Datacron-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /VAULT="C:\Users\me\Notes"
 
 Options:
 
+- `/MEMORYVAULT="C:\Users\me\Datacron-Memory"`: optional dedicated Memory Vault root for Dual-Vault mode.
 - `/RESETCONFIG`: reset the config and index (instead of keeping).
 - `/INDEX`: index during installation. Without this switch, the index is not built at
   that time.

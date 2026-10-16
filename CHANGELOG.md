@@ -9,6 +9,18 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.1016.00] - 2026-10-16
+
+### Added
+
+- **Windows Setup Wizard Dual-Vault Support (`Datacron-Setup.exe`)**: added Single-Vault vs
+  Dual-Vault explanation and an optional second directory picker (`Memory Vault`) on the
+  installer vault page (English and French), `/MEMORYVAULT=<path>` silent-install parameter,
+  `MemoryVaultRoot` registry persistence, `--memory-vault` pass-through to `datacron.exe setup`
+  and Start Menu shortcuts, and updated EN/FR documentation (`docs/en/setup.md`,
+  `docs/fr/setup.md`, `docs/en/installation-windows.md`, `docs/fr/installation-windows.md`,
+  `docs/en/user-guide.md`, `docs/fr/user-guide.md`).
+
 ## [2026.1015.00] - 2026-10-15
 
 ### Added

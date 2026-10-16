@@ -64,13 +64,15 @@ english.ReinstallDescription=Choose what this installation should do with the se
 english.ReinstallSubCaption=Keep preserves your configuration and generated index. Reset removes them before setup; note identities, audit data, logs, and Markdown files remain unchanged.
 english.KeepConfig=Keep my current Datacron configuration (recommended)
 english.ResetConfig=Reset configuration and rebuild the generated index
-english.VaultPageCaption=Markdown vault
-english.VaultPageDescription=Choose the folder Datacron should serve.
-english.VaultPageSubCaption=You can start with an empty folder and add Markdown notes later.
+english.VaultPageCaption=Markdown vault (Single-Vault or Dual-Vault)
+english.VaultPageDescription=Choose the folder(s) Datacron should serve.
+english.VaultPageSubCaption=You can start with an empty folder and add Markdown notes later. Optional Dual-Vault mode: leave the second field empty to keep everything in one folder, or pick a dedicated Memory Vault folder so Datacron stores .datacron/ and _memory/ separately while keeping your documentation folder untouched.
+english.PrimaryVaultLabel=Primary documentation vault:
+english.MemoryVaultLabel=Dedicated Memory Vault (optional Dual-Vault mode - leave empty for Single-Vault):
 english.IndexNow=Index this vault now
 english.WritePageCaption=Allow note writing
 english.WritePageDescription=Choose whether your AI assistants can create notes.
-english.WritePageSubCaption=By default, your AI assistants (Claude, Cursor...) can READ your notes but never change them. Check the first box to also let them create and update notes - only inside three dedicated subfolders (_memory, _drafts, _journal). Everything else stays untouched. If unsure, leave unchecked: you can enable this later by running Datacron Setup again.
+english.WritePageSubCaption=By default, your AI assistants (Claude, Cursor...) can READ your notes but never change them. Check the first box to also let them create and update notes - only inside three dedicated subfolders (_memory, _drafts, _journal; in Dual-Vault mode, _memory lives in your Memory Vault). Everything else stays untouched. If unsure, leave unchecked: you can enable this later by running Datacron Setup again.
 english.EnableWriteTools=Let my AI assistants write notes (in 3 dedicated subfolders only)
 english.MachineWideWrite=Remember this permission for AI assistants installed later
 english.VaultRequiredSilent=/VAULT=<path> is required for a silent Datacron installation.
@@ -88,13 +90,15 @@ french.ReinstallDescription=Choisissez ce que cette installation doit faire avec
 french.ReinstallSubCaption=Garder conserve la configuration et l'index genere. Reinitialiser les supprime avant le setup ; les identites de notes, l'audit, les logs et les fichiers Markdown restent inchanges.
 french.KeepConfig=Garder ma configuration Datacron actuelle (recommande)
 french.ResetConfig=Reinitialiser la configuration et reconstruire l'index genere
-french.VaultPageCaption=Vault Markdown
-french.VaultPageDescription=Choisissez le dossier que Datacron doit servir.
-french.VaultPageSubCaption=Vous pouvez commencer avec un dossier vide et ajouter des notes Markdown plus tard.
+french.VaultPageCaption=Vault Markdown (Single-Vault ou Dual-Vault)
+french.VaultPageDescription=Choisissez le ou les dossiers que Datacron doit servir.
+french.VaultPageSubCaption=Vous pouvez commencer avec un dossier vide et ajouter des notes Markdown plus tard. Mode Dual-Vault (optionnel) : laissez le second champ vide pour tout garder dans un seul dossier, ou choisissez un dossier Vault Memoire dedie pour que Datacron y stocke .datacron/ et _memory/ separement sans toucher a votre dossier de documentation.
+french.PrimaryVaultLabel=Vault de documentation principal :
+french.MemoryVaultLabel=Vault Memoire dedie (mode Dual-Vault optionnel - laisser vide pour un vault unique) :
 french.IndexNow=Indexer ce vault maintenant
 french.WritePageCaption=Autoriser l'ecriture de notes
 french.WritePageDescription=Choisissez si vos assistants IA peuvent creer des notes.
-french.WritePageSubCaption=Par defaut, vos assistants IA (Claude, Cursor...) peuvent LIRE vos notes mais jamais les modifier. Cochez la premiere case pour leur permettre aussi de creer et mettre a jour des notes - uniquement dans trois sous-dossiers dedies (_memory, _drafts, _journal). Tout le reste de vos notes reste intouchable. Dans le doute, laissez decoche : vous pourrez l'activer plus tard en relancant Datacron Setup.
+french.WritePageSubCaption=Par defaut, vos assistants IA (Claude, Cursor...) peuvent LIRE vos notes mais jamais les modifier. Cochez la premiere case pour leur permettre aussi de creer et mettre a jour des notes - uniquement dans trois sous-dossiers dedies (_memory, _drafts, _journal ; en mode Dual-Vault, _memory est place dans votre Vault Memoire). Tout le reste de vos notes reste intouchable. Dans le doute, laissez decoche : vous pourrez l'activer plus tard en relancant Datacron Setup.
 french.EnableWriteTools=Autoriser mes assistants IA a ecrire des notes (dans 3 sous-dossiers dedies uniquement)
 french.MachineWideWrite=Retenir cette autorisation pour les assistants IA installes plus tard
 french.VaultRequiredSilent=/VAULT=<chemin> est obligatoire pour une installation silencieuse de Datacron.
@@ -120,6 +124,7 @@ Name: "{group}\Datacron Setup"; Filename: "{cmd}"; Parameters: "{code:SetupShort
 const
   InstallerStateKey = 'Software\Datacron';
   InstallerVaultValue = 'VaultRoot';
+  InstallerMemoryVaultValue = 'MemoryVaultRoot';
 
 var
   VaultPage: TInputDirWizardPage;
@@ -127,8 +132,10 @@ var
   WritePage: TInputOptionWizardPage;
   IndexNowCheckBox: TNewCheckBox;
   PreviousVaultPath: String;
+  PreviousMemoryVaultPath: String;
   LastDetectedVaultPath: String;
   VaultPath: String;
+  MemoryVaultPath: String;
   ExistingConfigDetected: Boolean;
   SetupFailed: Boolean;
   UnregisterWarning: Boolean;
@@ -162,12 +169,28 @@ begin
     Result := Trim(VaultPage.Values[0]);
 end;
 
+function SelectedMemoryVaultPath: String;
+begin
+  if WizardSilent then
+    Result := CommandLineValue('MEMORYVAULT')
+  else
+    Result := Trim(VaultPage.Values[1]);
+end;
+
 function EffectiveVaultPath: String;
 begin
   if VaultPath <> '' then
     Result := VaultPath
   else
     Result := SelectedVaultPath;
+end;
+
+function EffectiveMemoryVaultPath: String;
+begin
+  if MemoryVaultPath <> '' then
+    Result := MemoryVaultPath
+  else
+    Result := SelectedMemoryVaultPath;
 end;
 
 function ResetConfigurationRequested: Boolean;
@@ -221,6 +244,8 @@ begin
     outer pair of quotes, which is what makes the inner quoting reliable. }
   Command := '"' + ExpandConstant('{app}\datacron.exe') + '"' +
     ' ' + Subcommand + ' --vault "' + EffectiveVaultPath + '"';
+  if EffectiveMemoryVaultPath <> '' then
+    Command := Command + ' --memory-vault "' + EffectiveMemoryVaultPath + '"';
   Result := '/s /k "' + Command + '"';
 end;
 
@@ -244,6 +269,7 @@ end;
 procedure InitializeWizard;
 var
   InitialPath: String;
+  InitialMemoryPath: String;
 begin
   { The switch chooses which option the page opens on; the operator still decides. }
   if CommandLineSwitchPresent('RESETCONFIG') then
@@ -252,11 +278,18 @@ begin
     ResetSwitchDefault := 0;
   UnregisterWarning := False;
   PreviousVaultPath := '';
+  PreviousMemoryVaultPath := '';
   RegQueryStringValue(
     HKCU,
     InstallerStateKey,
     InstallerVaultValue,
     PreviousVaultPath
+  );
+  RegQueryStringValue(
+    HKCU,
+    InstallerStateKey,
+    InstallerMemoryVaultValue,
+    PreviousMemoryVaultPath
   );
 
   InitialPath := CommandLineValue('VAULT');
@@ -264,6 +297,10 @@ begin
     InitialPath := Trim(PreviousVaultPath);
   if InitialPath = '' then
     InitialPath := ExpandConstant('{userdocs}\Datacron-Vault');
+
+  InitialMemoryPath := CommandLineValue('MEMORYVAULT');
+  if InitialMemoryPath = '' then
+    InitialMemoryPath := Trim(PreviousMemoryVaultPath);
 
   VaultPage := CreateInputDirPage(
     wpWelcome,
@@ -273,17 +310,19 @@ begin
     False,
     ''
   );
-  VaultPage.Add('');
+  VaultPage.Add(CustomMessage('PrimaryVaultLabel'));
   VaultPage.Values[0] := InitialPath;
+  VaultPage.Add(CustomMessage('MemoryVaultLabel'));
+  VaultPage.Values[1] := InitialMemoryPath;
 
   IndexNowCheckBox := TNewCheckBox.Create(VaultPage);
   IndexNowCheckBox.Parent := VaultPage.Surface;
   IndexNowCheckBox.Caption := CustomMessage('IndexNow');
   IndexNowCheckBox.Checked := True;
   IndexNowCheckBox.Top :=
-    VaultPage.Edits[0].Top + VaultPage.Edits[0].Height + ScaleY(16);
-  IndexNowCheckBox.Left := VaultPage.Edits[0].Left;
-  IndexNowCheckBox.Width := VaultPage.Edits[0].Width;
+    VaultPage.Edits[1].Top + VaultPage.Edits[1].Height + ScaleY(16);
+  IndexNowCheckBox.Left := VaultPage.Edits[1].Left;
+  IndexNowCheckBox.Width := VaultPage.Edits[1].Width;
 
   ReinstallPage := CreateInputOptionPage(
     VaultPage.ID,
@@ -318,26 +357,34 @@ begin
   ExistingConfigDetected := False;
   LastDetectedVaultPath := '';
   VaultPath := '';
+  MemoryVaultPath := '';
   SetupFailed := False;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   CandidateVault: String;
+  CandidateMemoryVault: String;
+  SidecarRoot: String;
 begin
   Result := True;
   if CurPageID <> VaultPage.ID then
     Exit;
 
   CandidateVault := Trim(VaultPage.Values[0]);
-  if CompareText(CandidateVault, LastDetectedVaultPath) <> 0 then
+  CandidateMemoryVault := Trim(VaultPage.Values[1]);
+  if CandidateMemoryVault <> '' then
+    SidecarRoot := CandidateMemoryVault
+  else
+    SidecarRoot := CandidateVault;
+  if CompareText(SidecarRoot, LastDetectedVaultPath) <> 0 then
     ReinstallPage.SelectedValueIndex := ResetSwitchDefault;
-  ExistingConfigDetected := (CandidateVault <> '') and FileExists(
-    AddBackslash(CandidateVault) + '.datacron\VAULT.yaml'
+  ExistingConfigDetected := (SidecarRoot <> '') and FileExists(
+    AddBackslash(SidecarRoot) + '.datacron\VAULT.yaml'
   );
   if not ExistingConfigDetected then
     ReinstallPage.SelectedValueIndex := ResetSwitchDefault;
-  LastDetectedVaultPath := CandidateVault;
+  LastDetectedVaultPath := SidecarRoot;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -396,7 +443,8 @@ begin
     command line built from it. A path carrying its own double quote cannot be
     quoted safely at all and is refused. }
   VaultPath := NormalizePathEntry(SelectedVaultPath);
-  if Pos('"', VaultPath) > 0 then
+  MemoryVaultPath := NormalizePathEntry(SelectedMemoryVaultPath);
+  if (Pos('"', VaultPath) > 0) or (Pos('"', MemoryVaultPath) > 0) then
   begin
     Result := CustomMessage('VaultQuoteRejected');
     Exit;
@@ -410,7 +458,13 @@ begin
   end;
 
   if not DirExists(VaultPath) and not ForceDirectories(VaultPath) then
+  begin
     Result := CustomMessage('DirectoryFailed') + #13#10 + VaultPath;
+    Exit;
+  end;
+  if (MemoryVaultPath <> '') and (not DirExists(MemoryVaultPath)) and
+     (not ForceDirectories(MemoryVaultPath)) then
+    Result := CustomMessage('DirectoryFailed') + #13#10 + MemoryVaultPath;
 end;
 
 function UserPathContains(const UserPath, Entry: String): Boolean;
@@ -605,6 +659,15 @@ begin
     MarkSetupFailure(CustomMessage('RegistryFailed'));
     Exit;
   end;
+  if MemoryVaultPath <> '' then
+    RegWriteStringValue(
+      HKCU,
+      InstallerStateKey,
+      InstallerMemoryVaultValue,
+      MemoryVaultPath
+    )
+  else
+    RegDeleteValue(HKCU, InstallerStateKey, InstallerMemoryVaultValue);
 
   ResetConfiguration := ResetConfigurationRequested;
   { User scope only: project scope writes five client configs and their backups
@@ -612,6 +675,8 @@ begin
     still unregisters both scopes, so files left by an earlier release go too. }
   Parameters :=
     'setup --yes --client all --scope user --vault ' + AddQuotes(VaultPath);
+  if MemoryVaultPath <> '' then
+    Parameters := Parameters + ' --memory-vault ' + AddQuotes(MemoryVaultPath);
   if ResetConfiguration then
     Parameters := Parameters + ' --reset';
   if not ShouldIndexNow then
