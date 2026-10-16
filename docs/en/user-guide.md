@@ -9,9 +9,10 @@ tested_on: "Datacron MCP stdio / mcp 2.0.0 / Python 3.11.15"
 **English** | [Français](../fr/user-guide.md)
 
 This guide explains how to use Datacron day to day from Claude, once installation is done
-(see the [Installation guide](setup.md)). Datacron is not an app with a UI: it is an MCP
-server that your client (Claude Desktop or Claude Code) queries. You work in natural
-language, and Claude calls the Datacron tools for you.
+(see the [Installation guide](setup.md)). Datacron is an MCP server that your client
+(Claude Desktop, Claude Code, Codex, Gemini, etc.) queries, complemented by an optional local
+graphical control panel (`datacron companion` on `127.0.0.1`). You work in natural
+language, and your assistant calls the Datacron tools for you.
 
 ## The mental model in one minute
 
@@ -21,7 +22,10 @@ returns only the relevant notes or fragments (chunks) to Claude. Concretely:
 - You ask a question or request an action on your notes.
 - Claude picks the right Datacron tool (search, read, write...).
 - Datacron returns a bounded result (limited count and token budget), wrapped in
-  `<vault_content>...</vault_content>`.
+  `<vault_content>...</vault_content>`, along with provenance metadata (`source_vault` and
+  `writable`) indicating whether each note comes from the primary documentation vault, a
+  dedicated Dual-Vault memory root (`DATACRON_MEMORY_ROOT`), or a read-only secondary vault
+  mount (`DATACRON_EXTRA_READ_VAULTS`).
 - Your notes stay ordinary Markdown files, editable by hand at any time.
 
 ## Tools, by use

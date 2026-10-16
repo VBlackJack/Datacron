@@ -10,11 +10,11 @@ a Markdown vault from Claude, without sending the whole vault into the context.
 | Document | For what |
 |---|---|
 | [README](../../README.md) | Overview, capabilities, current measurements. |
-| [Installation and configuration guide](setup.md) | Install, initialize a vault, wire up Claude Desktop / Claude Code, environment variables, enable writing. |
+| [Installation and configuration guide](setup.md) | Install, initialize a vault (Single-Vault, Dual-Vault, or Multi-Vault), wire up MCP clients, launch `datacron companion`, run `migrate-memory`, `graph-health`, `compact-memory`, and `config get/set`. |
 | [Use Datacron with Ollama](ollama.md) | Connect Ollama to Datacron's stdio MCP server through an explicit bridge with documented evidence limits. |
-| [Windows installation (installer)](installation-windows.md) | The `Datacron-Setup.exe` installer: double-click, no Python, automatic client registration, reinstall, silent mode, uninstall. |
+| [Windows installation (installer)](installation-windows.md) | The `Datacron-Setup.exe` installer: double-click, no Python, automatic client registration, `Datacron Companion` shortcut, reinstall, silent mode, uninstall. |
 | [Frequently asked questions](faq.md) | Symptom-first fixes for vault selection, write access, clients, index freshness, reset, uninstall, and logs. |
-| [User guide](user-guide.md) | Day-to-day use from Claude: search, read, write, supervise, example requests. |
+| [User guide](user-guide.md) | Day-to-day use from your assistant: search, read, write, supervise, provenance metadata (`source_vault`, `writable`), and example requests. |
 | [Memory discipline](memory-discipline.md) | Common initialization, people enrichment, sourced follow-up and client diagnostics. |
 
 ## Understand how it works

@@ -67,6 +67,7 @@ d'abord l'ancien vault de tes clients, pour éviter les entrées fantômes.
 
 ## 4. Raccourcis du menu Démarrer
 
+- **Datacron Companion** : ouvre le panneau de contrôle graphique local (`127.0.0.1`) dans ton navigateur pour gérer la topologie des vaults, la recherche, la santé du graphe, la compaction, les clients MCP, l'historique d'audit et les réglages.
 - **Datacron Status** : ouvre une console sur l'état du vault, de l'index et de la santé.
 - **Datacron Setup** : relance la configuration (par exemple pour réenregistrer un client).
 
