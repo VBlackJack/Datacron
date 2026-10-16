@@ -192,7 +192,7 @@ Variables d'environnement utiles :
 
 | Variable | Défaut | Rôle |
 |---|---:|---|
-| `DATACRON_VAULT_ROOT` | non définie | racine principale du vault documentaire utilisateur (fallback après `--vault`) |
+| `DATACRON_VAULT_ROOT` | non définie | racine principale du vault documentaire utilisateur (fallback après `--vault` ; le répertoire courant n'est accepté que s'il contient `.datacron/VAULT.yaml`) |
 | `DATACRON_MEMORY_ROOT` | non définie | racine optionnelle dédiée au vault mémoire hébergeant `.datacron/` et `_memory/` (mode Dual-Vault) |
 | `DATACRON_EXTRA_READ_VAULTS` | vide | montages secondaires optionnels en lecture seule (`prefix=chemin` séparés par le séparateur OS ou objet JSON) |
 | `DATACRON_READ_PATHS` | vide | allowlist de lecture ; le setup des clients la fixe au(x) vault(s) |

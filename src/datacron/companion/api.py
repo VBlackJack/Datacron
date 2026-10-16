@@ -52,7 +52,7 @@ from datacron.installers.mcp_clients import (
     discover_targets,
 )
 from datacron.mcp.server import build_app
-from datacron.mcp.tools.search import _search_regex_impl, _search_text_impl
+from datacron.mcp.tools.search import search_regex_impl, search_text_impl
 from datacron.memory_compaction import DEFAULT_COMPACTION_DAYS, compact_vault_memory
 from datacron.migration import migrate_vault_to_dual
 from datacron.setup_wizard import (
@@ -475,8 +475,8 @@ async def run_companion_search(
     await app.store.open(db_path)
     try:
         if mode == "regex":
-            return await _search_regex_impl(app, pattern=query, glob=folder, limit=limit)
-        return await _search_text_impl(
+            return await search_regex_impl(app, pattern=query, glob=folder, limit=limit)
+        return await search_text_impl(
             app,
             query=query,
             limit=limit,

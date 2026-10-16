@@ -826,3 +826,7 @@ async def _chunk_links_to(
         if alias_cache[key] == target_note_id:
             return True
     return False
+
+
+search_text_impl = _search_text_impl
+search_regex_impl = _search_regex_impl

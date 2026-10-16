@@ -54,6 +54,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   reused `ReliabilityScan` content hashes and mtimes in `get_health` to avoid duplicate full-vault
   reads.
 
+### Security
+
+- Upgraded `mcp` floor and lockfile pin to `>=2.3.0` (`2.3.0`) to remediate `CVE-2026-59951`.
+
 ### Fixed
 
 - Unified Windows reparse-point checks via `is_link_stat` so OneDrive Files On-Demand cloud

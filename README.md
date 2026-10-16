@@ -192,7 +192,7 @@ Useful environment variables:
 
 | Variable | Default | Role |
 |---|---:|---|
-| `DATACRON_VAULT_ROOT` | unset | primary user documentation vault root (fallback after `--vault`) |
+| `DATACRON_VAULT_ROOT` | unset | primary user documentation vault root (fallback after `--vault`; the current directory is accepted only when it contains `.datacron/VAULT.yaml`) |
 | `DATACRON_MEMORY_ROOT` | unset | optional dedicated memory vault root hosting `.datacron/` and `_memory/` (Dual-Vault mode) |
 | `DATACRON_EXTRA_READ_VAULTS` | empty | optional read-only secondary vault mounts (`prefix=path` separated by OS path separator or JSON object) |
 | `DATACRON_READ_PATHS` | empty | read allowlist; client setup sets it to the vault(s) |

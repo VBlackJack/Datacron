@@ -324,19 +324,21 @@ class SingleTenantVaultScope:
         """Return the immutable note policy enforced by this scope."""
         return self._admission_policy
 
-    def _target_for_rel_path(self, rel_path: str) -> tuple[Path, tuple[str, ...]]:
+    def _target_for_rel_path(self, rel_path: str) -> tuple[Path, str | Path, tuple[str, ...]]:
         normalized = rel_path.strip().replace("\\", "/").lstrip("/")
         parts = PurePosixPath(normalized).parts if normalized else ()
         if self._memory_root is not None and (
             is_memory_rel_path(rel_path)
             or (parts and parts[0].casefold() == SIDECAR_DIR_NAME.casefold())
         ):
-            return self._memory_root, parts
+            return self._memory_root, rel_path, parts
         if parts and self._extra_read_by_folded:
             extra_match = self._extra_read_by_folded.get(parts[0].casefold())
             if extra_match is not None:
-                return extra_match[1], parts[1:]
-        return self._vault_root, parts
+                sub_parts = parts[1:]
+                sub_rel = Path(*sub_parts) if sub_parts else Path()
+                return extra_match[1], sub_rel, sub_parts
+        return self._vault_root, rel_path, parts
 
     def _canonical_rel_path_for_resolved(self, resolved: Path) -> Path:
         for prefix, extra_root in self._extra_read_vaults.items():
@@ -397,9 +399,9 @@ class SingleTenantVaultScope:
         spelling travels on.
         """
         assert_vault_rel_path(rel_path)
-        target_root, target_parts = self._target_for_rel_path(rel_path)
+        target_root, sub_rel, _ = self._target_for_rel_path(rel_path)
         try:
-            return self.authorize_path(target_root.joinpath(*target_parts), access)
+            return self.authorize_path(target_root / sub_rel, access)
         except PathConfinementError as exc:
             _LOGGER.debug("Refused %s access to %r: %s", access, rel_path, exc)
             raise type(exc)(f"Path {rel_path!r} is outside the allowed {access} scope.") from exc
@@ -465,7 +467,7 @@ class SingleTenantVaultScope:
         assert_vault_rel_path(rel_path)
         lexical_parts = PurePosixPath(rel_path.replace("\\", "/")).parts
         self._assert_admitted_parts(lexical_parts, rel_path=rel_path)
-        target_root, target_parts = self._target_for_rel_path(rel_path)
+        target_root, _, target_parts = self._target_for_rel_path(rel_path)
         linked = _first_link_below(target_root, target_parts)
         if linked is not None:
             _LOGGER.debug("Refused a write through the link %s for %r", linked, rel_path)
