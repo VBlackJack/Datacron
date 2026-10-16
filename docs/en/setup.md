@@ -251,6 +251,7 @@ datacron protocol uninstall --client all
 |---|---|---|
 | `DATACRON_VAULT_ROOT` | unset | Fallback after `--vault`; the current directory is accepted only when it contains `.datacron/VAULT.yaml`. |
 | `DATACRON_MEMORY_ROOT` | unset | Optional dedicated memory vault root; hosts `.datacron/` and `_memory/` while keeping `DATACRON_VAULT_ROOT` free of both. |
+| `DATACRON_EXTRA_READ_VAULTS` | empty | Optional read-only secondary vault mounts (`prefix=path` separated by the OS path separator or a JSON object). |
 | `DATACRON_READ_PATHS` | empty | Read allowlist; the installer sets it to the vault (and memory vault when configured). |
 | `DATACRON_WRITE_PATHS` | empty | Write allowlist; **empty = writing disabled**. |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | Maximum number of results returned. |
@@ -348,6 +349,31 @@ index freshness, integrity, checksum, durability, and invariants. If everything 
 `list_notes` returns your notes, the installation is operational.
 
 For the next steps, move on to the [user guide](user-guide.md).
+
+## 12. Datacron Companion, Dual-Vault migration & maintenance CLI
+
+- **Graphical Control Panel (`datacron companion`)**: launches a local control panel on `127.0.0.1` (session-token CSRF and `Host`/`Origin` validation) with 7 tabs (Dashboard, Vaults & Topology, Search & Preview, Graph & Compaction, MCP Clients, History & Audit, Settings) and live FR/EN switching:
+  ```bash
+  datacron companion --vault /path/to/vault
+  ```
+- **Atomic Single-to-Dual Vault Migration (`datacron migrate-memory`)**: copies `.datacron/` and `_memory/` from an existing single vault into a dedicated memory vault, verifies every copied file by SHA-256, rebuilds the FTS5 index across both roots, and removes the old copies (pass `--keep-source` to retain them):
+  ```bash
+  datacron migrate-memory --vault /path/to/docs --memory-vault /path/to/memory
+  ```
+- **Graph Health & Link Integrity (`datacron graph-health`)**: scans the vault (and any mounted memory or secondary vaults) to report broken wikilinks, non-journal orphan notes, hub notes, and cross-vault links:
+  ```bash
+  datacron graph-health --vault /path/to/vault --json
+  ```
+- **Smart Memory Compaction (`datacron compact-memory`)**: consolidates `_memory/journal/` notes older than `--older-than-days` (default `30`) into monthly archive digests (`_memory/archive/journal-YYYY-MM.md`) while preserving wikilinks and stamping `status: archived`:
+  ```bash
+  datacron compact-memory --vault /path/to/vault --older-than-days 30 --dry-run
+  datacron compact-memory --vault /path/to/vault --older-than-days 30 --apply
+  ```
+- **Versioned Configuration CAS (`datacron config get` / `datacron config set`)**: reads and atomically updates `.datacron/VAULT.yaml` or `companion.json` under Compare-And-Swap (`--expected-hash` or `--expect-absent`):
+  ```bash
+  datacron config get /path/to/vault --json
+  datacron config set /path/to/vault --expected-hash sha256:... --values-json '{"excluded_folders":[".git"]}'
+  ```
 
 ## Build the standalone executable (optional)
 

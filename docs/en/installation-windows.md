@@ -66,6 +66,7 @@ old vault from your clients to avoid stale entries.
 
 ## 4. Start menu shortcuts
 
+- **Datacron Companion**: opens the local graphical control panel (`127.0.0.1`) in your browser to manage vault topology, search, graph health, compaction, MCP clients, audit history, and settings.
 - **Datacron Status**: opens a console showing vault, index, and health state.
 - **Datacron Setup**: re-runs setup (for example to re-register a client).
 
