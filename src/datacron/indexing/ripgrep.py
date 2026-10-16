@@ -32,19 +32,21 @@ import os
 import re
 import shutil
 from asyncio.subprocess import PIPE, Process
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, final
 
 from datacron.core.config import (
+    DEFAULT_MAX_RESULT_COUNT,
     DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH,
     DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS,
     DEFAULT_REGEX_MAX_FRAME_BYTES,
     DEFAULT_RIPGREP_PATH,
     REGEX_FALLBACK_SCAN_BATCH_CHUNKS,
     REGEX_STREAM_READ_BYTES,
+    has_catastrophic_regex_shape,
 )
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, SearchResult
@@ -125,6 +127,10 @@ class RipgrepOutputError(RuntimeError):
     code = "regex_frame_too_large"
 
 
+class _RipgrepUnavailableError(OSError):
+    """Internal signal that ripgrep could not be spawned and fallback should run."""
+
+
 @final
 class RipgrepWrapper:
     """Run ``rg --json`` and resolve matches to indexed chunks."""
@@ -134,13 +140,14 @@ class RipgrepWrapper:
         pattern: str,
         vault_root: Path,
         glob: str | None = None,
-        limit: int = 20,
+        limit: int = DEFAULT_MAX_RESULT_COUNT,
         store: FTS5Store | None = None,
         rg_path: str | None = None,
         fallback_max_pattern_length: int | None = None,
         fallback_timeout_seconds: float | None = None,
         admit: Callable[[str], bool] | None = None,
         max_frame_bytes: int | None = None,
+        extra_roots: Mapping[str, Path] | None = None,
     ) -> list[SearchResult]:
         """Search with ripgrep, falling back to indexed chunks if the binary is absent.
 
@@ -162,88 +169,149 @@ class RipgrepWrapper:
             _LOGGER.info("ripgrep search skipped: no FTS5Store supplied for chunk resolution")
             return []
 
+        timeout_seconds = (
+            DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS
+            if fallback_timeout_seconds is None
+            else fallback_timeout_seconds
+        )
         resolved_rg_path = _resolve_ripgrep_path(rg_path)
-        command = _build_command(resolved_rg_path, pattern, glob)
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *command, stdout=PIPE, stderr=PIPE, cwd=vault_root
-            )
-        except OSError as exc:
-            _LOGGER.warning(
-                "ripgrep is unusable (%s: errno=%s winerror=%s %s); falling back to "
-                "best-effort indexed Python regex scan",
-                resolved_rg_path,
-                exc.errno,
-                getattr(exc, "winerror", None),
-                exc.strerror,
-            )
-            return await _fallback_indexed_regex_search(
-                pattern=pattern,
-                glob=glob,
-                limit=limit,
-                store=store,
-                max_pattern_length=(
-                    DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH
-                    if fallback_max_pattern_length is None
-                    else fallback_max_pattern_length
-                ),
-                timeout_seconds=(
-                    DEFAULT_REGEX_FALLBACK_TIMEOUT_SECONDS
-                    if fallback_timeout_seconds is None
-                    else fallback_timeout_seconds
-                ),
-                admit=admit,
-            )
+        roots_to_search: list[tuple[str | None, Path]] = [(None, vault_root)]
+        if extra_roots:
+            for prefix, extra_root in extra_roots.items():
+                if extra_root.is_dir():
+                    roots_to_search.append((prefix, extra_root))
 
-        if proc.stdout is None or proc.stderr is None:
-            raise RuntimeError("ripgrep subprocess was not created with stdout/stderr pipes")
+        combined: list[SearchResult] = []
+        last_error: RipgrepError | None = None
+        for root_prefix, root_dir in roots_to_search:
+            remaining = limit - len(combined)
+            if remaining <= 0:
+                break
+            try:
+                part = await _search_single_root(
+                    pattern=pattern,
+                    root_dir=root_dir,
+                    prefix=root_prefix,
+                    glob=glob,
+                    limit=remaining,
+                    rank_offset=len(combined),
+                    store=store,
+                    resolved_rg_path=resolved_rg_path,
+                    timeout_seconds=timeout_seconds,
+                    admit=admit,
+                    max_frame_bytes=max_frame_bytes or DEFAULT_REGEX_MAX_FRAME_BYTES,
+                )
+            except _RipgrepUnavailableError:
+                return await _fallback_indexed_regex_search(
+                    pattern=pattern,
+                    glob=glob,
+                    limit=limit,
+                    store=store,
+                    max_pattern_length=(
+                        DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH
+                        if fallback_max_pattern_length is None
+                        else fallback_max_pattern_length
+                    ),
+                    timeout_seconds=timeout_seconds,
+                    admit=admit,
+                )
+            except RipgrepError as exc:
+                last_error = exc
+                continue
+            combined.extend(part)
+        if not combined and last_error is not None:
+            raise last_error
+        return combined
 
-        stderr_task = asyncio.create_task(_drain_stderr(proc.stderr, _MAX_STDERR_BYTES))
-        killed_for_limit = False
-        stderr = ""
 
-        try:
+async def _search_single_root(
+    *,
+    pattern: str,
+    root_dir: Path,
+    prefix: str | None,
+    glob: str | None,
+    limit: int,
+    rank_offset: int,
+    store: FTS5Store,
+    resolved_rg_path: str,
+    timeout_seconds: float,
+    admit: Callable[[str], bool] | None,
+    max_frame_bytes: int,
+) -> list[SearchResult]:
+    rg_glob = glob if prefix is None else None
+    command = _build_command(resolved_rg_path, pattern, rg_glob)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *command, stdout=PIPE, stderr=PIPE, cwd=root_dir
+        )
+    except OSError as exc:
+        _LOGGER.warning(
+            "ripgrep is unusable (%s: errno=%s winerror=%s %s); falling back to "
+            "best-effort indexed Python regex scan",
+            resolved_rg_path,
+            exc.errno,
+            getattr(exc, "winerror", None),
+            exc.strerror,
+        )
+        raise _RipgrepUnavailableError from exc
+
+    if proc.stdout is None or proc.stderr is None:
+        raise RuntimeError("ripgrep subprocess was not created with stdout/stderr pipes")
+
+    stderr_task = asyncio.create_task(_drain_stderr(proc.stderr, _MAX_STDERR_BYTES))
+    killed_for_limit = False
+    stderr = ""
+
+    try:
+        async with asyncio.timeout(timeout_seconds):
             results, killed_for_limit = await _collect_results(
                 stdout=proc.stdout,
-                vault_root=vault_root,
+                vault_root=root_dir,
                 store=store,
                 limit=limit,
                 admit=admit,
-                max_frame_bytes=max_frame_bytes or DEFAULT_REGEX_MAX_FRAME_BYTES,
+                max_frame_bytes=max_frame_bytes,
                 glob=glob,
+                prefix=prefix,
+                rank_offset=rank_offset,
             )
-            if killed_for_limit and proc.returncode is None:
-                await _terminate_ripgrep(proc)
-            else:
-                await proc.wait()
+            await _finalize_ripgrep_process(proc, killed_for_limit=killed_for_limit)
             stderr = await _read_stderr(stderr_task)
-        finally:
-            if proc.returncode is None:
-                await _terminate_ripgrep(proc)
-            if not stderr_task.done():
-                stderr_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await stderr_task
-        if killed_for_limit:
-            return results
-        if proc.returncode not in (0, _NO_MATCH_RETURN_CODE):
-            _LOGGER.warning(
-                "ripgrep exited with status %s: %s",
-                proc.returncode,
-                stderr.strip() or "(no stderr)",
-            )
-            if results:
-                # ripgrep exits 2 when any file could not be read, which on Windows
-                # is routine: one note held by the editor, one placeholder that does
-                # not hydrate, one folder without rights. Every match it printed
-                # first is valid, and discarding them told the caller its pattern was
-                # rejected when the message underneath was an access error, so an
-                # agent rewrote a correct regex indefinitely. A run that reached the
-                # end and matched nothing is the only one that can be a pattern
-                # problem, and that one still raises.
-                return results
-            raise RipgrepError(proc.returncode, stderr)
+    except TimeoutError:
+        raise RipgrepError(
+            None,
+            f"ripgrep subprocess timed out after {timeout_seconds} seconds",
+        ) from None
+    finally:
+        await _cleanup_ripgrep_resources(proc, stderr_task)
+    if killed_for_limit:
         return results
+    if proc.returncode not in (0, _NO_MATCH_RETURN_CODE):
+        _LOGGER.warning(
+            "ripgrep exited with status %s: %s",
+            proc.returncode,
+            stderr.strip() or "(no stderr)",
+        )
+        if results:
+            return results
+        raise RipgrepError(proc.returncode, stderr)
+    return results
+
+
+async def _finalize_ripgrep_process(proc: Process, *, killed_for_limit: bool) -> None:
+    if killed_for_limit and proc.returncode is None:
+        await _terminate_ripgrep(proc)
+    else:
+        await proc.wait()
+
+
+async def _cleanup_ripgrep_resources(proc: Process, stderr_task: asyncio.Task[bytes]) -> None:
+    if proc.returncode is None:
+        await _terminate_ripgrep(proc)
+    if not stderr_task.done():
+        stderr_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await stderr_task
 
 
 async def _terminate_ripgrep(proc: Process) -> None:
@@ -275,6 +343,8 @@ async def _collect_results(
     admit: Callable[[str], bool] | None = None,
     max_frame_bytes: int = DEFAULT_REGEX_MAX_FRAME_BYTES,
     glob: str | None = None,
+    prefix: str | None = None,
+    rank_offset: int = 0,
 ) -> tuple[list[SearchResult], bool]:
     results: list[SearchResult] = []
     # One note's chunks are resolved once per search, not once per line that matched
@@ -286,7 +356,7 @@ async def _collect_results(
         parsed = _parse_json_line(raw_line)
         if parsed is None or parsed.get("type") != "match":
             continue
-        match = _match_fields(parsed, vault_root=vault_root)
+        match = _match_fields(parsed, vault_root=vault_root, prefix=prefix)
         if match is None:
             continue
         # Filter on the path before resolving: the glob and the admission check need
@@ -301,7 +371,7 @@ async def _collect_results(
             results.append(
                 SearchResult(
                     chunk=chunk,
-                    score=1.0 / (1.0 + len(results)),
+                    score=1.0 / (1.0 + rank_offset + len(results)),
                     snippet=_highlight_submatches(match.line, match.submatches),
                     redaction_source=match.line,
                 )
@@ -321,13 +391,20 @@ class _MatchFields:
     submatches: list[object]
 
 
-def _match_fields(event: dict[str, Any], *, vault_root: Path) -> _MatchFields | None:
+def _match_fields(
+    event: dict[str, Any],
+    *,
+    vault_root: Path,
+    prefix: str | None = None,
+) -> _MatchFields | None:
     """Read one match frame, or report why it cannot be used."""
     data = event.get("data")
     if not isinstance(data, dict):
         _LOGGER.info("Skipping ripgrep match with invalid data payload")
         return None
     rel_path = _relative_path_from_match(data.get("path"), vault_root)
+    if rel_path is not None and prefix is not None:
+        rel_path = f"{prefix}/{rel_path}"
     line_number = data.get("line_number")
     line = _text_from_data(data.get("lines"))
     submatches = data.get("submatches")
@@ -561,7 +638,7 @@ def _compile_guarded_pattern(pattern: str) -> re.Pattern[str]:
     is what makes the refusal reachable: behind a full scan it could never be
     reported, because the deadline expired first.
     """
-    if _RISKY_REPETITION_PATTERN.search(pattern):
+    if _RISKY_REPETITION_PATTERN.search(pattern) or has_catastrophic_regex_shape(pattern):
         raise RegexFallbackError(
             "best-effort regex fallback rejected a potentially catastrophic pattern "
             "-- install ripgrep"

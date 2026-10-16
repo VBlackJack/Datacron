@@ -39,7 +39,8 @@ Useful options:
   workspace MCP configurations.
 - `datacron setup --vault PATH --client lmstudio --scope user` - register LM Studio in its
   user MCP configuration.
-- `datacron setup --enable-write --write-path PATH` - enable writing on one explicit subfolder; without `--write-path`, the defaults are `<vault>/_memory`, `<vault>/_drafts`, and `<vault>/_journal`.
+- `datacron setup --enable-write --write-path PATH` - enable writing on one explicit subfolder; without `--write-path`, the defaults are `<vault>/_memory`, `<vault>/_drafts`, and `<vault>/_journal` (or `<memory-vault>/_memory`, `<vault>/_drafts`, and `<vault>/_journal` when `--memory-vault` is set).
+- `datacron setup --vault DOCS_PATH --memory-vault MEMORY_PATH` - separate the user documentation vault from the Datacron memory vault (`.datacron/` and `_memory/` live in `MEMORY_PATH`).
 - `datacron setup --enable-write --machine-wide-write` - also opt in to the user environment allowlist for future clients.
 - `datacron setup --durability strict --read-only` - strict durability and certified read-only mode.
 - `datacron setup --no-write` / `datacron setup --no-read-only` - remove an existing write allowlist or read-only mode from the client configs. A rerun that names neither form keeps what each client config already holds, and the summary prints the settings actually written, preserved ones included. Pointing setup at another vault drops preserved write paths that lie outside it. Interactively, the write and read-only prompts default to the setting this vault's existing client entry holds: Enter keeps it, only an explicit answer changes it.
@@ -249,7 +250,8 @@ datacron protocol uninstall --client all
 | Variable | Default | Role |
 |---|---|---|
 | `DATACRON_VAULT_ROOT` | unset | Fallback after `--vault`; the current directory is accepted only when it contains `.datacron/VAULT.yaml`. |
-| `DATACRON_READ_PATHS` | empty | Read allowlist; the installer sets it to the vault. |
+| `DATACRON_MEMORY_ROOT` | unset | Optional dedicated memory vault root; hosts `.datacron/` and `_memory/` while keeping `DATACRON_VAULT_ROOT` free of both. |
+| `DATACRON_READ_PATHS` | empty | Read allowlist; the installer sets it to the vault (and memory vault when configured). |
 | `DATACRON_WRITE_PATHS` | empty | Write allowlist; **empty = writing disabled**. |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | Maximum number of results returned. |
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | Token budget for search results. |

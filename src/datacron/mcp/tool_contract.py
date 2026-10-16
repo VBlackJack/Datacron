@@ -20,6 +20,7 @@ from typing import Any, Literal, NotRequired, Required, TypeAlias
 from typing_extensions import TypedDict
 
 GetNoteFormat: TypeAlias = Literal["full", "map", "chunk"]
+VaultSourceKind: TypeAlias = Literal["docs", "memory"]
 MemoryOrigin: TypeAlias = Literal["ai", "human", "merged"]
 MemoryConfidence: TypeAlias = Literal["high", "medium", "low", "needs_verification"]
 ContradictionScanMode: TypeAlias = Literal["scan", "confirm"]
@@ -62,6 +63,8 @@ class NoteSummaryOutput(TypedDict):
     frontmatter: dict[str, Any]
     created: str
     updated: str
+    source_vault: NotRequired[VaultSourceKind]
+    writable: NotRequired[bool]
 
 
 class SessionContextOutput(TypedDict, total=False):
@@ -173,6 +176,8 @@ class GetNoteOutput(TypedDict, total=False):
     line_end: int | None
     prev_chunk_id: str | None
     next_chunk_id: str | None
+    source_vault: VaultSourceKind | None
+    writable: bool | None
 
 
 class SearchResultOutput(TypedDict):
@@ -191,6 +196,8 @@ class SearchResultOutput(TypedDict):
     token_count: int
     note_matches: NotRequired[int | None]
     lifecycle: NotRequired[str | None]
+    source_vault: NotRequired[VaultSourceKind]
+    writable: NotRequired[bool]
 
 
 class SearchFiltersOutput(TypedDict, total=False):

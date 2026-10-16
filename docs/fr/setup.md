@@ -39,7 +39,8 @@ d'indexation est différé et n'annule jamais l'enregistrement des clients. Opti
   configurations MCP utilisateur et workspace.
 - `datacron setup --vault CHEMIN --client lmstudio --scope user` - enregistre LM Studio
   dans sa configuration MCP utilisateur.
-- `datacron setup --enable-write --write-path CHEMIN` - active l'écriture sur un sous-dossier explicite ; sans `--write-path`, les défauts sont `<vault>/_memory`, `<vault>/_drafts` et `<vault>/_journal`.
+- `datacron setup --enable-write --write-path CHEMIN` - active l'écriture sur un sous-dossier explicite ; sans `--write-path`, les défauts sont `<vault>/_memory`, `<vault>/_drafts` et `<vault>/_journal` (ou `<memory-vault>/_memory`, `<vault>/_drafts` et `<vault>/_journal` lorsque `--memory-vault` est défini).
+- `datacron setup --vault CHEMIN_DOCS --memory-vault CHEMIN_MEMOIRE` - sépare le vault de documentation utilisateur du vault mémoire Datacron (`.datacron/` et `_memory/` résident dans `CHEMIN_MEMOIRE`).
 - `datacron setup --enable-write --machine-wide-write` - active aussi explicitement l'allowlist dans l'environnement utilisateur pour les futurs clients.
 - `datacron setup --durability strict --read-only` - mode durabilité strict et lecture seule certifiée.
 - `datacron setup --no-write` / `datacron setup --no-read-only` - retire une allowlist d'écriture ou un mode lecture seule existant des configs client. Une relance qui ne nomme aucune des deux formes garde ce que chaque config client contient déjà, et le récapitulatif affiche les réglages réellement écrits, conservés compris. Pointer le setup vers un autre vault retire les chemins d'écriture conservés qui sont en dehors. En interactif, les questions écriture et lecture seule proposent par défaut le réglage que contient déjà l'entrée client de ce vault : Entrée le garde, seule une réponse explicite le change.
@@ -256,7 +257,8 @@ datacron protocol uninstall --client all
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `DATACRON_VAULT_ROOT` | non définie | Fallback après `--vault` ; le répertoire courant n'est accepté que s'il contient `.datacron/VAULT.yaml`. |
-| `DATACRON_READ_PATHS` | vide | Allowlist de lecture ; l'installateur la fixe au vault. |
+| `DATACRON_MEMORY_ROOT` | non définie | Racine optionnelle du vault mémoire dédié ; héberge `.datacron/` et `_memory/` en laissant `DATACRON_VAULT_ROOT` intact. |
+| `DATACRON_READ_PATHS` | vide | Allowlist de lecture ; l'installateur la fixe au vault (et au vault mémoire s'il est configuré). |
 | `DATACRON_WRITE_PATHS` | vide | Allowlist d'écriture ; **vide = écriture désactivée**. |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | Nombre max de résultats retournés. |
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | Budget token des résultats de recherche. |

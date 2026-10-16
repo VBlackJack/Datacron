@@ -21,6 +21,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import (
+    CANONICAL_ULID_PATTERN,
     GROUPED_OVERFETCH_GROWTH,
     GROUPED_OVERFETCH_MAX_CHUNKS,
     MAX_SEARCH_QUERY_CHARS,
@@ -29,7 +30,12 @@ from datacron.core.config import (
 )
 from datacron.core.frontmatter import normalize_tag_filter
 from datacron.core.models import Chunk, SearchResult
-from datacron.core.paths import PathConfinementError
+from datacron.core.paths import (
+    PathConfinementError,
+    effective_extra_read_vaults,
+    effective_memory_root,
+    note_source_vault,
+)
 from datacron.core.scope import ScopedVaultReader
 from datacron.core.temporal import rerank_temporal
 from datacron.core.vault import DuplicateNoteIdentityError
@@ -59,9 +65,11 @@ from datacron.mcp.tools.payloads import (
 from datacron.mcp.tools.retrieval import SearchIndexStaleError, bound_results, protect_results
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from datacron.mcp.server import DatacronApp
 
-_ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+_ULID_PATTERN: Final[re.Pattern[str]] = CANONICAL_ULID_PATTERN
 SEARCH_QUERY_TOO_LARGE_CODE: Final[str] = "search_query_too_large"
 
 
@@ -196,8 +204,25 @@ def _authorized_search_folder(app: DatacronApp, folder: str | None) -> str | Non
     if folder is None or not folder.strip():
         return None
     authorized = app.scope.authorize_rel_path(folder, "read")
-    relative = authorized.relative_to(app.vault_root)
-    return None if relative.name == "" else relative.as_posix()
+    if authorized == app.vault_root:
+        return None
+    normalized = folder.replace("\\", "/").strip().strip("/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:].lstrip("/")
+    return None if not normalized or normalized == "." else normalized
+
+
+def _regex_extra_roots(app: DatacronApp) -> dict[str, Path]:
+    """Return any out-of-tree roots (`_memory` or `extra_read_vaults`) for regex search."""
+    extra: dict[str, Path] = {}
+    mem_root = effective_memory_root(app.vault_root, settings=app.settings)
+    if mem_root is not None:
+        extra["_memory"] = mem_root / "_memory"
+    for prefix, ext_root in effective_extra_read_vaults(
+        app.vault_root, settings=app.settings
+    ).items():
+        extra[prefix] = ext_root
+    return extra
 
 
 async def _retrieve_ranked_results(
@@ -350,6 +375,10 @@ async def _search_regex_impl(
                     "regex_glob_no_files",
                     "Glob selects no admitted indexed note; check the file filter",
                 )
+        extra_roots = _regex_extra_roots(app)
+        rg_kwargs: dict[str, Any] = {}
+        if extra_roots:
+            rg_kwargs["extra_roots"] = extra_roots
         raw_results = await app.ripgrep.search(
             pattern=pattern,
             vault_root=search_root,
@@ -361,6 +390,7 @@ async def _search_regex_impl(
             fallback_timeout_seconds=app.settings.regex_fallback_timeout_seconds,
             admit=app.scope.allows_note_rel_path,
             max_frame_bytes=app.settings.regex_max_frame_bytes,
+            **rg_kwargs,
         )
         raw_results = _filter_admitted_results(app, raw_results)
         raw_results = await protect_results(app, raw_results)
@@ -530,6 +560,11 @@ def _search_result_summary(
         "line_start": chunk.line_start,
         "line_end": chunk.line_end,
         "token_count": chunk.token_count,
+        "source_vault": note_source_vault(chunk.note_rel_path),
+        "writable": bool(
+            app.write_policy.writes_allowed
+            and app.scope.allows_rel_path(chunk.note_rel_path, "write")
+        ),
     }
     if note_matches is not None:
         summary["note_matches"] = note_matches
@@ -791,3 +826,7 @@ async def _chunk_links_to(
         if alias_cache[key] == target_note_id:
             return True
     return False
+
+
+search_text_impl = _search_text_impl
+search_regex_impl = _search_regex_impl

@@ -22,24 +22,27 @@ from typing import Annotated, Final
 
 import typer
 
-from datacron.cli_help import VAULT_ROOT_HELP
+from datacron.cli_help import MEMORY_VAULT_HELP, VAULT_ROOT_HELP
 from datacron.core.config import Settings, get_settings
 from datacron.core.frontmatter import FrontmatterError
+from datacron.i18n import t
 from datacron.organization.library import audit_library, read_library
 from datacron.organization.library_models import EditorialRecipe, LibraryOptions
 from datacron.organization.library_workbench import check_library, prepare_library, propose_split
 
 _EXIT_INPUT_ERROR: Final[int] = 2
-_OPTIONS_HELP: Final[str] = (
-    "JSON file with the library options: scope, home, tags, language, areas and limits."
-)
-_OUTPUT_HELP: Final[str] = "New directory, outside the vault, that receives the review bundle."
-_RECIPE_HELP: Final[str] = "Optional JSON editorial recipe of sourced consolidation notes."
-_SOURCE_HELP: Final[str] = "Vault-relative path of the note to split into H2 section notes."
+_OPTIONS_HELP: Final[str] = t("cli.library.options_help")
+_OUTPUT_HELP: Final[str] = t("cli.library.output_help")
+_RECIPE_HELP: Final[str] = t("cli.library.recipe_help")
+_SOURCE_HELP: Final[str] = t("cli.library.source_help")
 
-app = typer.Typer(help="Prepare readable offline navigation and sourced consolidation reviews.")
+app = typer.Typer(help=t("cli.library.app_help"))
 VaultArgument = Annotated[
     Path | None, typer.Option("--vault", exists=True, file_okay=False, help=VAULT_ROOT_HELP)
+]
+MemoryVaultArgument = Annotated[
+    Path | None,
+    typer.Option("--memory-vault", exists=True, file_okay=False, help=MEMORY_VAULT_HELP),
 ]
 OptionsArgument = Annotated[
     Path, typer.Option("--options", exists=True, dir_okay=False, help=_OPTIONS_HELP)
@@ -57,11 +60,14 @@ def _options(path: Path) -> LibraryOptions:
 
 def _failure_message(exc: Exception) -> str:
     if isinstance(exc, KeyError):
-        return f"Missing required note field: {exc.args[0]}"
+        return t("cli.library.missing_required_note_field", field=exc.args[0])
     return str(exc)
 
 
-def _vault_root(vault: Path | None) -> tuple[Path, Settings]:
+def _vault_root(
+    vault: Path | None,
+    memory_vault: Path | None = None,
+) -> tuple[Path, Settings]:
     """Resolve the vault the way every other command does: flag, environment, then cwd.
 
     The settings are bound to that vault like every other vault command binds them,
@@ -72,21 +78,27 @@ def _vault_root(vault: Path | None) -> tuple[Path, Settings]:
     from datacron.cli import _resolve_vault_root, _settings_for_cli_vault  # noqa: PLC0415
 
     settings = get_settings()
+    if memory_vault is not None:
+        settings = settings.model_copy(update={"memory_root": memory_vault.expanduser().resolve()})
     vault_root = _resolve_vault_root(vault, settings, error_exit_code=_EXIT_INPUT_ERROR)
-    return vault_root, _settings_for_cli_vault(settings, vault_root)
+    return vault_root, _settings_for_cli_vault(settings, vault_root, memory_root=memory_vault)
 
 
 @app.command()
-def audit(options: OptionsArgument, vault: VaultArgument = None) -> None:
+def audit(
+    options: OptionsArgument,
+    vault: VaultArgument = None,
+    memory_vault: MemoryVaultArgument = None,
+) -> None:
     """Print a scoped readability report as JSON without changing the vault.
 
     Exit code 0 means success; 2 means the vault, the options, the recipe or the bundle
     could not be read or is invalid.
     """
     try:
-        vault_root, _settings = _vault_root(vault)
+        vault_root, settings = _vault_root(vault, memory_vault)
         config = _options(options)
-        notes = asyncio.run(read_library(vault_root, config))
+        notes = asyncio.run(read_library(vault_root, config, settings=settings))
         typer.echo(audit_library(notes, config).model_dump_json(indent=2))
     except (OSError, ValueError, FrontmatterError) as exc:
         typer.echo(str(exc), err=True)
@@ -98,6 +110,7 @@ def prepare(
     options: OptionsArgument,
     output: OutputArgument,
     vault: VaultArgument = None,
+    memory_vault: MemoryVaultArgument = None,
     recipe: RecipeArgument = None,
 ) -> None:
     """Create an external preview, source snapshot, diff and exact apply manifest.
@@ -106,7 +119,7 @@ def prepare(
     could not be read or is invalid.
     """
     try:
-        vault_root, settings = _vault_root(vault)
+        vault_root, settings = _vault_root(vault, memory_vault)
         editorial = (
             EditorialRecipe.model_validate_json(recipe.read_text(encoding="utf-8"))
             if recipe
@@ -122,14 +135,18 @@ def prepare(
 
 
 @app.command()
-def check(output: OutputArgument, vault: VaultArgument = None) -> None:
+def check(
+    output: OutputArgument,
+    vault: VaultArgument = None,
+    memory_vault: MemoryVaultArgument = None,
+) -> None:
     """Recheck source freshness, preview integrity and exact manifest admission.
 
     Exit code 0 means success; 2 means the vault, the options, the recipe or the bundle
     could not be read or is invalid.
     """
     try:
-        vault_root, settings = _vault_root(vault)
+        vault_root, settings = _vault_root(vault, memory_vault)
         result = asyncio.run(check_library(vault_root, output, settings))
         typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
     except (OSError, ValueError, KeyError, FrontmatterError) as exc:
@@ -138,19 +155,24 @@ def check(output: OutputArgument, vault: VaultArgument = None) -> None:
 
 
 @app.command()
-def split(options: OptionsArgument, source: SourceArgument, vault: VaultArgument = None) -> None:
+def split(
+    options: OptionsArgument,
+    source: SourceArgument,
+    vault: VaultArgument = None,
+    memory_vault: MemoryVaultArgument = None,
+) -> None:
     """Print an exact H2 split recipe; retain original notes and anchors.
 
     Exit code 0 means success; 2 means the vault, the options, the recipe or the bundle
     could not be read or is invalid.
     """
     try:
-        vault_root, _settings = _vault_root(vault)
+        vault_root, settings = _vault_root(vault, memory_vault)
         config = _options(options)
-        notes = asyncio.run(read_library(vault_root, config))
+        notes = asyncio.run(read_library(vault_root, config, settings=settings))
         note = next((n for n in notes if n.rel_path == source), None)
         if note is None:
-            raise ValueError("Source is not an admitted note in the selected scope")
+            raise ValueError(t("cli.library.source_not_admitted"))
         typer.echo(propose_split(note, config).model_dump_json(indent=2))
     except (OSError, ValueError, FrontmatterError) as exc:
         typer.echo(str(exc), err=True)

@@ -41,7 +41,7 @@ from rich.progress import Progress, TaskID, TextColumn
 
 from datacron import __version__
 from datacron.bootstrap import initialize_vault
-from datacron.cli_help import VAULT_ROOT_HELP
+from datacron.cli_help import MEMORY_VAULT_HELP, VAULT_ROOT_HELP
 from datacron.cli_library import app as library_app
 from datacron.core.config import (
     DEFAULT_DURABILITY_MODE,
@@ -52,11 +52,15 @@ from datacron.core.config import (
     get_settings,
     load_vault_config,
 )
-from datacron.core.durability import WritePolicy, probe_directory_durability
+from datacron.core.durability import (
+    WritePolicy,
+    atomic_durable_write,
+    probe_directory_durability,
+)
 from datacron.core.error_text import describe_config_error
 from datacron.core.frontmatter import FrontmatterError
 from datacron.core.logger import configure_logging, get_logger
-from datacron.core.models import EvalPipeline, EvalTransport
+from datacron.core.models import EvalPipeline, EvalReport, EvalTransport
 from datacron.core.operation_log import (
     HistoryUnavailableError,
     OperationContext,
@@ -64,6 +68,7 @@ from datacron.core.operation_log import (
 )
 from datacron.core.paths import (
     read_ulid_mappings,
+    resolve_sidecar_root,
     sidecar_dir,
     sidecar_index_db,
     sidecar_vault_config,
@@ -79,6 +84,7 @@ from datacron.core.vault_writer import (
     VaultLockBusyError,
     WriteConflictError,
 )
+from datacron.i18n import t
 from datacron.installers.mcp_clients import (
     ALL_CLIENT_IDS,
     SCOPE_PROJECT,
@@ -106,6 +112,7 @@ from datacron.setup_wizard import (
     SetupPlan,
     SetupResult,
     _scopes_for,
+    default_write_paths,
     existing_client_settings,
     get_user_write_env,
     run_setup,
@@ -133,6 +140,7 @@ class _SetupPrompt(StrEnum):
     """Stable identifiers for setup's centralized interactive guidance."""
 
     VAULT = "vault"
+    MEMORY_VAULT = "memory-vault"
     RESET = "reset"
     CLIENT = "client"
     SCOPE = "scope"
@@ -164,6 +172,11 @@ _SETUP_PROMPT_EXPLANATIONS: Final[dict[_SetupPrompt, tuple[str, ...]]] = {
         "Choose the dedicated Markdown folder Datacron will serve as this vault.",
         "Default: the current directory, which is right when setup runs from the intended vault.",
         "A different path serves notes and stores the Datacron sidecar there instead.",
+    ),
+    _SetupPrompt.MEMORY_VAULT: (
+        t("cli.setup.memory_vault_explain_1"),
+        t("cli.setup.memory_vault_explain_2"),
+        t("cli.setup.memory_vault_explain_3"),
     ),
     _SetupPrompt.RESET: (
         "Reset removes this vault's Datacron configuration and generated index before setup.",
@@ -324,7 +337,7 @@ def _resolve_vault_root(
     if settings.vault_root is not None:
         return settings.vault_root
     cwd = Path.cwd().resolve()
-    if sidecar_vault_config(cwd).exists():
+    if sidecar_vault_config(cwd, settings=settings).exists():
         return cwd
     _error(
         "No vault root provided. Pass --vault or set DATACRON_VAULT_ROOT, "
@@ -333,21 +346,40 @@ def _resolve_vault_root(
     )
 
 
-def _settings_for_cli_vault(settings: Settings, vault_root: Path) -> Settings:
+def _settings_for_cli_vault(
+    settings: Settings,
+    vault_root: Path,
+    *,
+    memory_root: Path | None = None,
+) -> Settings:
     """Bind an explicit CLI vault without widening configured non-empty scopes."""
+    resolved_memory = (
+        memory_root.expanduser().resolve() if memory_root is not None else settings.memory_root
+    )
     updates: dict[str, object] = {"vault_root": vault_root}
+    if resolved_memory is not None:
+        updates["memory_root"] = resolved_memory
+    roots: list[Path] = [vault_root]
+    if resolved_memory is not None and resolved_memory != vault_root:
+        roots.append(resolved_memory)
     if not settings.read_paths:
-        updates["read_paths"] = [vault_root]
+        updates["read_paths"] = list(roots)
     if not settings.write_paths:
-        updates["write_paths"] = [vault_root]
+        updates["write_paths"] = list(roots)
     return settings.model_copy(update=updates)
 
 
-def _load_vault_yaml(vault_root: Path) -> VaultConfig | None:
-    return load_vault_config(sidecar_vault_config(vault_root))
+def _load_vault_yaml(
+    vault_root: Path,
+    settings: Settings | None = None,
+) -> VaultConfig | None:
+    return load_vault_config(sidecar_vault_config(vault_root, settings=settings))
 
 
-def _load_vault_yaml_or_exit(vault_root: Path) -> VaultConfig | None:
+def _load_vault_yaml_or_exit(
+    vault_root: Path,
+    settings: Settings | None = None,
+) -> VaultConfig | None:
     """Load VAULT.yaml, or exit with a configuration error naming what is wrong.
 
     A malformed file used to end ``status`` and ``index`` in a raw parser or
@@ -355,10 +387,11 @@ def _load_vault_yaml_or_exit(vault_root: Path) -> VaultConfig | None:
     the offending value, which may be a secret pasted into the wrong key.
     """
     try:
-        return _load_vault_yaml(vault_root)
+        return _load_vault_yaml(vault_root, settings=settings)
     except (ValueError, yaml.YAMLError) as exc:
         _error(
-            f"{sidecar_vault_config(vault_root)} does not load: {describe_config_error(exc)}",
+            f"{sidecar_vault_config(vault_root, settings=settings)} does not load: "
+            f"{describe_config_error(exc)}",
             exit_code=_EXIT_CONFIGURATION_ERROR,
         )
 
@@ -422,40 +455,45 @@ def status(
         "-v",
         help=VAULT_ROOT_HELP,
     ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
 ) -> None:
     """Print vault metadata, note count, and index freshness."""
-    settings = get_settings()
-    vault_root = _resolve_vault_root(vault, settings)
+    base_settings = get_settings()
+    if memory_vault is not None:
+        base_settings = base_settings.model_copy(
+            update={"memory_root": memory_vault.expanduser().resolve()}
+        )
+    vault_root = _resolve_vault_root(vault, base_settings)
+    settings = _settings_for_cli_vault(base_settings, vault_root, memory_root=memory_vault)
     started = _log_invocation("status", vault=str(vault_root))
 
-    config = _load_vault_yaml_or_exit(vault_root)
+    config = _load_vault_yaml_or_exit(vault_root, settings=settings)
     initialized = config is not None
 
     if config is not None:
-        # Counting notes needs their names, not their contents. ``list_notes`` read
-        # the bytes of every note, decoded them, parsed the YAML, extracted tags and
-        # aliases and hashed the file, then everything but the length was discarded.
-        # ``stat_notes`` enumerates exactly the same notes and only stats them.
-        #
-        # The reader is also read-only, because status writes nothing: a writable one
-        # resolves and persists an identity for every note that has neither a
-        # frontmatter id nor a sidecar entry, which on a fresh vault turned a health
-        # check into a rewrite of the sidecar once per note.
-        reader = build_configured_reader(vault_root, read_only=True)
+        reader = build_configured_reader(vault_root, read_only=True, settings=settings)
         note_count = len(asyncio.run(reader.stat_notes()))
     else:
         note_count = 0
 
-    db_path = sidecar_index_db(vault_root)
+    db_path = sidecar_index_db(vault_root, settings=settings)
     index_status = asyncio.run(_index_status_label(db_path))
-    # The logger writes to settings.log_dir (~/.datacron/logs by default); the
-    # vault's sidecar holds no logs, and pointing there sent the operator to a
-    # file that never existed.
     log_dir = settings.log_dir
     today_log = LOG_FILENAME_PATTERN.format(date=datetime.now().strftime("%Y%m%d"))
 
     _print(f"Datacron {__version__}")
     _print(f"  vault_root: {vault_root}")
+    if settings.memory_root is not None and settings.memory_root != vault_root:
+        _print(t("cli.status.memory_root", memory_root=settings.memory_root))
+    if settings.extra_read_vaults:
+        extra_str = ", ".join(
+            f"{prefix}={path}" for prefix, path in sorted(settings.extra_read_vaults.items())
+        )
+        _print(t("cli.status.extra_vaults", extra_vaults=extra_str))
     _print(f"  initialized: {'yes' if initialized else 'no (run `datacron init`)'}")
     if config is not None:
         _print(f"  vault_id:   {config.vault_id or '<unknown>'}")
@@ -468,18 +506,11 @@ def status(
 
 
 def _maintenance_settings(vault_root: Path, settings: Settings) -> Settings:
-    """Widen the write scope to the vault root for explicit local maintenance.
-
-    The content write scope exists to bound *agent* writes to note folders, so it
-    deliberately excludes ``.datacron/`` -- where Datacron keeps its own state. A
-    maintenance command writing its own checkpoint is not an agent write, and
-    refusing it means the command cannot run at all.
-
-    Shared on purpose: ``ops inspect``, ``ops repair`` and ``scrub`` all need this
-    exact widening, and having each build it separately is how ``scrub`` came to be
-    the one that never got it.
-    """
-    return settings.model_copy(update={"write_paths": [vault_root]})
+    """Widen the write scope to the vault root (and memory root) for explicit local maintenance."""
+    roots: list[Path] = [vault_root]
+    if settings.memory_root is not None and settings.memory_root != vault_root:
+        roots.append(settings.memory_root)
+    return settings.model_copy(update={"write_paths": roots})
 
 
 def _ops_writer(vault_root: Path, settings: Settings) -> FilesystemVaultWriter:
@@ -487,7 +518,7 @@ def _ops_writer(vault_root: Path, settings: Settings) -> FilesystemVaultWriter:
     return FilesystemVaultWriter(
         vault_root,
         _maintenance_settings(vault_root, settings),
-        _load_vault_yaml(vault_root) or VaultConfig(),
+        _load_vault_yaml(vault_root, settings=settings) or VaultConfig(),
     )
 
 
@@ -887,9 +918,7 @@ def _realign_sidecar_entry(vault_root: Path, rel_path: str, note_id: str) -> Non
     payload[rel_path] = note_id
     serialized = json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(serialized, encoding="utf-8")
-    os.replace(temporary, path)
+    atomic_durable_write(path, serialized.encode("utf-8"))
 
 
 async def _realign_index_identity(
@@ -1132,21 +1161,33 @@ async def _index_status_label(db_path: Path) -> str:
 @app.command()
 def index(
     vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
+    memory_vault: Path | None = typer.Option(None, "--memory-vault", help=MEMORY_VAULT_HELP),
 ) -> None:
     """Build or refresh the FTS5 index for the vault."""
-    settings = get_settings()
-    vault_root = _resolve_vault_root(vault, settings)
-    asyncio.run(_run_index(vault_root, drop_first=False))
+    base_settings = get_settings()
+    if memory_vault is not None:
+        base_settings = base_settings.model_copy(
+            update={"memory_root": memory_vault.expanduser().resolve()}
+        )
+    vault_root = _resolve_vault_root(vault, base_settings)
+    settings = _settings_for_cli_vault(base_settings, vault_root, memory_root=memory_vault)
+    asyncio.run(_run_index(vault_root, drop_first=False, settings=settings))
 
 
 @app.command()
 def reindex(
     vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
+    memory_vault: Path | None = typer.Option(None, "--memory-vault", help=MEMORY_VAULT_HELP),
 ) -> None:
     """Build, validate, and atomically publish a complete FTS5 replacement."""
-    settings = get_settings()
-    vault_root = _resolve_vault_root(vault, settings)
-    asyncio.run(_run_index(vault_root, drop_first=True))
+    base_settings = get_settings()
+    if memory_vault is not None:
+        base_settings = base_settings.model_copy(
+            update={"memory_root": memory_vault.expanduser().resolve()}
+        )
+    vault_root = _resolve_vault_root(vault, base_settings)
+    settings = _settings_for_cli_vault(base_settings, vault_root, memory_root=memory_vault)
+    asyncio.run(_run_index(vault_root, drop_first=True, settings=settings))
 
 
 _REORGANIZE_DRY_RUN_HELP: Final[str] = (
@@ -1168,15 +1209,13 @@ _REORGANIZE_BAD_VAULT: Final[str] = "Vault root is not a readable directory: {va
 _REORGANIZE_BAD_CONFIG: Final[str] = "Invalid organization configuration: {detail}"
 _EXIT_DEVIATIONS_FOUND: Final[int] = 1
 _EXIT_CONFIGURATION_ERROR: Final[int] = 2
-# The scrub reports anomalies with the same code, in a different command
-# and for a different reason; it was written as a bare 2 two lines from
-# where these constants are used.
 _EXIT_SCRUB_ANOMALIES: Final[int] = 2
 
 
 @app.command()
 def reorganize(
     vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
+    memory_vault: Path | None = typer.Option(None, "--memory-vault", help=MEMORY_VAULT_HELP),
     dry_run: bool = typer.Option(False, "--dry-run", help=_REORGANIZE_DRY_RUN_HELP),
     as_json: bool = typer.Option(False, "--json", help=_REORGANIZE_JSON_HELP),
     kind: str | None = typer.Option(None, "--kind", help=_REORGANIZE_KIND_HELP),
@@ -1218,12 +1257,17 @@ def reorganize(
             raise typer.Exit(code=_EXIT_CONFIGURATION_ERROR) from None
 
     try:
-        settings = get_settings()
+        base_settings = get_settings()
+        if memory_vault is not None:
+            base_settings = base_settings.model_copy(
+                update={"memory_root": memory_vault.expanduser().resolve()}
+            )
         vault_root = _resolve_vault_root(
             vault,
-            settings,
+            base_settings,
             error_exit_code=_EXIT_CONFIGURATION_ERROR,
         )
+        settings = _settings_for_cli_vault(base_settings, vault_root, memory_root=memory_vault)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         _error(
             _REORGANIZE_BAD_CONFIG.format(detail=str(exc)),
@@ -1236,7 +1280,7 @@ def reorganize(
         )
 
     try:
-        config = _load_vault_yaml(vault_root)
+        config = _load_vault_yaml(vault_root, settings=settings)
     except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
         _error(
             _REORGANIZE_BAD_CONFIG.format(detail=str(exc)),
@@ -1274,13 +1318,22 @@ def reorganize(
 @app.command(name="scrub-init")
 def scrub_init(
     vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
+    memory_vault: Path | None = typer.Option(None, "--memory-vault", help=MEMORY_VAULT_HELP),
 ) -> None:
     """Explicitly create configured integrity canaries without overwriting any."""
     base_settings = get_settings()
+    if memory_vault is not None:
+        base_settings = base_settings.model_copy(
+            update={"memory_root": memory_vault.expanduser().resolve()}
+        )
     vault_root = _resolve_vault_root(vault, base_settings)
-    settings = _maintenance_settings(vault_root, _settings_for_cli_vault(base_settings, vault_root))
+    settings = _maintenance_settings(
+        vault_root,
+        _settings_for_cli_vault(base_settings, vault_root, memory_root=memory_vault),
+    )
     scope = SingleTenantVaultScope(vault_root, settings)
-    write_policy = WritePolicy(settings, probe_directory_durability(vault_root))
+    sidecar_root = resolve_sidecar_root(vault_root, settings=settings)
+    write_policy = WritePolicy(settings, probe_directory_durability(sidecar_root))
     try:
         result = initialize_canaries(vault_root, settings, scope, write_policy)
     except CanaryInitializationError as exc:
@@ -1294,11 +1347,16 @@ def scrub_init(
 @app.command()
 def scrub(
     vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
+    memory_vault: Path | None = typer.Option(None, "--memory-vault", help=MEMORY_VAULT_HELP),
 ) -> None:
     """Run one configured, resumable, alert-only integrity scrub window."""
     base_settings = get_settings()
+    if memory_vault is not None:
+        base_settings = base_settings.model_copy(
+            update={"memory_root": memory_vault.expanduser().resolve()}
+        )
     vault_root = _resolve_vault_root(vault, base_settings)
-    settings = _settings_for_cli_vault(base_settings, vault_root)
+    settings = _settings_for_cli_vault(base_settings, vault_root, memory_root=memory_vault)
     state = asyncio.run(_run_scrub(vault_root, settings))
     status = "critical" if state.anomalies else ("complete" if state.completed else "running")
     _print(
@@ -1316,10 +1374,11 @@ async def _run_scrub(vault_root: Path, settings: Settings) -> ScrubState:
 
     maintenance = _maintenance_settings(vault_root, settings)
     store = SQLiteFTS5Store()
-    await store.open(sidecar_index_db(vault_root), read_only=True)
+    await store.open(sidecar_index_db(vault_root, settings=maintenance), read_only=True)
     try:
         scope = SingleTenantVaultScope(vault_root, maintenance)
-        write_policy = WritePolicy(maintenance, probe_directory_durability(vault_root))
+        sidecar_root = resolve_sidecar_root(vault_root, settings=maintenance)
+        write_policy = WritePolicy(maintenance, probe_directory_durability(sidecar_root))
         return await run_integrity_scrub(
             vault_root,
             maintenance,
@@ -1331,30 +1390,28 @@ async def _run_scrub(vault_root: Path, settings: Settings) -> ScrubState:
         await store.close()
 
 
-async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
-    """Reconcile the FTS5 index with the vault (incremental unless ``drop_first``).
-
-    Both ``datacron index`` and the MCP read-repair go through the shared
-    :func:`reconcile`, so the CLI gets the same mtime-gated incremental behavior:
-    unchanged notes are skipped, changed ones re-chunked, vanished ones deleted.
-    ``reindex`` (``drop_first``) builds a separate complete database and only
-    swaps it over the live index after byte-hash and SQLite validation.
-    """
+async def _run_index(
+    vault_root: Path,
+    *,
+    drop_first: bool,
+    settings: Settings | None = None,
+) -> None:
+    """Reconcile the FTS5 index with the vault (incremental unless ``drop_first``)."""
     from datacron.core.paths import sidecar_index_db  # noqa: PLC0415
     from datacron.indexing.chunker import MarkdownChunker  # noqa: PLC0415
     from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
     from datacron.indexing.rebuild import rebuild_index_atomic  # noqa: PLC0415
     from datacron.indexing.reconcile import reconcile  # noqa: PLC0415
 
-    db_path = sidecar_index_db(vault_root)
-    settings = get_settings()
-    config = _load_vault_yaml_or_exit(vault_root) or VaultConfig()
+    active_settings = settings or _settings_for_cli_vault(get_settings(), vault_root)
+    db_path = sidecar_index_db(vault_root, settings=active_settings)
+    config = _load_vault_yaml_or_exit(vault_root, settings=active_settings) or VaultConfig()
     if drop_first:
         started = time.perf_counter()
         with _index_progress() as progress:
             rebuilt = await rebuild_index_atomic(
                 vault_root,
-                settings,
+                active_settings,
                 config,
                 progress=progress,
             )
@@ -1373,8 +1430,8 @@ async def _run_index(vault_root: Path, *, drop_first: bool) -> None:
         )
         return
 
-    reader = build_configured_reader(vault_root)
-    chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
+    reader = build_configured_reader(vault_root, settings=active_settings)
+    chunker = MarkdownChunker(max_tokens=active_settings.chunk_max_tokens)
     store = SQLiteFTS5Store(term_map=config.query_expansion, archive_tags=config.archive_tags)
     await store.open(db_path)
     started = time.perf_counter()
@@ -1468,7 +1525,7 @@ def eval_(
         raise typer.Exit(code=exit_code)
 
 
-async def _run_eval(  # noqa: PLR0912 -- command orchestration covers optional output modes
+async def _run_eval(
     vault_root: Path,
     questions_path: Path,
     settings: Settings,
@@ -1486,7 +1543,6 @@ async def _run_eval(  # noqa: PLR0912 -- command orchestration covers optional o
         compare_with_baseline,
         eval_config_hash,
         load_baseline,
-        save_baseline,
     )
     from datacron.eval.harness import LocalEvalHarness, load_eval_questions  # noqa: PLC0415
     from datacron.eval.transport import e2e_search_transport  # noqa: PLC0415
@@ -1540,14 +1596,40 @@ async def _run_eval(  # noqa: PLR0912 -- command orchestration covers optional o
         finally:
             await store.close()
 
-    comparison = None
-    if baseline is not None:
-        comparison = compare_with_baseline(
+    comparison = (
+        compare_with_baseline(
             report,
             baseline,
             tolerance=settings.eval_regression_tolerance,
             config_hash=eval_config_hash(settings, config),
         )
+        if baseline is not None
+        else None
+    )
+    return _finalize_eval_report(
+        report,
+        vault_root=vault_root,
+        settings=settings,
+        config=config,
+        comparison=comparison,
+        save_baseline_requested=save_baseline_requested,
+        json_output=json_output,
+    )
+
+
+def _finalize_eval_report(
+    report: EvalReport,
+    *,
+    vault_root: Path,
+    settings: Settings,
+    config: VaultConfig,
+    comparison: BaselineComparison | None,
+    save_baseline_requested: bool,
+    json_output: bool,
+) -> int:
+    """Validate completed eval results, optionally persist baseline, and print output."""
+    from datacron.eval.baseline import baseline_path, save_baseline  # noqa: PLC0415
+
     if report.failures:
         # Keeping the completed measurements is not the same as passing: a run
         # with a question the search layer could not answer is not a clean
@@ -1617,6 +1699,16 @@ def setup(
         "--vault",
         "-v",
         help="Vault root to set up. Prompted interactively if omitted.",
+    ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
+    dual_vault: bool = typer.Option(
+        False,
+        "--dual-vault",
+        help=t("cli.help.dual_vault"),
     ),
     client: str | None = typer.Option(
         None,
@@ -1702,6 +1794,11 @@ def setup(
     started = _log_invocation("setup", assume_yes=assume_yes)
 
     resolved_vault = _prompt_vault(vault, assume_yes)
+    resolved_memory_vault = _prompt_memory_vault(
+        memory_vault,
+        dual_vault=dual_vault,
+        assume_yes=assume_yes,
+    )
     if reset and not assume_yes:
         _explain(_SetupPrompt.RESET)
         if not typer.confirm(
@@ -1726,6 +1823,7 @@ def setup(
         resolved_vault,
         assume_yes,
         current_write=None if current is None else current[0],
+        memory_root=resolved_memory_vault,
     )
     resolved_machine_wide_write, replace_existing_write_env = _prompt_machine_wide_write(
         machine_wide_write,
@@ -1755,6 +1853,7 @@ def setup(
 
     plan = SetupPlan(
         vault_path=resolved_vault,
+        memory_vault_path=resolved_memory_vault,
         build_index=build_index,
         enable_write=resolved_enable_write,
         write_paths=resolved_write_paths,
@@ -1772,20 +1871,13 @@ def setup(
 
     try:
         result = asyncio.run(run_setup(plan))
-    except (ResetGuardError, ResetExecutionError) as exc:
-        _error(str(exc))
-    except (ValueError, NotADirectoryError) as exc:
+    except (ResetGuardError, ResetExecutionError, ValueError, NotADirectoryError) as exc:
         _error(str(exc))
     except ClaudeDesktopConfigError as exc:
         # Raised when datacron-mcp cannot be located for the claude-code snippet,
         # after the vault was already initialized; it used to end in a traceback.
         _error(f"Could not resolve the datacron-mcp command: {exc}")
 
-    # A client that could not be registered is a failed setup. The run used to exit
-    # 0 with an "[err]" line, and the Windows installer runs setup hidden and trusts
-    # the exit code, so it reported success while no client could reach the vault.
-    # A Claude Desktop write that failed, or a launch command that could not be
-    # resolved for --client all, was only a warning, with "setup complete" above it.
     clients_failed = bool(result.client_errors) or any(
         not outcome.installed for outcome in result.client_installs
     )
@@ -1800,6 +1892,93 @@ def setup(
         protocol_failed = _render_protocol_outcomes(protocol_outcomes, operation="install")
     _log_completion("setup", started)
     if protocol_failed or clients_failed:
+        raise typer.Exit(code=1)
+
+
+@app.command(name="migrate-memory", help=t("cli.migrate_memory.help"))
+def migrate_memory(
+    vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
+    memory_vault: Path = typer.Option(..., "--memory-vault", help=MEMORY_VAULT_HELP),
+    keep_source: bool = typer.Option(
+        False,
+        "--keep-source",
+        help=t("cli.help.keep_source"),
+    ),
+    client: str = typer.Option(
+        "none",
+        "--client",
+        help=f"MCP client to update ({', '.join(CLIENT_CHOICES)}).",
+    ),
+    scope: str = typer.Option(
+        INSTALL_SCOPE_BOTH,
+        "--scope",
+        help=f"For --client all, config scope ({', '.join(INSTALL_SCOPE_CHOICES)}).",
+    ),
+    enable_write: bool = typer.Option(
+        True,
+        "--enable-write/--no-write",
+        help="Configure default write allowlists when updating MCP client configs.",
+    ),
+) -> None:
+    """Split an existing single vault into a clean Docs Vault and a Memory Vault."""
+    from datacron.migration import MigrationError, migrate_vault_to_dual  # noqa: PLC0415
+
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    target_memory = _guard_vault_target(memory_vault.expanduser().resolve())
+    if client not in CLIENT_CHOICES:
+        _error(f"Unknown client {client!r}. Expected one of {list(CLIENT_CHOICES)}.")
+    if scope not in INSTALL_SCOPE_CHOICES:
+        _error(f"Unknown scope {scope!r}. Expected one of {list(INSTALL_SCOPE_CHOICES)}.")
+    started = _log_invocation(
+        "migrate_memory",
+        vault=str(vault_root),
+        memory_vault=str(target_memory),
+        keep_source=keep_source,
+    )
+    try:
+        outcome = asyncio.run(
+            migrate_vault_to_dual(
+                vault_root,
+                target_memory,
+                keep_source=keep_source,
+                client=client,
+                install_scope=scope,
+                enable_write=enable_write,
+                settings=settings,
+            )
+        )
+    except (MigrationError, NotADirectoryError, OSError, ValueError) as exc:
+        _error(str(exc))
+
+    state_label = (
+        t("cli.migrate_memory.state_cleaned")
+        if outcome.source_cleaned
+        else t("cli.migrate_memory.state_kept")
+    )
+    _print(t("cli.migrate_memory.completed"))
+    _print(t("cli.migrate_memory.vault_line", vault=outcome.vault_path))
+    _print(t("cli.migrate_memory.memory_line", memory_vault=outcome.memory_vault_path))
+    _print(
+        t(
+            "cli.migrate_memory.copied_line",
+            verified=outcome.verified_files,
+            memory_files=outcome.copied_memory_files,
+            sidecar_files=outcome.copied_sidecar_files,
+        )
+    )
+    _print(
+        t(
+            "cli.migrate_memory.indexed_line",
+            notes=outcome.indexed_notes,
+            chunks=outcome.indexed_chunks,
+        )
+    )
+    _print(t("cli.migrate_memory.source_cleaned_line", state=state_label))
+    _log_completion("migrate_memory", started)
+    if outcome.client_errors:
+        for err_msg in outcome.client_errors:
+            typer.secho(f"  error: {err_msg}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
 
@@ -1821,6 +2000,27 @@ def _guard_vault_target(vault_root: Path) -> Path:
             "Create a dedicated directory and pass it with --vault."
         )
     return vault_root
+
+
+def _prompt_memory_vault(
+    memory_vault: Path | None,
+    *,
+    dual_vault: bool,
+    assume_yes: bool,
+) -> Path | None:
+    """Resolve an explicit, environment-configured, or interactively prompted memory vault root."""
+    if memory_vault is not None:
+        return _guard_vault_target(memory_vault.expanduser().resolve())
+    settings = get_settings()
+    if settings.memory_root is not None:
+        return _guard_vault_target(settings.memory_root.expanduser().resolve())
+    if not dual_vault or assume_yes:
+        return None
+    _explain(_SetupPrompt.MEMORY_VAULT)
+    answer = typer.prompt(t("cli.setup.memory_vault_prompt"), default="").strip()
+    if not answer:
+        return None
+    return _guard_vault_target(Path(answer).expanduser().resolve())
 
 
 def _prompt_vault(vault: Path | None, assume_yes: bool) -> Path:
@@ -1902,6 +2102,7 @@ def _prompt_write(
     assume_yes: bool,
     *,
     current_write: bool | None = None,
+    memory_root: Path | None = None,
 ) -> tuple[bool | None, list[Path]]:
     """Resolve the write choice: ``None`` keeps what the client config holds.
 
@@ -1916,7 +2117,7 @@ def _prompt_write(
     if enable_write is not None:
         if not enable_write:
             return False, []
-        return True, _prompt_write_paths(vault_root, assume_yes)
+        return True, _prompt_write_paths(vault_root, assume_yes, memory_root=memory_root)
     if assume_yes:
         return None, []
     _explain(_SetupPrompt.WRITE)
@@ -1928,7 +2129,7 @@ def _prompt_write(
     decision = _kept_or_answer(answer, current_write)
     if not decision:
         return decision, []
-    return True, _prompt_write_paths(vault_root, assume_yes)
+    return True, _prompt_write_paths(vault_root, assume_yes, memory_root=memory_root)
 
 
 def _kept_or_answer(answer: bool, current: bool | None) -> bool | None:
@@ -1938,8 +2139,13 @@ def _kept_or_answer(answer: bool, current: bool | None) -> bool | None:
     return answer
 
 
-def _prompt_write_paths(vault_root: Path, assume_yes: bool) -> list[Path]:
-    default_paths = [vault_root / name for name in DEFAULT_WRITE_SUBFOLDERS]
+def _prompt_write_paths(
+    vault_root: Path,
+    assume_yes: bool,
+    *,
+    memory_root: Path | None = None,
+) -> list[Path]:
+    default_paths = default_write_paths(vault_root, memory_root)
     if assume_yes:
         return default_paths
     default_value = os.pathsep.join(str(path) for path in default_paths)
@@ -2054,6 +2260,8 @@ def _render_setup_result(result: SetupResult, *, failed: bool = False) -> None:
     _print("")
     _print("Datacron setup finished with errors." if failed else "Datacron setup complete.")
     _print(f"  vault:      {result.bootstrap.vault_path}")
+    if result.memory_vault_path is not None:
+        _print(f"  memory:     {result.memory_vault_path}")
     if result.reset_result is not None:
         config_status = "removed" if result.reset_result.config_removed else "not present"
         index_status = "removed" if result.reset_result.index_removed else "not present"
@@ -2459,6 +2667,312 @@ def mcp_install(
         vault_root,
         target,
     )
+
+
+@app.command("graph-health")
+def graph_health_cmd(
+    vault: Path | None = typer.Argument(
+        None,
+        help=VAULT_ROOT_HELP,
+    ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
+    hub_limit: int = typer.Option(
+        10,
+        "--hub-limit",
+        min=1,
+        max=100,
+        help="Maximum number of top hub notes to report.",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable JSON output.",
+    ),
+) -> None:
+    """Analyze wikilink integrity, orphan notes, hub notes, and cross-vault links."""
+    from datacron.graph_health import analyze_vault_graph  # noqa: PLC0415
+
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    settings = _settings_for_cli_vault(settings, vault_root, memory_root=memory_vault)
+    try:
+        report = asyncio.run(
+            analyze_vault_graph(vault_root, settings=settings, hub_limit=hub_limit)
+        )
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        _error(str(exc))
+
+    if as_json:
+        _print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+        return
+
+    _print(
+        t(
+            "cli.graph_health.summary",
+            total_notes=report.total_notes,
+            total_links=report.total_links,
+            resolved_links=report.resolved_links,
+            broken_links=report.broken_link_count,
+            orphan_notes=report.orphan_note_count,
+            cross_vault_links=report.cross_vault_link_count,
+        )
+    )
+    for broken in report.broken_links:
+        _print(
+            t(
+                "cli.graph_health.broken_item",
+                source_rel_path=broken.source_rel_path,
+                target_alias=broken.target_alias,
+            )
+        )
+    for orphan in report.orphan_notes:
+        _print(
+            t(
+                "cli.graph_health.orphan_item",
+                rel_path=orphan.rel_path,
+                title=orphan.title,
+            )
+        )
+    for hub in report.hub_notes:
+        _print(
+            t(
+                "cli.graph_health.hub_item",
+                rel_path=hub.rel_path,
+                incoming_count=hub.incoming_count,
+                outgoing_count=hub.outgoing_count,
+            )
+        )
+
+
+@app.command("compact-memory")
+def compact_memory_cmd(
+    vault: Path | None = typer.Argument(
+        None,
+        help=VAULT_ROOT_HELP,
+    ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
+    older_than_days: int = typer.Option(
+        30,
+        "--older-than-days",
+        min=0,
+        help="Consolidate journal notes older than this number of days.",
+    ),
+    apply: bool = typer.Option(
+        False,
+        "--apply/--dry-run",
+        help="Write monthly digests and tag compacted source journals (default: --dry-run).",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable JSON output.",
+    ),
+) -> None:
+    """Consolidate historical _memory/journal/ notes into monthly archive digests."""
+    from datacron.memory_compaction import compact_vault_memory  # noqa: PLC0415
+
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    settings = _settings_for_cli_vault(settings, vault_root, memory_root=memory_vault)
+    try:
+        report = asyncio.run(
+            compact_vault_memory(
+                vault_root,
+                settings=settings,
+                older_than_days=older_than_days,
+                dry_run=not apply,
+            )
+        )
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        _error(str(exc))
+
+    if as_json:
+        _print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+        return
+
+    if report.dry_run:
+        _print(
+            t(
+                "cli.compact_memory.dry_run_summary",
+                cutoff_date=report.cutoff_date,
+                candidate_count=len(report.candidate_journals),
+                digest_count=len(report.digests_planned),
+                superseded_count=len(report.superseded_notes),
+            )
+        )
+    else:
+        _print(
+            t(
+                "cli.compact_memory.applied_summary",
+                compacted_count=report.compacted_count,
+                digests_written=report.digests_written,
+            )
+        )
+    for digest in report.digests_planned:
+        _print(
+            t(
+                "cli.compact_memory.digest_item",
+                digest_rel_path=digest.digest_rel_path,
+                source_note_count=digest.source_note_count,
+            )
+        )
+
+
+config_app = typer.Typer(
+    name="config",
+    help="Inspect or update .datacron/VAULT.yaml under Compare-And-Swap (CAS) protection.",
+    no_args_is_help=True,
+)
+app.add_typer(config_app, name="config")
+
+
+@config_app.command("get")
+def config_get_cmd(
+    vault: Path | None = typer.Argument(
+        None,
+        help=VAULT_ROOT_HELP,
+    ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable CAS configuration snapshot.",
+    ),
+) -> None:
+    """Read `.datacron/VAULT.yaml` and its SHA-256 Compare-And-Swap hash."""
+    from datacron.config_contract import read_vault_config_snapshot  # noqa: PLC0415
+
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    settings = _settings_for_cli_vault(settings, vault_root, memory_root=memory_vault)
+    snap = read_vault_config_snapshot(vault_root, settings=settings)
+    if as_json:
+        _print(json.dumps(snap.to_dict(), indent=2, sort_keys=True))
+        return
+    _print(f"config_path: {snap.config_path}")
+    _print(f"present: {snap.present}")
+    _print(f"content_hash: {snap.content_hash}")
+    _print(f"valid: {snap.valid}")
+
+
+@config_app.command("set")
+def config_set_cmd(
+    values_json: str = typer.Option(
+        ...,
+        "--values-json",
+        help="JSON object containing VAULT.yaml fields to write.",
+    ),
+    vault: Path | None = typer.Argument(
+        None,
+        help=VAULT_ROOT_HELP,
+    ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
+    expected_hash: str | None = typer.Option(
+        None,
+        "--expected-hash",
+        help="Expected SHA-256 content_hash from `datacron config get`.",
+    ),
+    expect_absent: bool = typer.Option(
+        False,
+        "--expect-absent",
+        help="Require VAULT.yaml not to exist before writing.",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable CAS configuration snapshot.",
+    ),
+) -> None:
+    """Atomically write `.datacron/VAULT.yaml` with Compare-And-Swap verification."""
+    from datacron.config_contract import (  # noqa: PLC0415
+        EXIT_VALIDATION_ERROR,
+        ConfigContractError,
+        write_vault_config_cas,
+    )
+
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault, settings)
+    settings = _settings_for_cli_vault(settings, vault_root, memory_root=memory_vault)
+    try:
+        decoded = json.loads(values_json)
+        if not isinstance(decoded, dict):
+            raise ValueError("--values-json must decode to a JSON object")
+    except (json.JSONDecodeError, ValueError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=EXIT_VALIDATION_ERROR) from exc
+
+    try:
+        snap = write_vault_config_cas(
+            vault_root,
+            decoded,
+            settings=settings,
+            expected_hash=expected_hash,
+            expect_absent=expect_absent,
+        )
+    except ConfigContractError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+
+    if as_json:
+        _print(json.dumps(snap.to_dict(), indent=2, sort_keys=True))
+        return
+    _print(
+        t(
+            "cli.config.saved",
+            config_path=snap.config_path,
+            content_hash=snap.content_hash,
+        )
+    )
+
+
+@app.command("companion")
+def companion_cmd(
+    port: int = typer.Option(
+        0,
+        "--port",
+        min=0,
+        max=65535,
+        help="Localhost TCP port (0 selects an ephemeral free port).",
+    ),
+    no_browser: bool = typer.Option(
+        False,
+        "--no-browser",
+        help="Start the Companion server without opening a desktop window.",
+    ),
+) -> None:
+    """Launch the Datacron Companion graphical control panel on 127.0.0.1."""
+    from datacron.companion import (  # noqa: PLC0415
+        create_companion_server,
+        launch_companion_window,
+    )
+
+    server, url, _token = create_companion_server(port=port)
+    _print(t("cli.companion.launching", url=url))
+    _print(t("cli.companion.press_ctrl_c"))
+    if not no_browser:
+        launch_companion_window(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
 
 
 def mcp_entry() -> None:

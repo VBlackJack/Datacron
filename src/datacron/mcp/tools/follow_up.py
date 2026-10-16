@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
+from datacron.core.config import CANONICAL_ULID_REGEX, TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.markdown_headings import markdown_headings
 from datacron.core.memory_protocol import (
     FOLLOW_UP_MARKER_PREFIX,
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 _ID = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
 _HASH = r"^[0-9a-f]{64}$"
-_ULID = r"^[0-9A-HJKMNP-TV-Z]{26}$"
+_ULID = CANONICAL_ULID_REGEX
 _HEADING_MAX_LENGTH: Final[int] = 256
 _OWNER_MAX_LENGTH: Final[int] = 256
 _IDENTITY_BASIS_MAX_LENGTH: Final[int] = 1000
@@ -396,7 +396,7 @@ def _validate(record: FollowUpRecord, target: Note, source: Note, today: date) -
         for h in markdown_headings(target.content.splitlines(keepends=True))
         if h.text == record.heading
     ]
-    if len(headings) != 1 or headings[0].level < 2:
+    if len(headings) != 1 or headings[0].level <= 1:
         raise FollowUpValidationError("history heading must exist exactly once at H2-H6")
     person_related = (
         "memory/contact" in target.tags

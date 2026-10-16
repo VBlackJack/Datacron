@@ -312,6 +312,11 @@ def _render(
     lines.append(f"| `other` | {groups.get('other', 0)} |")
     lines.extend(["", "Actual exclusion reasons:", "", "| Reason | Notes |", "|---|---:|"])
     lines.extend(f"| `{_ascii(reason)}` | {count} |" for reason, count in sorted(reasons.items()))
+    recent_days = 30
+    quarter_days = 90
+    year_days = 365
+    age_31_90 = sum(recent_days < row.age_days <= quarter_days for row in rows)
+    age_91_365 = sum(quarter_days < row.age_days <= year_days for row in rows)
     lines.extend(
         [
             "",
@@ -319,10 +324,10 @@ def _render(
             "",
             "| Metric | Value |",
             "|---|---:|",
-            f"| Age 0-30 days | {sum(row.age_days <= 30 for row in rows)} |",
-            f"| Age 31-90 days | {sum(31 <= row.age_days <= 90 for row in rows)} |",
-            f"| Age 91-365 days | {sum(91 <= row.age_days <= 365 for row in rows)} |",
-            f"| Age 366+ days | {sum(row.age_days > 365 for row in rows)} |",
+            f"| Age 0-30 days | {sum(row.age_days <= recent_days for row in rows)} |",
+            f"| Age 31-90 days | {age_31_90} |",
+            f"| Age 91-365 days | {age_91_365} |",
+            f"| Age 366+ days | {sum(row.age_days > year_days for row in rows)} |",
             f"| Total bytes | {sum(sizes):,} |",
             # A vault with nothing excluded is the outcome this report exists to
             # certify, and it was the one outcome it could not render: the median

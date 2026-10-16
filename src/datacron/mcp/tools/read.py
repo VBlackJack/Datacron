@@ -21,13 +21,18 @@ import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Final
 
-from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
+from datacron.core.config import CANONICAL_ULID_PATTERN, TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.frontmatter import matches_frontmatter_filter, normalize_tag_filter
 from datacron.core.hashing import FRESHNESS_CONTRACT_ID
 from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
 from datacron.core.markdown_sections import heading_ancestry
 from datacron.core.models import Chunk, ChunkType, Note
-from datacron.core.paths import PathConfinementError, read_ulid_mappings, sidecar_dir
+from datacron.core.paths import (
+    PathConfinementError,
+    note_source_vault,
+    read_ulid_mappings,
+    sidecar_dir,
+)
 from datacron.core.scope import NoteAdmissionError
 from datacron.core.vault import ULID_SIDECAR_FILENAME
 from datacron.indexing.chunker import content_line_offset
@@ -57,7 +62,7 @@ if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
 _VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map", "chunk"})
-_ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+_ULID_PATTERN: Final[re.Pattern[str]] = CANONICAL_ULID_PATTERN
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
 _CHUNK_ID_SEPARATOR: Final[str] = "::"
 # Every admitted path is needed before the page can be cut, because
@@ -205,9 +210,9 @@ async def _list_notes_from_index(
     offset: int,
 ) -> tuple[list[Note], int] | None:
     """Return an index-selected note page, or ``None`` for filesystem fallback."""
-    authorized_folder = app.scope.authorize_rel_path(folder or "", "read")
-    relative_folder = authorized_folder.relative_to(app.vault_root)
-    normalized_folder = None if relative_folder.name == "" else relative_folder.as_posix()
+    app.scope.authorize_rel_path(folder or "", "read")
+    cleaned_folder = (folder or "").strip().replace("\\", "/").strip("/")
+    normalized_folder = cleaned_folder or None
     try:
         repair = await _repair_index_on_read(app)
         # One call, not two. The first asked for a single row purely to learn
@@ -443,6 +448,15 @@ def _filter_by_tags(notes: list[Note], tags: list[str] | None) -> list[Note]:
     return [note for note in notes if required.issubset(set(note.tags))]
 
 
+def _note_provenance(app: DatacronApp, rel_path: str) -> dict[str, Any]:
+    return {
+        "source_vault": note_source_vault(rel_path),
+        "writable": bool(
+            app.write_policy.writes_allowed and app.scope.allows_rel_path(rel_path, "write")
+        ),
+    }
+
+
 def _note_summary(app: DatacronApp, note: Note) -> dict[str, Any]:
     return {
         "id": note.id,
@@ -450,6 +464,7 @@ def _note_summary(app: DatacronApp, note: Note) -> dict[str, Any]:
         **_sanitized_note_metadata(app, note),
         "created": note.created.isoformat(),
         "updated": note.updated.isoformat(),
+        **_note_provenance(app, note.rel_path),
     }
 
 
@@ -595,7 +610,7 @@ async def _resolve_note_from_sidecar(
     returned rather than dropped because if no route finds the note, that refusal
     is the true answer.
     """
-    sidecar_path = sidecar_dir(app.vault_root) / ULID_SIDECAR_FILENAME
+    sidecar_path = sidecar_dir(app.vault_root, settings=app.settings) / ULID_SIDECAR_FILENAME
     if not sidecar_path.is_file():
         return None, None
     try:
@@ -720,6 +735,7 @@ def _build_full_payload(
         "returned_chars": len(content),
         "next_offset": next_offset,
         "truncated": truncated,
+        **_note_provenance(app, note.rel_path),
     }
 
 
@@ -759,6 +775,7 @@ def _build_chunk_payload(
         "next_chunk_id": (
             _redact_retrieval_text(app, next_chunk_id) if next_chunk_id is not None else None
         ),
+        **_note_provenance(app, chunk.note_rel_path),
     }
 
 
@@ -807,4 +824,5 @@ def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
         "format": "map",
         "headings": headings,
         "chunk_count": len(chunks),
+        **_note_provenance(app, note.rel_path),
     }

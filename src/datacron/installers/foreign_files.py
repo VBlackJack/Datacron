@@ -32,11 +32,12 @@ from pathlib import Path
 from typing import Final
 
 from datacron.core.durability import atomic_durable_write
+from datacron.core.paths import FILE_ATTRIBUTE_REPARSE_POINT, is_link_stat
 
 __all__ = ["BACKUP_SUFFIX", "replace_foreign_file"]
 
 BACKUP_SUFFIX: Final[str] = ".datacron-backup"
-_FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = 0x0400
+_FILE_ATTRIBUTE_REPARSE_POINT: Final[int] = FILE_ATTRIBUTE_REPARSE_POINT
 
 
 def _link_target(path: Path) -> str | None:
@@ -45,10 +46,9 @@ def _link_target(path: Path) -> str | None:
         status = os.lstat(path)
     except FileNotFoundError:
         return None
-    attributes = getattr(status, "st_file_attributes", 0)
     if stat.S_ISLNK(status.st_mode):
         return os.readlink(path)
-    if attributes & _FILE_ATTRIBUTE_REPARSE_POINT:
+    if is_link_stat(status):
         return "a reparse point"
     return None
 
@@ -83,10 +83,20 @@ def replace_foreign_file(
             f"{path} is a link to {target}; Datacron will not replace a link with a "
             "regular file. Edit the target directly, or remove the link first."
         )
+    backup_path = path.with_name(f"{path.name}{BACKUP_SUFFIX}")
+    try:
+        backup_target = _link_target(backup_path)
+    except OSError as exc:
+        raise error(f"cannot inspect {backup_path}: {exc}") from exc
+    if backup_target is not None:
+        raise error(
+            f"{backup_path} is a link to {backup_target}; Datacron will not write a "
+            "backup through a link. Remove the link first."
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         if path.read_bytes() == payload:
             return False
-        shutil.copy2(path, path.with_name(f"{path.name}{BACKUP_SUFFIX}"))
+        shutil.copy2(path, backup_path)
     atomic_durable_write(path, payload)
     return True

@@ -192,8 +192,10 @@ Useful environment variables:
 
 | Variable | Default | Role |
 |---|---:|---|
-| `DATACRON_VAULT_ROOT` | unset | fallback after `--vault`; the current directory is accepted only when it contains `.datacron/VAULT.yaml` |
-| `DATACRON_READ_PATHS` | empty | read allowlist; client setup sets it to the vault |
+| `DATACRON_VAULT_ROOT` | unset | primary user documentation vault root (fallback after `--vault`; the current directory is accepted only when it contains `.datacron/VAULT.yaml`) |
+| `DATACRON_MEMORY_ROOT` | unset | optional dedicated memory vault root hosting `.datacron/` and `_memory/` (Dual-Vault mode) |
+| `DATACRON_EXTRA_READ_VAULTS` | empty | optional read-only secondary vault mounts (`prefix=path` separated by OS path separator or JSON object) |
+| `DATACRON_READ_PATHS` | empty | read allowlist; client setup sets it to the vault(s) |
 | `DATACRON_WRITE_PATHS` | empty | write allowlist; empty = write tools disabled |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | maximum number of results returned |
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | token budget for search results |
@@ -300,9 +302,11 @@ machine-local absolute paths, so a synced vault carries them to every machine. P
 | Index | `datacron index` incremental, `datacron reindex` full, conditional repair on read |
 | Organization | Optional `organization` block in `VAULT.yaml`; `datacron reorganize --dry-run` measures the gap read-only, `apply_organization_manifest` applies |
 | Evaluation | `datacron eval` over the real MCP pipeline: recall@k, MRR, nDCG, freshness, latency, and payload tokens |
-| Guided setup | `datacron setup`: init + index + MCP registration in one command |
+| Guided setup | `datacron setup`: init + index + MCP registration in one command (Single-Vault or Dual-Vault via `--memory-vault`) |
+| Graphical control panel | `datacron companion`: local graphical control panel (`127.0.0.1`) for topology, search, graph diagnostics, compaction, MCP client setup, audit history, and CAS settings |
 | Clients | Auto-detect and register via `datacron setup --client all`: Claude Desktop, Claude Code, Cursor, Gemini CLI, Antigravity, LM Studio, Codex CLI, Windsurf, VS Code |
 | Daily memory | `session_context`, `prepare_follow_up`, `get_follow_up`: bounded context, sourced follow-up, and structured state |
+| Graph & Compaction | `datacron graph-health` (broken links, orphans, hubs, cross-vault links) and `datacron compact-memory` (monthly journal digests) |
 | Memory protocol | Shared versioned server/client contract; `protocol status` checks distribution, not model behavior |
 | Distribution | Windows installer (`Datacron-Setup.exe`), standalone executable (PyInstaller) with no Python required, or installation from source |
 
@@ -416,9 +420,17 @@ with a suitable question set to measure behavior on your own notes.
 ## CLI commands
 
 ```bash
+datacron companion                  # launch the local graphical control panel (127.0.0.1)
 datacron setup                      # guided path: init + index + client config
 datacron setup --yes                # all defaults, no prompts
 datacron setup --client all --scope both --vault /path/to/vault
+datacron setup --vault /path/to/docs --memory-vault /path/to/memory  # Dual-Vault setup
+datacron migrate-memory --vault /path/to/docs --memory-vault /path/to/memory
+datacron graph-health --vault /path/to/vault --json
+datacron compact-memory --vault /path/to/vault --older-than-days 30 --dry-run
+datacron compact-memory --vault /path/to/vault --older-than-days 30 --apply
+datacron config get /path/to/vault --json
+datacron config set /path/to/vault --expected-hash sha256:... --values-json '{"excluded_folders":[".git"]}'
 datacron setup --protocol           # also install client memory rules
 datacron protocol install --client all
 datacron protocol status --client all --scope user
@@ -443,7 +455,6 @@ datacron protocol uninstall --client all
 
 - Lexical search only: no vector search or embeddings.
 - No autonomous agent: the MCP client orchestrates.
-- No GUI.
 - No concurrent multi-machine writes.
 - Client detection in `datacron setup` is best-effort (a config directory or a binary on the
   `PATH`); an install in a non-standard location may be missed and can then be configured by

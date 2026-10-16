@@ -21,7 +21,7 @@ import json
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Final
 
 from ulid import ULID
 
@@ -205,13 +205,17 @@ def _archived_note(raw: str, destinations: list[str], captured: str) -> str:
     return serialize_preserving_bom(meta, body, has_bom=bom)
 
 
+_SPLIT_HEADING_LEVEL: Final[int] = 2
+_MIN_SPLIT_SECTIONS: Final[int] = 2
+
+
 def propose_split(source: Note, options: LibraryOptions) -> EditorialRecipe:
     """Draft exact H2 section notes, retaining the original and its incoming anchors."""
     if links_and_tasks(source.content)[1]:
         raise ValueError("Resolve open checkboxes or prepare a sourced editorial recipe manually")
     lines = source.content.splitlines(keepends=True)
-    headings = [h for h in markdown_headings(lines) if h.level == 2]
-    if len(headings) < 2:
+    headings = [h for h in markdown_headings(lines) if h.level == _SPLIT_HEADING_LEVEL]
+    if len(headings) < _MIN_SPLIT_SECTIONS:
         raise ValueError("Automatic split requires at least two H2 sections")
     entries = []
     for index, heading in enumerate(headings):
@@ -457,7 +461,7 @@ async def prepare_library(
     """Build an exact, externally reviewable navigation/consolidation bundle."""
     vault = vault.expanduser().absolute()
     output = output.expanduser().absolute()
-    notes = await read_library(vault, options)
+    notes = await read_library(vault, options, settings=settings)
     captured = datetime.now(tz=UTC)
     # Every body is parsed once here and shared by the editorial checks, the navigation
     # and the audit of the same note set.
@@ -469,7 +473,7 @@ async def prepare_library(
         list(projected.values()),
         options,
         captured.isoformat(),
-        archive_tags=vault_archive_tags(vault),
+        archive_tags=vault_archive_tags(vault, settings=settings),
         parsed_links=parsed_links,
     )
     for path, body in pages.items():
@@ -507,7 +511,7 @@ async def check_library(
         raise ValueError("Unsupported library snapshot")
     options = LibraryOptions.model_validate(snapshot["options"])
     if notes is None:
-        notes = await read_library(vault, options)
+        notes = await read_library(vault, options, settings=settings)
     current = {n.rel_path: n.content_hash for n in notes}
     if current != snapshot["sources"]:
         raise ValueError("Source set or bytes changed; prepare a fresh review bundle")

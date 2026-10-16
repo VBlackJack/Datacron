@@ -26,6 +26,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 from datacron.core import config as core_config
+from datacron.core.hashing import index_generation_hash
 from datacron.core.markdown_headings import markdown_headings
 from datacron.core.markdown_sections import find_section_span, heading_ancestry
 from datacron.core.models import Chunk, ChunkType, Note
@@ -222,6 +223,13 @@ class _TruncatedText:
     truncated: bool
 
 
+_MAX_CANDIDATE_CACHE_ENTRIES: Final[int] = 8
+_INDEXED_CANDIDATE_CACHE: dict[
+    tuple[object, ...],
+    tuple[tuple[Candidate, ...], int, int, int],
+] = {}
+
+
 def format_update_block(
     classification: CandidateClass,
     statement: str,
@@ -241,7 +249,6 @@ def format_update_block(
         if truncated or cleaned_statement.endswith((".", "?", "!"))
         else f"{cleaned_statement}."
     )
-    connector = core_config.DEFAULT_CONTRADICTION_SOURCE_CONNECTOR
     return f"> {label} {today.isoformat()} : {sentence} {connector} {source_rel_path}."
 
 
@@ -403,6 +410,52 @@ def build_proposal(
 async def _scan_candidate_models(
     app: DatacronApp,
 ) -> tuple[list[Candidate], int, int, int]:
+    indexed_notes = await app.store.list_indexed_notes()
+    get_generation = getattr(app.store, "get_generation", None)
+    generation = await get_generation() if callable(get_generation) else 0
+    cache_key: tuple[object, ...] | None = None
+    if generation > 0 and indexed_notes:
+        cache_key = (
+            id(app.store),
+            generation,
+            index_generation_hash(indexed_notes),
+            id(app.scope),
+            app.settings.contradiction_max_sections,
+            app.settings.contradiction_max_pairs,
+            app.settings.contradiction_max_candidates,
+            app.settings.contradiction_max_per_note_pair,
+            tuple(sorted(core_config.DEFAULT_CONTRADICTION_PROVENANCE_LABELS.items())),
+        )
+    cached = _INDEXED_CANDIDATE_CACHE.get(cache_key) if cache_key is not None else None
+    if cached is not None:
+        limited_tuple, examined_pairs, section_count, vault_sections = cached
+        limited = list(limited_tuple)
+    else:
+        limited, examined_pairs, section_count, vault_sections = await _discover_indexed_candidates(
+            app
+        )
+        if cache_key is not None:
+            if len(_INDEXED_CANDIDATE_CACHE) >= _MAX_CANDIDATE_CACHE_ENTRIES:
+                oldest_key = next(iter(_INDEXED_CANDIDATE_CACHE))
+                _INDEXED_CANDIDATE_CACHE.pop(oldest_key, None)
+            _INDEXED_CANDIDATE_CACHE[cache_key] = (
+                tuple(limited),
+                examined_pairs,
+                section_count,
+                vault_sections,
+            )
+
+    note_cache: dict[str, Note] = {}
+    resolved = [
+        await _resolve_addressability(app, candidate, indexed_notes, note_cache)
+        for candidate in limited
+    ]
+    return resolved, examined_pairs, section_count, vault_sections
+
+
+async def _discover_indexed_candidates(
+    app: DatacronApp,
+) -> tuple[list[Candidate], int, int, int]:
     sections, vault_sections = await _collect_sections(
         app, limit=app.settings.contradiction_max_sections
     )
@@ -451,13 +504,7 @@ async def _scan_candidate_models(
         note_pair_counts[note_pair] += 1
         capped_candidates.append(candidate)
     limited = capped_candidates[: app.settings.contradiction_max_candidates]
-    indexed_notes = await app.store.list_indexed_notes()
-    note_cache: dict[str, Note] = {}
-    resolved = [
-        await _resolve_addressability(app, candidate, indexed_notes, note_cache)
-        for candidate in limited
-    ]
-    return resolved, len(seen_pairs), len(sections), vault_sections
+    return limited, len(seen_pairs), len(sections), vault_sections
 
 
 async def _collect_sections(app: DatacronApp, *, limit: int) -> tuple[list[SectionAssertion], int]:

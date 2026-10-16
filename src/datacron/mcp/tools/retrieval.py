@@ -19,7 +19,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Any, Final
 
-from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
+from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN, ULID_LENGTH
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
 from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
@@ -36,7 +36,9 @@ if TYPE_CHECKING:
 _LOGGER = get_logger(__name__)
 
 # '@' cannot occur in a heading slug, keeping aliases disjoint from stored IDs.
-OPAQUE_CHUNK_PATTERN = re.compile(r"^([0-9A-HJKMNP-TV-Z]{26})::@redacted-[0-9a-f]{64}::0000$")
+OPAQUE_CHUNK_PATTERN = re.compile(
+    rf"^([0-9A-HJKMNP-TV-Z]{{{ULID_LENGTH}}})::@redacted-[0-9a-f]{{64}}::0000$"
+)
 SEARCH_INDEX_STALE_CODE: Final[str] = "search_index_stale"
 
 

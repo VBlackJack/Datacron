@@ -67,7 +67,7 @@ dependencies = [
     "typer>=0.16",
     "click>=8.2",
     # MCP server (Phase 0 Sem 2)
-    "mcp>=2,<3",
+    "mcp>=2.3.0,<3",
     # Indexing (Phase 0 Sem 2-3)
     "aiosqlite>=0.20",
     "mistletoe>=1.3",
@@ -85,6 +85,7 @@ dev = [
     "pytest-cov>=5.0",
     "hypothesis>=6.112",
     "types-PyYAML>=6.0",
+    "httpx>=0.28.1",
 ]
 build = [
     "pyinstaller>=6.0",
@@ -152,9 +153,7 @@ select = [
     "RUF",   # ruff
 ]
 ignore = [
-    "S101",    # assert allowed in tests
     "PLR0913", # too many args
-    "PLR2004", # magic value comparison (covered case-by-case)
     "TC001",   # Pydantic resolves annotations at runtime
     "TC002",
     "TC003",
@@ -163,7 +162,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "PLR2004", "S603", "S607", "PLR0915", "PLC0415"]
-"src/datacron/cli.py" = ["B008", "PLR0915"]
+"src/datacron/cli.py" = ["B008"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["datacron"]

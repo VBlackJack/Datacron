@@ -63,7 +63,7 @@ def test_mcp_v2_dependency_and_public_surface_are_explicit() -> None:
     pyproject_path = Path(__file__).parents[3] / "pyproject.toml"
     pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
 
-    assert "mcp>=2,<3" in pyproject["project"]["dependencies"]
+    assert "mcp>=2.3.0,<3" in pyproject["project"]["dependencies"]
     assert version("mcp").startswith("2.")
 
     from mcp.client import Client

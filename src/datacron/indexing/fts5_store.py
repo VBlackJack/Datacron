@@ -32,9 +32,12 @@ import aiosqlite
 from datacron.core.config import (
     CHUNK_CONTEXT_SEPARATOR,
     DEFAULT_ARCHIVE_TAGS,
+    DEFAULT_MAX_RESULT_COUNT,
+    DEFAULT_VAULT_LOCK_TIMEOUT_SECONDS,
     SEARCH_CONTENT_WEIGHT,
     SEARCH_CONTEXT_WEIGHT,
 )
+from datacron.core.durability import atomic_durable_write
 from datacron.core.frontmatter import (
     coerce_string_list,
     extract_tags,
@@ -79,8 +82,13 @@ to run again over rows an earlier release wrote.
 _PROBE_STALE_WRITER_SQL: Final[str] = "SELECT 1 FROM notes WHERE writer_version < ? LIMIT 1;"
 _PROBE_DERIVED_DATA_ABSENT_SQL: Final[str] = """
 SELECT 1
-WHERE EXISTS (SELECT 1 FROM notes)
-  AND NOT EXISTS (SELECT 1 FROM note_frontmatter);
+WHERE (
+    EXISTS (SELECT 1 FROM notes)
+    AND NOT EXISTS (SELECT 1 FROM note_frontmatter)
+) OR (
+    EXISTS (SELECT 1 FROM chunks_fts)
+    AND NOT EXISTS (SELECT 1 FROM chunk_lookup)
+);
 """
 _STAMP_WRITER_VERSION_SQL: Final[str] = "UPDATE notes SET writer_version = ?;"
 _CREATE_NOTES_WRITER_VERSION_INDEX_SQL: Final[str] = (
@@ -180,6 +188,74 @@ WHERE note_id IN (SELECT note_id FROM notes WHERE rel_path = ? AND note_id != ?)
 """
 _NOTE_FRONTMATTER_TABLE: Final[str] = "note_frontmatter"
 
+# Indexed companion lookup table for ``chunks_fts`` so point lookups and deletes by
+# ``chunk_id``, ``note_id``, ``note_rel_path``, and outgoing wikilinks seek by B-tree
+# and ``chunks_fts.rowid`` instead of scanning the FTS shadow content table.
+_CHUNK_LOOKUP_TABLE: Final[str] = "chunk_lookup"
+_CREATE_CHUNK_LOOKUP_SQL: Final[str] = """
+CREATE TABLE IF NOT EXISTS chunk_lookup (
+    chunk_rowid INTEGER PRIMARY KEY,
+    chunk_id TEXT NOT NULL UNIQUE,
+    note_id TEXT NOT NULL,
+    note_rel_path TEXT NOT NULL,
+    wikilinks_out_json TEXT
+);
+"""
+_CREATE_CHUNK_LOOKUP_NOTE_INDEX_SQL: Final[str] = """
+CREATE INDEX IF NOT EXISTS chunk_lookup_note_id
+ON chunk_lookup (note_id, chunk_rowid);
+"""
+_CREATE_CHUNK_LOOKUP_PATH_INDEX_SQL: Final[str] = """
+CREATE INDEX IF NOT EXISTS chunk_lookup_rel_path
+ON chunk_lookup (note_rel_path, chunk_rowid);
+"""
+_CREATE_CHUNK_LOOKUP_WIKILINKS_INDEX_SQL: Final[str] = """
+CREATE INDEX IF NOT EXISTS chunk_lookup_wikilinks
+ON chunk_lookup (chunk_rowid)
+WHERE wikilinks_out_json IS NOT NULL AND wikilinks_out_json != '[]';
+"""
+_INSERT_CHUNK_LOOKUP_SQL: Final[str] = """
+INSERT INTO chunk_lookup (
+    chunk_rowid,
+    chunk_id,
+    note_id,
+    note_rel_path,
+    wikilinks_out_json
+) VALUES (?, ?, ?, ?, ?);
+"""
+_DELETE_CHUNKS_FTS_BY_NOTE_OR_PATH_SQL: Final[str] = """
+DELETE FROM chunks_fts
+WHERE rowid IN (
+    SELECT chunk_rowid FROM chunk_lookup WHERE note_id = ?
+    UNION
+    SELECT chunk_rowid FROM chunk_lookup WHERE note_rel_path = ?
+);
+"""
+_DELETE_CHUNK_LOOKUP_BY_NOTE_OR_PATH_SQL: Final[str] = """
+DELETE FROM chunk_lookup WHERE note_id = ? OR note_rel_path = ?;
+"""
+_DELETE_CHUNKS_FTS_BY_NOTE_SQL: Final[str] = """
+DELETE FROM chunks_fts
+WHERE rowid IN (SELECT chunk_rowid FROM chunk_lookup WHERE note_id = ?);
+"""
+_DELETE_CHUNK_LOOKUP_BY_NOTE_SQL: Final[str] = "DELETE FROM chunk_lookup WHERE note_id = ?;"
+_REBUILD_CHUNK_LOOKUP_SQL: Final[str] = """
+INSERT INTO chunk_lookup (
+    chunk_rowid,
+    chunk_id,
+    note_id,
+    note_rel_path,
+    wikilinks_out_json
+)
+SELECT
+    rowid,
+    chunk_id,
+    note_id,
+    note_rel_path,
+    wikilinks_out_json
+FROM chunks_fts;
+"""
+
 _INSERT_NOTE_SQL: Final[str] = """
 INSERT INTO notes (
     note_id,
@@ -211,6 +287,7 @@ ON CONFLICT(note_id) DO UPDATE SET
 
 _INSERT_CHUNK_SQL: Final[str] = """
 INSERT INTO chunks_fts (
+    rowid,
     chunk_id,
     note_id,
     note_rel_path,
@@ -226,7 +303,7 @@ INSERT INTO chunks_fts (
     wikilinks_out_json,
     lang,
     context
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 _SEARCH_COLUMNS_SQL: Final[str] = """
@@ -453,7 +530,46 @@ FROM notes
 ORDER BY sort_key COLLATE BINARY;
 """
 
+_QUALIFIED_CHUNK_COLUMNS_SQL: Final[str] = """
+    chunks_fts.chunk_id,
+    chunks_fts.note_id,
+    chunks_fts.note_rel_path,
+    chunks_fts.header_path,
+    chunks_fts.section_title,
+    chunks_fts.chunk_type,
+    chunks_fts.content,
+    chunks_fts.ordinal,
+    chunks_fts.content_hash,
+    chunks_fts.token_count,
+    chunks_fts.line_start,
+    chunks_fts.line_end,
+    chunks_fts.wikilinks_out_json,
+    chunks_fts.lang
+"""
+
 _GET_CHUNK_SQL: Final[str] = """
+SELECT
+    chunks_fts.chunk_id,
+    chunks_fts.note_id,
+    chunks_fts.note_rel_path,
+    chunks_fts.header_path,
+    chunks_fts.section_title,
+    chunks_fts.chunk_type,
+    chunks_fts.content,
+    chunks_fts.ordinal,
+    chunks_fts.content_hash,
+    chunks_fts.token_count,
+    chunks_fts.line_start,
+    chunks_fts.line_end,
+    chunks_fts.wikilinks_out_json,
+    chunks_fts.lang
+FROM chunk_lookup
+JOIN chunks_fts ON chunks_fts.rowid = chunk_lookup.chunk_rowid
+WHERE chunk_lookup.chunk_id = ?
+LIMIT 1;
+"""
+
+_GET_CHUNK_LEGACY_SQL: Final[str] = """
 SELECT
     chunk_id,
     note_id,
@@ -475,6 +591,28 @@ LIMIT 1;
 """
 
 _LIST_CHUNKS_FOR_NOTE_SQL: Final[str] = """
+SELECT
+    chunks_fts.chunk_id,
+    chunks_fts.note_id,
+    chunks_fts.note_rel_path,
+    chunks_fts.header_path,
+    chunks_fts.section_title,
+    chunks_fts.chunk_type,
+    chunks_fts.content,
+    chunks_fts.ordinal,
+    chunks_fts.content_hash,
+    chunks_fts.token_count,
+    chunks_fts.line_start,
+    chunks_fts.line_end,
+    chunks_fts.wikilinks_out_json,
+    chunks_fts.lang
+FROM chunk_lookup
+JOIN chunks_fts ON chunks_fts.rowid = chunk_lookup.chunk_rowid
+WHERE chunk_lookup.note_id = ?
+ORDER BY chunk_lookup.chunk_rowid;
+"""
+
+_LIST_CHUNKS_FOR_NOTE_LEGACY_SQL: Final[str] = """
 SELECT
     chunk_id,
     note_id,
@@ -518,14 +656,60 @@ WHERE wikilinks_out_json IS NOT NULL
   AND wikilinks_out_json != '[]'
 """
 
-_LIST_CHUNKS_WITH_WIKILINKS_SQL: Final[str] = f"""
+_LIST_CHUNKS_WITH_WIKILINKS_SQL: Final[str] = """
 SELECT
-{_CHUNK_COLUMNS_SQL}
-{_WIKILINK_SOURCE_FILTER_SQL}
+    chunks_fts.chunk_id,
+    chunks_fts.note_id,
+    chunks_fts.note_rel_path,
+    chunks_fts.header_path,
+    chunks_fts.section_title,
+    chunks_fts.chunk_type,
+    chunks_fts.content,
+    chunks_fts.ordinal,
+    chunks_fts.content_hash,
+    chunks_fts.token_count,
+    chunks_fts.line_start,
+    chunks_fts.line_end,
+    chunks_fts.wikilinks_out_json,
+    chunks_fts.lang
+FROM chunk_lookup
+JOIN chunks_fts ON chunks_fts.rowid = chunk_lookup.chunk_rowid
+WHERE chunk_lookup.wikilinks_out_json IS NOT NULL
+  AND chunk_lookup.wikilinks_out_json != '[]'
+ORDER BY chunk_lookup.chunk_rowid;
+"""
+
+_LIST_CHUNKS_WITH_WIKILINKS_LEGACY_SQL: Final[str] = """
+SELECT
+    chunk_id,
+    note_id,
+    note_rel_path,
+    header_path,
+    section_title,
+    chunk_type,
+    content,
+    ordinal,
+    content_hash,
+    token_count,
+    line_start,
+    line_end,
+    wikilinks_out_json,
+    lang
+FROM chunks_fts
+WHERE wikilinks_out_json IS NOT NULL
+  AND wikilinks_out_json != '[]'
 ORDER BY rowid;
 """
 
-_ITER_WIKILINK_SOURCES_SQL: Final[str] = f"""
+_ITER_WIKILINK_SOURCES_SQL: Final[str] = """
+SELECT chunk_id, note_id, note_rel_path, wikilinks_out_json
+FROM chunk_lookup
+WHERE wikilinks_out_json IS NOT NULL
+  AND wikilinks_out_json != '[]'
+ORDER BY chunk_rowid;
+"""
+
+_ITER_WIKILINK_SOURCES_LEGACY_SQL: Final[str] = f"""
 SELECT chunk_id, note_id, note_rel_path, wikilinks_out_json
 {_WIKILINK_SOURCE_FILTER_SQL}
 ORDER BY rowid;
@@ -538,13 +722,22 @@ into a validated model, for rows the scan goes on to discard.
 """
 
 
-def _chunks_by_ids_sql(count: int) -> str:
+def _chunks_by_ids_sql(count: int, *, indexed: bool = True) -> str:
     """Fetch, in one statement, the handful of chunks a backlink scan returns.
 
     Only the number of placeholders varies. The ids themselves are bound, never
     interpolated, so nothing a caller supplies reaches the statement text.
     """
     placeholders = ", ".join(["?"] * count)
+    if indexed:
+        return f"""
+SELECT
+{_QUALIFIED_CHUNK_COLUMNS_SQL}
+FROM chunk_lookup
+JOIN chunks_fts ON chunks_fts.rowid = chunk_lookup.chunk_rowid
+WHERE chunk_lookup.chunk_id IN ({placeholders})
+ORDER BY chunk_lookup.chunk_rowid;
+"""  # noqa: S608
     return f"""
 SELECT
 {_CHUNK_COLUMNS_SQL}
@@ -755,6 +948,8 @@ class SQLiteFTS5Store:
         # and the frontmatter pair table.
         self._context_indexed: bool | None = None
         self._frontmatter_indexed: bool | None = None
+        self._chunk_lookup_indexed: bool | None = None
+        self._write_lock = asyncio.Lock()
         # ``None`` outside a bulk scope, where each write commits on its own.
         self._bulk_commit_every: int | None = None
         self._bulk_transaction_open = False
@@ -778,10 +973,17 @@ class SQLiteFTS5Store:
                     f"certified read-only mode requires a prebuilt index: {resolved_path}"
                 )
             uri = f"{resolved_path.as_uri()}?mode=ro"
-            connection = await aiosqlite.connect(uri, uri=True)
+            connection = await aiosqlite.connect(
+                uri,
+                uri=True,
+                timeout=DEFAULT_VAULT_LOCK_TIMEOUT_SECONDS,
+            )
         else:
             resolved_path.parent.mkdir(parents=True, exist_ok=True)
-            connection = await aiosqlite.connect(resolved_path)
+            connection = await aiosqlite.connect(
+                resolved_path,
+                timeout=DEFAULT_VAULT_LOCK_TIMEOUT_SECONDS,
+            )
 
         connection.row_factory = sqlite3.Row
         self._conn = connection
@@ -789,6 +991,8 @@ class SQLiteFTS5Store:
         self._read_only = read_only
 
         try:
+            busy_timeout_ms = int(DEFAULT_VAULT_LOCK_TIMEOUT_SECONDS * 1000)
+            await connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms};")
             if read_only:
                 await connection.execute("PRAGMA query_only = ON;")
             else:
@@ -810,6 +1014,7 @@ class SQLiteFTS5Store:
         self._temporal_metadata_cache = None
         self._context_indexed = None
         self._frontmatter_indexed = None
+        self._chunk_lookup_indexed = None
         if connection is not None:
             await connection.close()
 
@@ -828,52 +1033,71 @@ class SQLiteFTS5Store:
         _validate_chunks_belong_to_note(note, chunks)
 
         indexed_at = datetime.now(tz=UTC).isoformat()
-        # Reserve the writer before reading identity ownership. Deferred transactions
-        # can deadlock when independent clients both promote a shared read lock.
-        await self._begin_write_unit(connection)
-        try:
-            async with connection.execute(
-                "SELECT rel_path FROM notes WHERE note_id = ?", (note.id,)
-            ) as cursor:
-                owner = await cursor.fetchone()
-            if owner is not None and owner[0] != note.rel_path:
-                raise DuplicateNoteIdentityError(note.id, str(owner[0]), note.rel_path)
-            await connection.execute(
-                "DELETE FROM chunks_fts WHERE note_id = ? OR note_rel_path = ?",
-                (note.id, note.rel_path),
-            )
-            # Order matters: the superseded identity is read from ``notes`` and must be
-            # resolved before that row is deleted, or its pairs survive with no owner.
-            await connection.execute(_DELETE_SUPERSEDED_FRONTMATTER_SQL, (note.rel_path, note.id))
-            await connection.execute(
-                "DELETE FROM notes WHERE rel_path = ? AND note_id != ?",
-                (note.rel_path, note.id),
-            )
-            await connection.execute(_INSERT_NOTE_SQL, _note_row(note, indexed_at, fs_mtime_ns))
-            await connection.execute(_DELETE_NOTE_FRONTMATTER_SQL, (note.id,))
-            await connection.executemany(
-                _INSERT_NOTE_FRONTMATTER_SQL,
-                _frontmatter_pair_rows(note.id, _frontmatter_json(note.frontmatter)),
-            )
-            await connection.execute(
-                "DELETE FROM ulid_paths WHERE rel_path = ? OR note_id = ?",
-                (note.rel_path, note.id),
-            )
-            await connection.execute(
-                "INSERT INTO ulid_paths(rel_path, note_id) VALUES (?, ?)",
-                (note.rel_path, note.id),
-            )
-            await connection.executemany(
-                _INSERT_CHUNK_SQL,
-                [
-                    _chunk_row(chunk, _chunk_context(note.title, chunk.header_path))
-                    for chunk in chunks
-                ],
-            )
-        except Exception:
-            await self._abandon_write_unit(connection)
-            raise
-        await self._end_write_unit(connection)
+        async with self._write_lock:
+            # Reserve the writer before reading identity ownership. Deferred transactions
+            # can deadlock when independent clients both promote a shared read lock.
+            await self._begin_write_unit(connection)
+            try:
+                async with connection.execute(
+                    "SELECT rel_path FROM notes WHERE note_id = ?", (note.id,)
+                ) as cursor:
+                    owner = await cursor.fetchone()
+                if owner is not None and owner[0] != note.rel_path:
+                    raise DuplicateNoteIdentityError(note.id, str(owner[0]), note.rel_path)
+                await connection.execute(
+                    _DELETE_CHUNKS_FTS_BY_NOTE_OR_PATH_SQL,
+                    (note.id, note.rel_path),
+                )
+                await connection.execute(
+                    _DELETE_CHUNK_LOOKUP_BY_NOTE_OR_PATH_SQL,
+                    (note.id, note.rel_path),
+                )
+                # Order matters: the superseded identity is read from ``notes`` and must be
+                # resolved before that row is deleted, or its pairs survive with no owner.
+                await connection.execute(
+                    _DELETE_SUPERSEDED_FRONTMATTER_SQL, (note.rel_path, note.id)
+                )
+                await connection.execute(
+                    "DELETE FROM notes WHERE rel_path = ? AND note_id != ?",
+                    (note.rel_path, note.id),
+                )
+                await connection.execute(_INSERT_NOTE_SQL, _note_row(note, indexed_at, fs_mtime_ns))
+                await connection.execute(_DELETE_NOTE_FRONTMATTER_SQL, (note.id,))
+                await connection.executemany(
+                    _INSERT_NOTE_FRONTMATTER_SQL,
+                    _frontmatter_pair_rows(note.id, _frontmatter_json(note.frontmatter)),
+                )
+                await connection.execute(
+                    "DELETE FROM ulid_paths WHERE rel_path = ? OR note_id = ?",
+                    (note.rel_path, note.id),
+                )
+                await connection.execute(
+                    "INSERT INTO ulid_paths(rel_path, note_id) VALUES (?, ?)",
+                    (note.rel_path, note.id),
+                )
+                if chunks:
+                    base_rowid = await _fetch_int(
+                        connection,
+                        "SELECT COALESCE(MAX(chunk_rowid), 0) FROM chunk_lookup;",
+                    )
+                    fts_rows = [
+                        _chunk_row(
+                            base_rowid + offset,
+                            chunk,
+                            _chunk_context(note.title, chunk.header_path),
+                        )
+                        for offset, chunk in enumerate(chunks, start=1)
+                    ]
+                    lookup_rows = [
+                        _chunk_lookup_row(base_rowid + offset, chunk)
+                        for offset, chunk in enumerate(chunks, start=1)
+                    ]
+                    await connection.executemany(_INSERT_CHUNK_SQL, fts_rows)
+                    await connection.executemany(_INSERT_CHUNK_LOOKUP_SQL, lookup_rows)
+            except Exception:
+                await self._abandon_write_unit(connection)
+                raise
+            await self._end_write_unit(connection)
 
     @asynccontextmanager
     async def bulk_writes(self, *, commit_every: int = _BULK_COMMIT_NOTES) -> AsyncIterator[None]:
@@ -956,29 +1180,32 @@ class SQLiteFTS5Store:
         """
         connection = self._require_connection()
         self._require_writable()
-        await connection.execute(_RECORD_MTIME_SQL, (fs_mtime_ns, note_id))
-        await connection.commit()
+        async with self._write_lock:
+            await connection.execute(_RECORD_MTIME_SQL, (fs_mtime_ns, note_id))
+            await connection.commit()
 
     async def delete_note(self, note_id: str) -> None:
         """Remove a note, its chunks, and its path mapping if present."""
         connection = self._require_connection()
         self._require_writable()
 
-        await self._begin_write_unit(connection)
-        try:
-            await connection.execute("DELETE FROM chunks_fts WHERE note_id = ?", (note_id,))
-            await connection.execute("DELETE FROM notes WHERE note_id = ?", (note_id,))
-            await connection.execute(_DELETE_NOTE_FRONTMATTER_SQL, (note_id,))
-            await connection.execute("DELETE FROM ulid_paths WHERE note_id = ?", (note_id,))
-        except Exception:
-            await self._abandon_write_unit(connection)
-            raise
-        await self._end_write_unit(connection)
+        async with self._write_lock:
+            await self._begin_write_unit(connection)
+            try:
+                await connection.execute(_DELETE_CHUNKS_FTS_BY_NOTE_SQL, (note_id,))
+                await connection.execute(_DELETE_CHUNK_LOOKUP_BY_NOTE_SQL, (note_id,))
+                await connection.execute("DELETE FROM notes WHERE note_id = ?", (note_id,))
+                await connection.execute(_DELETE_NOTE_FRONTMATTER_SQL, (note_id,))
+                await connection.execute("DELETE FROM ulid_paths WHERE note_id = ?", (note_id,))
+            except Exception:
+                await self._abandon_write_unit(connection)
+                raise
+            await self._end_write_unit(connection)
 
     async def search(
         self,
         query: str,
-        limit: int = 20,
+        limit: int = DEFAULT_MAX_RESULT_COUNT,
         *,
         folder: str | None = None,
         tags: Sequence[str] | None = None,
@@ -1089,21 +1316,36 @@ class SQLiteFTS5Store:
     async def get_chunk(self, chunk_id: str) -> Chunk | None:
         """Return one chunk by ID, or ``None`` if absent."""
         connection = self._require_connection()
-        async with connection.execute(_GET_CHUNK_SQL, (chunk_id,)) as cursor:
+        sql = (
+            _GET_CHUNK_SQL
+            if await self._is_chunk_lookup_indexed(connection)
+            else _GET_CHUNK_LEGACY_SQL
+        )
+        async with connection.execute(sql, (chunk_id,)) as cursor:
             row = await cursor.fetchone()
         return _chunk_from_row(row) if row is not None else None
 
     async def list_chunks_for_note(self, note_id: str) -> list[Chunk]:
         """Return chunks for ``note_id`` in insertion/document order."""
         connection = self._require_connection()
-        async with connection.execute(_LIST_CHUNKS_FOR_NOTE_SQL, (note_id,)) as cursor:
+        sql = (
+            _LIST_CHUNKS_FOR_NOTE_SQL
+            if await self._is_chunk_lookup_indexed(connection)
+            else _LIST_CHUNKS_FOR_NOTE_LEGACY_SQL
+        )
+        async with connection.execute(sql, (note_id,)) as cursor:
             rows = cast("list[sqlite3.Row]", await cursor.fetchall())
         return [_chunk_from_row(row) for row in rows]
 
     async def list_chunks_with_wikilinks(self) -> list[Chunk]:
         """Return all chunks whose indexed wikilink list is non-empty."""
         connection = self._require_connection()
-        async with connection.execute(_LIST_CHUNKS_WITH_WIKILINKS_SQL) as cursor:
+        sql = (
+            _LIST_CHUNKS_WITH_WIKILINKS_SQL
+            if await self._is_chunk_lookup_indexed(connection)
+            else _LIST_CHUNKS_WITH_WIKILINKS_LEGACY_SQL
+        )
+        async with connection.execute(sql) as cursor:
             rows = cast("list[sqlite3.Row]", await cursor.fetchall())
         return [_chunk_from_row(row) for row in rows]
 
@@ -1118,7 +1360,12 @@ class SQLiteFTS5Store:
         cost nothing at all.
         """
         connection = self._require_connection()
-        async with connection.execute(_ITER_WIKILINK_SOURCES_SQL) as cursor:
+        sql = (
+            _ITER_WIKILINK_SOURCES_SQL
+            if await self._is_chunk_lookup_indexed(connection)
+            else _ITER_WIKILINK_SOURCES_LEGACY_SQL
+        )
+        async with connection.execute(sql) as cursor:
             async for row in cursor:
                 yield WikilinkSource(
                     chunk_id=str(row["chunk_id"]),
@@ -1138,8 +1385,9 @@ class SQLiteFTS5Store:
         if not chunk_ids:
             return {}
         connection = self._require_connection()
+        indexed = await self._is_chunk_lookup_indexed(connection)
         async with connection.execute(
-            _chunks_by_ids_sql(len(chunk_ids)), tuple(chunk_ids)
+            _chunks_by_ids_sql(len(chunk_ids), indexed=indexed), tuple(chunk_ids)
         ) as cursor:
             rows = cast("list[sqlite3.Row]", await cursor.fetchall())
         chunks = (_chunk_from_row(row) for row in rows)
@@ -1342,12 +1590,13 @@ class SQLiteFTS5Store:
             raise ValueError("generation must be non-negative")
         connection = self._require_connection()
         self._require_writable()
-        await connection.execute(
-            "INSERT INTO index_meta(key, value) VALUES ('generation', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
-            (str(generation),),
-        )
-        await connection.commit()
+        async with self._write_lock:
+            await connection.execute(
+                "INSERT INTO index_meta(key, value) VALUES ('generation', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+                (str(generation),),
+            )
+            await connection.commit()
 
     async def get_chunker_version(self) -> int | None:
         """Return the chunker version that wrote the index, ``None`` when unrecorded."""
@@ -1365,12 +1614,13 @@ class SQLiteFTS5Store:
         """Record the chunker version every indexed note is now chunked with."""
         connection = self._require_connection()
         self._require_writable()
-        await connection.execute(
-            "INSERT INTO index_meta(key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
-            (_CHUNKER_VERSION_KEY, str(version)),
-        )
-        await connection.commit()
+        async with self._write_lock:
+            await connection.execute(
+                "INSERT INTO index_meta(key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+                (_CHUNKER_VERSION_KEY, str(version)),
+            )
+            await connection.commit()
 
     async def increment_generation(self) -> int:
         """Advance generation after one complete reconcile operation."""
@@ -1424,21 +1674,27 @@ class SQLiteFTS5Store:
         await connection.execute(_CREATE_NOTE_FRONTMATTER_SQL)
         await connection.execute(_CREATE_NOTE_FRONTMATTER_INDEX_SQL)
         await connection.execute(_CREATE_NOTE_FRONTMATTER_NOTE_INDEX_SQL)
+        await connection.execute(_CREATE_CHUNK_LOOKUP_SQL)
+        await connection.execute(_CREATE_CHUNK_LOOKUP_NOTE_INDEX_SQL)
+        await connection.execute(_CREATE_CHUNK_LOOKUP_PATH_INDEX_SQL)
+        await connection.execute(_CREATE_CHUNK_LOOKUP_WIKILINKS_INDEX_SQL)
         await connection.execute(
             "INSERT OR IGNORE INTO index_meta(key, value) VALUES ('generation', '0');"
         )
         await self._migrate_notes_columns(connection)
         await self._migrate_chunk_context(connection)
-        # Both repairs below exist for rows an earlier release wrote, and both cost a
-        # pass over the whole index. One probe decides for both, and the stamp is
-        # written once afterwards so the second repair still sees what the first saw.
+        # The repairs below exist for rows an earlier release wrote, and cost a
+        # pass over the whole index. One probe decides for all, and the stamp is
+        # written once afterwards so each repair sees what the previous saw.
         if await self._has_rows_from_an_earlier_release(connection):
             await self._rebuild_frontmatter_pairs(connection)
             await self._repair_missing_context(connection)
+            await self._rebuild_chunk_lookup(connection)
             await connection.execute(_STAMP_WRITER_VERSION_SQL, (_INDEX_WRITER_VERSION,))
         await connection.commit()
         self._context_indexed = True
         self._frontmatter_indexed = True
+        self._chunk_lookup_indexed = True
 
     async def _migrate_chunk_context(self, connection: aiosqlite.Connection) -> None:
         """Add the indexed ``context`` column to a legacy ``chunks_fts`` table.
@@ -1460,6 +1716,8 @@ class SQLiteFTS5Store:
         )
         migrated_rows = cursor.rowcount
         await connection.execute(f"DROP TABLE {_LEGACY_CHUNKS_TABLE};")
+        await connection.execute("DELETE FROM chunk_lookup;")
+        await connection.execute(_REBUILD_CHUNK_LOOKUP_SQL)
         _LOGGER.info(
             "Migrated %d chunks to the context-indexed schema in %.0f ms",
             migrated_rows,
@@ -1474,6 +1732,15 @@ class SQLiteFTS5Store:
                     "Index predates the context column; scoring stays unweighted until rebuilt"
                 )
         return self._context_indexed
+
+    async def _is_chunk_lookup_indexed(self, connection: aiosqlite.Connection) -> bool:
+        if self._chunk_lookup_indexed is None:
+            self._chunk_lookup_indexed = await _has_table(connection, _CHUNK_LOOKUP_TABLE)
+        return self._chunk_lookup_indexed
+
+    async def _rebuild_chunk_lookup(self, connection: aiosqlite.Connection) -> None:
+        await connection.execute("DELETE FROM chunk_lookup;")
+        await connection.execute(_REBUILD_CHUNK_LOOKUP_SQL)
 
     async def _search_scope(
         self,
@@ -1848,10 +2115,29 @@ def _vault_order_key(rel_path: str) -> str:
 
 
 def _chunk_row(
+    rowid: int,
     chunk: Chunk,
     context: str,
-) -> tuple[str, str, str, str, str | None, str, str, int, str, int, int, int, str, str | None, str]:
+) -> tuple[
+    int,
+    str,
+    str,
+    str,
+    str,
+    str | None,
+    str,
+    str,
+    int,
+    str,
+    int,
+    int,
+    int,
+    str,
+    str | None,
+    str,
+]:
     return (
+        rowid,
         chunk.chunk_id,
         chunk.note_id,
         chunk.note_rel_path,
@@ -1867,6 +2153,19 @@ def _chunk_row(
         json.dumps(chunk.wikilinks_out, ensure_ascii=False),
         chunk.lang,
         context,
+    )
+
+
+def _chunk_lookup_row(
+    rowid: int,
+    chunk: Chunk,
+) -> tuple[int, str, str, str, str]:
+    return (
+        rowid,
+        chunk.chunk_id,
+        chunk.note_id,
+        chunk.note_rel_path,
+        json.dumps(chunk.wikilinks_out, ensure_ascii=False),
     )
 
 
@@ -1935,8 +2234,8 @@ def _json_default(value: object) -> str:
 
 def _write_ulid_mappings(path: Path, mappings: dict[str, str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    serialized = json.dumps(mappings, indent=2, sort_keys=True, ensure_ascii=False)
-    path.write_text(serialized + "\n", encoding="utf-8")
+    serialized = json.dumps(mappings, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    atomic_durable_write(path, serialized.encode("utf-8"))
 
 
 async def _fetch_int(connection: aiosqlite.Connection, sql: str) -> int:

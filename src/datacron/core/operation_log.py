@@ -19,7 +19,6 @@ import json
 import math
 import os
 import re
-import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -42,6 +41,7 @@ from datacron.core.durability import (
 )
 from datacron.core.hashing import sha256_bytes
 from datacron.core.logger import get_logger
+from datacron.core.paths import is_link_stat as _is_link
 
 JsonScalar: TypeAlias = str | int | float | bool | None
 
@@ -151,16 +151,18 @@ def _request_key_prefix(key_hash: str) -> int:
 
 
 def _is_reparse_point(entry: os.DirEntry[str]) -> bool:
-    """Report a Windows reparse point from the entry the directory scan returned.
+    """Report a Windows link reparse point from the entry the directory scan returned.
 
     A junction is not a symlink to :func:`os.DirEntry.is_symlink`, and the scan
-    already carries the attributes, so this costs no extra syscall.
+    already carries the attributes, so this costs no extra syscall. Cloud
+    placeholders (OneDrive Files-On-Demand) carry their own reparse tag and are
+    not links.
     """
     try:
-        attributes = getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
+        entry_stat = entry.stat(follow_symlinks=False)
     except OSError:
         return False
-    return bool(attributes & _FILE_ATTRIBUTE_REPARSE_POINT)
+    return _is_link(entry_stat)
 
 
 def _assert_unlinked_operation_path(
@@ -191,8 +193,7 @@ def _assert_unlinked_operation_path(
             if allow_missing:
                 break
             raise
-        attributes = getattr(component_stat, "st_file_attributes", 0)
-        if stat.S_ISLNK(component_stat.st_mode) or bool(attributes & _FILE_ATTRIBUTE_REPARSE_POINT):
+        if _is_link(component_stat):
             raise OperationLogError(
                 f"linked or reparse operation journal path is forbidden: {component}"
             )
@@ -892,7 +893,9 @@ class OperationJournal:
         # the specification defines. Hashing the bytes as they sit on the line instead
         # would let a hand-repaired journal break the chain permanently: the next
         # append would record a prev_hash no reader ever recomputes.
-        expected_prev_hash = sha256_bytes(_record_line(tail[-2][0])) if len(tail) == 2 else None
+        expected_prev_hash = (
+            sha256_bytes(_record_line(tail[-2][0])) if len(tail) == _TAIL_RECORDS_COUNT else None
+        )
         if tail_record.prev_hash != expected_prev_hash:
             raise OperationLogError("operation log tail hash chain mismatch")
         self._tail_record = tail_record
@@ -1263,6 +1266,11 @@ def _iter_lines_reverse(stream: BinaryIO, end: int) -> Iterator[tuple[int, bytes
         yield 0, buffer
 
 
+_TAIL_READ_CHUNK_BYTES: Final[int] = 4096
+_TAIL_RECORDS_COUNT: Final[int] = 2
+_TAIL_REQUIRED_NEWLINES: Final[int] = _TAIL_RECORDS_COUNT + 1
+
+
 def _read_tail_records(path: Path) -> list[tuple[OperationRecord, bytes]]:
     if not path.is_file():
         return []
@@ -1278,14 +1286,14 @@ def _read_tail_records(path: Path) -> list[tuple[OperationRecord, bytes]]:
             position = end
             chunks: list[bytes] = []
             newline_count = 0
-            while position > 0 and newline_count < 3:
-                read_size = min(4096, position)
+            while position > 0 and newline_count < _TAIL_REQUIRED_NEWLINES:
+                read_size = min(_TAIL_READ_CHUNK_BYTES, position)
                 position -= read_size
                 stream.seek(position)
                 chunk = stream.read(read_size)
                 chunks.append(chunk)
                 newline_count += chunk.count(b"\n")
-            lines = b"".join(reversed(chunks)).splitlines()[-2:]
+            lines = b"".join(reversed(chunks)).splitlines()[-_TAIL_RECORDS_COUNT:]
     except OSError as exc:
         raise OperationLogError("failed to read operation log tail") from exc
     records: list[tuple[OperationRecord, bytes]] = []

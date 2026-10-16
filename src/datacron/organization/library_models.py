@@ -34,6 +34,12 @@ AUDIT_NAME: Final[str] = "audit.json"
 RECIPE_NAME: Final[str] = "recipe.json"
 SUBJECT_TEMPLATE_NAME: Final[str] = "subject-template.md"
 EDITORIAL_RECIPE_MAX_NOTES: Final[int] = 64
+DEFAULT_LIBRARY_MAX_NOTE_CHARS: Final[int] = 24000
+DEFAULT_LIBRARY_MAX_SECTION_CHARS: Final[int] = 8000
+DEFAULT_LIBRARY_MAX_NOTES: Final[int] = 10000
+DEFAULT_LIBRARY_MAX_NOTE_BYTES: Final[int] = 2 * 1024 * 1024
+DEFAULT_LIBRARY_MAX_ATTACHMENT_BYTES: Final[int] = 32 * 1024 * 1024
+DEFAULT_LIBRARY_MAX_EXPORT_BYTES: Final[int] = 256 * 1024 * 1024
 # Working defaults for a vault that declares nothing: the state-note kinds hang off the
 # shared state-note namespace and the people tag is the session "people" domain tag.
 DEFAULT_STATE_NOTE_KINDS: Final[tuple[str, ...]] = ("platform", "development", "mission")
@@ -54,12 +60,12 @@ class LibraryOptions(BaseModel):
     language: Literal["en", "fr"] = "en"
     areas: dict[str, str] = Field(default_factory=dict)
     folder_labels: dict[str, str] = Field(default_factory=dict)
-    max_note_chars: int = Field(default=24000, ge=1)
-    max_section_chars: int = Field(default=8000, ge=1)
-    max_notes: int = Field(default=10000, ge=1)
-    max_note_bytes: int = Field(default=2 * 1024 * 1024, ge=1)
-    max_attachment_bytes: int = Field(default=32 * 1024 * 1024, ge=1)
-    max_export_bytes: int = Field(default=256 * 1024 * 1024, ge=1)
+    max_note_chars: int = Field(default=DEFAULT_LIBRARY_MAX_NOTE_CHARS, ge=1)
+    max_section_chars: int = Field(default=DEFAULT_LIBRARY_MAX_SECTION_CHARS, ge=1)
+    max_notes: int = Field(default=DEFAULT_LIBRARY_MAX_NOTES, ge=1)
+    max_note_bytes: int = Field(default=DEFAULT_LIBRARY_MAX_NOTE_BYTES, ge=1)
+    max_attachment_bytes: int = Field(default=DEFAULT_LIBRARY_MAX_ATTACHMENT_BYTES, ge=1)
+    max_export_bytes: int = Field(default=DEFAULT_LIBRARY_MAX_EXPORT_BYTES, ge=1)
     state_tags: list[str] = Field(
         default_factory=lambda: [
             f"{DEFAULT_STATE_NOTE_NAMESPACE}/{kind}" for kind in DEFAULT_STATE_NOTE_KINDS

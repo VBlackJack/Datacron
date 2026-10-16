@@ -430,6 +430,11 @@ else:
 
 
 if sys.platform == "win32":
+    _WIN32_FILESYSTEM_NAME_BUFFER_CHARS: Final[int] = 256
+    _WIN32_GENERIC_WRITE: Final[int] = 0x40000000
+    _WIN32_FILE_SHARE_ALL: Final[int] = 0x00000001 | 0x00000002 | 0x00000004
+    _WIN32_OPEN_EXISTING: Final[int] = 3
+    _WIN32_FILE_FLAG_BACKUP_SEMANTICS: Final[int] = 0x02000000
 
     def _windows_filesystem_name(path: Path) -> str:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -452,7 +457,7 @@ if sys.platform == "win32":
         volume_path = ctypes.create_unicode_buffer(_WINDOWS_MAX_PATH)
         if not get_volume_path_name(str(path), volume_path, len(volume_path)):
             return "windows-unknown"
-        filesystem_name = ctypes.create_unicode_buffer(256)
+        filesystem_name = ctypes.create_unicode_buffer(_WIN32_FILESYSTEM_NAME_BUFFER_CHARS)
         serial = wintypes.DWORD()
         max_component = wintypes.DWORD()
         flags = wintypes.DWORD()
@@ -470,10 +475,10 @@ if sys.platform == "win32":
         return filesystem_name.value.lower() or "windows-unknown"
 
     def _flush_windows_directory(path: Path) -> bool:
-        generic_write = 0x40000000
-        file_share_all = 0x00000001 | 0x00000002 | 0x00000004
-        open_existing = 3
-        file_flag_backup_semantics = 0x02000000
+        generic_write = _WIN32_GENERIC_WRITE
+        file_share_all = _WIN32_FILE_SHARE_ALL
+        open_existing = _WIN32_OPEN_EXISTING
+        file_flag_backup_semantics = _WIN32_FILE_FLAG_BACKUP_SEMANTICS
         invalid_handle_value = wintypes.HANDLE(-1).value
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)

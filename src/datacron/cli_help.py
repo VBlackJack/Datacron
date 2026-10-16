@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Final
 
-VAULT_ROOT_HELP: Final[str] = (
-    "Vault root. Fallback: DATACRON_VAULT_ROOT, then cwd containing VAULT.yaml under .datacron."
-)
+from datacron.i18n import t
+
+VAULT_ROOT_HELP: Final[str] = t("cli.help.vault_root")
+MEMORY_VAULT_HELP: Final[str] = t("cli.help.memory_vault")

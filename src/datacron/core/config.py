@@ -42,11 +42,17 @@ from datacron.core.memory_protocol import (
     SESSION_NOTE_CHARS,
 )
 from datacron.core.query_expansion import default_query_expansion, normalize_term_map
+from datacron.i18n import t
 
+ULID_LENGTH: Final[int] = 26
+CANONICAL_ULID_REGEX: Final[str] = rf"^[0-9A-HJKMNP-TV-Z]{{{ULID_LENGTH}}}$"
+CANONICAL_ULID_PATTERN: Final[re.Pattern[str]] = re.compile(CANONICAL_ULID_REGEX)
+LEGACY_NOTE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(rf"^[0-9A-Z]{{{ULID_LENGTH}}}$")
 DEFAULT_LOG_LEVEL: Final[str] = "INFO"
 DEFAULT_LOG_DIR: Final[Path] = Path.home() / ".datacron" / "logs"
 DEFAULT_MAX_RESULT_TOKENS: Final[int] = 8000
 DEFAULT_MAX_RESULT_COUNT: Final[int] = 20
+DEFAULT_HISTORY_LIMIT: Final[int] = 100
 DEFAULT_REPAIR_MIN_INTERVAL_SECONDS: Final[float] = 30.0
 DEFAULT_OPERATION_HISTORY_PURGE_MIN_INTERVAL_SECONDS: Final[float] = 30.0
 DEFAULT_EVAL_REGRESSION_TOLERANCE: Final[float] = 0.02
@@ -64,11 +70,13 @@ DEFAULT_CONTRADICTION_MAX_CANDIDATES: Final[int] = 20
 DEFAULT_CONTRADICTION_MAX_PER_NOTE_PAIR: Final[int] = 2
 DEFAULT_CONTRADICTION_SUMMARY_EVIDENCE_CHARS: Final[int] = 160
 DEFAULT_CONTRADICTION_PROVENANCE_LABELS: Final[dict[str, str]] = {
-    "contradiction": "CORRECTION",
-    "refinement": "MISE A JOUR",
-    "open_question": "QUESTION OUVERTE",
+    "contradiction": t("contradiction.provenance.contradiction", locale="fr"),
+    "refinement": t("contradiction.provenance.refinement", locale="fr"),
+    "open_question": t("contradiction.provenance.open_question", locale="fr"),
 }
-DEFAULT_CONTRADICTION_SOURCE_CONNECTOR: Final[str] = "Voir"
+DEFAULT_CONTRADICTION_SOURCE_CONNECTOR: Final[str] = t(
+    "contradiction.provenance.source_connector", locale="fr"
+)
 TOKEN_ESTIMATE_CHARS_PER_TOKEN: Final[int] = 4
 TEMPORAL_OVERFETCH_FACTOR: Final[int] = 3
 # group_by_note widens its window by this factor until it holds enough distinct notes,
@@ -153,6 +161,7 @@ DEFAULT_EXCLUDED_FOLDERS: Final[tuple[str, ...]] = (
 DEFAULT_EXCLUDED_FILES: Final[tuple[str, ...]] = ()
 
 SIDECAR_DIR_NAME: Final[str] = ".datacron"
+MEMORY_SUBFOLDER_NAME: Final[str] = "_memory"
 INDEX_DIR_NAME: Final[str] = "index"
 INDEX_DB_FILENAME: Final[str] = "datacron.db"
 HISTORY_DIR_NAME: Final[str] = "history"
@@ -761,6 +770,57 @@ def load_vault_config(path: Path) -> VaultConfig | None:
     return VaultConfig.model_validate(data)
 
 
+_BRACE_QUANTIFIER_RE: Final[re.Pattern[str]] = re.compile(r"^\{\d+(?:,\d*)?\}")
+_BACKREF_QUANTIFIER_RE: Final[re.Pattern[str]] = re.compile(r"\\[1-9]\d*(?:[+*]|\{\d)")
+
+
+def has_catastrophic_regex_shape(pattern: str) -> bool:
+    """Return True if ``pattern`` has nested repetition or quantified alternation."""
+    if _BACKREF_QUANTIFIER_RE.search(pattern):
+        return True
+    stack: list[bool] = []
+    in_char_class = False
+    index = 0
+    length = len(pattern)
+    while index < length:
+        char = pattern[index]
+        if char == "\\":
+            index += 2
+            continue
+        if in_char_class:
+            if char == "]":
+                in_char_class = False
+            index += 1
+            continue
+        if char == "[":
+            in_char_class = True
+            index += 1
+            continue
+        if char == "(":
+            stack.append(False)
+            index += 1
+            continue
+        if char == ")":
+            has_inner = stack.pop() if stack else False
+            next_slice = pattern[index + 1 :]
+            is_quantified = next_slice.startswith(("+", "*")) or bool(
+                _BRACE_QUANTIFIER_RE.match(next_slice)
+            )
+            if has_inner and is_quantified:
+                return True
+            if (has_inner or is_quantified) and stack:
+                stack[-1] = True
+            index += 1
+            continue
+        if stack and (
+            char in {"+", "*", "|"}
+            or (char == "{" and bool(_BRACE_QUANTIFIER_RE.match(pattern[index:])))
+        ):
+            stack[-1] = True
+        index += 1
+    return False
+
+
 def _split_path_list(value: str | list[str | Path] | None) -> list[Path]:
     """Parse the OS-dependent path separator into a list of resolved Paths.
 
@@ -774,6 +834,77 @@ def _split_path_list(value: str | list[str | Path] | None) -> list[Path]:
         parts: list[str] = [p for p in value.split(os.pathsep) if p.strip()]
         return [Path(p).expanduser().resolve() for p in parts]
     return [Path(p).expanduser().resolve() for p in value]
+
+
+def _validate_extra_vault_prefix(raw_prefix: object) -> str:
+    if not isinstance(raw_prefix, str):
+        raise TypeError("extra_read_vaults prefixes must be strings")
+    prefix = raw_prefix.strip().strip("/\\")
+    if (
+        not prefix
+        or "/" in prefix
+        or "\\" in prefix
+        or ":" in prefix
+        or prefix.startswith(".")
+        or any(char.isspace() for char in prefix)
+        or prefix.casefold() in {MEMORY_SUBFOLDER_NAME.casefold(), SIDECAR_DIR_NAME.casefold()}
+    ):
+        raise ValueError(
+            f"extra_read_vaults prefix must be a single safe folder name; got {raw_prefix!r}"
+        )
+    return prefix
+
+
+def _parse_extra_read_vaults_str(raw: str) -> dict[object, object]:
+    stripped = raw.strip()
+    if not stripped:
+        return {}
+    if stripped.startswith("{"):
+        try:
+            decoded = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "DATACRON_EXTRA_READ_VAULTS JSON must be a mapping of prefix to path"
+            ) from exc
+        if not isinstance(decoded, dict):
+            raise ValueError("DATACRON_EXTRA_READ_VAULTS JSON must be a mapping of prefix to path")
+        return decoded
+    mapping: dict[object, object] = {}
+    for entry in stripped.split(os.pathsep):
+        item = entry.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise ValueError(
+                f"DATACRON_EXTRA_READ_VAULTS entry must be 'prefix=path'; got {item!r}"
+            )
+        key, raw_path = item.split("=", 1)
+        mapping[key] = raw_path
+    return mapping
+
+
+def _parse_extra_read_vaults_value(value: object) -> dict[str, Path]:
+    if value is None or value == "":
+        return {}
+    if isinstance(value, str):
+        raw_mapping = _parse_extra_read_vaults_str(value)
+    elif isinstance(value, dict):
+        raw_mapping = value
+    else:
+        raise TypeError(f"Unsupported type for extra_read_vaults: {type(value).__name__}")
+    result: dict[str, Path] = {}
+    seen_folded: set[str] = set()
+    for raw_prefix, raw_target in raw_mapping.items():
+        prefix = _validate_extra_vault_prefix(raw_prefix)
+        folded = prefix.casefold()
+        if folded in seen_folded:
+            raise ValueError(f"Duplicate extra_read_vaults prefix: {prefix!r}")
+        seen_folded.add(folded)
+        target_str = str(raw_target).strip() if raw_target is not None else ""
+        if not target_str:
+            raise ValueError(f"extra_read_vaults path for {prefix!r} must not be empty")
+        result[prefix] = Path(target_str).expanduser().resolve()
+    return result
 
 
 @final
@@ -802,6 +933,8 @@ class Settings(BaseSettings):
     read_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
     write_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
     vault_root: Path | None = Field(default=None)
+    memory_root: Path | None = Field(default=None)
+    extra_read_vaults: Annotated[dict[str, Path], NoDecode] = Field(default_factory=dict)
     max_result_tokens: int = Field(default=DEFAULT_MAX_RESULT_TOKENS, ge=1)
     session_context_paths: list[str] = Field(
         default_factory=lambda: list(SESSION_DEFAULT_PATHS),
@@ -951,12 +1084,27 @@ class Settings(BaseSettings):
             return _split_path_list(value)
         raise TypeError(f"Unsupported type for write_paths: {type(value).__name__}")
 
-    @field_validator("vault_root", mode="before")
+    @field_validator("vault_root", "memory_root", mode="before")
     @classmethod
     def _expand_vault_root(cls, value: object) -> Path | None:
         if value is None or value == "":
             return None
         return Path(str(value)).expanduser().resolve()
+
+    @field_validator("extra_read_vaults", mode="before")
+    @classmethod
+    def _parse_extra_read_vaults(cls, value: object) -> dict[str, Path]:
+        return _parse_extra_read_vaults_value(value)
+
+    @model_validator(mode="after")
+    def _extend_read_paths_with_extra_vaults(self) -> Settings:
+        if self.read_paths and self.extra_read_vaults:
+            merged = list(self.read_paths)
+            for extra_root in self.extra_read_vaults.values():
+                if extra_root not in merged:
+                    merged.append(extra_root)
+            object.__setattr__(self, "read_paths", merged)
+        return self
 
     @field_validator("redact_secrets", mode="before")
     @classmethod
@@ -985,6 +1133,12 @@ class Settings(BaseSettings):
             raise TypeError("secret_redaction_patterns must be a list of regex strings")
         patterns = [item for item in value if item]
         for pattern in patterns:
+            if len(pattern) > DEFAULT_REGEX_FALLBACK_MAX_PATTERN_LENGTH:
+                raise ValueError(f"secret redaction regex exceeds max length: {pattern!r}")
+            if has_catastrophic_regex_shape(pattern):
+                raise ValueError(
+                    f"secret redaction regex rejected as potentially catastrophic: {pattern!r}"
+                )
             try:
                 re.compile(pattern)
             except re.error as exc:

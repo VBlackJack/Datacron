@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import re
 from collections.abc import Mapping
@@ -34,20 +33,29 @@ from typing import Annotated, Final, Literal, TypeAlias, final
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
-from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 from datacron.core.case_folding import case_folding_for, fold_path_key
-from datacron.core.config import OrganizationConfig, VaultConfig
+from datacron.core.config import (
+    CANONICAL_ULID_PATTERN,
+    LEGACY_NOTE_ID_PATTERN,
+    OrganizationConfig,
+    VaultConfig,
+)
 from datacron.core.error_text import describe_validation_error, describe_yaml_error
 from datacron.core.frontmatter import (
     FrontmatterError,
+    assert_finite_yaml_values,
+    assert_unique_yaml_mapping_keys,
     build_tiered_alias_index,
     coerce_string_list,
     parse,
     resolve_note_title,
+    strict_frontmatter_block,
 )
 from datacron.core.hashing import NOTE_ID_LENGTH, derive_note_id
 from datacron.core.paths import (
+    ASCII_CONTROL_CHAR_BOUNDARY,
+    WINDOWS_RESERVED_NAMES,
     PathConfinementError,
     assert_within_paths,
     read_ulid_sidecar_strict,
@@ -128,27 +136,14 @@ _YAML_SUFFIX: Final[Literal[".yaml"]] = ".yaml"
 _PAYLOAD_DIRECTORY_NAME: Final[str] = "payloads"
 _VAULT_CONFIG_REL_PATH: Final[str] = ".datacron/VAULT.yaml"
 _SHA256_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{64}$")
-_ULID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
-_LEGACY_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9A-Z]{26}$")
+_ULID_PATTERN: Final[re.Pattern[str]] = CANONICAL_ULID_PATTERN
+_LEGACY_ID_PATTERN: Final[re.Pattern[str]] = LEGACY_NOTE_ID_PATTERN
 _WINDOWS_INVALID_PATH_CHARACTERS: Final[frozenset[str]] = frozenset('<>"|?*')
-_WINDOWS_RESERVED_NAMES: Final[frozenset[str]] = frozenset(
-    {
-        "aux",
-        "clock$",
-        "con",
-        "conin$",
-        "conout$",
-        "nul",
-        "prn",
-        *(f"com{number}" for number in range(1, 10)),
-        *(f"com{number}" for number in "¹²³"),
-        *(f"lpt{number}" for number in range(1, 10)),
-        *(f"lpt{number}" for number in "¹²³"),
-    }
-)
+_WINDOWS_RESERVED_NAMES: Final[frozenset[str]] = WINDOWS_RESERVED_NAMES
 _JSON_SEPARATORS: Final[tuple[str, str]] = (",", ":")
 _ORGANIZATION_PATH_SENTINEL: Final[str] = "__datacron_organization_path__.md"
 _IDENTITY_CASE_CANONICALIZATION_SCHEMA: Final[str] = "identity-sidecar-case-canonicalizations-v1"
+_CASE_COLLISION_PAIR_SIZE: Final[int] = 2
 
 PayloadSuffix = Literal[".md", ".yaml"]
 OperationKind = Literal["create_exact", "replace_exact", "move_replace_exact"]
@@ -178,7 +173,7 @@ def _validate_aliases(value: tuple[str, ...]) -> tuple[str, ...]:
     for alias in value:
         if not alias or alias != alias.strip():
             raise ValueError("aliases must be non-empty and must not have surrounding whitespace")
-        if any(ord(character) < 32 for character in alias):
+        if any(ord(character) < ASCII_CONTROL_CHAR_BOUNDARY for character in alias):
             raise ValueError("aliases must not contain control characters")
         normalized = alias.casefold()
         if normalized in seen:
@@ -190,7 +185,7 @@ def _validate_aliases(value: tuple[str, ...]) -> tuple[str, ...]:
 def _validate_note_rel_path(value: str) -> str:
     if not value:
         raise ValueError("vault-relative note path must not be empty")
-    if any(ord(character) < 32 for character in value):
+    if any(ord(character) < ASCII_CONTROL_CHAR_BOUNDARY for character in value):
         raise ValueError("vault-relative note path must not contain control characters")
     if "\\" in value:
         raise ValueError("vault-relative note path must use POSIX separators")
@@ -674,58 +669,9 @@ def _decode_utf8(content: bytes, *, label: str) -> str:
         ) from exc
 
 
-def _assert_unique_yaml_mapping_keys(text: str) -> None:
-    """Reject aliases, non-string keys, and duplicate keys in safe YAML."""
-    root = yaml.compose(text, Loader=yaml.SafeLoader)
-    pending: list[Node] = [] if root is None else [root]
-    visited: set[int] = set()
-    while pending:
-        node = pending.pop()
-        node_identity = id(node)
-        if node_identity in visited:
-            raise yaml.YAMLError("YAML aliases are forbidden")
-        visited.add(node_identity)
-        if isinstance(node, MappingNode):
-            seen: set[tuple[str, str]] = set()
-            for key_node, value_node in node.value:
-                if key_node.tag == "tag:yaml.org,2002:merge":
-                    raise yaml.YAMLError("YAML merge keys are forbidden")
-                if not isinstance(key_node, ScalarNode) or key_node.tag != (
-                    "tag:yaml.org,2002:str"
-                ):
-                    raise yaml.YAMLError("YAML mapping keys must be strings")
-                key = (key_node.tag, key_node.value)
-                if key in seen:
-                    raise yaml.YAMLError(f"found duplicate mapping key {key_node.value!r}")
-                seen.add(key)
-                pending.extend((key_node, value_node))
-        elif isinstance(node, SequenceNode):
-            pending.extend(node.value)
-
-
-def _assert_finite_yaml_values(value: object) -> None:
-    pending = [value]
-    while pending:
-        item = pending.pop()
-        if isinstance(item, float) and not math.isfinite(item):
-            raise ValueError("YAML non-finite floats are forbidden")
-        if isinstance(item, dict):
-            pending.extend(item.keys())
-            pending.extend(item.values())
-        elif isinstance(item, list):
-            pending.extend(item)
-
-
-def _strict_frontmatter_block(text: str) -> str | None:
-    """Return frontmatter YAML for duplicate-key validation, when present."""
-    parseable = text[1:] if text.startswith("\ufeff") else text
-    lines = parseable.lstrip().splitlines()
-    if not lines or lines[0].strip() != "---":
-        return None
-    for index, line in enumerate(lines[1:], start=1):
-        if line.strip() == "---":
-            return "\n".join(lines[1:index])
-    return None
+_assert_unique_yaml_mapping_keys = assert_unique_yaml_mapping_keys
+_assert_finite_yaml_values = assert_finite_yaml_values
+_strict_frontmatter_block = strict_frontmatter_block
 
 
 def parse_organization_note_strict(text: str) -> tuple[dict[str, object], str]:
@@ -1634,7 +1580,7 @@ def canonicalize_identity_sidecar_case_collisions(
     for path_key, entries in sorted(primary_groups.items()):
         if len(entries) == 1:
             continue
-        if len(entries) != 2:
+        if len(entries) != _CASE_COLLISION_PAIR_SIZE:
             raise OrganizationManifestError(
                 "identity_inventory_invalid",
                 f"ULID sidecar case collision does not contain exactly two keys: {path_key!r}",

@@ -22,6 +22,7 @@ from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 from pydantic import StrictBool, StrictInt
 
+from datacron.core.config import DEFAULT_HISTORY_LIMIT, DEFAULT_MAX_RESULT_COUNT
 from datacron.core.scope import SingleTenantVaultScope
 from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
 from datacron.mcp.tool_contract import (
@@ -241,7 +242,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         folder: str | None = None,
         tags: list[str] | None = None,
         frontmatter: dict[str, str] | None = None,
-        limit: int = 20,
+        limit: int = DEFAULT_MAX_RESULT_COUNT,
         offset: int = 0,
     ) -> ListNotesOutput:
         return cast(
@@ -303,7 +304,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
     )
     async def search_text(
         query: str,
-        limit: int = 20,
+        limit: int = DEFAULT_MAX_RESULT_COUNT,
         include_superseded: bool = False,
         folder: str | None = None,
         tags: list[str] | None = None,
@@ -341,7 +342,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
     async def search_regex(
         pattern: str,
         glob: str | None = None,
-        limit: int = 20,
+        limit: int = DEFAULT_MAX_RESULT_COUNT,
     ) -> dict[str, Any]:
         return await _search_regex_impl(app, pattern=pattern, glob=glob, limit=limit)
 
@@ -358,7 +359,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         ),
         annotations=_READ_ANNOTATIONS,
     )
-    async def get_backlinks(target: str, limit: int = 20) -> dict[str, Any]:
+    async def get_backlinks(target: str, limit: int = DEFAULT_MAX_RESULT_COUNT) -> dict[str, Any]:
         return await _get_backlinks_impl(app, target=target, limit=limit)
 
     @server.tool(
@@ -862,7 +863,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
     )
     async def get_note_history(
         note: str,
-        limit: int = 100,
+        limit: int = DEFAULT_HISTORY_LIMIT,
         request_id: str | None = None,
     ) -> dict[str, Any]:
         return await _get_note_history_impl(app, note=note, limit=limit, request_id=request_id)
@@ -881,7 +882,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         end: str | None = None,
         tool: str | None = None,
         note: str | None = None,
-        limit: int = 100,
+        limit: int = DEFAULT_HISTORY_LIMIT,
     ) -> dict[str, Any]:
         return await _audit_query_impl(
             app,

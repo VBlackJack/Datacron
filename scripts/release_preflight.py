@@ -50,7 +50,9 @@ _GIT_EXECUTABLE: Final[str | None] = which("git")
 # footer needs its opening bracket, so prose such as "tables generated with mkdocs"
 # is not refused.
 _ASSISTANT_ATTRIBUTION_RE: Final[Pattern[str]] = re_compile(
-    r"^[ \t]*co-authored-by:[^\n]*(?:claude|anthropic|codex|gpt|openai|copilot)"
+    r"^[ \t]*co-authored-by:[^\n]*(?:"
+    r"claude|anthropic|codex|gpt|openai|copilot|gemini|cursor|windsurf|antigravity"
+    r")"
     r"|\bgenerated with \[",
     IGNORECASE | MULTILINE,
 )
@@ -186,8 +188,9 @@ def _remote_main_sha(repo_root: Path) -> str:
     if len(lines) != 1:
         raise ReleasePreflightError("The origin main branch did not resolve uniquely.")
     fields = lines[0].split()
+    expected_fields = 2
     if (
-        len(fields) != 2
+        len(fields) != expected_fields
         or _SHA_RE.fullmatch(fields[0].casefold()) is None
         or fields[1] != "refs/heads/main"
     ):
