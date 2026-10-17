@@ -32,12 +32,13 @@ import logging
 import queue
 import sys
 import threading
-from datetime import UTC, datetime
-from logging.handlers import QueueHandler, QueueListener, TimedRotatingFileHandler
+from datetime import UTC, date, datetime, timedelta
+from logging.handlers import QueueHandler, QueueListener
 from pathlib import Path
 from typing import Any, Final
 
 from datacron.core.config import (
+    DEFAULT_LOG_RETENTION_DAYS,
     LOG_DATE_FORMAT,
     LOG_FILENAME_PATTERN,
     LOG_FORMAT,
@@ -49,7 +50,6 @@ from datacron.core.security import SecretRedactor
 __all__ = ["configure_logging", "get_logger", "shutdown_logging"]
 
 _ROOT_LOGGER_NAME: Final[str] = "datacron"
-_LOG_BACKUP_COUNT: Final[int] = 14
 _setup_lock = threading.Lock()
 _listener: QueueListener | None = None
 _log_queue: queue.Queue[logging.LogRecord] | None = None
@@ -70,21 +70,57 @@ class _RedactingFormatter(logging.Formatter):
         return self._redactor.redact_text(rendered)
 
 
+def _log_date() -> date:
+    return datetime.now(tz=UTC).astimezone().date()
+
+
+class _DailyFileHandler(logging.FileHandler):
+    """Append to the current local day's file and prune dated logs across restarts."""
+
+    def __init__(self, log_dir: Path) -> None:
+        self._log_dir = log_dir
+        self._day = _log_date()
+        super().__init__(self._path(self._day), encoding="utf-8", delay=True)
+        self._prune()
+
+    def _path(self, day: date) -> Path:
+        return self._log_dir / LOG_FILENAME_PATTERN.format(date=day.strftime("%Y%m%d"))
+
+    def _prune(self) -> None:
+        cutoff = self._day - timedelta(days=DEFAULT_LOG_RETENTION_DAYS)
+        for path in self._log_dir.glob(LOG_FILENAME_PATTERN.format(date="*")):
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                prefix, _, suffix = LOG_FILENAME_PATTERN.partition("{date}")
+                day = datetime.strptime(
+                    path.name.removeprefix(prefix).removesuffix(suffix), "%Y%m%d"
+                ).date()
+            except ValueError:
+                continue
+            # Exact round-trip prevents permissive date parsing from deleting other names.
+            if path.name == self._path(day).name and day < cutoff:
+                path.unlink()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        day = _log_date()
+        if day != self._day:
+            try:
+                self.close()
+                self._day = day
+                self.baseFilename = str(self._path(day).resolve())
+                self._prune()
+            except OSError:
+                self.handleError(record)
+        super().emit(record)
+
+
 def _build_file_handler(
     log_dir: Path,
     redactor: SecretRedactor | None,
-) -> TimedRotatingFileHandler:
+) -> logging.FileHandler:
     log_dir.mkdir(parents=True, exist_ok=True)
-    today = datetime.now(tz=UTC).astimezone().strftime("%Y%m%d")
-    log_path = log_dir / LOG_FILENAME_PATTERN.format(date=today)
-    handler = TimedRotatingFileHandler(
-        filename=log_path,
-        when="midnight",
-        backupCount=_LOG_BACKUP_COUNT,
-        encoding="utf-8",
-        delay=True,
-        utc=False,
-    )
+    handler = _DailyFileHandler(log_dir)
     handler.setFormatter(_RedactingFormatter(redactor))
     handler.setLevel(logging.DEBUG)
     return handler

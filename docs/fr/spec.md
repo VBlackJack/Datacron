@@ -254,7 +254,7 @@ seuls les tools de lecture, advisory et opérationnels restent exposés.
 | Lecture | `prepare_follow_up` | Prépare les suivis sourcés sans écrire. |
 | Lecture | `get_follow_up` | Dernières révisions des suivis structurés avec pagination liée à un instantané. |
 | Lecture | `list_notes` | Liste paginée, filtrable par dossier, tags et frontmatter de premier niveau |
-| Lecture | `get_note` | Lecture par ULID, chunk ID ou chemin, en format `full`, `chunk` ou `map` |
+| Lecture | `get_note` | Lecture par ULID, chunk ID ou chemin, en format `full`, `chunk`, `map` ou `metadata` |
 | Lecture | `search_text` | Recherche BM25 FTS5 pondérant titres et chemins d'en-têtes, restreignable par dossier, tags ou frontmatter, avec ranking temporel optionnellement historique |
 | Lecture | `search_regex` | Recherche regex via ripgrep, avec fallback indexé borné, filtrable par glob |
 | Lecture | `get_backlinks` | Chunks dont les wikilinks ciblent un ULID ou un alias résolu |

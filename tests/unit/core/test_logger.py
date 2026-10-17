@@ -16,12 +16,55 @@
 from __future__ import annotations
 
 import logging
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
 
+from datacron.core import logger as logger_module
 from datacron.core.config import Settings
 from datacron.core.logger import configure_logging, get_logger, shutdown_logging
+
+
+def test_daily_handler_switches_at_midnight_without_renaming(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    day = date(2026, 10, 8)
+    monkeypatch.setattr(logger_module, "_log_date", lambda: day, raising=False)
+    handler = logger_module._build_file_handler(tmp_path, None)
+    record = logging.LogRecord("datacron.test", logging.INFO, __file__, 1, "before", (), None)
+    try:
+        handler.handle(record)
+        day += timedelta(days=1)
+        record.msg = "after"
+        handler.handle(record)
+        handler.flush()
+    finally:
+        handler.close()
+    assert "before" in (tmp_path / "datacron_20261008.log").read_text()
+    assert "after" not in (tmp_path / "datacron_20261008.log").read_text()
+    assert "after" in (tmp_path / "datacron_20261009.log").read_text()
+
+
+def test_daily_retention_applies_across_restarts_and_preserves_unrelated_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    today = date(2026, 10, 8)
+    monkeypatch.setattr(logger_module, "_log_date", lambda: today, raising=False)
+    for age in range(21):
+        day = today - timedelta(days=age)
+        (tmp_path / f"datacron_{day:%Y%m%d}.log").write_text(f"day {age}\n")
+    unrelated = tmp_path / "datacron_notes.log"
+    unrelated.write_text("keep")
+    invalid = tmp_path / "datacron_20261399.log"
+    invalid.write_text("keep")
+    handler = logger_module._build_file_handler(tmp_path, None)
+    handler.close()
+    daily = sorted(p.name for p in tmp_path.glob("datacron_2026*.log") if p != invalid)
+    assert daily == [
+        f"datacron_{today - timedelta(days=age):%Y%m%d}.log" for age in reversed(range(15))
+    ]
+    assert unrelated.read_text() == invalid.read_text() == "keep"
 
 
 class TestLogger:

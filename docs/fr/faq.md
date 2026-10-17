@@ -238,7 +238,10 @@ L'emplacement actif du FileLogger est contrôlé par `DATACRON_LOG_DIR` ; son d�
 `~/.datacron/logs`. Si le dossier de logs du sidecar est vide, vérifie cette variable
 d'environnement et le dossier par défaut. Définis `DATACRON_LOG_DIR` sur
 `<vault>/.datacron/logs` dans l'environnement du serveur si tu veux colocaliser les logs et le
-vault. Les fichiers quotidiens se nomment `datacron_YYYYMMDD.log` ; les warnings sont aussi envoyés
+vault. Les fichiers quotidiens se nomment `datacron_YYYYMMDD.log`. Le journal change
+de fichier à minuit local et reprend le fichier du jour après redémarrage. Les
+fichiers de plus de 14 jours sont supprimés au démarrage et au changement de date.
+Les warnings sont aussi envoyés
 sur stderr. Pour signaler un échec, joins la sortie de `datacron status`, la version de Datacron,
 le nom et le scope du client, ainsi que les lignes de log pertinentes après suppression des
 secrets.
