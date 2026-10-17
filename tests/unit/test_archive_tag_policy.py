@@ -111,3 +111,17 @@ async def test_archive_tags_fall_back_to_the_shared_defaults(tmp_path: Path) -> 
     assert metadata[default.id].archived is True
     assert lifecycle(retired, notes) == "active"
     assert lifecycle(default, notes) == "historical"
+
+
+async def test_top_level_archive_tags_in_vault_yaml(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    (vault / ".datacron").mkdir(parents=True)
+    sidecar_vault_config(vault).write_text(
+        "archive_tags:\n  - status/retired\n  - archive/compacted\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    config = load_vault_config(sidecar_vault_config(vault))
+    assert config is not None
+    assert config.archive_tags == frozenset({"status/retired", "archive/compacted"})
+    assert vault_archive_tags(vault) == frozenset({"status/retired", "archive/compacted"})
