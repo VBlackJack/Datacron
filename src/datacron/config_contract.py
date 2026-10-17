@@ -29,14 +29,18 @@ from datacron.core.config import (
     VALID_DURABILITY_MODES,
     Settings,
     VaultConfig,
+    _validate_extra_vault_prefix,
     get_settings,
 )
 from datacron.core.durability import atomic_durable_write
-from datacron.core.paths import sidecar_vault_config
+from datacron.core.paths import is_link_stat, resolve_sidecar_root, sidecar_vault_config
+from datacron.core.scope import LinkedPathError, assert_path_chain_without_links
 from datacron.i18n import SUPPORTED_LOCALES
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+SymlinkDetectedError = LinkedPathError
 
 __all__ = [
     "ALLOWED_CLI_TIMEOUTS",
@@ -52,6 +56,8 @@ __all__ = [
     "ConfigCasConflictError",
     "ConfigContractError",
     "ConfigValidationError",
+    "LinkedPathError",
+    "SymlinkDetectedError",
     "VaultConfigSnapshot",
     "companion_config_path",
     "read_companion_profile",
@@ -161,19 +167,71 @@ def _verify_cas_precondition(
 
 
 _ALLOWED_VAULT_CONFIG_KEYS: Final[frozenset[str]] = frozenset(
-    set(VaultConfig.model_fields) | {"archive_tags"}
+    set(VaultConfig.model_fields) | {"archive_tags", "schema_version", "read_only"}
 )
+
+
+def _extract_raw_archive_tags(payload: Mapping[str, Any]) -> list[str] | None:
+    raw_archive = payload.get("archive_tags")
+    if not isinstance(raw_archive, list):
+        org_raw = payload.get("organization")
+        if isinstance(org_raw, dict):
+            tags_raw = org_raw.get("tags")
+            if isinstance(tags_raw, dict):
+                raw_archive = tags_raw.get("archive_tags")
+    if isinstance(raw_archive, list):
+        return [str(t).strip() for t in raw_archive if str(t).strip()]
+    return None
 
 
 def _dump_vault_config_values(
     cfg: VaultConfig,
     override_archive_tags: list[str] | None = None,
+    *,
+    preserved_raw: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    dumped = cfg.model_dump(mode="json")
-    dumped["archive_tags"] = (
+    dumped: dict[str, Any] = dict(preserved_raw) if preserved_raw is not None else {}
+    model_dumped = cfg.model_dump(mode="json")
+    dumped.update(model_dumped)
+    effective_archive = (
         override_archive_tags if override_archive_tags is not None else sorted(cfg.archive_tags)
     )
+    dumped["archive_tags"] = effective_archive
+    if isinstance(dumped.get("organization"), dict) and isinstance(
+        dumped["organization"].get("tags"), dict
+    ):
+        org_copy = dict(dumped["organization"])
+        tags_copy = dict(org_copy["tags"])
+        tags_copy["archive_tags"] = list(effective_archive)
+        org_copy["tags"] = tags_copy
+        dumped["organization"] = org_copy
+    elif (
+        preserved_raw is not None
+        and isinstance(preserved_raw.get("organization"), dict)
+        and dumped.get("organization") is None
+    ):
+        org_copy = dict(preserved_raw["organization"])
+        if isinstance(org_copy.get("tags"), dict):
+            tags_copy = dict(org_copy["tags"])
+            tags_copy["archive_tags"] = list(effective_archive)
+            org_copy["tags"] = tags_copy
+        dumped["organization"] = org_copy
     return dumped
+
+
+def _verify_config_path_without_links(
+    resolved_root: Path,
+    cfg_path: Path,
+    settings: Settings,
+) -> None:
+    sidecar_anchor = resolve_sidecar_root(resolved_root, settings=settings)
+    assert_path_chain_without_links(cfg_path, anchor=sidecar_anchor, allow_missing=True)
+    try:
+        st = os.lstat(cfg_path)
+    except FileNotFoundError:
+        return
+    if is_link_stat(st):
+        raise SymlinkDetectedError(f"Refusing linked VAULT.yaml path: {cfg_path}")
 
 
 def read_vault_config_snapshot(
@@ -211,12 +269,7 @@ def read_vault_config_snapshot(
                 values=_dump_vault_config_values(VaultConfig()),
                 errors=["VAULT.yaml top-level value must be a mapping"],
             )
-        raw_archive = payload.get("archive_tags")
-        custom_archive = (
-            [str(t).strip() for t in raw_archive if str(t).strip()]
-            if isinstance(raw_archive, list)
-            else None
-        )
+        custom_archive = _extract_raw_archive_tags(payload)
         validated = VaultConfig.model_validate(payload)
         return VaultConfigSnapshot(
             contract_version=CONFIG_CONTRACT_VERSION,
@@ -224,7 +277,11 @@ def read_vault_config_snapshot(
             present=True,
             content_hash=content_hash,
             valid=True,
-            values=_dump_vault_config_values(validated, custom_archive),
+            values=_dump_vault_config_values(
+                validated,
+                custom_archive,
+                preserved_raw=payload,
+            ),
             errors=[],
         )
     except (UnicodeDecodeError, yaml.YAMLError, ValidationError, ValueError, TypeError) as exc:
@@ -239,6 +296,33 @@ def read_vault_config_snapshot(
         )
 
 
+def _load_existing_vault_yaml_dict(cfg_path: Path) -> dict[str, Any]:
+    if not cfg_path.is_file():
+        return {}
+    try:
+        loaded = yaml.safe_load(cfg_path.read_bytes().decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError):
+        return {}
+    return dict(loaded) if isinstance(loaded, dict) else {}
+
+
+def _sync_archive_tags_into_organization(
+    merged_raw: dict[str, Any],
+    custom_archive: list[str] | None,
+) -> None:
+    if (
+        custom_archive is not None
+        and isinstance(merged_raw.get("organization"), dict)
+        and isinstance(merged_raw["organization"].get("tags"), dict)
+        and "placement_namespace" in merged_raw["organization"]["tags"]
+    ):
+        org_copy = dict(merged_raw["organization"])
+        tags_copy = dict(org_copy["tags"])
+        tags_copy["archive_tags"] = list(custom_archive)
+        org_copy["tags"] = tags_copy
+        merged_raw["organization"] = org_copy
+
+
 def write_vault_config_cas(
     vault_root: Path,
     values: Mapping[str, Any],
@@ -248,31 +332,57 @@ def write_vault_config_cas(
     expect_absent: bool = False,
 ) -> VaultConfigSnapshot:
     """Validate and atomically write `.datacron/VAULT.yaml` under CAS protection."""
+    resolved_root = vault_root.expanduser().resolve()
+    active_settings = settings or get_settings()
+    raw_cfg_path = sidecar_vault_config(resolved_root, settings=active_settings)
+    _verify_config_path_without_links(resolved_root, raw_cfg_path, active_settings)
+
     raw_dict = dict(values)
     unknown_keys = sorted(set(raw_dict) - _ALLOWED_VAULT_CONFIG_KEYS)
     if unknown_keys:
         raise ConfigValidationError(f"Unknown VAULT.yaml fields: {unknown_keys}")
+    if "schema_version" in raw_dict:
+        sv = raw_dict["schema_version"]
+        if isinstance(sv, bool) or not isinstance(sv, int) or sv < 1:
+            raise ConfigValidationError("schema_version must be a positive integer")
+    if "read_only" in raw_dict and not isinstance(raw_dict["read_only"], bool):
+        raise ConfigValidationError("read_only must be a boolean")
+
     custom_archive: list[str] | None = None
     if "archive_tags" in raw_dict:
         raw_arch = raw_dict.pop("archive_tags")
         if not isinstance(raw_arch, list) or not all(isinstance(x, str) for x in raw_arch):
             raise ConfigValidationError("archive_tags must be a list of strings")
         custom_archive = [x.strip() for x in raw_arch if x.strip()]
-    try:
-        validated = VaultConfig.model_validate(raw_dict)
-    except (ValidationError, ValueError, TypeError) as exc:
-        raise ConfigValidationError(str(exc)) from exc
 
-    current = read_vault_config_snapshot(vault_root, settings=settings)
+    current = read_vault_config_snapshot(vault_root, settings=active_settings)
     _verify_cas_precondition(
         current.content_hash,
         present=current.present,
         expected_hash=expected_hash,
         expect_absent=expect_absent,
     )
+
     cfg_path = Path(current.config_path)
+    _verify_config_path_without_links(resolved_root, cfg_path, active_settings)
+    existing_raw = _load_existing_vault_yaml_dict(cfg_path)
+    if custom_archive is None:
+        custom_archive = _extract_raw_archive_tags(existing_raw)
+
+    merged_raw: dict[str, Any] = {**existing_raw, **raw_dict}
+    _sync_archive_tags_into_organization(merged_raw, custom_archive)
+
+    try:
+        validated = VaultConfig.model_validate(merged_raw)
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise ConfigValidationError(str(exc)) from exc
+
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    dumped_dict = _dump_vault_config_values(validated, custom_archive)
+    dumped_dict = _dump_vault_config_values(
+        validated,
+        custom_archive,
+        preserved_raw=merged_raw,
+    )
     rendered = yaml.safe_dump(
         dumped_dict,
         sort_keys=False,
@@ -319,11 +429,21 @@ def _validate_companion_profile(raw: Mapping[str, Any]) -> CompanionProfile:
     extra_raw = raw.get("extra_read_vaults") or {}
     if not isinstance(extra_raw, dict):
         raise ConfigValidationError("extra_read_vaults must be a mapping")
-    extra_clean = {
-        str(k).strip(): str(v).strip()
-        for k, v in extra_raw.items()
-        if str(k).strip() and str(v).strip()
-    }
+    extra_clean: dict[str, str] = {}
+    for k, v in extra_raw.items():
+        prefix_str = str(k).strip()
+        target_str = str(v).strip()
+        if not prefix_str and not target_str:
+            continue
+        try:
+            validated_prefix = _validate_extra_vault_prefix(prefix_str)
+        except (ValueError, TypeError) as exc:
+            raise ConfigValidationError(str(exc)) from exc
+        if not target_str:
+            raise ConfigValidationError(
+                f"extra_read_vaults[{validated_prefix!r}] path must not be empty"
+            )
+        extra_clean[validated_prefix] = target_str
     return CompanionProfile(
         vault_path=str(raw.get("vault_path", "")).strip(),
         memory_vault_path=str(raw.get("memory_vault_path", "")).strip(),

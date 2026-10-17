@@ -833,18 +833,28 @@ def _on_disk_spelling(resolved_root: Path, rel_path: PurePosixPath) -> str:
 def _snapshot_target_folders(
     vault_root: Path,
     config: VaultConfig,
+    *,
+    settings: Settings | None = None,
 ) -> tuple[str, OrganizationConfig, dict[str, str]]:
     """Validate rule folders lexically for an in-memory planner projection."""
     organization = config.organization
     if organization is None or not organization.rules or organization.scope is None:
         raise OrganizationConfigurationError("active organization rules require a scope")
     resolved_root = vault_root.expanduser().resolve()
-    fold_case = filesystem_folds_case(resolved_root)
-    scope = PurePosixPath(_on_disk_spelling(resolved_root, PurePosixPath(organization.scope)))
+    mem_root = (
+        effective_memory_root(resolved_root, settings=settings) if settings is not None else None
+    )
+    effective_root = (
+        mem_root
+        if mem_root is not None and is_memory_rel_path(organization.scope)
+        else resolved_root
+    )
+    fold_case = filesystem_folds_case(effective_root)
+    scope = PurePosixPath(_on_disk_spelling(effective_root, PurePosixPath(organization.scope)))
     scope_key = _filesystem_parts(scope, fold_case=fold_case)
     targets: dict[str, str] = {}
     for rule in organization.rules:
-        folder = PurePosixPath(_on_disk_spelling(resolved_root, PurePosixPath(rule.folder)))
+        folder = PurePosixPath(_on_disk_spelling(effective_root, PurePosixPath(rule.folder)))
         folder_key = _filesystem_parts(folder, fold_case=fold_case)
         if folder_key[: len(scope_key)] != scope_key:
             raise OrganizationConfigurationError(
@@ -859,6 +869,8 @@ def plan_organization_snapshot(
     vault_root: Path,
     config: VaultConfig,
     notes: Iterable[OrganizationNoteSnapshot],
+    *,
+    settings: Settings | None = None,
 ) -> OrganizationPlan:
     """Plan from content-free admitted-note metadata without filesystem copies."""
     organization = config.organization
@@ -872,8 +884,19 @@ def plan_organization_snapshot(
             deviations=(),
             skipped=(),
         )
-    scope, active, targets = _snapshot_target_folders(vault_root, config)
-    fold_case = filesystem_folds_case(vault_root)
+    scope, active, targets = _snapshot_target_folders(
+        vault_root,
+        config,
+        settings=settings,
+    )
+    resolved_root = vault_root.expanduser().resolve()
+    mem_root = (
+        effective_memory_root(resolved_root, settings=settings) if settings is not None else None
+    )
+    effective_root = (
+        mem_root if mem_root is not None and is_memory_rel_path(scope) else resolved_root
+    )
+    fold_case = filesystem_folds_case(effective_root)
     scope_key = _filesystem_parts(PurePosixPath(scope), fold_case=fold_case)
     materialized = tuple(notes)
     for note in materialized:

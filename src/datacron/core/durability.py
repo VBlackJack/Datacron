@@ -43,6 +43,7 @@ __all__ = [
     "DurabilityStatus",
     "DurabilityUnavailableError",
     "ReadOnlyModeError",
+    "ReadOnlyVaultError",
     "RecoveryRequiredError",
     "UnexpectedRecoveryEntryError",
     "WritePolicy",
@@ -71,6 +72,9 @@ FaultInjector = Callable[[str], None]
 
 class ReadOnlyModeError(PermissionError):
     """Raised when a write reaches the certified read-only server."""
+
+
+ReadOnlyVaultError = ReadOnlyModeError
 
 
 class DurabilityUnavailableError(PermissionError):

@@ -201,9 +201,10 @@ class FilesystemVaultWriter:
             purge_min_interval_seconds=(settings.operation_history_purge_min_interval_seconds),
         )
         self._batch_transaction = OrganizationBatchTransaction(
-            self._sidecar_root,
+            self._vault_root,
             self._operation_journal,
             write_paths=settings.write_paths,
+            memory_root=self._memory_root,
         )
         self._recovery_outcome = RecoveryOutcome()
 
@@ -1561,8 +1562,11 @@ class FilesystemVaultWriter:
             except ValueError:
                 rel_memory = None
             if rel_memory is not None:
-                if rel_memory.parts and rel_memory.parts[0] == MEMORY_SUBFOLDER_NAME:
-                    return rel_memory
+                if (
+                    rel_memory.parts
+                    and rel_memory.parts[0].casefold() == MEMORY_SUBFOLDER_NAME.casefold()
+                ):
+                    return Path(MEMORY_SUBFOLDER_NAME, *rel_memory.parts[1:])
                 raise PathConfinementError(
                     f"Path {plain_target} is outside the memory subfolder in {self._memory_root}."
                 )
@@ -1575,7 +1579,7 @@ class FilesystemVaultWriter:
         if (
             self._memory_root is not None
             and rel_vault.parts
-            and rel_vault.parts[0] == MEMORY_SUBFOLDER_NAME
+            and rel_vault.parts[0].casefold() == MEMORY_SUBFOLDER_NAME.casefold()
         ):
             raise PathConfinementError(
                 f"Path {plain_target} cannot target {MEMORY_SUBFOLDER_NAME} in the docs vault "
@@ -1719,6 +1723,10 @@ class FilesystemVaultWriter:
             mem_sub = self._memory_root / MEMORY_SUBFOLDER_NAME
             if mem_sub.is_dir():
                 roots.append(mem_sub)
+        for extra_root in (self._settings.extra_read_vaults or {}).values():
+            resolved_extra = extra_root.expanduser().resolve()
+            if resolved_extra.is_dir() and resolved_extra not in roots:
+                roots.append(resolved_extra)
         for scan_root in roots:
             for current_dir, dirnames, filenames in os.walk(scan_root):
                 current_path = Path(current_dir)
@@ -1731,7 +1739,7 @@ class FilesystemVaultWriter:
                         self._memory_root is not None
                         and scan_root == self._vault_root
                         and current_path == self._vault_root
-                        and name == MEMORY_SUBFOLDER_NAME
+                        and name.casefold() == MEMORY_SUBFOLDER_NAME.casefold()
                     )
                 )
                 for filename in filenames:
