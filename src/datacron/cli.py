@@ -530,10 +530,20 @@ def ops_inspect(
         "-v",
         help=VAULT_ROOT_HELP,
     ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
 ) -> None:
     """Inspect blocked operation manifests without changing durable state."""
-    settings = get_settings()
-    vault_root = _resolve_vault_root(vault, settings)
+    base_settings = get_settings()
+    if memory_vault is not None:
+        base_settings = base_settings.model_copy(
+            update={"memory_root": memory_vault.expanduser().resolve()}
+        )
+    vault_root = _resolve_vault_root(vault, base_settings)
+    settings = _settings_for_cli_vault(base_settings, vault_root, memory_root=memory_vault)
     started = _log_invocation("ops.inspect", vault=str(vault_root))
     writer = _ops_writer(vault_root, settings)
     try:
@@ -592,12 +602,22 @@ def ops_repair(
         "-v",
         help=VAULT_ROOT_HELP,
     ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
 ) -> None:
     """Repair one blocked operation under exact ID and disk-hash confirmation."""
     if confirm != operation_id:
         _error(f"Repair not confirmed. Pass --confirm {operation_id}")
-    settings = get_settings()
-    vault_root = _resolve_vault_root(vault, settings)
+    base_settings = get_settings()
+    if memory_vault is not None:
+        base_settings = base_settings.model_copy(
+            update={"memory_root": memory_vault.expanduser().resolve()}
+        )
+    vault_root = _resolve_vault_root(vault, base_settings)
+    settings = _settings_for_cli_vault(base_settings, vault_root, memory_root=memory_vault)
     started = _log_invocation(
         "ops.repair",
         vault=str(vault_root),
@@ -670,6 +690,8 @@ def _recommended_id_action(
     vault_root: Path,
     scan: ReliabilityScan,
     violation: ReliabilityViolation,
+    *,
+    settings: Settings | None = None,
 ) -> str:
     """Return the safest identity-source action the repair preflight accepts.
 
@@ -700,7 +722,12 @@ def _recommended_id_action(
             refusals.append(f"{note_id} is already carried by {', '.join(claimants)}")
             continue
         try:
-            _assert_migrated_sidecar_agrees(vault_root, violation.rel_path, note_id)
+            _assert_migrated_sidecar_agrees(
+                vault_root,
+                violation.rel_path,
+                note_id,
+                settings=settings,
+            )
         except ValueError as exc:
             refusals.append(str(exc))
             continue
@@ -716,15 +743,29 @@ def ops_inspect_id(
         "-v",
         help=VAULT_ROOT_HELP,
     ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
 ) -> None:
     """Inspect note-identity divergences without changing durable state."""
     from datacron.reliability import scan_vault_read_only  # noqa: PLC0415
 
-    settings = get_settings()
-    vault_root = _resolve_vault_root(vault, settings)
+    base_settings = get_settings()
+    if memory_vault is not None:
+        base_settings = base_settings.model_copy(
+            update={"memory_root": memory_vault.expanduser().resolve()}
+        )
+    vault_root = _resolve_vault_root(vault, base_settings)
+    settings = _settings_for_cli_vault(base_settings, vault_root, memory_root=memory_vault)
     started = _log_invocation("ops.inspect-id", vault=str(vault_root))
     try:
-        scan = scan_vault_read_only(vault_root)
+        scan = scan_vault_read_only(
+            vault_root,
+            memory_root=settings.memory_root,
+            extra_read_vaults=settings.extra_read_vaults,
+        )
     except OSError as exc:
         _error(f"Identity inspection failed: {exc}")
     if not scan.id_violations:
@@ -742,7 +783,10 @@ def ops_inspect_id(
             _print(f"  {source}: {sources.get(source, '<absent>')}")
         _print(f"  classification: {item.classification}")
         _print(f"  content_hash: {content_hashes.get(item.rel_path, '<absent>')}")
-        _print(f"  recommended action: {_recommended_id_action(vault_root, scan, item)}")
+        _print(
+            f"  recommended action: "
+            f"{_recommended_id_action(vault_root, scan, item, settings=settings)}"
+        )
     _print("No changes made.")
     _log_completion("ops.inspect-id", started)
 
@@ -767,12 +811,22 @@ def ops_repair_id(
         "-v",
         help=VAULT_ROOT_HELP,
     ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
 ) -> None:
     """Repair one divergent note identity under exact path and hash confirmation."""
     if confirm != rel_path:
         _error(f"Repair not confirmed. Pass --confirm {rel_path}")
-    settings = get_settings()
-    vault_root = _resolve_vault_root(vault, settings)
+    base_settings = get_settings()
+    if memory_vault is not None:
+        base_settings = base_settings.model_copy(
+            update={"memory_root": memory_vault.expanduser().resolve()}
+        )
+    vault_root = _resolve_vault_root(vault, base_settings)
+    settings = _settings_for_cli_vault(base_settings, vault_root, memory_root=memory_vault)
     started = _log_invocation(
         "ops.repair-id",
         vault=str(vault_root),
@@ -870,7 +924,13 @@ def _assert_id_is_unclaimed(
         )
 
 
-def _assert_migrated_sidecar_agrees(vault_root: Path, rel_path: str, note_id: str) -> None:
+def _assert_migrated_sidecar_agrees(
+    vault_root: Path,
+    rel_path: str,
+    note_id: str,
+    *,
+    settings: Settings | None = None,
+) -> None:
     """Refuse when the migrated sidecar would re-impose the old ID after repair.
 
     ``JsonIdStore`` merges ``ulids.json.migrated`` over ``ulids.json`` and writes
@@ -879,7 +939,7 @@ def _assert_migrated_sidecar_agrees(vault_root: Path, rel_path: str, note_id: st
     is exactly why a disagreement between the two files must be settled by a human
     rather than guessed at here.
     """
-    migrated = sidecar_dir(vault_root) / MIGRATED_ULID_SIDECAR_FILENAME
+    migrated = sidecar_dir(vault_root, settings=settings) / MIGRATED_ULID_SIDECAR_FILENAME
     if not migrated.is_file():
         return
     try:
@@ -902,14 +962,20 @@ class _PartialIdRepairError(Exception):
     """Raised when a step fails after the note or the sidecar was already written."""
 
 
-def _realign_sidecar_entry(vault_root: Path, rel_path: str, note_id: str) -> None:
+def _realign_sidecar_entry(
+    vault_root: Path,
+    rel_path: str,
+    note_id: str,
+    *,
+    settings: Settings | None = None,
+) -> None:
     """Rewrite one mapping in ``ulids.json`` and nothing else.
 
     ``JsonIdStore`` cannot be used here: loading it merges ``ulids.json.migrated``
     over the primary file and writes the merged result back, so repairing one note
     would silently stamp every stale migrated mapping onto unrelated notes.
     """
-    path = sidecar_dir(vault_root) / ULID_SIDECAR_FILENAME
+    path = sidecar_dir(vault_root, settings=settings) / ULID_SIDECAR_FILENAME
     payload: dict[str, str] = {}
     if path.is_file():
         payload = dict(
@@ -925,6 +991,8 @@ async def _realign_index_identity(
     vault_root: Path,
     rel_path: str,
     note_id: str,
+    *,
+    settings: Settings | None = None,
 ) -> tuple[str | None, str | None]:
     """Realign the live index and report the indexed ID before and after.
 
@@ -942,13 +1010,13 @@ async def _realign_index_identity(
     from datacron.indexing.fts5_store import SQLiteFTS5Store  # noqa: PLC0415
     from datacron.indexing.reconcile import reconcile  # noqa: PLC0415
 
-    db_path = sidecar_index_db(vault_root)
+    active_settings = settings or get_settings()
+    db_path = sidecar_index_db(vault_root, settings=active_settings)
     if not db_path.exists():
         return None, None
-    settings = get_settings()
-    config = _load_vault_yaml(vault_root) or VaultConfig()
-    reader = build_configured_reader(vault_root)
-    chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
+    config = _load_vault_yaml(vault_root, settings=active_settings) or VaultConfig()
+    reader = build_configured_reader(vault_root, settings=active_settings)
+    chunker = MarkdownChunker(max_tokens=active_settings.chunk_max_tokens)
     store = SQLiteFTS5Store(term_map=config.query_expansion, archive_tags=config.archive_tags)
     await store.open(db_path)
     try:
@@ -972,12 +1040,14 @@ async def _apply_id_source_realignments(
     rel_path: str,
     note_id: str,
     sources: dict[str, str],
+    *,
+    settings: Settings | None = None,
 ) -> tuple[bool, str | None, str | None]:
     """Realign sidecar and index sources after the note plan is validated."""
     sidecar_realigned = "sidecar" in sources and sources["sidecar"] != note_id
     if sidecar_realigned:
         try:
-            _realign_sidecar_entry(vault_root, rel_path, note_id)
+            _realign_sidecar_entry(vault_root, rel_path, note_id, settings=settings)
         except OSError as exc:
             raise _PartialIdRepairError(
                 f"the note now carries {note_id}, but the sidecar could not be "
@@ -985,7 +1055,12 @@ async def _apply_id_source_realignments(
             ) from exc
 
     try:
-        index_before, index_after = await _realign_index_identity(vault_root, rel_path, note_id)
+        index_before, index_after = await _realign_index_identity(
+            vault_root,
+            rel_path,
+            note_id,
+            settings=settings,
+        )
     except (OSError, sqlite3.Error) as exc:
         raise _PartialIdRepairError(
             f"the note repair and any required sidecar realignment completed for {note_id}, "
@@ -1014,7 +1089,11 @@ async def _repair_note_id(
     if cleaned_hash is None:
         raise ValueError("--expected-hash is required")
     rel_path = rel_path.strip().replace("\\", "/")
-    scan = scan_vault_read_only(vault_root)
+    scan = scan_vault_read_only(
+        vault_root,
+        memory_root=settings.memory_root,
+        extra_read_vaults=settings.extra_read_vaults,
+    )
     mismatches_before = len(scan.id_violations)
     _violation, sources = _resolve_id_violation(scan, rel_path)
     label, note_id = _canonical_id_for_action(action, sources)
@@ -1024,7 +1103,7 @@ async def _repair_note_id(
             "adopting it would propagate a malformed identity"
         )
     _assert_id_is_unclaimed(scan, rel_path, note_id)
-    _assert_migrated_sidecar_agrees(vault_root, rel_path, note_id)
+    _assert_migrated_sidecar_agrees(vault_root, rel_path, note_id, settings=settings)
 
     content_hash = dict(scan.content_hashes).get(rel_path)
     if content_hash != cleaned_hash:
@@ -1046,16 +1125,27 @@ async def _repair_note_id(
         )
         try:
             with writer.lock_note_identity(rel_path, expected_hash=content_hash):
-                locked_scan = scan_vault_read_only(vault_root)
+                locked_scan = scan_vault_read_only(
+                    vault_root,
+                    memory_root=settings.memory_root,
+                    extra_read_vaults=settings.extra_read_vaults,
+                )
                 _assert_id_is_unclaimed(locked_scan, rel_path, note_id)
-                _assert_migrated_sidecar_agrees(vault_root, rel_path, note_id)
+                _assert_migrated_sidecar_agrees(vault_root, rel_path, note_id, settings=settings)
                 sidecar_realigned, index_before, index_after = await _apply_id_source_realignments(
                     vault_root,
                     rel_path,
                     note_id,
                     sources,
+                    settings=settings,
                 )
-                mismatches_after = len(scan_vault_read_only(vault_root).id_violations)
+                mismatches_after = len(
+                    scan_vault_read_only(
+                        vault_root,
+                        memory_root=settings.memory_root,
+                        extra_read_vaults=settings.extra_read_vaults,
+                    ).id_violations
+                )
         except _PartialIdRepairError:
             raise
         except (
@@ -1072,7 +1162,11 @@ async def _repair_note_id(
             ) from exc
     else:
         with writer.lock_note_identity(rel_path, expected_hash=cleaned_hash):
-            locked_scan = scan_vault_read_only(vault_root)
+            locked_scan = scan_vault_read_only(
+                vault_root,
+                memory_root=settings.memory_root,
+                extra_read_vaults=settings.extra_read_vaults,
+            )
             _locked_violation, locked_sources = _resolve_id_violation(locked_scan, rel_path)
             locked_label, locked_note_id = _canonical_id_for_action(action, locked_sources)
             if locked_sources != sources or locked_label != label or locked_note_id != note_id:
@@ -1080,15 +1174,22 @@ async def _repair_note_id(
                     "identity sources changed since inspection; re-read and retry"
                 )
             _assert_id_is_unclaimed(locked_scan, rel_path, note_id)
-            _assert_migrated_sidecar_agrees(vault_root, rel_path, note_id)
+            _assert_migrated_sidecar_agrees(vault_root, rel_path, note_id, settings=settings)
             sources = locked_sources
             sidecar_realigned, index_before, index_after = await _apply_id_source_realignments(
                 vault_root,
                 rel_path,
                 note_id,
                 sources,
+                settings=settings,
             )
-            mismatches_after = len(scan_vault_read_only(vault_root).id_violations)
+            mismatches_after = len(
+                scan_vault_read_only(
+                    vault_root,
+                    memory_root=settings.memory_root,
+                    extra_read_vaults=settings.extra_read_vaults,
+                ).id_violations
+            )
 
     return _IdRepairOutcome(
         rel_path=rel_path,
@@ -2836,9 +2937,20 @@ app.add_typer(config_app, name="config")
 
 @config_app.command("get")
 def config_get_cmd(
-    vault: Path | None = typer.Argument(
+    vault_arg: Path | None = typer.Argument(
         None,
         help=VAULT_ROOT_HELP,
+    ),
+    vault_opt: Path | None = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help=VAULT_ROOT_HELP,
+    ),
+    target: str = typer.Option(
+        "vault",
+        "--target",
+        help="Configuration target ('vault' or 'companion').",
     ),
     memory_vault: Path | None = typer.Option(
         None,
@@ -2846,16 +2958,35 @@ def config_get_cmd(
         help=MEMORY_VAULT_HELP,
     ),
     as_json: bool = typer.Option(
-        False,
-        "--json",
+        True,
+        "--json/--text",
         help="Emit machine-readable CAS configuration snapshot.",
     ),
 ) -> None:
-    """Read `.datacron/VAULT.yaml` and its SHA-256 Compare-And-Swap hash."""
-    from datacron.config_contract import read_vault_config_snapshot  # noqa: PLC0415
+    """Read `.datacron/VAULT.yaml` or Companion profile and its SHA-256 CAS hash."""
+    from datacron.config_contract import (  # noqa: PLC0415
+        EXIT_VALIDATION_ERROR,
+        read_companion_profile,
+        read_vault_config_snapshot,
+    )
+
+    clean_target = target.strip().lower()
+    if clean_target not in {"vault", "companion"}:
+        typer.echo(f"Error: Unknown --target {target!r}", err=True)
+        raise typer.Exit(code=EXIT_VALIDATION_ERROR)
+    if clean_target == "companion":
+        comp_snap = read_companion_profile()
+        if as_json:
+            _print(json.dumps(comp_snap.to_dict(), indent=2, sort_keys=True))
+            return
+        _print(f"config_path: {comp_snap.config_path}")
+        _print(f"present: {comp_snap.present}")
+        _print(f"content_hash: {comp_snap.content_hash}")
+        _print(f"valid: {comp_snap.valid}")
+        return
 
     settings = get_settings()
-    vault_root = _resolve_vault_root(vault, settings)
+    vault_root = _resolve_vault_root(vault_opt or vault_arg, settings)
     settings = _settings_for_cli_vault(settings, vault_root, memory_root=memory_vault)
     snap = read_vault_config_snapshot(vault_root, settings=settings)
     if as_json:
@@ -2872,11 +3003,22 @@ def config_set_cmd(
     values_json: str = typer.Option(
         ...,
         "--values-json",
-        help="JSON object containing VAULT.yaml fields to write.",
+        help="JSON object containing VAULT.yaml or Companion profile fields to write.",
     ),
-    vault: Path | None = typer.Argument(
+    vault_arg: Path | None = typer.Argument(
         None,
         help=VAULT_ROOT_HELP,
+    ),
+    vault_opt: Path | None = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help=VAULT_ROOT_HELP,
+    ),
+    target: str = typer.Option(
+        "vault",
+        "--target",
+        help="Configuration target ('vault' or 'companion').",
     ),
     memory_vault: Path | None = typer.Option(
         None,
@@ -2891,24 +3033,31 @@ def config_set_cmd(
     expect_absent: bool = typer.Option(
         False,
         "--expect-absent",
-        help="Require VAULT.yaml not to exist before writing.",
+        help="Require target file not to exist before writing.",
     ),
     as_json: bool = typer.Option(
-        False,
-        "--json",
+        True,
+        "--json/--text",
         help="Emit machine-readable CAS configuration snapshot.",
     ),
 ) -> None:
-    """Atomically write `.datacron/VAULT.yaml` with Compare-And-Swap verification."""
+    """Atomically write `.datacron/VAULT.yaml` or Companion profile with CAS verification."""
+    from dataclasses import asdict  # noqa: PLC0415
+
     from datacron.config_contract import (  # noqa: PLC0415
         EXIT_VALIDATION_ERROR,
         ConfigContractError,
+        read_companion_profile,
+        read_vault_config_snapshot,
+        write_companion_profile_cas,
         write_vault_config_cas,
     )
 
-    settings = get_settings()
-    vault_root = _resolve_vault_root(vault, settings)
-    settings = _settings_for_cli_vault(settings, vault_root, memory_root=memory_vault)
+    clean_target = target.strip().lower()
+    if clean_target not in {"vault", "companion"}:
+        typer.echo(f"Error: Unknown --target {target!r}", err=True)
+        raise typer.Exit(code=EXIT_VALIDATION_ERROR)
+
     try:
         decoded = json.loads(values_json)
         if not isinstance(decoded, dict):
@@ -2917,10 +3066,39 @@ def config_set_cmd(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=EXIT_VALIDATION_ERROR) from exc
 
+    if clean_target == "companion":
+        current_comp = read_companion_profile()
+        merged_comp = {**asdict(current_comp.profile), **decoded}
+        try:
+            comp_snap = write_companion_profile_cas(
+                merged_comp,
+                expected_hash=expected_hash,
+                expect_absent=expect_absent,
+            )
+        except ConfigContractError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=exc.exit_code) from exc
+        if as_json:
+            _print(json.dumps(comp_snap.to_dict(), indent=2, sort_keys=True))
+            return
+        _print(
+            t(
+                "cli.config.saved",
+                config_path=comp_snap.config_path,
+                content_hash=comp_snap.content_hash,
+            )
+        )
+        return
+
+    settings = get_settings()
+    vault_root = _resolve_vault_root(vault_opt or vault_arg, settings)
+    settings = _settings_for_cli_vault(settings, vault_root, memory_root=memory_vault)
+    current_snap = read_vault_config_snapshot(vault_root, settings=settings)
+    merged_values = {**current_snap.values, **decoded}
     try:
         snap = write_vault_config_cas(
             vault_root,
-            decoded,
+            merged_values,
             settings=settings,
             expected_hash=expected_hash,
             expect_absent=expect_absent,
@@ -2943,6 +3121,17 @@ def config_set_cmd(
 
 @app.command("companion")
 def companion_cmd(
+    vault: Path | None = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help=VAULT_ROOT_HELP,
+    ),
+    memory_vault: Path | None = typer.Option(
+        None,
+        "--memory-vault",
+        help=MEMORY_VAULT_HELP,
+    ),
     port: int = typer.Option(
         0,
         "--port",
@@ -2957,10 +3146,27 @@ def companion_cmd(
     ),
 ) -> None:
     """Launch the Datacron Companion graphical control panel on 127.0.0.1."""
+    from dataclasses import asdict  # noqa: PLC0415
+
     from datacron.companion import (  # noqa: PLC0415
         create_companion_server,
         launch_companion_window,
     )
+    from datacron.config_contract import (  # noqa: PLC0415
+        read_companion_profile,
+        write_companion_profile_cas,
+    )
+
+    if vault is not None or memory_vault is not None:
+        current = read_companion_profile()
+        updated = asdict(current.profile)
+        if vault is not None:
+            updated["vault_path"] = str(_guard_vault_target(vault.expanduser().resolve()))
+        if memory_vault is not None:
+            updated["memory_vault_path"] = str(
+                _guard_vault_target(memory_vault.expanduser().resolve())
+            )
+        write_companion_profile_cas(updated, expected_hash=current.content_hash)
 
     server, url, _token = create_companion_server(port=port)
     _print(t("cli.companion.launching", url=url))

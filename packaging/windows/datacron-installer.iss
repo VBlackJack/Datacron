@@ -682,7 +682,9 @@ begin
   if not ShouldIndexNow then
     Parameters := Parameters + ' --no-index';
   if WriteToolsRequested then
-    Parameters := Parameters + ' --enable-write';
+    Parameters := Parameters + ' --enable-write'
+  else
+    Parameters := Parameters + ' --no-write';
   if MachineWideWriteRequested then
     Parameters := Parameters + ' --machine-wide-write';
 

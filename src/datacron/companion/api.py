@@ -35,10 +35,13 @@ from datacron.core.config import (
     VALID_DURABILITY_MODES,
     Settings,
     VaultConfig,
+    _validate_extra_vault_prefix,
     get_settings,
     load_vault_config,
 )
 from datacron.core.paths import sidecar_index_db, sidecar_vault_config
+from datacron.core.scope import admits_note_path
+from datacron.core.security import SecretRedactor
 from datacron.core.vault import build_configured_reader
 from datacron.graph_health import analyze_vault_graph
 from datacron.i18n import t
@@ -52,6 +55,7 @@ from datacron.installers.mcp_clients import (
     discover_targets,
 )
 from datacron.mcp.server import build_app
+from datacron.mcp.tools.read import _list_notes_impl
 from datacron.mcp.tools.search import search_regex_impl, search_text_impl
 from datacron.memory_compaction import DEFAULT_COMPACTION_DAYS, compact_vault_memory
 from datacron.migration import migrate_vault_to_dual
@@ -65,19 +69,46 @@ from datacron.setup_wizard import (
 
 __all__ = [
     "companion_i18n_bundle",
+    "get_companion_graph_health",
     "get_companion_history",
     "get_companion_state",
+    "list_companion_notes",
     "run_companion_compaction",
     "run_companion_graph_health",
     "run_companion_mcp_setup",
+    "run_companion_memory_compaction",
     "run_companion_migration",
     "run_companion_search",
     "run_companion_sync",
     "save_companion_topology",
     "save_vault_config",
+    "search_companion",
 ]
 
 _MAX_HISTORY_RECORDS: Final[int] = 25
+
+
+def _parse_bounded_int(
+    value: Any,
+    *,
+    field_name: str,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be an integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be an integer") from exc
+    if parsed < minimum or parsed > maximum:
+        raise ValueError(f"{field_name} must be between {minimum} and {maximum}")
+    return parsed
+
+
 _COMPANION_I18N_SECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
     (
         "app",
@@ -204,10 +235,17 @@ def _build_runtime_settings(profile: CompanionProfile) -> tuple[Path | None, Set
         str(env_settings.memory_root) if env_settings.memory_root else ""
     )
     memory_root = Path(mem_str).expanduser().resolve() if mem_str else None
-    extra_map = {
-        prefix: Path(raw_path).expanduser().resolve()
-        for prefix, raw_path in profile.extra_read_vaults.items()
-    }
+    if memory_root is not None and memory_root == vault_root:
+        memory_root = None
+    extra_map: dict[str, Path] = {}
+    for raw_prefix, raw_path in profile.extra_read_vaults.items():
+        if not str(raw_path).strip():
+            continue
+        try:
+            clean_prefix = _validate_extra_vault_prefix(raw_prefix)
+        except (TypeError, ValueError):
+            continue
+        extra_map[clean_prefix] = Path(raw_path).expanduser().resolve()
     read_paths = [vault_root]
     if memory_root is not None and memory_root not in read_paths:
         read_paths.append(memory_root)
@@ -436,7 +474,11 @@ async def run_companion_migration(
     updated_profile = asdict(profile_snap.profile)
     updated_profile["vault_path"] = str(result.vault_path)
     updated_profile["memory_vault_path"] = str(result.memory_vault_path)
-    write_companion_profile_cas(updated_profile, path=profile_path)
+    write_companion_profile_cas(
+        updated_profile,
+        path=profile_path,
+        expected_hash=profile_snap.content_hash,
+    )
     return {
         "migration": {
             "vault_path": str(result.vault_path),
@@ -451,23 +493,76 @@ async def run_companion_migration(
     }
 
 
+async def list_companion_notes(
+    payload: Mapping[str, Any],
+    *,
+    profile_path: Path | None = None,
+) -> dict[str, Any]:
+    """List notes in the configured vault(s) with bounded limit and offset."""
+    limit = _parse_bounded_int(
+        payload.get("limit"),
+        field_name="limit",
+        default=50,
+        minimum=1,
+        maximum=200,
+    )
+    offset = _parse_bounded_int(
+        payload.get("offset"),
+        field_name="offset",
+        default=0,
+        minimum=0,
+        maximum=100_000,
+    )
+    folder_raw = str(payload.get("folder") or "").strip()
+    folder = folder_raw if folder_raw else None
+    profile_snap = read_companion_profile(profile_path)
+    vault_root, settings = _build_runtime_settings(profile_snap.profile)
+    if vault_root is None or not vault_root.is_dir():
+        return {"notes": [], "total": 0, "returned": 0}
+    app = build_app(settings=settings, vault_root=vault_root)
+    db_path = sidecar_index_db(vault_root, settings=settings)
+    if db_path.is_file():
+        await app.store.open(db_path, read_only=True)
+    try:
+        return await _list_notes_impl(
+            app,
+            folder=folder,
+            tags=None,
+            limit=limit,
+            offset=offset,
+        )
+    finally:
+        await app.store.close()
+
+
 async def run_companion_search(
     payload: Mapping[str, Any],
     *,
     profile_path: Path | None = None,
 ) -> dict[str, Any]:
     """Run FTS5 or Regex search across the configured vault(s)."""
+    limit = _parse_bounded_int(
+        payload.get("limit"),
+        field_name="limit",
+        default=15,
+        minimum=1,
+        maximum=100,
+    )
     profile_snap = read_companion_profile(profile_path)
     vault_root, settings = _build_runtime_settings(profile_snap.profile)
     if vault_root is None or not vault_root.is_dir():
         raise ValueError("Configure a valid primary documentation vault first")
-    query = str(payload.get("query", "")).strip()
+    query = str(payload.get("query") or "").strip()
     if not query:
-        raise ValueError("Search query must not be empty")
-    folder_raw = str(payload.get("folder", "")).strip()
+        return {
+            "query": "",
+            "results": [],
+            "returned": 0,
+            "limit_applied": limit,
+        }
+    folder_raw = str(payload.get("folder") or "").strip()
     folder = folder_raw if folder_raw else None
-    mode = str(payload.get("mode", "fts")).strip().lower()
-    limit = int(payload.get("limit", 15))
+    mode = str(payload.get("mode") or "fts").strip().lower()
     app = build_app(settings=settings, vault_root=vault_root)
     db_path = sidecar_index_db(vault_root, settings=settings)
     if not db_path.is_file():
@@ -491,7 +586,7 @@ async def run_companion_search(
 
 
 async def run_companion_graph_health(
-    _payload: Mapping[str, Any],
+    _payload: Mapping[str, Any] | None = None,
     *,
     profile_path: Path | None = None,
 ) -> dict[str, Any]:
@@ -501,7 +596,11 @@ async def run_companion_graph_health(
     if vault_root is None or not vault_root.is_dir():
         raise ValueError("Configure a valid primary documentation vault first")
     report = await analyze_vault_graph(vault_root, settings=settings)
-    return report.to_dict()
+    payload_dict = report.to_dict()
+    if SecretRedactor.retrieval_enabled(settings):
+        redactor = SecretRedactor.from_settings(settings)
+        payload_dict = redactor.redact_value(payload_dict)
+    return payload_dict
 
 
 async def run_companion_compaction(
@@ -510,11 +609,17 @@ async def run_companion_compaction(
     profile_path: Path | None = None,
 ) -> dict[str, Any]:
     """Preview or apply smart monthly memory compaction."""
+    days = _parse_bounded_int(
+        payload.get("older_than_days"),
+        field_name="older_than_days",
+        default=DEFAULT_COMPACTION_DAYS,
+        minimum=0,
+        maximum=3650,
+    )
     profile_snap = read_companion_profile(profile_path)
     vault_root, settings = _build_runtime_settings(profile_snap.profile)
     if vault_root is None or not vault_root.is_dir():
         raise ValueError("Configure a valid primary documentation vault first")
-    days = int(payload.get("older_than_days", DEFAULT_COMPACTION_DAYS))
     dry_run = bool(payload.get("dry_run", True))
     report = await compact_vault_memory(
         vault_root,
@@ -522,7 +627,11 @@ async def run_companion_compaction(
         older_than_days=days,
         dry_run=dry_run,
     )
-    return report.to_dict()
+    payload_dict = report.to_dict()
+    if SecretRedactor.retrieval_enabled(settings):
+        redactor = SecretRedactor.from_settings(settings)
+        payload_dict = redactor.redact_value(payload_dict)
+    return payload_dict
 
 
 async def run_companion_mcp_setup(
@@ -570,25 +679,37 @@ async def run_companion_mcp_setup(
 
 
 async def get_companion_history(
-    _payload: Mapping[str, Any],
+    _payload: Mapping[str, Any] | None = None,
     *,
     profile_path: Path | None = None,
 ) -> dict[str, Any]:
     """Return recent durable operation log records for the configured vault."""
+    payload = _payload or {}
+    limit = _parse_bounded_int(
+        payload.get("limit"),
+        field_name="limit",
+        default=_MAX_HISTORY_RECORDS,
+        minimum=1,
+        maximum=200,
+    )
     profile_snap = read_companion_profile(profile_path)
     vault_root, settings = _build_runtime_settings(profile_snap.profile)
     if vault_root is None or not vault_root.is_dir():
         return {"operations": []}
     app = build_app(settings=settings, vault_root=vault_root)
     records = await app.vault_writer.list_operations()
-    recent = list(reversed(records[-_MAX_HISTORY_RECORDS:]))
+    admitted = [rec for rec in records if admits_note_path(app.scope, rec.rel_path)]
+    recent = list(reversed(admitted[-limit:]))
+    redact = SecretRedactor.retrieval_enabled(app.settings)
     return {
         "operations": [
             {
                 "op_id": rec.operation_id,
                 "timestamp": rec.timestamp,
                 "tool": rec.tool,
-                "rel_path": rec.rel_path,
+                "rel_path": (
+                    app.secret_redactor.redact_text(rec.rel_path) if redact else rec.rel_path
+                ),
                 "note_id": rec.note_id,
                 "actor": rec.actor,
                 "before_hash": rec.before_hash,
@@ -597,3 +718,8 @@ async def get_companion_history(
             for rec in recent
         ]
     }
+
+
+search_companion = run_companion_search
+get_companion_graph_health = run_companion_graph_health
+run_companion_memory_compaction = run_companion_compaction
