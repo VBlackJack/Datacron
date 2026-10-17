@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 from datacron.companion.api import (
     get_companion_history,
     get_companion_state,
+    list_companion_notes,
     run_companion_compaction,
     run_companion_graph_health,
     run_companion_mcp_setup,
@@ -41,6 +42,7 @@ from datacron.companion.api import (
 )
 from datacron.companion.ui import render_companion_html
 from datacron.config_contract import ConfigCasConflictError, ConfigValidationError
+from datacron.core.logger import get_logger
 from datacron.migration import MigrationError
 
 if TYPE_CHECKING:
@@ -62,6 +64,16 @@ DEFAULT_COMPANION_HOST: Final[str] = "127.0.0.1"
 TOKEN_HEADER_NAME: Final[str] = "X-Datacron-Token"  # noqa: S105
 MAX_REQUEST_BODY_BYTES: Final[int] = 262_144
 _SESSION_TOKEN_BYTES: Final[int] = 24
+_HTML_CSP: Final[str] = (
+    "default-src 'self'; "
+    "script-src 'unsafe-inline'; "
+    "style-src 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "object-src 'none'; "
+    "base-uri 'none'; "
+    "frame-ancestors 'none'"
+)
+_LOGGER = get_logger(__name__)
 _APP_BROWSER_CANDIDATES: Final[tuple[str, ...]] = (
     "msedge",
     "chrome",
@@ -74,6 +86,7 @@ _POST_ROUTES: Final[dict[str, PostHandler]] = {
     "/api/vault-config": save_vault_config,
     "/api/sync": run_companion_sync,
     "/api/migrate": run_companion_migration,
+    "/api/notes": list_companion_notes,
     "/api/search": run_companion_search,
     "/api/graph-health": run_companion_graph_health,
     "/api/compact-memory": run_companion_compaction,
@@ -113,7 +126,7 @@ class _CompanionRequestHandler(BaseHTTPRequestHandler):
     def _check_host(self) -> bool:
         host_header = self.headers.get("Host", "").strip().lower()
         if not host_header:
-            return True
+            return False
         port = self._companion_server.server_address[1]
         allowed = {
             f"127.0.0.1:{port}",
@@ -157,6 +170,7 @@ class _CompanionRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", _HTML_CSP)
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
@@ -187,8 +201,15 @@ class _CompanionRequestHandler(BaseHTTPRequestHandler):
             if not self._check_token():
                 self._send_json(HTTPStatus.FORBIDDEN, {"error": "Invalid session token"})
                 return
-            state = asyncio.run(get_companion_state(self._companion_server.profile_path))
-            self._send_json(HTTPStatus.OK, state)
+            try:
+                state = asyncio.run(get_companion_state(self._companion_server.profile_path))
+                self._send_json(HTTPStatus.OK, state)
+            except Exception:
+                _LOGGER.exception("Companion internal error on %s", parsed.path)
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": "Internal server error"},
+                )
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
@@ -212,8 +233,12 @@ class _CompanionRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.CONFLICT, {"error": str(exc)})
         except (ConfigValidationError, MigrationError, ValueError, FileNotFoundError) as exc:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
-        except Exception as exc:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
+        except Exception:
+            _LOGGER.exception("Companion internal error on %s", parsed.path)
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"error": "Internal server error"},
+            )
 
 
 def create_companion_server(

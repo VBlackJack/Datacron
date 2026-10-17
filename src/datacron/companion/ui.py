@@ -97,7 +97,7 @@ body {
   border-left-color: var(--accent);
 }
 .nav-btn:focus-visible, button:focus-visible, input:focus-visible,
-select:focus-visible, textarea:focus-visible {
+select:focus-visible, textarea:focus-visible, .list-item:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -194,12 +194,13 @@ textarea { font-family: var(--font-mono); min-height: 90px; resize: vertical; }
 }
 .list-item {
   background: var(--highlight);
+  border: 1px solid transparent;
   border-radius: var(--control-radius);
   padding: 10px 12px;
   margin-bottom: 8px;
   cursor: pointer;
 }
-.list-item:hover { border: 1px solid var(--border); }
+.list-item:hover { border-color: var(--border); }
 """
 
 _HTML_BODY: Final[str] = """
@@ -207,7 +208,8 @@ _HTML_BODY: Final[str] = """
   <nav class="nav-rail" aria-label="Primary">
     <div class="brand-title" data-i18n="app.title"></div>
     <div class="brand-sub" data-i18n="app.subtitle"></div>
-    <button class="nav-btn active" data-tab="home" data-i18n="nav.home"></button>
+    <button class="nav-btn active" aria-current="page" data-tab="home"
+      data-i18n="nav.home"></button>
     <button class="nav-btn" data-tab="vaults" data-i18n="nav.vaults"></button>
     <button class="nav-btn" data-tab="search" data-i18n="nav.search"></button>
     <button class="nav-btn" data-tab="graph" data-i18n="nav.graph"></button>
@@ -254,10 +256,14 @@ _HTML_BODY: Final[str] = """
       </div>
       <div class="card">
         <h2 data-i18n="home.getting_started_title"></h2>
-        <div class="list-item" data-jump="vaults" data-i18n="home.step1_title"></div>
-        <div class="list-item" data-jump="vaults" data-i18n="home.step2_title"></div>
-        <div class="list-item" data-jump="vaults" data-i18n="home.step3_title"></div>
-        <div class="list-item" data-jump="mcp" data-i18n="home.step4_title"></div>
+        <div class="list-item" role="button" tabindex="0" data-jump="vaults"
+          data-i18n="home.step1_title"></div>
+        <div class="list-item" role="button" tabindex="0" data-jump="vaults"
+          data-i18n="home.step2_title"></div>
+        <div class="list-item" role="button" tabindex="0" data-jump="vaults"
+          data-i18n="home.step3_title"></div>
+        <div class="list-item" role="button" tabindex="0" data-jump="mcp"
+          data-i18n="home.step4_title"></div>
       </div>
     </section>
 
@@ -296,13 +302,16 @@ _HTML_BODY: Final[str] = """
       <h1 class="headline" data-i18n="search.headline"></h1>
       <div class="card">
         <div class="grid-2">
-          <input type="text" id="inp-search-query"
+          <input type="text" id="inp-search-query" aria-label="Search query"
+            data-i18n-aria="search.query_placeholder"
             data-i18n-placeholder="search.query_placeholder" />
-          <input type="text" id="inp-search-folder"
+          <input type="text" id="inp-search-folder" aria-label="Folder filter"
+            data-i18n-aria="search.folder_placeholder"
             data-i18n-placeholder="search.folder_placeholder" />
         </div>
         <div class="row">
-          <select id="sel-search-mode" style="width:180px;">
+          <select id="sel-search-mode" aria-label="Search mode"
+            data-i18n-aria="search.headline" style="width:180px;">
             <option value="fts" data-i18n="search.mode_fts"></option>
             <option value="regex" data-i18n="search.mode_regex"></option>
           </select>
@@ -429,6 +438,19 @@ async function apiCall(path, method = "GET", body = null) {
   return data;
 }
 
+async function runAction(btn, fn) {
+  if (btn) btn.disabled = true;
+  try {
+    await fn();
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    const statusEl = document.getElementById("status-message");
+    if (statusEl) statusEl.textContent = msg;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function resolveI18n(i18n, dotted) {
   const parts = dotted.split(".");
   let cur = i18n;
@@ -439,7 +461,8 @@ function resolveI18n(i18n, dotted) {
   return typeof cur === "string" ? cur : "";
 }
 
-function applyTranslations(i18n) {
+function applyTranslations(i18n, currentLang) {
+  document.documentElement.lang = currentLang || "en";
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const val = resolveI18n(i18n, el.getAttribute("data-i18n"));
     if (val) el.textContent = val;
@@ -448,13 +471,23 @@ function applyTranslations(i18n) {
     const val = resolveI18n(i18n, el.getAttribute("data-i18n-placeholder"));
     if (val) el.setAttribute("placeholder", val);
   });
+  document.querySelectorAll("[data-i18n-aria]").forEach((el) => {
+    const val = resolveI18n(i18n, el.getAttribute("data-i18n-aria"));
+    if (val) el.setAttribute("aria-label", val);
+  });
   const titleVal = resolveI18n(i18n, "app.title");
   if (titleVal) document.title = titleVal;
 }
 
 function activateTab(tabName) {
   document.querySelectorAll(".nav-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.getAttribute("data-tab") === tabName);
+    const isActive = btn.getAttribute("data-tab") === tabName;
+    btn.classList.toggle("active", isActive);
+    if (isActive) {
+      btn.setAttribute("aria-current", "page");
+    } else {
+      btn.removeAttribute("aria-current");
+    }
   });
   document.querySelectorAll(".page").forEach((sec) => {
     sec.classList.toggle("active", sec.id === "tab-" + tabName);
@@ -475,8 +508,8 @@ function populateSelect(id, items, selectedVal) {
 
 function renderState(state) {
   APP_STATE = state;
-  applyTranslations(state.i18n);
   const prof = state.profile_snapshot.profile;
+  applyTranslations(state.i18n, prof.ui_language);
   const vcfg = state.vault_config_snapshot;
   const rdy = state.readiness;
 
@@ -574,34 +607,91 @@ async function saveVaultConfig() {
   document.getElementById("lbl-cas-hash").textContent = res.vault_config_snapshot.content_hash;
 }
 
+async function executeSearch() {
+  const res = await apiCall("/api/search", "POST", {
+    query: document.getElementById("inp-search-query").value,
+    folder: document.getElementById("inp-search-folder").value,
+    mode: document.getElementById("sel-search-mode").value
+  });
+  const listEl = document.getElementById("search-results-list");
+  listEl.innerHTML = "";
+  const items = res.results || [];
+  if (!items.length) {
+    listEl.textContent = APP_STATE ? APP_STATE.i18n.search.empty_state : "";
+    return;
+  }
+  items.forEach((item) => {
+    const div = document.createElement("div");
+    div.className = "list-item";
+    div.setAttribute("role", "button");
+    div.setAttribute("tabindex", "0");
+    const src = item.source_vault || "docs";
+    const sec = item.section_title || "-";
+    div.textContent = `[${src}] ${item.note_rel_path} (${sec})`;
+    const selectItem = () => {
+      document.getElementById("search-preview-box").textContent = JSON.stringify(item, null, 2);
+    };
+    div.addEventListener("click", selectItem);
+    div.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        selectItem();
+      }
+    });
+    listEl.appendChild(div);
+  });
+  document.getElementById("search-preview-box").textContent = JSON.stringify(items[0], null, 2);
+}
+
+function clearSearch() {
+  document.getElementById("inp-search-query").value = "";
+  document.getElementById("search-results-list").innerHTML = "";
+  document.getElementById("search-preview-box").textContent = "";
+}
+
 window.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll(".nav-btn").forEach((btn) => {
     btn.addEventListener("click", () => activateTab(btn.getAttribute("data-tab")));
   });
   document.querySelectorAll("[data-jump]").forEach((el) => {
-    el.addEventListener("click", () => activateTab(el.getAttribute("data-jump")));
+    const target = el.getAttribute("data-jump");
+    el.addEventListener("click", () => activateTab(target));
+    el.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        activateTab(target);
+      }
+    });
   });
   document.getElementById("home-cta-vaults").addEventListener("click", () => activateTab("vaults"));
   document.getElementById("home-cta-search").addEventListener("click", () => activateTab("search"));
-  document.getElementById("home-cta-sync").addEventListener("click", async () => {
+  const homeSyncBtn = document.getElementById("home-cta-sync");
+  homeSyncBtn.addEventListener("click", () => runAction(homeSyncBtn, async () => {
     const out = await apiCall("/api/sync", "POST", { rebuild: false });
     document.getElementById("vaults-output").textContent = JSON.stringify(out, null, 2);
     await refreshState();
-  });
-  document.getElementById("btn-global-refresh").addEventListener("click", refreshState);
-  document.getElementById("lang-select").addEventListener("change", saveTopology);
-  document.getElementById("btn-save-topology").addEventListener("click", saveTopology);
-  document.getElementById("btn-sync-inc").addEventListener("click", async () => {
+  }));
+  const globalRefreshBtn = document.getElementById("btn-global-refresh");
+  globalRefreshBtn.addEventListener("click", () => runAction(globalRefreshBtn, refreshState));
+  document.getElementById("lang-select").addEventListener("change", () =>
+    runAction(null, saveTopology)
+  );
+  const saveTopoBtn = document.getElementById("btn-save-topology");
+  saveTopoBtn.addEventListener("click", () => runAction(saveTopoBtn, saveTopology));
+  const syncIncBtn = document.getElementById("btn-sync-inc");
+  syncIncBtn.addEventListener("click", () => runAction(syncIncBtn, async () => {
     const out = await apiCall("/api/sync", "POST", { rebuild: false });
     document.getElementById("vaults-output").textContent = JSON.stringify(out, null, 2);
     await refreshState();
-  });
-  document.getElementById("btn-sync-rebuild").addEventListener("click", async () => {
+  }));
+  const syncRebuildBtn = document.getElementById("btn-sync-rebuild");
+  syncRebuildBtn.addEventListener("click", () => runAction(syncRebuildBtn, async () => {
     const out = await apiCall("/api/sync", "POST", { rebuild: true });
     document.getElementById("vaults-output").textContent = JSON.stringify(out, null, 2);
     await refreshState();
-  });
-  document.getElementById("btn-migrate-dual").addEventListener("click", async () => {
+  }));
+  const migrateBtn = document.getElementById("btn-migrate-dual");
+  migrateBtn.addEventListener("click", () => runAction(migrateBtn, async () => {
     const out = await apiCall("/api/migrate", "POST", {
       vault_path: document.getElementById("inp-vault").value.trim(),
       memory_vault_path: document.getElementById("inp-mem-vault").value.trim(),
@@ -609,81 +699,71 @@ window.addEventListener("DOMContentLoaded", () => {
     });
     document.getElementById("vaults-output").textContent = JSON.stringify(out, null, 2);
     await refreshState();
-  });
-  document.getElementById("btn-search-run").addEventListener("click", async () => {
-    const res = await apiCall("/api/search", "POST", {
-      query: document.getElementById("inp-search-query").value,
-      folder: document.getElementById("inp-search-folder").value,
-      mode: document.getElementById("sel-search-mode").value
+  }));
+  const searchRunBtn = document.getElementById("btn-search-run");
+  searchRunBtn.addEventListener("click", () => runAction(searchRunBtn, executeSearch));
+  document.getElementById("btn-search-clear").addEventListener("click", clearSearch);
+  ["inp-search-query", "inp-search-folder"].forEach((inputId) => {
+    const inp = document.getElementById(inputId);
+    inp.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        runAction(searchRunBtn, executeSearch);
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        clearSearch();
+      }
     });
-    const listEl = document.getElementById("search-results-list");
-    listEl.innerHTML = "";
-    const items = res.results || [];
-    if (!items.length) {
-      listEl.textContent = APP_STATE.i18n.search.empty_state;
-      return;
-    }
-    items.forEach((item) => {
-      const div = document.createElement("div");
-      div.className = "list-item";
-      const src = item.source_vault || "docs";
-      const sec = item.section_title || "-";
-      div.textContent = `[${src}] ${item.note_rel_path} (${sec})`;
-      div.addEventListener("click", () => {
-        document.getElementById("search-preview-box").textContent = JSON.stringify(item, null, 2);
-      });
-      listEl.appendChild(div);
-    });
-    document.getElementById("search-preview-box").textContent = JSON.stringify(items[0], null, 2);
   });
-  document.getElementById("btn-search-clear").addEventListener("click", () => {
-    document.getElementById("inp-search-query").value = "";
-    document.getElementById("search-results-list").innerHTML = "";
-    document.getElementById("search-preview-box").textContent = "";
-  });
-  document.getElementById("btn-graph-analyze").addEventListener("click", async () => {
+  const graphBtn = document.getElementById("btn-graph-analyze");
+  graphBtn.addEventListener("click", () => runAction(graphBtn, async () => {
     const out = await apiCall("/api/graph-health", "POST", {});
     document.getElementById("graph-output").textContent = JSON.stringify(out, null, 2);
-  });
-  document.getElementById("btn-compact-preview").addEventListener("click", async () => {
+  }));
+  const compactPrevBtn = document.getElementById("btn-compact-preview");
+  compactPrevBtn.addEventListener("click", () => runAction(compactPrevBtn, async () => {
     const out = await apiCall("/api/compact-memory", "POST", {
       older_than_days: parseInt(document.getElementById("inp-compact-days").value || "30", 10),
       dry_run: true
     });
     document.getElementById("compact-output").textContent = JSON.stringify(out, null, 2);
-  });
-  document.getElementById("btn-compact-apply").addEventListener("click", async () => {
+  }));
+  const compactApplyBtn = document.getElementById("btn-compact-apply");
+  compactApplyBtn.addEventListener("click", () => runAction(compactApplyBtn, async () => {
     const out = await apiCall("/api/compact-memory", "POST", {
       older_than_days: parseInt(document.getElementById("inp-compact-days").value || "30", 10),
       dry_run: false
     });
     document.getElementById("compact-output").textContent = JSON.stringify(out, null, 2);
     await refreshState();
-  });
-  document.getElementById("btn-mcp-configure").addEventListener("click", async () => {
+  }));
+  const mcpBtn = document.getElementById("btn-mcp-configure");
+  mcpBtn.addEventListener("click", () => runAction(mcpBtn, async () => {
     const out = await apiCall("/api/mcp-setup", "POST", {
       client: document.getElementById("sel-mcp-client").value,
       install_scope: document.getElementById("sel-mcp-scope").value,
       enable_write: document.getElementById("chk-mcp-write").checked
     });
     document.getElementById("mcp-targets-box").textContent = JSON.stringify(out, null, 2);
-  });
-  document.getElementById("btn-history-reload").addEventListener("click", async () => {
+  }));
+  const historyBtn = document.getElementById("btn-history-reload");
+  historyBtn.addEventListener("click", () => runAction(historyBtn, async () => {
     const out = await apiCall("/api/history", "POST", {});
     document.getElementById("history-output").textContent =
       (out.operations && out.operations.length)
         ? JSON.stringify(out.operations, null, 2)
         : APP_STATE.i18n.history.empty_log;
-  });
-  document.getElementById("btn-save-vault-cfg").addEventListener("click", saveVaultConfig);
+  }));
+  const saveVaultCfgBtn = document.getElementById("btn-save-vault-cfg");
+  saveVaultCfgBtn.addEventListener("click", () => runAction(saveVaultCfgBtn, saveVaultConfig));
   window.addEventListener("keydown", (ev) => {
-    if (ev.key === "F5") { ev.preventDefault(); refreshState(); }
+    if (ev.key === "F5") { ev.preventDefault(); runAction(globalRefreshBtn, refreshState); }
     if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s") {
       ev.preventDefault();
-      saveVaultConfig();
+      runAction(saveVaultCfgBtn, saveVaultConfig);
     }
   });
-  refreshState();
+  runAction(null, refreshState);
 });
 """
 

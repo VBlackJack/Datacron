@@ -454,14 +454,24 @@ async def _build_index(
     Mirrors the incremental path of ``datacron index``: unchanged notes are
     skipped, changed ones re-chunked, vanished ones deleted.
     """
+    index_settings = (
+        settings
+        if memory_root is None
+        else settings.model_copy(update={"memory_root": memory_root})
+    )
     config = (
-        load_vault_config(sidecar_vault_config(vault_root, memory_root=memory_root))
+        load_vault_config(
+            sidecar_vault_config(vault_root, settings=index_settings, memory_root=memory_root)
+        )
         or VaultConfig()
     )
-    reader = build_configured_reader(vault_root, memory_root=memory_root)
-    chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
-    store = SQLiteFTS5Store(term_map=config.query_expansion)
-    await store.open(sidecar_index_db(vault_root, memory_root=memory_root))
+    reader = build_configured_reader(vault_root, settings=index_settings, memory_root=memory_root)
+    chunker = MarkdownChunker(max_tokens=index_settings.chunk_max_tokens)
+    store = SQLiteFTS5Store(
+        term_map=config.query_expansion,
+        archive_tags=config.archive_tags,
+    )
+    await store.open(sidecar_index_db(vault_root, settings=index_settings, memory_root=memory_root))
     try:
         stats = await reconcile(store, reader, chunker, mtime_gate=True)
     finally:
