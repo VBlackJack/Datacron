@@ -87,7 +87,11 @@
       "overlapping_roots": "Le vault de documentation et le vault mémoire ne doivent pas se chevaucher : {vault} vs {memory_vault}",
       "missing_source": "Le vault source ne contient ni .datacron/VAULT.yaml ni _memory/ à migrer : {vault}",
       "target_conflict": "Le vault mémoire cible contient déjà un fichier différent à {rel_path} ; écrasement refusé.",
-      "hash_mismatch": "Échec de la vérification SHA-256 après copie de {rel_path} ; les fichiers sources ont été préservés."
+      "hash_mismatch": "Échec de la vérification SHA-256 après copie de {rel_path} ; les fichiers sources ont été préservés.",
+      "error": {
+        "vault_not_found": "Le chemin du vault n'existe pas ou n'est pas un répertoire : {path}",
+        "unsafe_home_root": "Refus d'utiliser la racine du profil utilisateur comme vault ou vault mémoire."
+      }
     },
     "library": {
       "app_help": "Préparer une navigation hors ligne lisible et des revues de consolidation sourcées.",

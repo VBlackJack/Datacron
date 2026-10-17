@@ -17,11 +17,16 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import Settings, get_settings
 from datacron.core.models import ChunkType
-from datacron.core.paths import note_source_vault
+from datacron.core.paths import (
+    effective_extra_read_vaults,
+    effective_memory_root,
+    is_memory_rel_path,
+)
 from datacron.core.vault import build_configured_reader
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.wikilinks import (
@@ -31,8 +36,6 @@ from datacron.indexing.wikilinks import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from datacron.core.models import Note
     from datacron.core.protocols import VaultReader
 
@@ -125,6 +128,60 @@ def _is_exempt_from_orphan_check(rel_path: str) -> bool:
     return lower.startswith((_JOURNAL_PREFIX, _ARCHIVE_PREFIX))
 
 
+def _vault_for_note(
+    note: Note,
+    *,
+    has_dedicated_memory: bool,
+    extra_prefixes: tuple[str, ...],
+) -> str:
+    rel = note.rel_path.strip().replace("\\", "/").lstrip("/")
+    if is_memory_rel_path(rel):
+        return "memory" if has_dedicated_memory else "docs"
+    rel_folded = rel.casefold()
+    for prefix in extra_prefixes:
+        if rel_folded == prefix.casefold() or rel_folded.startswith(f"{prefix.casefold()}/"):
+            return f"extra:{prefix}"
+    return "docs"
+
+
+def _resolve_topology_flags(
+    reader: VaultReader,
+    *,
+    vault_root: Path | None = None,
+    settings: Settings | None = None,
+) -> tuple[bool, tuple[str, ...]]:
+    reader_vault_root = getattr(reader, "vault_root", None) or getattr(reader, "_vault_root", None)
+    resolved_root = (
+        vault_root.expanduser().resolve()
+        if vault_root is not None
+        else (
+            reader_vault_root.expanduser().resolve()
+            if isinstance(reader_vault_root, Path)
+            else None
+        )
+    )
+    reader_mem = getattr(reader, "memory_root", None) or getattr(reader, "_memory_root", None)
+    has_dedicated_memory = isinstance(reader_mem, Path) and (
+        resolved_root is None or reader_mem.expanduser().resolve() != resolved_root
+    )
+    if not has_dedicated_memory and resolved_root is not None and settings is not None:
+        has_dedicated_memory = effective_memory_root(resolved_root, settings=settings) is not None
+
+    prefixes: dict[str, str] = {}
+    reader_extras = getattr(reader, "_extra_read_vaults", None)
+    if isinstance(reader_extras, dict):
+        for prefix in reader_extras:
+            cleaned = str(prefix).strip().strip("/")
+            if cleaned:
+                prefixes[cleaned.casefold()] = cleaned
+    if resolved_root is not None and settings is not None:
+        for prefix in effective_extra_read_vaults(resolved_root, settings=settings):
+            cleaned = prefix.strip().strip("/")
+            if cleaned and cleaned.casefold() not in prefixes:
+                prefixes[cleaned.casefold()] = cleaned
+    return has_dedicated_memory, tuple(prefixes.values())
+
+
 def _extract_note_links(
     note: Note,
     chunker: MarkdownChunker,
@@ -177,13 +234,20 @@ def _rank_hubs(
     incoming_counts: Counter[str],
     outgoing_counts: Counter[str],
     hub_limit: int,
+    *,
+    has_dedicated_memory: bool,
+    extra_prefixes: tuple[str, ...],
 ) -> list[HubNote]:
     scored = [
         HubNote(
             note_id=note_id,
             rel_path=note.rel_path,
             title=note.title,
-            source_vault=note_source_vault(note.rel_path),
+            source_vault=_vault_for_note(
+                note,
+                has_dedicated_memory=has_dedicated_memory,
+                extra_prefixes=extra_prefixes,
+            ),
             incoming_count=incoming_counts.get(note_id, 0),
             outgoing_count=outgoing_counts.get(note_id, 0),
         )
@@ -195,34 +259,62 @@ def _rank_hubs(
 
 
 async def analyze_graph_health(
-    reader: VaultReader,
+    reader_or_root: VaultReader | Path,
     *,
     chunker: MarkdownChunker | None = None,
     hub_limit: int = DEFAULT_HUB_LIMIT,
+    settings: Settings | None = None,
+    reader: VaultReader | None = None,
 ) -> GraphHealthReport:
     """Compute broken links, orphan notes, hub notes, and cross-vault links."""
-    active_chunker = chunker or MarkdownChunker()
-    notes = await reader.list_notes()
+    resolved_root: Path | None = None
+    active_settings = settings
+    if isinstance(reader_or_root, Path):
+        resolved_root = reader_or_root.expanduser().resolve()
+        active_settings = settings or get_settings()
+        active_reader: VaultReader = reader or build_configured_reader(
+            resolved_root,
+            read_only=True,
+            settings=active_settings,
+        )
+        active_chunker = chunker or MarkdownChunker(max_tokens=active_settings.chunk_max_tokens)
+    else:
+        active_reader = reader or reader_or_root
+        active_chunker = chunker or MarkdownChunker()
+
+    has_dedicated_memory, extra_prefixes = _resolve_topology_flags(
+        active_reader,
+        vault_root=resolved_root,
+        settings=active_settings,
+    )
+
+    notes = await active_reader.list_notes()
     notes_by_id = {note.id: note for note in notes}
     notes_by_folded_id = {note.id.casefold(): note.id for note in notes}
     alias_cache: dict[str, str | None] = {}
 
     incoming_counts: Counter[str] = Counter()
     outgoing_counts: Counter[str] = Counter()
+    total_outgoing_counts: Counter[str] = Counter()
     broken_links: list[BrokenWikilink] = []
     cross_vault_links: list[CrossVaultLink] = []
     total_links = 0
     resolved_links = 0
 
     for note in notes:
-        src_vault = note_source_vault(note.rel_path)
+        src_vault = _vault_for_note(
+            note,
+            has_dedicated_memory=has_dedicated_memory,
+            extra_prefixes=extra_prefixes,
+        )
         link_pairs = _extract_note_links(note, active_chunker)
         for target_alias, section_title in link_pairs:
             total_links += 1
             target_id = await _resolve_target(
-                reader, notes_by_id, notes_by_folded_id, alias_cache, target_alias
+                active_reader, notes_by_id, notes_by_folded_id, alias_cache, target_alias
             )
             if target_id is None:
+                total_outgoing_counts[note.id] += 1
                 broken_links.append(
                     BrokenWikilink(
                         source_note_id=note.id,
@@ -235,10 +327,15 @@ async def analyze_graph_health(
                 continue
             resolved_links += 1
             if target_id != note.id:
+                total_outgoing_counts[note.id] += 1
                 outgoing_counts[note.id] += 1
                 incoming_counts[target_id] += 1
             target_note = notes_by_id[target_id]
-            dst_vault = note_source_vault(target_note.rel_path)
+            dst_vault = _vault_for_note(
+                target_note,
+                has_dedicated_memory=has_dedicated_memory,
+                extra_prefixes=extra_prefixes,
+            )
             if src_vault != dst_vault:
                 cross_vault_links.append(
                     CrossVaultLink(
@@ -255,14 +352,25 @@ async def analyze_graph_health(
             note_id=note.id,
             rel_path=note.rel_path,
             title=note.title,
-            source_vault=note_source_vault(note.rel_path),
+            source_vault=_vault_for_note(
+                note,
+                has_dedicated_memory=has_dedicated_memory,
+                extra_prefixes=extra_prefixes,
+            ),
         )
         for note in notes
         if incoming_counts.get(note.id, 0) == 0
-        and outgoing_counts.get(note.id, 0) == 0
+        and total_outgoing_counts.get(note.id, 0) == 0
         and not _is_exempt_from_orphan_check(note.rel_path)
     ]
-    hub_notes = _rank_hubs(notes_by_id, incoming_counts, outgoing_counts, hub_limit)
+    hub_notes = _rank_hubs(
+        notes_by_id,
+        incoming_counts,
+        outgoing_counts,
+        hub_limit,
+        has_dedicated_memory=has_dedicated_memory,
+        extra_prefixes=extra_prefixes,
+    )
 
     return GraphHealthReport(
         total_notes=len(notes),
@@ -285,12 +393,8 @@ async def analyze_vault_graph(
     hub_limit: int = DEFAULT_HUB_LIMIT,
 ) -> GraphHealthReport:
     """High-level helper that builds a configured reader and analyzes its graph."""
-    resolved_root = vault_root.expanduser().resolve()
-    active_settings = settings or get_settings()
-    reader = build_configured_reader(
-        resolved_root,
-        read_only=True,
-        settings=active_settings,
+    return await analyze_graph_health(
+        vault_root,
+        settings=settings,
+        hub_limit=hub_limit,
     )
-    chunker = MarkdownChunker(max_tokens=active_settings.chunk_max_tokens)
-    return await analyze_graph_health(reader, chunker=chunker, hub_limit=hub_limit)

@@ -46,13 +46,21 @@ from datacron.core.config import (
     DEFAULT_RIPGREP_PATH,
     REGEX_FALLBACK_SCAN_BATCH_CHUNKS,
     REGEX_STREAM_READ_BYTES,
+    Settings,
     has_catastrophic_regex_shape,
 )
 from datacron.core.logger import get_logger
 from datacron.core.models import Chunk, SearchResult
+from datacron.core.paths import effective_extra_read_vaults, effective_memory_root
 from datacron.core.protocols import FTS5Store
 
-__all__ = ["RegexFallbackError", "RipgrepError", "RipgrepWrapper", "ripgrep_available"]
+__all__ = [
+    "RegexFallbackError",
+    "RipgrepError",
+    "RipgrepWrapper",
+    "ripgrep_available",
+    "search_vault_regex",
+]
 
 _LOGGER = get_logger(__name__)
 _RIPGREP_PATH_ENV: Final[str] = "DATACRON_RIPGREP_PATH"
@@ -121,6 +129,51 @@ def matches_vault_glob(rel_path: str, glob: str) -> bool:
     return match(0, 0)
 
 
+def _is_shadowed_by_extra_roots(rel_path: str, shadowed_prefixes: tuple[str, ...]) -> bool:
+    """Return True when `rel_path` in `vault_root` is shadowed by a mounted extra root."""
+    if not shadowed_prefixes:
+        return False
+    normalized = rel_path.strip().replace("\\", "/").lstrip("/")
+    if not normalized:
+        return False
+    folded = normalized.casefold()
+    for mount_prefix in shadowed_prefixes:
+        prefix_folded = mount_prefix.casefold()
+        if folded == prefix_folded or folded.startswith(f"{prefix_folded}/"):
+            return True
+    return False
+
+
+def _build_roots_to_search(
+    vault_root: Path,
+    extra_roots: Mapping[str, Path] | None,
+    settings: Settings | None,
+) -> tuple[list[tuple[str | None, Path]], tuple[str, ...]]:
+    active_extra_roots: Mapping[str, Path] | None = extra_roots
+    if active_extra_roots is None and settings is not None:
+        derived_extra: dict[str, Path] = {}
+        mem_root = effective_memory_root(vault_root, settings=settings)
+        if mem_root is not None:
+            derived_extra["_memory"] = mem_root / "_memory"
+        for prefix, ext_root in effective_extra_read_vaults(vault_root, settings=settings).items():
+            derived_extra[prefix] = ext_root
+        if derived_extra:
+            active_extra_roots = derived_extra
+
+    roots_to_search: list[tuple[str | None, Path]] = [(None, vault_root)]
+    if not active_extra_roots:
+        return roots_to_search, ()
+
+    cleaned_prefixes: list[str] = []
+    for prefix, extra_root in active_extra_roots.items():
+        cleaned = prefix.strip().replace("\\", "/").strip("/")
+        if cleaned:
+            cleaned_prefixes.append(cleaned)
+        if extra_root.is_dir():
+            roots_to_search.append((prefix, extra_root))
+    return roots_to_search, tuple(cleaned_prefixes)
+
+
 class RipgrepOutputError(RuntimeError):
     """A bounded subprocess frame was refused before JSON decoding."""
 
@@ -148,6 +201,7 @@ class RipgrepWrapper:
         admit: Callable[[str], bool] | None = None,
         max_frame_bytes: int | None = None,
         extra_roots: Mapping[str, Path] | None = None,
+        settings: Settings | None = None,
     ) -> list[SearchResult]:
         """Search with ripgrep, falling back to indexed chunks if the binary is absent.
 
@@ -175,11 +229,11 @@ class RipgrepWrapper:
             else fallback_timeout_seconds
         )
         resolved_rg_path = _resolve_ripgrep_path(rg_path)
-        roots_to_search: list[tuple[str | None, Path]] = [(None, vault_root)]
-        if extra_roots:
-            for prefix, extra_root in extra_roots.items():
-                if extra_root.is_dir():
-                    roots_to_search.append((prefix, extra_root))
+        roots_to_search, shadowed_prefixes = _build_roots_to_search(
+            vault_root,
+            extra_roots,
+            settings,
+        )
 
         combined: list[SearchResult] = []
         last_error: RipgrepError | None = None
@@ -200,6 +254,7 @@ class RipgrepWrapper:
                     timeout_seconds=timeout_seconds,
                     admit=admit,
                     max_frame_bytes=max_frame_bytes or DEFAULT_REGEX_MAX_FRAME_BYTES,
+                    shadowed_prefixes=shadowed_prefixes if root_prefix is None else (),
                 )
             except _RipgrepUnavailableError:
                 return await _fallback_indexed_regex_search(
@@ -224,6 +279,38 @@ class RipgrepWrapper:
         return combined
 
 
+async def search_vault_regex(
+    pattern: str,
+    vault_root: Path,
+    *,
+    glob: str | None = None,
+    limit: int = DEFAULT_MAX_RESULT_COUNT,
+    store: FTS5Store | None = None,
+    rg_path: str | None = None,
+    fallback_max_pattern_length: int | None = None,
+    fallback_timeout_seconds: float | None = None,
+    admit: Callable[[str], bool] | None = None,
+    max_frame_bytes: int | None = None,
+    extra_roots: Mapping[str, Path] | None = None,
+    settings: Settings | None = None,
+) -> list[SearchResult]:
+    """Run a Dual-Vault-aware regex search across `vault_root` and any mounted roots."""
+    return await RipgrepWrapper().search(
+        pattern=pattern,
+        vault_root=vault_root,
+        glob=glob,
+        limit=limit,
+        store=store,
+        rg_path=rg_path,
+        fallback_max_pattern_length=fallback_max_pattern_length,
+        fallback_timeout_seconds=fallback_timeout_seconds,
+        admit=admit,
+        max_frame_bytes=max_frame_bytes,
+        extra_roots=extra_roots,
+        settings=settings,
+    )
+
+
 async def _search_single_root(
     *,
     pattern: str,
@@ -237,6 +324,7 @@ async def _search_single_root(
     timeout_seconds: float,
     admit: Callable[[str], bool] | None,
     max_frame_bytes: int,
+    shadowed_prefixes: tuple[str, ...] = (),
 ) -> list[SearchResult]:
     rg_glob = glob if prefix is None else None
     command = _build_command(resolved_rg_path, pattern, rg_glob)
@@ -274,6 +362,7 @@ async def _search_single_root(
                 glob=glob,
                 prefix=prefix,
                 rank_offset=rank_offset,
+                shadowed_prefixes=shadowed_prefixes,
             )
             await _finalize_ripgrep_process(proc, killed_for_limit=killed_for_limit)
             stderr = await _read_stderr(stderr_task)
@@ -345,6 +434,7 @@ async def _collect_results(
     glob: str | None = None,
     prefix: str | None = None,
     rank_offset: int = 0,
+    shadowed_prefixes: tuple[str, ...] = (),
 ) -> tuple[list[SearchResult], bool]:
     results: list[SearchResult] = []
     # One note's chunks are resolved once per search, not once per line that matched
@@ -358,6 +448,8 @@ async def _collect_results(
             continue
         match = _match_fields(parsed, vault_root=vault_root, prefix=prefix)
         if match is None:
+            continue
+        if prefix is None and _is_shadowed_by_extra_roots(match.rel_path, shadowed_prefixes):
             continue
         # Filter on the path before resolving: the glob and the admission check need
         # nothing the index provides, and a match they reject costs a table scan.
