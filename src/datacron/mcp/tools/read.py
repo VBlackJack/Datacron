@@ -16,10 +16,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Final
+
+from pydantic_core import to_jsonable_python
 
 from datacron.core.config import CANONICAL_ULID_PATTERN, TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.frontmatter import matches_frontmatter_filter, normalize_tag_filter
@@ -40,6 +43,7 @@ from datacron.mcp.sandbox import (
     sanitize_payload_strings,
     wrap_vault_content,
 )
+from datacron.mcp.tool_contract import GetNoteOutput
 from datacron.mcp.tools.payloads import (
     _audit,
     _bounded_count,
@@ -61,7 +65,8 @@ from datacron.mcp.tools.search import _repair_clock, _repair_index_on_read
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
-_VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map", "chunk"})
+_VALID_FORMATS: Final[frozenset[str]] = frozenset({"full", "map", "chunk", "metadata"})
+_METADATA_BUDGET_DIVISOR: Final[int] = 4
 _ULID_PATTERN: Final[re.Pattern[str]] = CANONICAL_ULID_PATTERN
 _HEADING_HASH_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}(#{1,6})\s+")
 _CHUNK_ID_SEPARATOR: Final[str] = "::"
@@ -174,7 +179,7 @@ async def _list_notes_impl(
             "list_notes", started, folder=folder, tags=tags, frontmatter=frontmatter
         )
 
-    end = min(start + bounded_limit, total)
+    end = min(start + len(returned), total)
     next_offset = end if end < total else None
     payload = {
         "notes": [_note_summary(app, note) for note in returned],
@@ -185,6 +190,10 @@ async def _list_notes_impl(
         "truncated": start > 0 or next_offset is not None,
         "limit_applied": bounded_limit,
     }
+    try:
+        payload = _fit_list_page(app, payload, "notes")
+    except ValueError as exc:
+        return _error_response("list_notes", exc, started)
     _audit(
         "list_notes",
         started,
@@ -195,7 +204,7 @@ async def _list_notes_impl(
         offset=offset,
         bounded_limit=bounded_limit,
         total=total,
-        returned=len(returned),
+        returned=payload["returned"],
     )
     return payload
 
@@ -284,6 +293,7 @@ async def _get_note_impl(
     try:
         chunk_payload = await _resolve_chunk_payload(app, id_or_path)
         if chunk_payload is not None:
+            _require_response_budget(app, chunk_payload)
             _audit(
                 "get_note",
                 started,
@@ -313,8 +323,10 @@ async def _get_note_impl(
                 app, note, heading_path, heading_occurrence, offset=offset, limit=limit
             )
             if heading_path is not None
-            else _build_map_payload(app, note)
+            else _build_map_payload(app, note, offset=offset, limit=limit)
             if fmt == "map"
+            else _build_metadata_payload(app, note, offset=offset, limit=limit)
+            if fmt == "metadata"
             else _build_full_payload(app, note, offset=offset, limit=limit)
         )
     except ValueError as exc:
@@ -325,8 +337,8 @@ async def _get_note_impl(
         started,
         id_or_path=id_or_path,
         fmt=fmt,
-        offset=offset if fmt == "full" else None,
-        limit=limit if fmt == "full" else None,
+        offset=offset,
+        limit=limit,
         note_id=note.id,
         note_rel_path=note.rel_path,
         truncated=bool(payload.get("truncated", False)),
@@ -406,15 +418,16 @@ def _build_section_payload(
             )
             for ancestor in selected_ancestors
         ]
-    payload = _build_full_payload(app, note, offset=offset, limit=limit, retrieval_content=content)
-    payload["section"] = {
+    section = {
         "heading_path": [_sanitize_retrieval_metadata(app, part) for part in returned_path],
         "heading_occurrence": occurrence,
         "matching_headings": len(matches),
         "line_start": line_start,
         "line_end": line_end,
     }
-    return payload
+    return _build_full_payload(
+        app, note, offset=offset, limit=limit, retrieval_content=content, section=section
+    )
 
 
 def _validate_get_note_request(
@@ -472,6 +485,21 @@ def _note_summary(app: DatacronApp, note: Note) -> dict[str, Any]:
 
 
 def _sanitized_note_metadata(app: DatacronApp, note: Note) -> dict[str, Any]:
+    sanitized = _retrieval_note_metadata(app, note)
+    if _serialized_chars(sanitized) <= (
+        app.settings.max_read_response_chars // _METADATA_BUDGET_DIVISOR
+    ):
+        return sanitized
+    return {
+        "title": "",
+        "tags": [],
+        "aliases": [],
+        "frontmatter": {},
+        "metadata_truncated": True,
+    }
+
+
+def _retrieval_note_metadata(app: DatacronApp, note: Note) -> dict[str, Any]:
     metadata = {
         "title": protect_note_title(app, note),
         "tags": list(note.tags),
@@ -483,6 +511,121 @@ def _sanitized_note_metadata(app: DatacronApp, note: Note) -> dict[str, Any]:
         if metadata["frontmatter"].get("title") == note.title:
             metadata["frontmatter"]["title"] = metadata["title"]
     return sanitize_payload_strings(metadata)
+
+
+def _serialized_chars(payload: dict[str, Any]) -> int:
+    # MCP's text block uses indented JSON. ASCII escaping is conservative for Unicode.
+    # Its structured model also fills absent optional fields with null.
+    normalized = payload
+    if payload.get("format") in _VALID_FORMATS:
+        normalized = {**dict.fromkeys(GetNoteOutput.__annotations__), **payload}
+    elif "notes" in payload:
+        normalized = {
+            **payload,
+            "notes": [{"metadata_truncated": None, **note} for note in payload["notes"]],
+        }
+    return len(json.dumps(to_jsonable_python(normalized), indent=2, ensure_ascii=True))
+
+
+def _require_response_budget(app: DatacronApp, payload: dict[str, Any]) -> None:
+    if _serialized_chars(payload) > app.settings.max_read_response_chars:
+        raise ValueError(
+            "Read response cannot fit the serialized budget without losing its identity "
+            "or selectors; use a paginated full/metadata read or increase "
+            "DATACRON_MAX_READ_RESPONSE_CHARS"
+        )
+
+
+def _fit_list_page(app: DatacronApp, payload: dict[str, Any], key: str) -> dict[str, Any]:
+    rows = payload[key]
+    total = payload["total"]
+    start = payload["offset"]
+
+    def candidate(count: int) -> dict[str, Any]:
+        end = start + count
+        return {
+            **payload,
+            key: rows[:count],
+            "returned": count,
+            "next_offset": end if end < total else None,
+            "truncated": start > 0 or end < total,
+        }
+
+    complete = candidate(len(rows))
+    if _serialized_chars(complete) <= app.settings.max_read_response_chars:
+        return complete
+    low, high = 0, len(rows)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _serialized_chars(candidate(middle)) <= app.settings.max_read_response_chars:
+            low = middle
+        else:
+            high = middle - 1
+    result = candidate(low)
+    if rows and low == 0:
+        _require_response_budget(app, candidate(1))
+    _require_response_budget(app, result)
+    return result
+
+
+def _fit_text_page(
+    app: DatacronApp, payload: dict[str, Any], text: str, *, key: str, wrapped: bool
+) -> dict[str, Any]:
+    start, total = payload["offset"], payload["total_chars"]
+
+    def candidate(count: int) -> dict[str, Any]:
+        selected = text[:count]
+        end = start + count
+        return {
+            **payload,
+            key: wrap_vault_content(payload["rel_path"], selected) if wrapped else selected,
+            "returned_chars": count,
+            "returned_estimated_tokens": _estimate_tokens(selected),
+            "limit_applied": min(payload["limit_applied"], count)
+            if count < len(text)
+            else payload["limit_applied"],
+            "next_offset": end if end < total else None,
+            "truncated": start > 0 or end < total,
+        }
+
+    complete = candidate(len(text))
+    if _serialized_chars(complete) <= app.settings.max_read_response_chars:
+        return complete
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _serialized_chars(candidate(middle)) <= app.settings.max_read_response_chars:
+            low = middle
+        else:
+            high = middle - 1
+    if text and low == 0:
+        _require_response_budget(app, candidate(1))
+    result = candidate(low)
+    _require_response_budget(app, result)
+    return result
+
+
+def _build_metadata_payload(
+    app: DatacronApp, note: Note, *, offset: int, limit: int | None
+) -> dict[str, Any]:
+    text = json.dumps(to_jsonable_python(_retrieval_note_metadata(app, note)), ensure_ascii=False)
+    start = min(offset, len(text))
+    applied = min(limit or len(text), app.settings.max_read_response_chars)
+    payload = {
+        "format": "metadata",
+        "id": note.id,
+        "rel_path": _redact_retrieval_text(app, note.rel_path),
+        "content_hash": note.content_hash,
+        "note_content_hash": note.content_hash,
+        "content_hash_contract": FRESHNESS_CONTRACT_ID,
+        "offset": start,
+        "total_chars": len(text),
+        "limit_applied": applied,
+        **_note_provenance(app, note.rel_path),
+    }
+    return _fit_text_page(
+        app, payload, text[start : start + applied], key="metadata_json", wrapped=False
+    )
 
 
 async def _resolve_note(app: DatacronApp, id_or_path: str) -> Note | None:
@@ -703,6 +846,7 @@ def _build_full_payload(
     offset: int,
     limit: int | None,
     retrieval_content: str | None = None,
+    section: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     max_tokens = app.settings.get_note_max_tokens
     max_chars = max_tokens * TOKEN_ESTIMATE_CHARS_PER_TOKEN
@@ -719,7 +863,7 @@ def _build_full_payload(
 
     returned_rel_path = _redact_retrieval_text(app, note.rel_path)
     wrapped = wrap_vault_content(returned_rel_path, content)
-    return {
+    payload = {
         "id": note.id,
         "rel_path": returned_rel_path,
         **_sanitized_note_metadata(app, note),
@@ -740,6 +884,9 @@ def _build_full_payload(
         "truncated": truncated,
         **_note_provenance(app, note.rel_path),
     }
+    if section is not None:
+        payload["section"] = section
+    return _fit_text_page(app, payload, content, key="content", wrapped=True)
 
 
 def _build_chunk_payload(
@@ -782,7 +929,9 @@ def _build_chunk_payload(
     }
 
 
-def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
+def _build_map_payload(
+    app: DatacronApp, note: Note, *, offset: int = 0, limit: int | None = None
+) -> dict[str, Any]:
     # One heading parse serves the map, the chunk protection and the title protection.
     selected_headings = markdown_headings(note.content.splitlines(keepends=True))
     chunks = protect_chunk_metadata(app, note, app.chunker.chunk(note), headings=selected_headings)
@@ -815,17 +964,27 @@ def _build_map_payload(app: DatacronApp, note: Note) -> dict[str, Any]:
                 "chunk_id": _redact_retrieval_text(app, chunk.chunk_id),
             }
         )
-    return {
+    start = min(offset, len(headings))
+    title = _sanitize_retrieval_metadata(
+        app, protect_note_title(app, note, headings=selected_headings)
+    )
+    omitted_title = (
+        len(json.dumps(title)) > app.settings.max_read_response_chars // _METADATA_BUDGET_DIVISOR
+    )
+    payload = {
         "id": note.id,
         "rel_path": _redact_retrieval_text(app, note.rel_path),
-        "title": _sanitize_retrieval_metadata(
-            app, protect_note_title(app, note, headings=selected_headings)
-        ),
+        "title": "" if omitted_title else title,
         "content_hash": note.content_hash,
         "note_content_hash": note.content_hash,
         "content_hash_contract": FRESHNESS_CONTRACT_ID,
         "format": "map",
-        "headings": headings,
+        "headings": headings[start : start + limit] if limit is not None else headings[start:],
         "chunk_count": len(chunks),
+        "total": len(headings),
+        "offset": start,
         **_note_provenance(app, note.rel_path),
     }
+    if omitted_title:
+        payload["metadata_truncated"] = True
+    return _fit_list_page(app, payload, "headings")

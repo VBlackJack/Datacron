@@ -224,6 +224,8 @@ The active FileLogger location is controlled by `DATACRON_LOG_DIR`; its current 
 `~/.datacron/logs`. If the sidecar log directory is empty, check that environment value and the
 default directory. Set `DATACRON_LOG_DIR` to `<vault>/.datacron/logs` in the server environment if
 you want runtime logs colocated with the vault. Daily files use the name
-`datacron_YYYYMMDD.log`; warnings are also sent to stderr. When reporting a failure, include the
+`datacron_YYYYMMDD.log`; the handler switches files at local midnight and appends
+to the same daily file after a restart. Files older than 14 days are pruned at
+startup and on date changes. Warnings are also sent to stderr. When reporting a failure, include the
 `datacron status` output, Datacron version, client name and scope, and the relevant redacted log
 lines.
