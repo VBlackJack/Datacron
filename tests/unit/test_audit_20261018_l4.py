@@ -526,6 +526,7 @@ _SPLITLINES_ALLOWED_CALLS = {
     "cli.py": 1,
     "contradictions.py": 2,
     "core/frontmatter.py": 3,
+    "core/frontmatter_edit.py": 2,
     "core/memory_protocol.py": 1,
     "core/operation_log.py": 3,
     "core/vault_writer.py": 1,

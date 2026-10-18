@@ -35,7 +35,10 @@ from datacron.core.frontmatter import (
     coerce_string_list,
     parse_preserving_bom_and_body_eols,
     serialize,
-    serialize_preserving_bom,
+)
+from datacron.core.frontmatter_edit import (
+    FrontmatterEditRefusedError,
+    serialize_preserving_frontmatter,
 )
 from datacron.core.operation_log import OperationContext
 from datacron.core.paths import (
@@ -63,6 +66,7 @@ __all__ = [
     "MonthlyDigestSummary",
     "ReadOnlyModeError",
     "ReadOnlyVaultError",
+    "SkippedCompactionNote",
     "compact_vault_memory",
 ]
 
@@ -72,6 +76,10 @@ _ARCHIVE_REL_DIR: Final[str] = f"{MEMORY_SUBFOLDER_NAME}/archive"
 _COMPACTED_TAG: Final[str] = "archive/compacted"
 _MEMORY_ARCHIVE_TAG: Final[str] = "memory/archive"
 _SUPERSEDED_TAG: Final[str] = "archive/superseded"
+# Compacted notes and digests also carry ``archived: true``. The index honours
+# that key under any archive tag list, so a vault that declares its own list
+# without the compaction tags still demotes them.
+_ARCHIVED_KEY: Final[str] = "archived"
 _DIGEST_TAGS: Final[tuple[str, ...]] = (
     "type/archive",
     "archive/journal-digest",
@@ -104,8 +112,21 @@ class MonthlyDigestSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class SkippedCompactionNote:
+    """One candidate journal left uncompacted, with the reason it was skipped."""
+
+    rel_path: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class MemoryCompactionReport:
-    """Outcome of a dry-run or applied memory compaction pass."""
+    """Outcome of a dry-run or applied memory compaction pass.
+
+    ``skipped_notes`` lists candidates whose frontmatter cannot be edited without
+    rewriting keys compaction does not set. They are left untouched and kept out
+    of the digest, so a digest's ``compacted_notes`` names only marked notes.
+    """
 
     dry_run: bool
     older_than_days: int
@@ -115,6 +136,7 @@ class MemoryCompactionReport:
     candidate_journals: list[CompactionCandidate] = field(default_factory=list)
     digests_planned: list[MonthlyDigestSummary] = field(default_factory=list)
     superseded_notes: list[str] = field(default_factory=list)
+    skipped_notes: list[SkippedCompactionNote] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the compaction report to a JSON-compatible dictionary."""
@@ -217,8 +239,8 @@ def _build_digest_content(
     *,
     existing_meta: dict[str, Any],
     existing_body: str,
-    has_bom: bool,
-) -> tuple[str, str]:
+) -> tuple[str, dict[str, Any], str]:
+    """Return the digest id, its frontmatter and its body; the caller renders them."""
     digest_id = str(existing_meta.get("id") or ULID())
     prev_compacted = coerce_string_list(existing_meta.get("compacted_notes"), split_delimited=False)
     compacted_list: list[str] = list(prev_compacted)
@@ -256,19 +278,22 @@ def _build_digest_content(
         **existing_meta,
         "id": digest_id,
         "title": f"Journal Digest {month_bucket}",
-        "created": str(existing_meta.get("created") or now_iso),
+        # An existing value is kept as parsed: turning a YAML date into its
+        # string form would rewrite a key compaction has no reason to touch.
+        "created": existing_meta.get("created") or now_iso,
         "updated": now_iso,
         "tags": merged_tags,
         "compacted_notes": compacted_list,
+        _ARCHIVED_KEY: True,
     }
     body_text = "\n\n".join(sections).strip() + "\n"
-    if has_bom:
-        rendered = serialize_preserving_bom(metadata, body_text, has_bom=True)
-    else:
-        rendered = serialize(metadata, body_text)
-    if not rendered.endswith(("\n", "\r\n")):
-        rendered += "\n"
-    return digest_id, rendered
+    return digest_id, metadata, body_text
+
+
+def _with_trailing_newline(rendered: str, raw_text: str) -> str:
+    if rendered.endswith(("\n", "\r\n")):
+        return rendered
+    return rendered + ("\r\n" if "\r\n" in raw_text else "\n")
 
 
 async def _write_monthly_digest(
@@ -291,15 +316,19 @@ async def _write_monthly_digest(
 
         def _mutate_digest(raw_existing: str) -> str:
             existing_meta, existing_body, has_bom = parse_preserving_bom_and_body_eols(raw_existing)
-            _, rendered = _build_digest_content(
+            _, metadata, body_text = _build_digest_content(
                 month_bucket,
                 bucket_notes,
                 now_iso,
                 existing_meta=existing_meta,
                 existing_body=existing_body,
-                has_bom=has_bom,
             )
-            return rendered
+            # Only the keys compaction sets are rendered again; the rest of the
+            # digest's frontmatter keeps its bytes, comments and key order.
+            rendered = serialize_preserving_frontmatter(
+                raw_existing, metadata, body_text, has_bom=has_bom
+            )
+            return _with_trailing_newline(rendered, raw_existing)
 
         await writer.mutate_note_atomic(
             digest_rel_path,
@@ -307,14 +336,14 @@ async def _write_monthly_digest(
             operation=op_ctx,
         )
     else:
-        digest_id, rendered = _build_digest_content(
+        digest_id, metadata, body_text = _build_digest_content(
             month_bucket,
             bucket_notes,
             now_iso,
             existing_meta={},
             existing_body="",
-            has_bom=False,
         )
+        rendered = _with_trailing_newline(serialize(metadata, body_text), "")
         await writer.write_note_atomic(
             digest_rel_path,
             rendered,
@@ -323,6 +352,55 @@ async def _write_monthly_digest(
             operation=op_ctx,
         )
     return digest_rel_path
+
+
+def _render_compacted_source(
+    raw_text: str,
+    note_id: str,
+    digest_rel_path: str,
+    now_iso: str,
+) -> str:
+    """Return ``raw_text`` marked as compacted into ``digest_rel_path``.
+
+    Only the keys compaction sets are rendered again. A PyYAML round trip of the
+    whole block turned 14:30 into 870, 1.10 into 1.1 and NO into false, and
+    dropped every comment, in notes compaction only meant to tag. A block that
+    cannot be edited that way raises :class:`FrontmatterEditRefusedError`.
+    """
+    meta, body, has_bom = parse_preserving_bom_and_body_eols(raw_text)
+    tags = coerce_string_list(meta.get("tags"))
+    for required_tag in (_COMPACTED_TAG, _MEMORY_ARCHIVE_TAG):
+        if not any(t.casefold() == required_tag.casefold() for t in tags):
+            tags.append(required_tag)
+    meta["id"] = meta.get("id") or note_id
+    meta["tags"] = tags
+    meta["compacted_into"] = digest_rel_path
+    meta["updated"] = now_iso
+    meta[_ARCHIVED_KEY] = True
+    rendered = serialize_preserving_frontmatter(raw_text, meta, body, has_bom=has_bom)
+    return _with_trailing_newline(rendered, raw_text)
+
+
+def _partition_markable(
+    bucket_notes: list[Note],
+    digest_rel_path: str,
+    now_iso: str,
+) -> tuple[list[Note], list[SkippedCompactionNote]]:
+    """Split notes into those compaction can mark and those it must leave alone.
+
+    The check runs before the digest is written, so a note that cannot be marked
+    never gets a section or a ``compacted_notes`` entry it does not carry itself.
+    """
+    markable: list[Note] = []
+    skipped: list[SkippedCompactionNote] = []
+    for note in bucket_notes:
+        try:
+            _render_compacted_source(note.raw_content, note.id, digest_rel_path, now_iso)
+        except FrontmatterEditRefusedError as exc:
+            skipped.append(SkippedCompactionNote(rel_path=note.rel_path, reason=str(exc)))
+            continue
+        markable.append(note)
+    return markable, skipped
 
 
 async def _mark_source_note_compacted(
@@ -338,20 +416,7 @@ async def _mark_source_note_compacted(
         return
 
     def _mutate_source(raw_text: str) -> str:
-        meta, body, has_bom = parse_preserving_bom_and_body_eols(raw_text)
-        tags = coerce_string_list(meta.get("tags"))
-        for required_tag in (_COMPACTED_TAG, _MEMORY_ARCHIVE_TAG):
-            if not any(t.casefold() == required_tag.casefold() for t in tags):
-                tags.append(required_tag)
-        meta["id"] = meta.get("id") or note.id
-        meta["tags"] = tags
-        meta["compacted_into"] = digest_rel_path
-        meta["updated"] = now_iso
-        rendered = serialize_preserving_bom(meta, body, has_bom=has_bom)
-        if not rendered.endswith(("\n", "\r\n")):
-            eol = "\r\n" if "\r\n" in raw_text else "\n"
-            rendered += eol
-        return rendered
+        return _render_compacted_source(raw_text, note.id, digest_rel_path, now_iso)
 
     await writer.mutate_note_atomic(
         note.rel_path,
@@ -430,7 +495,16 @@ async def compact_vault_memory(
         for bucket, bucket_notes in sorted(grouped_notes.items())
     ]
 
+    now_iso = datetime.now(UTC).isoformat()
     if dry_run or not candidates:
+        # A preview names the notes an apply would skip, from the same check.
+        preview_skipped = [
+            skipped
+            for bucket, bucket_notes in sorted(grouped_notes.items())
+            for skipped in _partition_markable(
+                bucket_notes, f"{_ARCHIVE_REL_DIR}/journal-{bucket}.md", now_iso
+            )[1]
+        ]
         return MemoryCompactionReport(
             dry_run=dry_run,
             older_than_days=older_than_days,
@@ -440,6 +514,7 @@ async def compact_vault_memory(
             candidate_journals=candidates,
             digests_planned=digests_planned,
             superseded_notes=superseded_paths,
+            skipped_notes=preview_skipped,
         )
 
     writer_settings = (
@@ -457,28 +532,53 @@ async def compact_vault_memory(
         vault_config=vault_cfg,
     )
 
-    now_iso = datetime.now(UTC).isoformat()
     digests_written = 0
     compacted_count = 0
-    for bucket, bucket_notes in sorted(grouped_notes.items()):
-        digest_rel = await _write_monthly_digest(
-            resolved_root,
-            active_settings,
-            writer,
-            bucket,
-            bucket_notes,
-            now_iso,
+    skipped_notes: list[SkippedCompactionNote] = []
+    for bucket, all_bucket_notes in sorted(grouped_notes.items()):
+        digest_rel_path = f"{_ARCHIVE_REL_DIR}/journal-{bucket}.md"
+        bucket_notes, bucket_skipped = _partition_markable(
+            all_bucket_notes, digest_rel_path, now_iso
         )
-        digests_written += 1
-        for note in bucket_notes:
-            await _mark_source_note_compacted(
+        skipped_notes.extend(bucket_skipped)
+        if not bucket_notes:
+            continue
+        try:
+            digest_rel = await _write_monthly_digest(
                 resolved_root,
                 active_settings,
                 writer,
-                note,
-                digest_rel,
+                bucket,
+                bucket_notes,
                 now_iso,
             )
+        except FrontmatterEditRefusedError as exc:
+            # An existing digest whose frontmatter cannot be edited in place is
+            # left as it is, and so is every note of its month: marking them
+            # would point them at a digest that does not hold their sections.
+            skipped_notes.append(SkippedCompactionNote(rel_path=digest_rel_path, reason=str(exc)))
+            skipped_notes.extend(
+                SkippedCompactionNote(rel_path=note.rel_path, reason=str(exc))
+                for note in bucket_notes
+            )
+            continue
+        digests_written += 1
+        for note in bucket_notes:
+            try:
+                await _mark_source_note_compacted(
+                    resolved_root,
+                    active_settings,
+                    writer,
+                    note,
+                    digest_rel,
+                    now_iso,
+                )
+            except FrontmatterEditRefusedError as exc:
+                # The note changed on disk after the check above. The digest
+                # already holds its section; the report names it so the two
+                # can be told apart, and a rerun after a fix marks it.
+                skipped_notes.append(SkippedCompactionNote(rel_path=note.rel_path, reason=str(exc)))
+                continue
             compacted_count += 1
 
     await _reconcile_if_indexed(resolved_root, active_settings, reader, vault_cfg)
@@ -491,4 +591,5 @@ async def compact_vault_memory(
         candidate_journals=candidates,
         digests_planned=digests_planned,
         superseded_notes=superseded_paths,
+        skipped_notes=skipped_notes,
     )
