@@ -49,6 +49,7 @@ from datacron.core.frontmatter import (
     extract_tags,
     parse,
     resolve_note_title,
+    strict_frontmatter_block,
 )
 from datacron.core.hashing import NOTE_ID_LENGTH, derive_note_id, sha256_bytes
 from datacron.core.logger import get_logger
@@ -87,6 +88,10 @@ MIGRATED_ULID_SIDECAR_FILENAME: Final[str] = "ulids.json.migrated"
 # title: the same rule for the reader and for every other module that derives a title.
 H1_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}#\s+(.+?)\s*$", re.MULTILINE)
 _H1_PATTERN: Final[re.Pattern[str]] = H1_PATTERN
+# The writer's rule for an ``id:`` line in a frontmatter block YAML cannot load.
+_FRONTMATTER_ID_PATTERN: Final[re.Pattern[str]] = re.compile(
+    rf"(?m)^id:[ \t]*['\"]?([0-9A-HJKMNP-TV-Z]{{{NOTE_ID_LENGTH}}})['\"]?[ \t]*$"
+)
 
 
 class DuplicateNoteIdentityError(ValueError):
@@ -534,6 +539,7 @@ class FilesystemVaultReader:
         stat = await asyncio.to_thread(resolved.stat)
         metadata: dict[str, Any]
         body: str
+        unparsed: str | None
         try:
             metadata, body = parse(raw_text)
         except FrontmatterError as exc:
@@ -544,9 +550,12 @@ class FilesystemVaultReader:
             )
             metadata = {}
             body = raw_text
+            unparsed = raw_text
+        else:
+            unparsed = None
 
         rel_path = self._rel_path_for_resolved(resolved)
-        note_id = await self._resolve_id(metadata, rel_path)
+        note_id = await self._resolve_id(metadata, rel_path, unparsed_raw=unparsed)
         title = resolve_note_title(
             metadata,
             body,
@@ -761,10 +770,28 @@ class FilesystemVaultReader:
     def _should_skip_file(self, name: str) -> bool:
         return name.casefold() in self._admission_policy.excluded_files
 
-    async def _resolve_id(self, metadata: dict[str, object], rel_path: str) -> str:
+    async def _resolve_id(
+        self,
+        metadata: dict[str, object],
+        rel_path: str,
+        *,
+        unparsed_raw: str | None = None,
+    ) -> str:
+        """Return the note's identity: frontmatter id, sidecar mapping, then path.
+
+        ``unparsed_raw`` is the note text when its frontmatter could not be parsed.
+        The writer still finds an ``id:`` line in such a block by pattern, so the
+        reader does too: deriving and storing a path identity there gave the note
+        two identities, one per side.
+        """
         front_id = metadata.get("id")
         if isinstance(front_id, str) and len(front_id) == NOTE_ID_LENGTH:
             return front_id
+        if unparsed_raw is not None:
+            block = strict_frontmatter_block(unparsed_raw)
+            match = _FRONTMATTER_ID_PATTERN.search(block) if block is not None else None
+            if match is not None:
+                return match.group(1)
         existing = await self._id_store.get(rel_path)
         if existing:
             return existing
@@ -798,9 +825,12 @@ class FilesystemVaultReader:
                 exc,
             )
             metadata, body = {}, raw_text
+            unparsed: str | None = raw_text
+        else:
+            unparsed = None
         rel_path = self._rel_path_for_resolved(path)
         return _AliasRecord(
-            note_id=await self._resolve_id(metadata, rel_path),
+            note_id=await self._resolve_id(metadata, rel_path, unparsed_raw=unparsed),
             title=resolve_note_title(
                 metadata,
                 body,

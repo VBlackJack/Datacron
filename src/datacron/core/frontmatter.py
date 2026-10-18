@@ -88,7 +88,7 @@ class FrontmatterError(Exception):
     """Raised when a note's YAML frontmatter cannot be parsed."""
 
 
-def parse(raw: str) -> tuple[dict[str, Any], str]:
+def parse(raw: str, *, strict_keys: bool = False) -> tuple[dict[str, Any], str]:
     """Split ``raw`` into a YAML frontmatter mapping and body.
 
     Returns a tuple ``(metadata, body)``. If the file has no frontmatter
@@ -108,10 +108,15 @@ def parse(raw: str) -> tuple[dict[str, Any], str]:
     rather than to the note, so it is dropped from the body when frontmatter is
     present; the no-frontmatter branch still returns ``raw`` untouched, keeping
     that body byte-exact.
+
+    A top-level key that YAML reads as anything but a string is left out of the
+    returned mapping, and the other keys are kept. With ``strict_keys`` such a key
+    raises :class:`FrontmatterError` instead, for a caller that rewrites the note.
     """
     parseable = raw[1:] if raw.startswith(_BOM) else raw
     if not parseable.lstrip().startswith("---"):
         return {}, raw
+    metadata: dict[str, Any]
     try:
         post = frontmatter.loads(parseable)
     except (yaml.YAMLError, ValueError) as exc:
@@ -124,10 +129,20 @@ def parse(raw: str) -> tuple[dict[str, Any], str]:
         # arguments, so a top-level key that YAML reads as anything but a string
         # (``2026:``, a date, ``true``, ``null``, ``1.5``) raises TypeError. It
         # escaped every caller, and one such note failed search and listing for
-        # the whole vault. Datacron only admits string keys, as the strict write
-        # validation already says, so the note degrades like invalid YAML.
-        raise FrontmatterError(f"{_NON_STRING_KEY_MESSAGE}: {exc}") from exc
-    metadata: dict[str, Any] = dict(post.metadata)
+        # the whole vault.
+        if strict_keys:
+            # A rewrite would serialize the mapping back without those keys, so a
+            # caller that writes the note refuses it instead of losing data.
+            raise FrontmatterError(f"{_NON_STRING_KEY_MESSAGE}: {exc}") from exc
+        # A reader keeps every string key. Degrading to empty metadata dropped
+        # the note's frontmatter id as well, and the reader then derived and
+        # stored a second identity that the writer, which finds the id by its
+        # own pattern, never agreed with.
+        loaded, content = frontmatter.parse(parseable)
+        metadata = {key: value for key, value in loaded.items() if isinstance(key, str)}
+        _normalize_lifecycle_scalars(metadata)
+        return metadata, content
+    metadata = dict(post.metadata)
     _normalize_lifecycle_scalars(metadata)
     return metadata, post.content
 
@@ -235,7 +250,9 @@ def parse_preserving_bom(raw: str) -> tuple[dict[str, Any], str, bool]:
     """Parse ``raw`` and report whether it started with a byte order mark."""
     has_bom = raw.startswith("\ufeff")
     parseable = raw[1:] if has_bom else raw
-    metadata, body = parse(parseable)
+    # Every caller rewrites the note from this mapping: a key it cannot carry back
+    # must refuse the rewrite rather than vanish from the file.
+    metadata, body = parse(parseable, strict_keys=True)
     return metadata, body, has_bom
 
 

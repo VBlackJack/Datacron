@@ -114,7 +114,7 @@ def _escape_suspicious(content: str, *, preceding: str = "", following: str = ""
         matched_literal = text[start:end]
         inert_literal = _html_escape(matched_literal, quote=False)
         escaped.append(text[cursor:start])
-        if _is_already_escaped(text, start, end):
+        if _is_already_escaped(text, start, end, lower=lower, upper=upper):
             escaped.append(inert_literal)
         else:
             escaped.append(f"{ESCAPE_PREFIX}{inert_literal}{ESCAPE_SUFFIX}")
@@ -147,9 +147,18 @@ def _detection_view(content: str) -> tuple[str, list[int]]:
     return "".join(chars), index_map
 
 
-def _is_already_escaped(content: str, start: int, end: int) -> bool:
+def _is_already_escaped(
+    content: str, start: int, end: int, *, lower: int = 0, upper: int | None = None
+) -> bool:
+    """Return whether ``content[start:end]`` already sits inside an escape envelope.
+
+    Only an envelope wholly inside the returned span ``[lower, upper)`` counts. With
+    page context, the prefix may lie in the text before the page, and a page cut
+    just after it would otherwise come back with the phrase raw.
+    """
+    bound = len(content) if upper is None else upper
     prefix_start = start - len(ESCAPE_PREFIX)
-    if prefix_start < 0:
+    if prefix_start < lower or end + len(ESCAPE_SUFFIX) > bound:
         return False
     return (
         content[prefix_start:start] == ESCAPE_PREFIX
