@@ -419,7 +419,8 @@ def test_extra_read_vaults_multi_vault_mounts_read_search_and_refuse_writes(
                 app, folder="shared", tags=None, frontmatter=None, limit=20
             )
             assert [n["rel_path"] for n in listed["notes"]] == ["shared/incident.md"]
-            assert listed["notes"][0]["source_vault"] == "docs"
+            assert listed["notes"][0]["source_vault"] == "extra"
+            assert listed["notes"][0]["source_mount"] == "shared"
             assert listed["notes"][0]["writable"] is False
 
             note_payload = await _get_note_impl(
@@ -431,7 +432,8 @@ def test_extra_read_vaults_multi_vault_mounts_read_search_and_refuse_writes(
                 offset=0,
                 limit=None,
             )
-            assert note_payload["source_vault"] == "docs"
+            assert note_payload["source_vault"] == "extra"
+            assert note_payload["source_mount"] == "shared"
             assert note_payload["writable"] is False
 
             fts_shared = await _search_text_impl(

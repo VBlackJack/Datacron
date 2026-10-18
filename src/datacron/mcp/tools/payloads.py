@@ -21,11 +21,14 @@ from uuid import uuid4
 
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.logger import get_logger
+from datacron.core.paths import effective_extra_read_vaults, note_source_vault
+from datacron.core.vault_writer import VaultLockBusyError
 from datacron.mcp.bounds import bounded_count as _bounded_count
 from datacron.mcp.guidance import ERROR_ACTIONS
 from datacron.mcp.sandbox import (
     sanitize_metadata_value,
 )
+from datacron.mcp.tool_contract import EXTRA_SOURCE_VAULT
 
 __all__ = ["_bounded_count"]
 
@@ -34,6 +37,10 @@ if TYPE_CHECKING:
 
 _LOGGER = get_logger("datacron.mcp.tools")
 _INTERNAL_ERROR_CODE: Final[str] = "internal_error"
+VAULT_LOCK_BUSY_CODE: Final[str] = "vault_lock_busy"
+VAULT_LOCK_BUSY_MESSAGE: Final[str] = (
+    "the vault write lock is held by another Datacron writer; nothing was written, retry shortly"
+)
 MAX_FRONTMATTER_FILTER_PAIRS: Final[int] = 8
 
 
@@ -42,13 +49,18 @@ def _estimate_tokens(text: str) -> int:
 
 
 def _error_response(tool: str, exc: BaseException, started: float, **fields: Any) -> dict[str, Any]:
-    message = sanitize_metadata_value(str(exc))
+    lock_busy = isinstance(exc, VaultLockBusyError)
+    message = VAULT_LOCK_BUSY_MESSAGE if lock_busy else sanitize_metadata_value(str(exc))
     _audit(tool, started, error=type(exc).__name__, error_message=message, **fields)
     error: dict[str, Any] = {
         "type": type(exc).__name__,
         "message": message,
     }
-    code = getattr(exc, "code", None)
+    if lock_busy:
+        # Contention with another Datacron writer, not a fault: nothing was written
+        # and the same call can simply be repeated. It surfaced as internal_error.
+        error["retryable"] = True
+    code = VAULT_LOCK_BUSY_CODE if lock_busy else getattr(exc, "code", None)
     if code is not None:
         error["code"] = code
     action = ERROR_ACTIONS.get(code or type(exc).__name__)
@@ -120,6 +132,25 @@ def _redact_retrieval_text(app: DatacronApp, value: str) -> str:
 
 def _sanitize_retrieval_metadata(app: DatacronApp, value: str) -> str:
     return sanitize_metadata_value(_redact_retrieval_text(app, value))
+
+
+def _note_source(app: DatacronApp, rel_path: str) -> dict[str, Any]:
+    """Return the ``source_vault`` provenance of ``rel_path``, and its mount when extra.
+
+    A note served from a ``DATACRON_EXTRA_READ_VAULTS`` mount reported ``docs``,
+    which the documentation says it does not: the field is how a caller tells the
+    primary vault from a read-only secondary mount. The mount table is the one the
+    scope serves, resolved from the application settings for this vault root.
+    """
+    mounts = app.settings.extra_read_vaults
+    if mounts:
+        first_part = rel_path.strip().replace("\\", "/").lstrip("/").split("/", 1)[0].casefold()
+        if any(prefix.casefold() == first_part for prefix in mounts):
+            active = effective_extra_read_vaults(app.vault_root, settings=app.settings)
+            for prefix in active:
+                if prefix.casefold() == first_part:
+                    return {"source_vault": EXTRA_SOURCE_VAULT, "source_mount": prefix}
+    return {"source_vault": note_source_vault(rel_path)}
 
 
 def _sanitize_optional_retrieval_metadata(

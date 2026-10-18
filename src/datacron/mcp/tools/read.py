@@ -32,7 +32,6 @@ from datacron.core.markdown_sections import heading_ancestry
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.core.paths import (
     PathConfinementError,
-    note_source_vault,
     read_ulid_mappings,
     sidecar_dir,
 )
@@ -40,6 +39,7 @@ from datacron.core.scope import NoteAdmissionError
 from datacron.core.vault import ULID_SIDECAR_FILENAME
 from datacron.indexing.chunker import content_line_offset
 from datacron.mcp.sandbox import (
+    boundary_context,
     sanitize_payload_strings,
     wrap_vault_content,
 )
@@ -50,6 +50,7 @@ from datacron.mcp.tools.payloads import (
     _error_response,
     _estimate_tokens,
     _internal_error_response,
+    _note_source,
     _redact_retrieval_text,
     _sanitize_retrieval_metadata,
     _validate_frontmatter_filter,
@@ -466,7 +467,7 @@ def _filter_by_tags(notes: list[Note], tags: list[str] | None) -> list[Note]:
 
 def _note_provenance(app: DatacronApp, rel_path: str) -> dict[str, Any]:
     return {
-        "source_vault": note_source_vault(rel_path),
+        **_note_source(app, rel_path),
         "writable": bool(
             app.write_policy.writes_allowed and app.scope.allows_rel_path(rel_path, "write")
         ),
@@ -569,16 +570,36 @@ def _fit_list_page(app: DatacronApp, payload: dict[str, Any], key: str) -> dict[
 
 
 def _fit_text_page(
-    app: DatacronApp, payload: dict[str, Any], text: str, *, key: str, wrapped: bool
+    app: DatacronApp,
+    payload: dict[str, Any],
+    text: str,
+    *,
+    key: str,
+    wrapped: bool,
+    source: str | None = None,
 ) -> dict[str, Any]:
+    """Fit ``text``, the page at ``payload["offset"]``, into the response budget.
+
+    ``source`` is the whole text the page was cut from. With it, a wrapped page is
+    escaped with the text around its boundaries in view, so a phrase split between
+    two pages is escaped in both.
+    """
     start, total = payload["offset"], payload["total_chars"]
+
+    def wrap(selected: str) -> str:
+        if source is None:
+            return wrap_vault_content(payload["rel_path"], selected)
+        preceding, following = boundary_context(source, start, start + len(selected))
+        return wrap_vault_content(
+            payload["rel_path"], selected, preceding=preceding, following=following
+        )
 
     def candidate(count: int) -> dict[str, Any]:
         selected = text[:count]
         end = start + count
         return {
             **payload,
-            key: wrap_vault_content(payload["rel_path"], selected) if wrapped else selected,
+            key: wrap(selected) if wrapped else selected,
             "returned_chars": count,
             "returned_estimated_tokens": _estimate_tokens(selected),
             "limit_applied": min(payload["limit_applied"], count)
@@ -862,7 +883,10 @@ def _build_full_payload(
     next_offset = end if end < total_chars else None
 
     returned_rel_path = _redact_retrieval_text(app, note.rel_path)
-    wrapped = wrap_vault_content(returned_rel_path, content)
+    preceding, following = boundary_context(retrieval_content, start, end)
+    wrapped = wrap_vault_content(
+        returned_rel_path, content, preceding=preceding, following=following
+    )
     payload = {
         "id": note.id,
         "rel_path": returned_rel_path,
@@ -886,7 +910,9 @@ def _build_full_payload(
     }
     if section is not None:
         payload["section"] = section
-    return _fit_text_page(app, payload, content, key="content", wrapped=True)
+    return _fit_text_page(
+        app, payload, content, key="content", wrapped=True, source=retrieval_content
+    )
 
 
 def _build_chunk_payload(

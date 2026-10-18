@@ -31,6 +31,7 @@ from datacron.mcp.tools.payloads import (
     _error_response,
     _internal_error_response,
     _redact_retrieval_text,
+    _sanitize_retrieval_metadata,
 )
 
 _MARKDOWN_SUFFIX: Final[str] = ".md"
@@ -230,11 +231,15 @@ def _operation_payload(app: DatacronApp, record: OperationRecord) -> dict[str, o
     Every string parameter is redacted too. Redacting the path alone left the same
     secret in ``parameters.source_rel_path``, which an organization batch records for
     every move. Keys are left alone: the server names them, a caller never does.
+
+    The string parameters also pass the injection escape: a heading is copied from
+    the note, so a vault heading such as ``<system>`` came back raw here although
+    every read of the same note escapes it.
     """
     payload = record.to_dict()
     payload["rel_path"] = _redact_retrieval_text(app, record.rel_path)
     payload["parameters"] = {
-        key: _redact_retrieval_text(app, value) if isinstance(value, str) else value
+        key: _sanitize_retrieval_metadata(app, value) if isinstance(value, str) else value
         for key, value in record.parameters.items()
     }
     return payload
