@@ -84,6 +84,34 @@ enregistrement complet et sauvegardé à côté du journal sous `operations.json
 Un enregistrement complet qui n'a perdu que son retour à la ligne est laissé en place pour un
 opérateur.
 
+Ce cas se voit à ce que chaque écriture est refusée avec `operation log does not end at a JSONL
+boundary`, et le journal du serveur le nomme : `The operation log ends with a complete record that
+has no trailing newline at byte offset <n>`. La reprise n'ajoute jamais elle-même le retour à la
+ligne, car elle ne sait pas distinguer un enregistrement validé d'octets écrits à la main. Pour
+rétablir les écritures :
+
+1. Arrête chaque serveur Datacron, la Companion et la CLI qui utilisent le vault.
+2. Copie `.datacron/oplog/operations.jsonl` quelque part hors du répertoire `.datacron`.
+3. Vérifie que la dernière ligne du journal est un objet JSON entier : elle commence par `{` et
+   finit par `}`. Sinon, arrête-toi là et garde la copie : ce n'est pas ce cas.
+4. Depuis la racine du vault, ajoute exactement un octet de saut de ligne (LF, pas CRLF) à la fin
+   du fichier, et rien d'autre. Sous Linux ou macOS :
+
+    ```sh
+    printf '\n' >> .datacron/oplog/operations.jsonl
+    ```
+
+    En PowerShell :
+
+    ```powershell
+    [IO.File]::AppendAllText("$PWD\.datacron\oplog\operations.jsonl", "`n")
+    ```
+
+5. Redémarre Datacron, lance `datacron ops inspect`, et vérifie `get_health` avant de reprendre
+   les écritures.
+
+En mode Dual-Vault, le répertoire `.datacron` est celui du vault mémoire.
+
 ### Définition de l'obsolescence d'index
 
 Une correspondance exacte indexé-vers-vivant sur le chemin et le hash de contenu rapporte `0.0`,

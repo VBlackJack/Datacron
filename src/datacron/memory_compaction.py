@@ -35,8 +35,8 @@ from datacron.core.frontmatter import (
     coerce_string_list,
     parse_preserving_bom_and_body_eols,
     serialize,
-    serialize_preserving_bom,
 )
+from datacron.core.frontmatter_edit import serialize_preserving_frontmatter
 from datacron.core.operation_log import OperationContext
 from datacron.core.paths import (
     effective_memory_root,
@@ -72,6 +72,10 @@ _ARCHIVE_REL_DIR: Final[str] = f"{MEMORY_SUBFOLDER_NAME}/archive"
 _COMPACTED_TAG: Final[str] = "archive/compacted"
 _MEMORY_ARCHIVE_TAG: Final[str] = "memory/archive"
 _SUPERSEDED_TAG: Final[str] = "archive/superseded"
+# Compacted notes and digests also carry ``archived: true``. The index honours
+# that key under any archive tag list, so a vault that declares its own list
+# without the compaction tags still demotes them.
+_ARCHIVED_KEY: Final[str] = "archived"
 _DIGEST_TAGS: Final[tuple[str, ...]] = (
     "type/archive",
     "archive/journal-digest",
@@ -217,8 +221,8 @@ def _build_digest_content(
     *,
     existing_meta: dict[str, Any],
     existing_body: str,
-    has_bom: bool,
-) -> tuple[str, str]:
+) -> tuple[str, dict[str, Any], str]:
+    """Return the digest id, its frontmatter and its body; the caller renders them."""
     digest_id = str(existing_meta.get("id") or ULID())
     prev_compacted = coerce_string_list(existing_meta.get("compacted_notes"), split_delimited=False)
     compacted_list: list[str] = list(prev_compacted)
@@ -256,19 +260,22 @@ def _build_digest_content(
         **existing_meta,
         "id": digest_id,
         "title": f"Journal Digest {month_bucket}",
-        "created": str(existing_meta.get("created") or now_iso),
+        # An existing value is kept as parsed: turning a YAML date into its
+        # string form would rewrite a key compaction has no reason to touch.
+        "created": existing_meta.get("created") or now_iso,
         "updated": now_iso,
         "tags": merged_tags,
         "compacted_notes": compacted_list,
+        _ARCHIVED_KEY: True,
     }
     body_text = "\n\n".join(sections).strip() + "\n"
-    if has_bom:
-        rendered = serialize_preserving_bom(metadata, body_text, has_bom=True)
-    else:
-        rendered = serialize(metadata, body_text)
-    if not rendered.endswith(("\n", "\r\n")):
-        rendered += "\n"
-    return digest_id, rendered
+    return digest_id, metadata, body_text
+
+
+def _with_trailing_newline(rendered: str, raw_text: str) -> str:
+    if rendered.endswith(("\n", "\r\n")):
+        return rendered
+    return rendered + ("\r\n" if "\r\n" in raw_text else "\n")
 
 
 async def _write_monthly_digest(
@@ -291,15 +298,19 @@ async def _write_monthly_digest(
 
         def _mutate_digest(raw_existing: str) -> str:
             existing_meta, existing_body, has_bom = parse_preserving_bom_and_body_eols(raw_existing)
-            _, rendered = _build_digest_content(
+            _, metadata, body_text = _build_digest_content(
                 month_bucket,
                 bucket_notes,
                 now_iso,
                 existing_meta=existing_meta,
                 existing_body=existing_body,
-                has_bom=has_bom,
             )
-            return rendered
+            # Only the keys compaction sets are rendered again; the rest of the
+            # digest's frontmatter keeps its bytes, comments and key order.
+            rendered = serialize_preserving_frontmatter(
+                raw_existing, metadata, body_text, has_bom=has_bom
+            )
+            return _with_trailing_newline(rendered, raw_existing)
 
         await writer.mutate_note_atomic(
             digest_rel_path,
@@ -307,14 +318,14 @@ async def _write_monthly_digest(
             operation=op_ctx,
         )
     else:
-        digest_id, rendered = _build_digest_content(
+        digest_id, metadata, body_text = _build_digest_content(
             month_bucket,
             bucket_notes,
             now_iso,
             existing_meta={},
             existing_body="",
-            has_bom=False,
         )
+        rendered = _with_trailing_newline(serialize(metadata, body_text), "")
         await writer.write_note_atomic(
             digest_rel_path,
             rendered,
@@ -347,11 +358,12 @@ async def _mark_source_note_compacted(
         meta["tags"] = tags
         meta["compacted_into"] = digest_rel_path
         meta["updated"] = now_iso
-        rendered = serialize_preserving_bom(meta, body, has_bom=has_bom)
-        if not rendered.endswith(("\n", "\r\n")):
-            eol = "\r\n" if "\r\n" in raw_text else "\n"
-            rendered += eol
-        return rendered
+        meta[_ARCHIVED_KEY] = True
+        # Only these keys are rendered again. A PyYAML round trip of the whole
+        # block turned 14:30 into 870, 1.10 into 1.1 and NO into false, and
+        # dropped every comment, in notes compaction only meant to tag.
+        rendered = serialize_preserving_frontmatter(raw_text, meta, body, has_bom=has_bom)
+        return _with_trailing_newline(rendered, raw_text)
 
     await writer.mutate_note_atomic(
         note.rel_path,

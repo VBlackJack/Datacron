@@ -50,6 +50,7 @@ from datacron.core.paths import (
     assert_vault_rel_path,
     assert_within_paths,
     assert_within_resolved_roots,
+    canonical_memory_rel_path,
     effective_extra_read_vaults,
     effective_memory_root,
     is_link_stat,
@@ -330,13 +331,18 @@ class SingleTenantVaultScope:
         return self._memory_root
 
     def _target_for_rel_path(self, rel_path: str) -> tuple[Path, str | Path, tuple[str, ...]]:
-        normalized = rel_path.strip().replace("\\", "/").lstrip("/")
+        # The parts are cut from the string the target is built from. Stripping
+        # it first made the link check walk "notes/a.md" while the write went to
+        # " notes/a.md", through a junction of that name the check never saw.
+        normalized = rel_path.replace("\\", "/")
         parts = PurePosixPath(normalized).parts if normalized else ()
         if self._memory_root is not None and (
             is_memory_rel_path(rel_path)
             or (parts and parts[0].casefold() == SIDECAR_DIR_NAME.casefold())
         ):
-            return self._memory_root, rel_path, parts
+            memory_rel_path = canonical_memory_rel_path(rel_path)
+            memory_parts = PurePosixPath(memory_rel_path.replace("\\", "/")).parts
+            return self._memory_root, memory_rel_path, memory_parts
         if parts and self._extra_read_by_folded:
             extra_match = self._extra_read_by_folded.get(parts[0].casefold())
             if extra_match is not None:

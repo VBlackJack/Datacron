@@ -52,6 +52,7 @@ __all__ = [
     "assert_within_read_paths",
     "assert_within_resolved_roots",
     "assert_within_write_paths",
+    "canonical_memory_rel_path",
     "effective_extra_read_vaults",
     "effective_memory_root",
     "is_link_stat",
@@ -400,6 +401,26 @@ def is_memory_rel_path(rel_path: str) -> bool:
     return first_part.casefold() == MEMORY_SUBFOLDER_NAME.casefold()
 
 
+def canonical_memory_rel_path(rel_path: str) -> str:
+    """Return ``rel_path`` with its first component spelled as the memory subfolder.
+
+    The namespace test folds case, so ``_Memory/x.md`` is a memory path. The
+    writer journals it as ``_memory/x.md`` and the reader serves the subfolder
+    under that exact name, so the bytes have to land there too. Writing them to
+    ``memory_root/_Memory/x.md`` made the note invisible on a case-sensitive
+    filesystem, and pointed recovery at a file the journal does not name.
+
+    Only a first component that equals the subfolder name once case is folded is
+    rewritten. Any other spelling, a padded one included, is returned unchanged
+    for confinement to refuse.
+    """
+    normalized = rel_path.replace("\\", "/")
+    first, separator, rest = normalized.partition("/")
+    if first.casefold() != MEMORY_SUBFOLDER_NAME.casefold():
+        return rel_path
+    return f"{MEMORY_SUBFOLDER_NAME}{separator}{rest}"
+
+
 def note_source_vault(rel_path: str) -> VaultSourceKind:
     """Return the logical source vault (``"memory"`` or ``"docs"``) for ``rel_path``."""
     return "memory" if is_memory_rel_path(rel_path) else "docs"
@@ -484,7 +505,7 @@ def resolve_vault_rel_target(
         settings=settings,
     )
     if mem_root is not None and is_memory_rel_path(rel_path):
-        return mem_root / rel_path
+        return mem_root / canonical_memory_rel_path(rel_path)
     extras = effective_extra_read_vaults(vault_root, settings=settings)
     if extras:
         normalized = rel_path.strip().replace("\\", "/").lstrip("/")

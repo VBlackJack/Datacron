@@ -76,6 +76,32 @@ fragment that is not valid JSON is cut back to the last complete record and save
 log as `operations.jsonl.torn-<timestamp>`. A complete record that only lost its newline is left
 in place for an operator.
 
+That case shows as every write refused with `operation log does not end at a JSONL boundary`,
+and the server log names it: `The operation log ends with a complete record that has no trailing
+newline at byte offset <n>`. Recovery never adds the newline itself, because it cannot tell a
+committed record from bytes written by hand. To restore writes:
+
+1. Stop every Datacron server, Companion and CLI that uses the vault.
+2. Copy `.datacron/oplog/operations.jsonl` somewhere outside the `.datacron` directory.
+3. Check that the last line of the log is one whole JSON object: it starts with `{` and ends
+   with `}`. If it does not, stop here and keep the copy: that is not this case.
+4. From the vault root, append exactly one line feed byte (LF, not CRLF) to the end of the
+   file, and nothing else. On Linux or macOS:
+
+    ```sh
+    printf '\n' >> .datacron/oplog/operations.jsonl
+    ```
+
+    In PowerShell:
+
+    ```powershell
+    [IO.File]::AppendAllText("$PWD\.datacron\oplog\operations.jsonl", "`n")
+    ```
+
+5. Restart Datacron, run `datacron ops inspect`, and check `get_health` before resuming writes.
+
+In Dual-Vault mode the `.datacron` directory is the one under the memory vault.
+
 ### Index staleness definition
 
 An exact indexed-to-live path and content-hash match reports `0.0`, even when the index contains
