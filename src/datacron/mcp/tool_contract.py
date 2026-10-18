@@ -15,12 +15,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired, Required, TypeAlias
+from typing import Any, Final, Literal, NotRequired, Required, TypeAlias
 
 from typing_extensions import TypedDict
 
 GetNoteFormat: TypeAlias = Literal["full", "map", "chunk", "metadata"]
-VaultSourceKind: TypeAlias = Literal["docs", "memory"]
+# ``extra`` is a note served from a read-only DATACRON_EXTRA_READ_VAULTS mount; its
+# payload also carries ``source_mount``, the mount prefix.
+VaultSourceKind: TypeAlias = Literal["docs", "memory", "extra"]
+EXTRA_SOURCE_VAULT: Final = "extra"
 MemoryOrigin: TypeAlias = Literal["ai", "human", "merged"]
 MemoryConfidence: TypeAlias = Literal["high", "medium", "low", "needs_verification"]
 ContradictionScanMode: TypeAlias = Literal["scan", "confirm"]
@@ -65,6 +68,7 @@ class NoteSummaryOutput(TypedDict):
     updated: str
     metadata_truncated: NotRequired[bool | None]
     source_vault: NotRequired[VaultSourceKind]
+    source_mount: NotRequired[str]
     writable: NotRequired[bool]
 
 
@@ -182,6 +186,7 @@ class GetNoteOutput(TypedDict, total=False):
     total: int | None
     returned: int | None
     source_vault: VaultSourceKind | None
+    source_mount: str | None
     writable: bool | None
 
 
@@ -202,6 +207,7 @@ class SearchResultOutput(TypedDict):
     note_matches: NotRequired[int | None]
     lifecycle: NotRequired[str | None]
     source_vault: NotRequired[VaultSourceKind]
+    source_mount: NotRequired[str]
     writable: NotRequired[bool]
 
 

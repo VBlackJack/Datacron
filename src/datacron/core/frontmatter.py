@@ -59,6 +59,8 @@ _BOM: Final[str] = "\ufeff"
 
 _AMBIGUOUS_BLOCK: Final[int] = -1
 
+_NON_STRING_KEY_MESSAGE: Final[str] = "frontmatter mapping keys must be strings"
+
 _FENCED_CODE_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?ms)^[ \t]*(?P<fence>`{3,}|~{3,})[^\n]*\n.*?^[ \t]*(?P=fence)[ \t]*(?=\n|$)"
 )
@@ -117,6 +119,14 @@ def parse(raw: str) -> tuple[dict[str, Any], str]:
         # for an impossible one such as ``2024-02-30``. It is malformed
         # frontmatter like any other, and must degrade the same way.
         raise FrontmatterError(str(exc)) from exc
+    except TypeError as exc:
+        # ``python-frontmatter`` passes the loaded mapping on as keyword
+        # arguments, so a top-level key that YAML reads as anything but a string
+        # (``2026:``, a date, ``true``, ``null``, ``1.5``) raises TypeError. It
+        # escaped every caller, and one such note failed search and listing for
+        # the whole vault. Datacron only admits string keys, as the strict write
+        # validation already says, so the note degrades like invalid YAML.
+        raise FrontmatterError(f"{_NON_STRING_KEY_MESSAGE}: {exc}") from exc
     metadata: dict[str, Any] = dict(post.metadata)
     _normalize_lifecycle_scalars(metadata)
     return metadata, post.content

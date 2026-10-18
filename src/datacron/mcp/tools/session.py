@@ -241,6 +241,7 @@ def _fit_sources(
                 break
             tight = _full_source(app, note, 1)
             tight.pop("source_vault", None)
+            tight.pop("source_mount", None)
             tight.pop("writable", None)
             result["sources"] = [tight]
             result["truncated"] = True
@@ -298,8 +299,11 @@ def _full_source(app: DatacronApp, note: Note, limit: int | None = None) -> dict
             "next_offset",
             "truncated",
             "source_vault",
+            "source_mount",
             "writable",
         )
+        # ``source_mount`` is present only for a note from an extra read mount.
+        if key in full
     }
     item["next_read"] = {
         "tool": "get_note",
@@ -405,8 +409,10 @@ def _orientation_source(app: DatacronApp, note: Note) -> dict[str, Any]:
                 "title",
                 "content_hash",
                 "source_vault",
+                "source_mount",
                 "writable",
             )
+            if key in summary
         },
         "excerpts": excerpts,
         "section_selection": {

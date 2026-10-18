@@ -479,7 +479,9 @@ def _assert_markdown_rel_path(cleaned_rel_path: str) -> None:
     so the suffix this server accepts was stated in eight places across two
     modules and could drift in any one of them.
     """
-    if not cleaned_rel_path.endswith(_MARKDOWN_SUFFIX):
+    # The reader, the scope and the writer all admit the suffix in any case, so a
+    # note saved as ``Note.MD`` was listed as writable and then refused here.
+    if not cleaned_rel_path.casefold().endswith(_MARKDOWN_SUFFIX):
         raise ValueError(f"rel_path must end with {_MARKDOWN_SUFFIX}")
     if PureWindowsPath(cleaned_rel_path).drive:
         # An absolute or drive-qualified path is the confinement check's to refuse,
