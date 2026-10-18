@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Final
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN, ULID_LENGTH
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
-from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
+from datacron.core.markdown_headings import MarkdownHeading, markdown_headings, split_markdown_lines
 from datacron.core.markdown_sections import heading_ancestry
 from datacron.core.models import Chunk, Note, SearchResult
 from datacron.core.scope import NoteAdmissionError
@@ -65,7 +65,7 @@ def protect_chunk_metadata(
     if app.secret_redactor.redact_text(note.raw_content) == note.raw_content:
         return chunks
     if headings is None:
-        headings = markdown_headings(note.content.splitlines(keepends=True))
+        headings = markdown_headings(split_markdown_lines(note.content))
     offset = content_line_offset(note)
     unsafe = {
         item.start
@@ -111,7 +111,7 @@ def protect_note_title(
         # itself may still come from a filename, so it keeps its own redaction.
         return app.secret_redactor.redact_text(note.title)
     if headings is None:
-        headings = markdown_headings(note.content.splitlines(keepends=True))
+        headings = markdown_headings(split_markdown_lines(note.content))
     offset = content_line_offset(note)
     for item in headings:
         if (

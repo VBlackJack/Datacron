@@ -21,16 +21,23 @@ via :func:`reset_settings_cache`.
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
+from collections.abc import Mapping
 from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Final, final
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from datacron.core.memory_protocol import (
@@ -45,9 +52,8 @@ from datacron.core.memory_protocol import (
 from datacron.core.query_expansion import default_query_expansion, normalize_term_map
 from datacron.i18n import t
 
-# The datacron logger factory imports this module, so the stdlib call is used here; the
-# name is already under the ``datacron`` namespace that factory configures.
-_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
+# Pydantic's prefix on a ValueError raised by a validator; dropped from CLI messages.
+_PYDANTIC_VALUE_ERROR_PREFIX: Final[str] = "Value error, "
 
 ULID_LENGTH: Final[int] = 26
 CANONICAL_ULID_REGEX: Final[str] = rf"^[0-9A-HJKMNP-TV-Z]{{{ULID_LENGTH}}}$"
@@ -950,7 +956,7 @@ def _roots_overlap(first: Path, second: Path) -> bool:
     return first == second or first.is_relative_to(second) or second.is_relative_to(first)
 
 
-def extra_mount_warnings(vault_root: Path, extra_read_vaults: dict[str, Path]) -> list[str]:
+def extra_mount_warnings(vault_root: Path, extra_read_vaults: Mapping[str, Path]) -> list[str]:
     """Return one message per mount that hides docs notes or reads nothing.
 
     A mount prefix is a top-level folder name of the merged vault, compared without
@@ -985,10 +991,23 @@ def extra_mount_warnings(vault_root: Path, extra_read_vaults: dict[str, Path]) -
     return messages
 
 
+class RootTopologyError(ValueError):
+    """The vault, memory and mount roots of one configuration contain one another."""
+
+
+def configuration_error_detail(error: ValidationError) -> str:
+    """Return the messages of a settings validation error as one line, for a CLI."""
+    details = []
+    for item in error.errors():
+        message = str(item.get("msg", ""))
+        details.append(message.removeprefix(_PYDANTIC_VALUE_ERROR_PREFIX))
+    return "; ".join(details) or str(error)
+
+
 def validate_root_topology(
     vault_root: Path | None,
     memory_root: Path | None,
-    extra_read_vaults: dict[str, Path],
+    extra_read_vaults: Mapping[str, Path],
 ) -> None:
     """Refuse a vault, memory and mount layout whose roots contain one another.
 
@@ -999,16 +1018,19 @@ def validate_root_topology(
     memory root above it claims every docs path for the memory scope. A memory root equal
     to the vault root is the single-vault layout and stays valid. Paths are compared
     resolved and with the platform's path semantics (case-insensitive on Windows).
+
+    Settings runs this when it is built, and the server runs it again on the roots it
+    actually serves, because a binding made with ``model_copy`` skips the validators.
     """
     dual_memory = memory_root if memory_root is not None and memory_root != vault_root else None
     if vault_root is not None and dual_memory is not None:
         if vault_root.is_relative_to(dual_memory):
-            raise ValueError(
+            raise RootTopologyError(
                 f"memory_root {dual_memory} contains vault_root {vault_root}; "
                 "the two vaults must be separate folders, for example siblings"
             )
         if dual_memory.is_relative_to(vault_root):
-            raise ValueError(
+            raise RootTopologyError(
                 f"memory_root {dual_memory} is inside vault_root {vault_root}; "
                 "the two vaults must be separate folders, for example siblings"
             )
@@ -1017,13 +1039,13 @@ def validate_root_topology(
     for index, (prefix, mount_root) in enumerate(mounts):
         for name, root in named_roots:
             if root is not None and _roots_overlap(mount_root, root):
-                raise ValueError(
+                raise RootTopologyError(
                     f"extra_read_vaults mount {prefix!r} ({mount_root}) overlaps {name} "
                     f"{root}; a mount must neither contain nor sit inside it"
                 )
         for other_prefix, other_root in mounts[index + 1 :]:
             if _roots_overlap(mount_root, other_root):
-                raise ValueError(
+                raise RootTopologyError(
                     f"extra_read_vaults mounts {prefix!r} ({mount_root}) and "
                     f"{other_prefix!r} ({other_root}) overlap; mounts must be disjoint folders"
                 )
@@ -1224,9 +1246,6 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _refuse_overlapping_roots(self) -> Settings:
         validate_root_topology(self.vault_root, self.memory_root, self.extra_read_vaults)
-        if self.vault_root is not None and self.extra_read_vaults:
-            for message in extra_mount_warnings(self.vault_root, self.extra_read_vaults):
-                _LOGGER.warning(message)
         return self
 
     @model_validator(mode="after")

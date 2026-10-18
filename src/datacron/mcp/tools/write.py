@@ -35,7 +35,12 @@ from datacron.core.frontmatter import (
     has_ambiguous_leading_delimiter_block,
     serialize,
 )
-from datacron.core.markdown_headings import heading_before, heading_identity, markdown_headings
+from datacron.core.markdown_headings import (
+    heading_before,
+    heading_identity,
+    markdown_headings,
+    split_markdown_lines,
+)
 from datacron.core.markdown_sections import (
     HEADING_SUGGESTION_MAX_CHARS,
     HeadingNotFoundError,
@@ -808,7 +813,7 @@ async def _patch_note_section_impl(
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             if has_ambiguous_leading_delimiter_block(raw):
                 raise ValueError(_AMBIGUOUS_LEADING_BLOCK_MESSAGE)
-            lines = body.splitlines(keepends=True)
+            lines = split_markdown_lines(body)
             content_start, content_end = find_section_span(
                 lines,
                 cleaned_heading,
@@ -987,7 +992,7 @@ async def _rename_note_section_impl(
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             if has_ambiguous_leading_delimiter_block(raw):
                 raise ValueError(_AMBIGUOUS_LEADING_BLOCK_MESSAGE)
-            lines = body.splitlines(keepends=True)
+            lines = split_markdown_lines(body)
             try:
                 content_start, _content_end = find_section_span(
                     lines,
@@ -1131,7 +1136,7 @@ async def _delete_note_section_impl(
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             if has_ambiguous_leading_delimiter_block(raw):
                 raise ValueError(_AMBIGUOUS_LEADING_BLOCK_MESSAGE)
-            lines = body.splitlines(keepends=True)
+            lines = split_markdown_lines(body)
             content_start, content_end = find_section_span(
                 lines,
                 cleaned_heading,

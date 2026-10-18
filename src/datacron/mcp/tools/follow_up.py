@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from datacron.core.config import CANONICAL_ULID_REGEX, TOKEN_ESTIMATE_CHARS_PER_TOKEN
-from datacron.core.markdown_headings import markdown_headings
+from datacron.core.markdown_headings import markdown_headings, split_markdown_lines
 from datacron.core.memory_protocol import (
     FOLLOW_UP_MARKER_PREFIX,
     FOLLOW_UP_MAX_RECORDS,
@@ -393,7 +393,7 @@ def _validate(record: FollowUpRecord, target: Note, source: Note, today: date) -
         raise FollowUpValidationError("due_date must not precede event_date")
     headings = [
         h
-        for h in markdown_headings(target.content.splitlines(keepends=True))
+        for h in markdown_headings(split_markdown_lines(target.content))
         if h.text == record.heading
     ]
     if len(headings) != 1 or headings[0].level <= 1:

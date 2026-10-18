@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 
 from datacron.core import config as core_config
 from datacron.core.hashing import index_generation_hash
-from datacron.core.markdown_headings import markdown_headings
+from datacron.core.markdown_headings import markdown_headings, split_markdown_lines
 from datacron.core.markdown_sections import find_section_span, heading_ancestry
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.mcp.sandbox import sanitize_metadata_value, wrap_vault_content
@@ -649,7 +649,7 @@ def _complete_source_section(note: Note, source: SectionAssertion) -> str | None
     if source.section_title is None:
         return None
     try:
-        lines = note.content.splitlines(keepends=True)
+        lines = split_markdown_lines(note.content)
         start, end = find_section_span(lines, source.section_title, None)
     except ValueError:
         return None
@@ -790,7 +790,7 @@ def _write_call(target_note: Note, proposal: Proposal) -> dict[str, Any]:
         or candidate.heading_level is None
     ):
         raise ValueError("section proposal is incomplete")
-    lines = target_note.content.splitlines(keepends=True)
+    lines = split_markdown_lines(target_note.content)
     content_start, content_end = find_section_span(
         lines,
         candidate.target.section_title,
@@ -817,7 +817,7 @@ def _addressable_selector(body: str, header_path: str) -> tuple[str, int] | None
             trail[-1].level,
             _HEADING_SEPARATOR.join(item.text for item in trail),
         )
-        for trail in heading_ancestry(markdown_headings(body.splitlines(keepends=True)))
+        for trail in heading_ancestry(markdown_headings(split_markdown_lines(body)))
     ]
 
     path_matches = [entry for entry in entries if entry[2] == header_path]

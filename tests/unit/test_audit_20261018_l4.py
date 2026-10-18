@@ -24,12 +24,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import ValidationError
+from typer.testing import CliRunner
 
+from datacron.cli import app as cli_app
 from datacron.core import config as config_module
 from datacron.core import markdown_headings as headings_module
-from datacron.core.config import Settings
+from datacron.core.config import Settings, reset_settings_cache
 from datacron.core.markdown_sections import HeadingNotFoundError, find_section_span
 from datacron.core.models import Chunk, Note, SearchResult
+from datacron.core.paths import sidecar_index_db
+from datacron.core.temporal import TemporalMeta, rerank_temporal
 from datacron.core.vault import FilesystemVaultReader
 from datacron.indexing import chunker as chunker_module
 from datacron.indexing import fts5_store as fts5_module
@@ -38,6 +42,10 @@ from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.reconcile import reconcile
 from datacron.indexing.ripgrep import RipgrepError, RipgrepWrapper, _build_command
+from datacron.mcp import server as server_module
+from datacron.mcp.server import build_app
+from datacron.mcp.tools.read import _get_note_impl
+from datacron.mcp.tools.search import _search_text_impl
 
 # Enough chunks to need more than one keyset page of ``iter_all_chunks``.
 _MANY_NOTES = 40
@@ -189,14 +197,60 @@ def test_masked_docs_folder_and_missing_mount_are_reported(
     def record(message: str, *args: object) -> None:
         warnings.append(message % args if args else message)
 
-    monkeypatch.setattr(config_module._LOGGER, "warning", record)
-    Settings(vault_root=vault, extra_read_vaults={"ref": missing})
+    monkeypatch.setattr(server_module._LOGGER, "warning", record)
+    build_app(
+        settings=Settings(vault_root=vault, extra_read_vaults={"ref": missing}), vault_root=vault
+    )
 
     assert any("masks the docs folder 'Ref'" in item for item in warnings)
     assert any("not an existing folder" in item for item in warnings)
     warnings.clear()
-    Settings(vault_root=vault, extra_read_vaults={"other": elsewhere})
+    build_app(
+        settings=Settings(vault_root=vault, extra_read_vaults={"other": elsewhere}),
+        vault_root=vault,
+    )
     assert warnings == []
+
+
+# Review follow-up: roots bound after Settings was built --------------------------------
+
+
+def test_server_refuses_overlapping_roots_bound_by_model_copy(tmp_path: Path) -> None:
+    vault, memory, _elsewhere = _layout(tmp_path)
+    (vault / "sub").mkdir()
+    # model_copy skips validators: this is how the CLI and the Companion bind a vault.
+    bound = Settings().model_copy(
+        update={"vault_root": vault, "extra_read_vaults": {"mirror": (vault / "sub").resolve()}}
+    )
+    with pytest.raises(config_module.RootTopologyError, match="overlaps vault_root"):
+        build_app(settings=bound, vault_root=vault)
+    nested_memory = Settings().model_copy(
+        update={"vault_root": vault, "memory_root": (vault / "sub").resolve()}
+    )
+    with pytest.raises(config_module.RootTopologyError, match="is inside vault_root"):
+        build_app(settings=nested_memory, vault_root=vault)
+    build_app(
+        settings=Settings().model_copy(update={"vault_root": vault, "memory_root": memory}),
+        vault_root=vault,
+    )
+
+
+def test_cli_reports_overlapping_roots_in_one_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault, _memory, _elsewhere = _layout(tmp_path)
+    monkeypatch.setenv("DATACRON_VAULT_ROOT", str(vault))
+    monkeypatch.setenv("DATACRON_EXTRA_READ_VAULTS", f"all={tmp_path}")
+    monkeypatch.setenv("DATACRON_LOG_DIR", str(tmp_path / "logs"))
+    reset_settings_cache()
+    try:
+        result = CliRunner().invoke(cli_app, ["mcp", "serve"])
+    finally:
+        reset_settings_cache()
+    assert result.exit_code == 1
+    assert "overlaps vault_root" in result.output
+    assert not isinstance(result.exception, ValidationError)
+    assert "Traceback" not in result.output
 
 
 # C-4 ---------------------------------------------------------------------------------
@@ -401,3 +455,127 @@ async def test_underscore_only_terms_do_not_drop_the_and_tier(tmp_path: Path) ->
         await store.close()
     assert results
     assert {result.tier for result in results} == {0}
+
+
+# Review follow-up: every consumer of chunk line numbers uses the same line model -------
+
+_PLANTED_VALUE = "hunter2SuperSecretValue"
+_SEPARATED_NOTE_ID = "01J00000000000000000000091"
+_SEPARATED_NOTE = (
+    f"---\nid: {_SEPARATED_NOTE_ID}\n---\n# Alpha\n\n"
+    "x\N{LINE SEPARATOR}y\N{LINE SEPARATOR}z\n\n## Beta\n\nbetaword here\n\n"
+    "### Gamma\n\ngammaword\n"
+)
+
+
+def _served_app(root: Path, **overrides: Any) -> server_module.DatacronApp:
+    settings = Settings(vault_root=root, read_paths=[root], write_paths=[root], **overrides)
+    return build_app(settings=settings, vault_root=root)
+
+
+async def test_search_text_redacts_a_labelled_secret_after_a_line_separator(
+    tmp_path: Path,
+) -> None:
+    body = (
+        "# T\n\nfiller"
+        + "\N{LINE SEPARATOR}a" * 5
+        + f"\n\n## Creds\n\npassword:\n\n{_PLANTED_VALUE}\n\n## Other\n\ntext\n"
+    )
+    (tmp_path / "n.md").write_text(body, encoding="utf-8", newline="\n")
+    app = _served_app(tmp_path, redact_secrets="retrieval")
+    await app.store.open(sidecar_index_db(tmp_path))
+    try:
+        response = await _search_text_impl(app, query=_PLANTED_VALUE, limit=5)
+    finally:
+        await app.store.close()
+    assert response.get("results")
+    assert _PLANTED_VALUE not in str(response["results"])
+
+
+async def test_note_map_levels_and_section_lines_follow_the_chunk_lines(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "n.md").write_text(_SEPARATED_NOTE, encoding="utf-8", newline="\n")
+    app = _served_app(tmp_path)
+    await app.store.open(sidecar_index_db(tmp_path))
+    try:
+        note_map = await _get_note_impl(app, id_or_path="n.md", fmt="map")
+        section = await _get_note_impl(
+            app, id_or_path="n.md", fmt="full", heading_path=["Alpha", "Beta"]
+        )
+        chunks = MarkdownChunker().chunk(await _read(tmp_path, "n.md"))
+    finally:
+        await app.store.close()
+    levels = [(item["text"], item["level"]) for item in note_map["headings"]]
+    assert levels == [("Alpha", 1), ("Beta", 2), ("Gamma", 3)]
+    beta_heading = next(chunk for chunk in chunks if chunk.content.startswith("## Beta"))
+    expected_line = _SEPARATED_NOTE[: _SEPARATED_NOTE.index("## Beta")].count("\n") + 1
+    assert beta_heading.line_start == expected_line
+    assert section["section"]["line_start"] == beta_heading.line_start
+
+
+# Files allowed to call ``splitlines`` on text, and how many times. Each call splits text
+# that is not a note body, or whose result carries no line number back to a chunk: CLI
+# and protocol text, operation log records, ripgrep byte frames, frontmatter delimiter
+# detection kept consistent with the frontmatter parser, whitespace-joined excerpts,
+# labels, titles, fence counts and diff display. Any other split of note content must
+# use ``split_markdown_lines``, the line model of the chunk line numbers.
+_SPLITLINES_ALLOWED_CALLS = {
+    "cli.py": 1,
+    "contradictions.py": 2,
+    "core/frontmatter.py": 3,
+    "core/memory_protocol.py": 1,
+    "core/operation_log.py": 3,
+    "core/vault_writer.py": 1,
+    "indexing/ripgrep.py": 1,
+    "mcp/tools/write_validation.py": 2,
+    "memory_compaction.py": 1,
+    "organization/library.py": 1,
+    "organization/library_workbench.py": 3,
+    "organization/planner.py": 1,
+}
+_SPLITLINES_CALL = ".splitlines("
+
+
+def test_note_line_models_use_the_shared_splitter() -> None:
+    source_root = Path(server_module.__file__).resolve().parents[1]
+    calls: dict[str, int] = {}
+    scanned_subpackage = False
+    for path in sorted(source_root.rglob("*.py")):
+        relative = path.relative_to(source_root).as_posix()
+        scanned_subpackage = scanned_subpackage or relative.startswith("mcp/tools/")
+        count = path.read_text(encoding="utf-8").count(_SPLITLINES_CALL)
+        if count:
+            calls[relative] = count
+    assert scanned_subpackage
+    assert calls == _SPLITLINES_ALLOWED_CALLS
+
+
+async def test_chunk_scan_never_yields_a_chunk_twice_across_a_reindex(tmp_path: Path) -> None:
+    sections = "".join(f"\n## S{index}\n\nbody {index}\n" for index in range(_SECTIONS_PER_NOTE))
+    for index in range(_MANY_NOTES):
+        (tmp_path / f"n{index}.md").write_text(f"# N{index}\n{sections}", encoding="utf-8")
+    store = await _open_store(tmp_path)
+    try:
+        await reconcile(store, _reader(tmp_path), MarkdownChunker(), mtime_gate=True)
+        scan = cast("AsyncGenerator[Chunk, None]", store.iter_all_chunks())
+        first = await anext(scan)
+        note = await _read(tmp_path, first.note_rel_path)
+        # Re-indexing gives the note's chunks new, higher rowids mid-scan.
+        await store.upsert_note(note, MarkdownChunker().chunk(note))
+        ids = [first.chunk_id] + [chunk.chunk_id async for chunk in scan]
+    finally:
+        await store.close()
+    assert len(ids) == len(set(ids))
+
+
+def test_status_superseded_is_labelled_superseded(chunk_factory: Any) -> None:
+    chunk = chunk_factory()
+    result = SearchResult(chunk=chunk, score=1.0, snippet="")
+    meta = {
+        chunk.note_id: TemporalMeta(
+            confidence=None, supersedes=[], archived=True, status="superseded"
+        )
+    }
+    ranked = rerank_temporal([result], meta, include_superseded=False)
+    assert ranked[0].lifecycle == "superseded"

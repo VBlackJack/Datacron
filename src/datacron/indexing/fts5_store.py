@@ -1658,11 +1658,15 @@ class SQLiteFTS5Store:
         regex fallback handing batches to a worker thread, used to keep one read cursor
         open for its whole scan, and with it the shared lock that made a writer in
         another Datacron process fail with "database is locked" after its busy timeout.
-        Between pages no lock is held, so a concurrent write is seen or not as its
-        rowid falls; a chunk is never yielded twice.
+        Between pages no lock is held, so the scan is not a snapshot: a note re-indexed
+        mid-scan gets new, higher rowids and its chunks would come round again. A chunk
+        id already yielded is skipped, so the same chunk never appears twice; a chunk
+        the re-index renamed (its section moved or was retitled) can still appear in
+        both its old and its new form.
         """
         connection = self._require_connection()
         after_rowid = 0
+        seen: set[str] = set()
         while True:
             async with connection.execute(
                 _ITER_ALL_CHUNKS_SQL, (after_rowid, _ITER_CHUNKS_PAGE_ROWS)
@@ -1672,6 +1676,10 @@ class SQLiteFTS5Store:
                 return
             after_rowid = int(rows[-1]["rowid"])
             for row in rows:
+                chunk_id = str(row["chunk_id"])
+                if chunk_id in seen:
+                    continue
+                seen.add(chunk_id)
                 yield _chunk_from_row(row)
             if len(rows) < _ITER_CHUNKS_PAGE_ROWS:
                 return
@@ -2269,6 +2277,7 @@ def _temporal_meta_from_frontmatter(
         if isinstance(stored_tags, list)
         else extract_tags(parsed, "")
     )
+    status = str(parsed.get("status", "")).casefold()
     return TemporalMeta(
         confidence=_optional_str(parsed.get("confidence")),
         supersedes=coerce_string_list(parsed.get("supersedes"), split_delimited=False),
@@ -2277,9 +2286,10 @@ def _temporal_meta_from_frontmatter(
         invalidated_by=_optional_str(parsed.get("invalidated_by")),
         archived=(
             parsed.get("archived") is True
-            or str(parsed.get("status", "")).casefold() in HISTORICAL_STATUSES
+            or status in HISTORICAL_STATUSES
             or bool(archive_tags & {tag.casefold() for tag in note_tags})
         ),
+        status=status or None,
     )
 
 
