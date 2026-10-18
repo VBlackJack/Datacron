@@ -46,6 +46,7 @@ from datacron.core.case_folding import case_folding_for, fold_path_key
 from datacron.core.config import (
     CANONICAL_ULID_PATTERN,
     LEGACY_NOTE_ID_PATTERN,
+    MEMORY_SUBFOLDER_NAME,
     SIDECAR_DIR_NAME,
     VaultConfig,
 )
@@ -75,6 +76,8 @@ from datacron.core.paths import (
     ASCII_CONTROL_CHAR_BOUNDARY,
     PathConfinementError,
     assert_within_paths,
+    effective_memory_root,
+    is_memory_rel_path,
 )
 from datacron.core.recovery import BlockedOperation
 from datacron.core.scope import assert_path_chain_without_links
@@ -456,14 +459,22 @@ class OrganizationBatchTransaction:
         journal: OperationJournal,
         *,
         write_paths: Iterable[Path],
+        memory_root: Path | None = None,
     ) -> None:
         self._vault_root = vault_root.expanduser().resolve()
+        self._memory_root = effective_memory_root(
+            self._vault_root,
+            memory_root=memory_root,
+        )
+        self._sidecar_root = (
+            self._memory_root if self._memory_root is not None else self._vault_root
+        )
         self._journal = journal
         self._write_paths = tuple(path.expanduser().resolve() for path in write_paths)
         # The open pass, as (batch_id, inventories). One field, so the
         # batch a cache belongs to cannot drift from the cache itself.
         self._open_pass: tuple[str, dict[object, Any]] | None = None
-        self._batches_root = self._vault_root / ".datacron" / "oplog" / _BATCHES_DIR_NAME
+        self._batches_root = self._sidecar_root / ".datacron" / "oplog" / _BATCHES_DIR_NAME
         self._pending_root = self._batches_root / _PENDING_DIR_NAME
         self._stage_root = self._batches_root / _STAGE_DIR_NAME
         self._committed_root = self._batches_root / _COMMITTED_DIR_NAME
@@ -553,8 +564,8 @@ class OrganizationBatchTransaction:
         """Reject linked journal roots before any durable batch state is created."""
         for rel_path in (_HISTORY_REL_ROOT, ".datacron/oplog"):
             assert_path_chain_without_links(
-                self._vault_root / Path(rel_path),
-                anchor=self._vault_root,
+                self._sidecar_root / Path(rel_path),
+                anchor=self._sidecar_root,
                 allow_missing=True,
             )
 
@@ -1496,6 +1507,22 @@ class OrganizationBatchTransaction:
             return dict(cached[_LIVE_ADMITTED_KEY])
         _scope, policy = self._live_organization_policy()
         notes = self._collect_live_admitted_note_paths(self._vault_root, policy)
+        if self._memory_root is not None:
+            mem_subdir = assert_path_chain_without_links(
+                self._memory_root / MEMORY_SUBFOLDER_NAME,
+                anchor=self._memory_root,
+                allow_missing=True,
+            )
+            if mem_subdir.is_dir():
+                for identity, item in self._collect_live_admitted_note_paths(
+                    mem_subdir,
+                    policy,
+                ).items():
+                    if identity in notes:
+                        raise OperationLogError(
+                            f"live scope contains case-colliding notes: {item[0]!r}"
+                        )
+                    notes[identity] = item
         if cached is not None:
             cached[_LIVE_ADMITTED_KEY] = dict(notes)
         return notes
@@ -1505,14 +1532,26 @@ class OrganizationBatchTransaction:
         root: Path,
         policy: NoteAdmissionPolicy,
     ) -> dict[str, tuple[str, Path]]:
+        anchor_root = (
+            self._memory_root
+            if self._memory_root is not None and root.is_relative_to(self._memory_root)
+            else self._vault_root
+        )
         pending_directories = [root]
         notes: dict[str, tuple[str, Path]] = {}
         while pending_directories:
             directory = pending_directories.pop()
             for candidate in sorted(directory.iterdir()):
+                if (
+                    self._memory_root is not None
+                    and anchor_root == self._vault_root
+                    and directory == self._vault_root
+                    and candidate.name.casefold() == MEMORY_SUBFOLDER_NAME.casefold()
+                ):
+                    continue
                 safe_candidate = assert_path_chain_without_links(
                     candidate,
-                    anchor=self._vault_root,
+                    anchor=anchor_root,
                     allow_missing=False,
                 )
                 if safe_candidate.is_dir():
@@ -2334,21 +2373,21 @@ class OrganizationBatchTransaction:
     def _assert_journal_roots(self) -> None:
         for rel_path in (_HISTORY_REL_ROOT, ".datacron/oplog"):
             self._assert_internal_path(
-                self._vault_root / Path(rel_path),
+                self._sidecar_root / Path(rel_path),
                 allow_missing=True,
             )
 
     def _assert_operations_path(self) -> None:
         self._assert_journal_roots()
         self._assert_internal_path(
-            self._vault_root / Path(_OPERATIONS_REL_PATH),
+            self._sidecar_root / Path(_OPERATIONS_REL_PATH),
             allow_missing=True,
         )
 
     def _store_history(self, data: bytes) -> str:
         self._assert_journal_roots()
         self._assert_internal_path(
-            self._vault_root / Path(_HISTORY_REL_ROOT) / sha256_bytes(data),
+            self._sidecar_root / Path(_HISTORY_REL_ROOT) / sha256_bytes(data),
             allow_missing=True,
         )
         return self._journal.store_history(data)
@@ -2356,7 +2395,7 @@ class OrganizationBatchTransaction:
     def _read_history(self, content_hash: str) -> bytes:
         self._assert_journal_roots()
         self._assert_internal_path(
-            self._vault_root / Path(_HISTORY_REL_ROOT) / content_hash,
+            self._sidecar_root / Path(_HISTORY_REL_ROOT) / content_hash,
             allow_missing=True,
         )
         return self._journal.read_history(content_hash)
@@ -2551,7 +2590,7 @@ class OrganizationBatchTransaction:
 
     def _entry_label(self, path: Path) -> str:
         """Name a sidecar entry by its vault-relative POSIX path, for an operator."""
-        return path.relative_to(self._vault_root).as_posix()
+        return path.relative_to(self._sidecar_root).as_posix()
 
     def _unexpected_stage_root_entries(self) -> list[str]:
         """Return the stage-root entries that are neither a stage nor shell metadata."""
@@ -2659,12 +2698,25 @@ class OrganizationBatchTransaction:
             raise BatchConflictError(f"batch path is not a regular file: {rel_path}")
         return _stream_sha256(path)
 
+    def _root_for_rel_path(self, rel_path: str) -> Path:
+        if self._memory_root is None:
+            return self._vault_root
+        normalized = rel_path.strip().replace("\\", "/").lstrip("/")
+        if (
+            normalized.casefold() == SIDECAR_DIR_NAME.casefold()
+            or normalized.casefold().startswith(f"{SIDECAR_DIR_NAME.casefold()}/")
+            or is_memory_rel_path(normalized)
+        ):
+            return self._sidecar_root
+        return self._vault_root
+
     def _absolute_path(self, rel_path: str) -> Path:
-        candidate = self._vault_root / Path(rel_path)
+        target_root = self._root_for_rel_path(rel_path)
+        candidate = target_root / Path(rel_path)
         try:
             safe = assert_path_chain_without_links(
                 candidate,
-                anchor=self._vault_root,
+                anchor=target_root,
                 allow_missing=True,
             )
         except (ValueError, OSError) as exc:
@@ -2673,9 +2725,32 @@ class OrganizationBatchTransaction:
         return safe
 
     def _relative_path(self, path: Path) -> str:
+        expanded = path.expanduser()
+        if self._memory_root is not None:
+            try:
+                safe_mem = assert_path_chain_without_links(
+                    expanded,
+                    anchor=self._memory_root,
+                    allow_missing=True,
+                )
+                rel_mem = safe_mem.relative_to(self._memory_root)
+            except (OSError, ValueError):
+                rel_mem = None
+            if rel_mem is not None:
+                if (
+                    not rel_mem.parts
+                    or any(part in {"", ".", ".."} for part in rel_mem.parts)
+                    or rel_mem.parts[0].casefold()
+                    not in {
+                        MEMORY_SUBFOLDER_NAME.casefold(),
+                        SIDECAR_DIR_NAME.casefold(),
+                    }
+                ):
+                    raise BatchConflictError(f"invalid vault-relative batch path: {path}")
+                return rel_mem.as_posix()
         try:
             safe = assert_path_chain_without_links(
-                path.expanduser(),
+                expanded,
                 anchor=self._vault_root,
                 allow_missing=True,
             )
@@ -2684,13 +2759,19 @@ class OrganizationBatchTransaction:
             raise BatchConflictError(f"batch path is outside vault root: {path}") from exc
         if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
             raise BatchConflictError(f"invalid vault-relative batch path: {path}")
+        if self._memory_root is not None and relative.parts[0].casefold() in {
+            MEMORY_SUBFOLDER_NAME.casefold(),
+            SIDECAR_DIR_NAME.casefold(),
+        }:
+            raise BatchConflictError(f"batch path is outside vault root: {path}")
         return relative.as_posix()
 
     def _missing_parent_dirs(self, target_rel_path: str) -> tuple[str, ...]:
+        target_root = self._root_for_rel_path(target_rel_path)
         target = self._absolute_path(target_rel_path)
         missing: list[str] = []
         current = target.parent
-        while current != self._vault_root and not current.exists():
+        while current != target_root and not current.exists():
             missing.append(self._relative_path(current))
             current = current.parent
         if not current.is_dir():
@@ -2710,7 +2791,7 @@ class OrganizationBatchTransaction:
         try:
             return assert_path_chain_without_links(
                 path,
-                anchor=self._vault_root,
+                anchor=self._sidecar_root,
                 allow_missing=allow_missing,
             )
         except (OSError, ValueError) as exc:

@@ -26,15 +26,27 @@ from ulid import ULID
 from datacron.core.config import (
     MEMORY_SUBFOLDER_NAME,
     Settings,
+    VaultConfig,
     get_settings,
+    load_vault_config,
 )
-from datacron.core.durability import atomic_durable_write
-from datacron.core.frontmatter import parse, serialize
+from datacron.core.durability import ReadOnlyModeError, ReadOnlyVaultError
+from datacron.core.frontmatter import (
+    coerce_string_list,
+    parse_preserving_bom_and_body_eols,
+    serialize,
+    serialize_preserving_bom,
+)
+from datacron.core.operation_log import OperationContext
 from datacron.core.paths import (
+    effective_memory_root,
     resolve_vault_rel_target,
     sidecar_index_db,
+    sidecar_vault_config,
 )
+from datacron.core.scope import assert_path_chain_without_links
 from datacron.core.vault import build_configured_reader
+from datacron.core.vault_writer import FilesystemVaultWriter
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.reconcile import reconcile
@@ -49,6 +61,8 @@ __all__ = [
     "CompactionCandidate",
     "MemoryCompactionReport",
     "MonthlyDigestSummary",
+    "ReadOnlyModeError",
+    "ReadOnlyVaultError",
     "compact_vault_memory",
 ]
 
@@ -56,8 +70,13 @@ DEFAULT_COMPACTION_DAYS: Final[int] = 30
 _JOURNAL_REL_PREFIX: Final[str] = f"{MEMORY_SUBFOLDER_NAME}/journal/"
 _ARCHIVE_REL_DIR: Final[str] = f"{MEMORY_SUBFOLDER_NAME}/archive"
 _COMPACTED_TAG: Final[str] = "archive/compacted"
+_MEMORY_ARCHIVE_TAG: Final[str] = "memory/archive"
 _SUPERSEDED_TAG: Final[str] = "archive/superseded"
-_DIGEST_TAGS: Final[tuple[str, ...]] = ("type/archive", "archive/journal-digest")
+_DIGEST_TAGS: Final[tuple[str, ...]] = (
+    "type/archive",
+    "archive/journal-digest",
+    _MEMORY_ARCHIVE_TAG,
+)
 _DATE_STEM_RE: Final[re.Pattern[str]] = re.compile(r"^(?P<ymd>\d{4}-\d{2}-\d{2})\b")
 
 
@@ -178,28 +197,31 @@ def _strip_top_heading(body: str) -> str:
     return body.strip()
 
 
-def _write_monthly_digest(
-    vault_root: Path,
-    settings: Settings,
+def _verify_memory_paths_without_links(resolved_root: Path, settings: Settings) -> Path:
+    memory_base = effective_memory_root(resolved_root, settings=settings) or resolved_root
+    memory_dir = memory_base / MEMORY_SUBFOLDER_NAME
+    assert_path_chain_without_links(memory_dir, anchor=memory_base, allow_missing=True)
+    for subdir_name in ("journal", "archive"):
+        subdir = memory_dir / subdir_name
+        assert_path_chain_without_links(subdir, anchor=memory_base, allow_missing=True)
+        if subdir.exists():
+            for entry in subdir.rglob("*"):
+                assert_path_chain_without_links(entry, anchor=memory_base, allow_missing=True)
+    return memory_dir
+
+
+def _build_digest_content(
     month_bucket: str,
     bucket_notes: list[Note],
     now_iso: str,
-) -> str:
-    digest_rel_path = f"{_ARCHIVE_REL_DIR}/journal-{month_bucket}.md"
-    target_path = resolve_vault_rel_target(vault_root, digest_rel_path, settings=settings)
-    existing_meta: dict[str, Any] = {}
-    existing_body = ""
-    if target_path.is_file():
-        raw_existing = target_path.read_text(encoding="utf-8")
-        existing_meta, existing_body = parse(raw_existing)
-
+    *,
+    existing_meta: dict[str, Any],
+    existing_body: str,
+    has_bom: bool,
+) -> tuple[str, str]:
     digest_id = str(existing_meta.get("id") or ULID())
-    prev_compacted = existing_meta.get("compacted_notes")
-    compacted_list: list[str] = (
-        [str(x) for x in prev_compacted if isinstance(x, str)]
-        if isinstance(prev_compacted, list)
-        else []
-    )
+    prev_compacted = coerce_string_list(existing_meta.get("compacted_notes"), split_delimited=False)
+    compacted_list: list[str] = list(prev_compacted)
     sections: list[str] = []
     if existing_body.strip():
         sections.append(existing_body.strip())
@@ -219,8 +241,16 @@ def _write_monthly_digest(
         if heading in existing_body:
             continue
         cleaned_body = _strip_top_heading(note.content)
-        section_text = f"{heading}\n\nSource: [[{note.id}|{note.rel_path}]]\n\n{cleaned_body}"
+        target_no_ext = note.rel_path.removesuffix(".md")
+        source_line = f"Source: [[{target_no_ext}|{note.rel_path}]] (id: `{note.id}`)"
+        section_text = f"{heading}\n\n{source_line}\n\n{cleaned_body}"
         sections.append(section_text)
+
+    existing_tags = coerce_string_list(existing_meta.get("tags"))
+    merged_tags = list(existing_tags)
+    for req_tag in _DIGEST_TAGS:
+        if not any(t.casefold() == req_tag.casefold() for t in merged_tags):
+            merged_tags.append(req_tag)
 
     metadata: dict[str, Any] = {
         **existing_meta,
@@ -228,18 +258,77 @@ def _write_monthly_digest(
         "title": f"Journal Digest {month_bucket}",
         "created": str(existing_meta.get("created") or now_iso),
         "updated": now_iso,
-        "tags": list(_DIGEST_TAGS),
+        "tags": merged_tags,
         "compacted_notes": compacted_list,
     }
-    rendered = serialize(metadata, "\n\n".join(sections).strip() + "\n")
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_durable_write(target_path, rendered.encode("utf-8"))
+    body_text = "\n\n".join(sections).strip() + "\n"
+    if has_bom:
+        rendered = serialize_preserving_bom(metadata, body_text, has_bom=True)
+    else:
+        rendered = serialize(metadata, body_text)
+    if not rendered.endswith(("\n", "\r\n")):
+        rendered += "\n"
+    return digest_id, rendered
+
+
+async def _write_monthly_digest(
+    vault_root: Path,
+    settings: Settings,
+    writer: FilesystemVaultWriter,
+    month_bucket: str,
+    bucket_notes: list[Note],
+    now_iso: str,
+) -> str:
+    digest_rel_path = f"{_ARCHIVE_REL_DIR}/journal-{month_bucket}.md"
+    target_path = resolve_vault_rel_target(vault_root, digest_rel_path, settings=settings)
+    op_ctx = OperationContext(
+        op="compact_memory_digest",
+        tool="compact_vault_memory",
+        actor="datacron:memory_compaction",
+        parameters={"month_bucket": month_bucket},
+    )
+    if target_path.is_file():
+
+        def _mutate_digest(raw_existing: str) -> str:
+            existing_meta, existing_body, has_bom = parse_preserving_bom_and_body_eols(raw_existing)
+            _, rendered = _build_digest_content(
+                month_bucket,
+                bucket_notes,
+                now_iso,
+                existing_meta=existing_meta,
+                existing_body=existing_body,
+                has_bom=has_bom,
+            )
+            return rendered
+
+        await writer.mutate_note_atomic(
+            digest_rel_path,
+            _mutate_digest,
+            operation=op_ctx,
+        )
+    else:
+        digest_id, rendered = _build_digest_content(
+            month_bucket,
+            bucket_notes,
+            now_iso,
+            existing_meta={},
+            existing_body="",
+            has_bom=False,
+        )
+        await writer.write_note_atomic(
+            digest_rel_path,
+            rendered,
+            overwrite=False,
+            note_id=digest_id,
+            operation=op_ctx,
+        )
     return digest_rel_path
 
 
-def _mark_source_note_compacted(
+async def _mark_source_note_compacted(
     vault_root: Path,
     settings: Settings,
+    writer: FilesystemVaultWriter,
     note: Note,
     digest_rel_path: str,
     now_iso: str,
@@ -247,31 +336,54 @@ def _mark_source_note_compacted(
     target_path = resolve_vault_rel_target(vault_root, note.rel_path, settings=settings)
     if not target_path.is_file():
         return
-    raw_text = target_path.read_text(encoding="utf-8")
-    meta, body = parse(raw_text)
-    raw_tags = meta.get("tags")
-    tags: list[str] = (
-        [str(t) for t in raw_tags if isinstance(t, str)] if isinstance(raw_tags, list) else []
+
+    def _mutate_source(raw_text: str) -> str:
+        meta, body, has_bom = parse_preserving_bom_and_body_eols(raw_text)
+        tags = coerce_string_list(meta.get("tags"))
+        for required_tag in (_COMPACTED_TAG, _MEMORY_ARCHIVE_TAG):
+            if not any(t.casefold() == required_tag.casefold() for t in tags):
+                tags.append(required_tag)
+        meta["id"] = meta.get("id") or note.id
+        meta["tags"] = tags
+        meta["compacted_into"] = digest_rel_path
+        meta["updated"] = now_iso
+        rendered = serialize_preserving_bom(meta, body, has_bom=has_bom)
+        if not rendered.endswith(("\n", "\r\n")):
+            eol = "\r\n" if "\r\n" in raw_text else "\n"
+            rendered += eol
+        return rendered
+
+    await writer.mutate_note_atomic(
+        note.rel_path,
+        _mutate_source,
+        operation=OperationContext(
+            op="compact_memory_source",
+            tool="compact_vault_memory",
+            actor="datacron:memory_compaction",
+            parameters={"digest_rel_path": digest_rel_path},
+        ),
     )
-    if not any(t.casefold() == _COMPACTED_TAG for t in tags):
-        tags.append(_COMPACTED_TAG)
-    meta["id"] = meta.get("id") or note.id
-    meta["tags"] = tags
-    meta["compacted_into"] = digest_rel_path
-    meta["updated"] = now_iso
-    rendered = serialize(meta, body)
-    atomic_durable_write(target_path, rendered.encode("utf-8"))
 
 
 async def _reconcile_if_indexed(
     vault_root: Path,
     settings: Settings,
     reader: Any,
+    vault_cfg: VaultConfig,
 ) -> None:
     db_path = sidecar_index_db(vault_root, settings=settings)
     if not db_path.is_file():
         return
-    store = SQLiteFTS5Store()
+    archive_tags = (
+        *vault_cfg.archive_tags,
+        _COMPACTED_TAG,
+        "archive/journal-digest",
+        _MEMORY_ARCHIVE_TAG,
+    )
+    store = SQLiteFTS5Store(
+        term_map=vault_cfg.query_expansion,
+        archive_tags=archive_tags,
+    )
     await store.open(db_path)
     try:
         chunker = MarkdownChunker(max_tokens=settings.chunk_max_tokens)
@@ -293,6 +405,10 @@ async def compact_vault_memory(
         raise ValueError("older_than_days must be non-negative")
     resolved_root = vault_root.expanduser().resolve()
     active_settings = settings or get_settings()
+    if not dry_run and active_settings.read_only:
+        raise ReadOnlyVaultError("Memory compaction apply is not permitted in read-only mode.")
+
+    memory_dir = _verify_memory_paths_without_links(resolved_root, active_settings)
     reader = build_configured_reader(
         resolved_root,
         read_only=dry_run,
@@ -326,19 +442,46 @@ async def compact_vault_memory(
             superseded_notes=superseded_paths,
         )
 
+    writer_settings = (
+        active_settings
+        if active_settings.write_paths
+        else active_settings.model_copy(update={"write_paths": [memory_dir]})
+    )
+    vault_cfg = (
+        load_vault_config(sidecar_vault_config(resolved_root, settings=active_settings))
+        or VaultConfig()
+    )
+    writer = FilesystemVaultWriter(
+        resolved_root,
+        writer_settings,
+        vault_config=vault_cfg,
+    )
+
     now_iso = datetime.now(UTC).isoformat()
     digests_written = 0
     compacted_count = 0
     for bucket, bucket_notes in sorted(grouped_notes.items()):
-        digest_rel = _write_monthly_digest(
-            resolved_root, active_settings, bucket, bucket_notes, now_iso
+        digest_rel = await _write_monthly_digest(
+            resolved_root,
+            active_settings,
+            writer,
+            bucket,
+            bucket_notes,
+            now_iso,
         )
         digests_written += 1
         for note in bucket_notes:
-            _mark_source_note_compacted(resolved_root, active_settings, note, digest_rel, now_iso)
+            await _mark_source_note_compacted(
+                resolved_root,
+                active_settings,
+                writer,
+                note,
+                digest_rel,
+                now_iso,
+            )
             compacted_count += 1
 
-    await _reconcile_if_indexed(resolved_root, active_settings, reader)
+    await _reconcile_if_indexed(resolved_root, active_settings, reader, vault_cfg)
     return MemoryCompactionReport(
         dry_run=False,
         older_than_days=older_than_days,
