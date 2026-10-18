@@ -35,6 +35,7 @@ from datacron.mcp.tools.write import _execute_write_tool, _reconcile_committed_w
 from datacron.mcp.tools.write_requests import replayable_write
 from datacron.mcp.tools.write_validation import (
     HEADING_LEVELS,
+    _assert_markdown_rel_path,
     _parse_preserving_bom_and_body_eols,
     _validate_expected_hash,
     _validate_heading_occurrence,
@@ -107,8 +108,7 @@ async def _move_note_section_impl(
         if cleaned_hash is None:
             raise ValueError("expected_hash is required")
         cleaned_path = rel_path.strip()
-        if not cleaned_path.endswith(".md"):
-            raise ValueError("rel_path must end with .md")
+        _assert_markdown_rel_path(cleaned_path)
         try:
             cleaned_heading = _selector(
                 heading, heading_level, heading_occurrence, cleaned_hash, "source"

@@ -23,6 +23,7 @@ mutating the user's notes -- IDs are stored in a JSON sidecar at
 from __future__ import annotations
 
 import asyncio
+import enum
 import json
 import os
 import re
@@ -48,6 +49,7 @@ from datacron.core.frontmatter import (
     extract_tags,
     parse,
     resolve_note_title,
+    strict_frontmatter_block,
 )
 from datacron.core.hashing import NOTE_ID_LENGTH, derive_note_id, sha256_bytes
 from datacron.core.logger import get_logger
@@ -55,6 +57,7 @@ from datacron.core.models import Note
 from datacron.core.paths import (
     effective_extra_read_vaults,
     effective_memory_root,
+    is_link_stat,
     is_memory_rel_path,
     read_ulid_mappings,
     sidecar_dir,
@@ -63,9 +66,11 @@ from datacron.core.paths import (
 
 __all__ = [
     "H1_PATTERN",
+    "NO_MEMORY_ROOT",
     "FilesystemVaultReader",
     "IdentitySidecarError",
     "JsonIdStore",
+    "NoMemoryRoot",
     "NoteAdmissionPolicy",
     "build_configured_reader",
 ]
@@ -83,6 +88,10 @@ MIGRATED_ULID_SIDECAR_FILENAME: Final[str] = "ulids.json.migrated"
 # title: the same rule for the reader and for every other module that derives a title.
 H1_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s{0,3}#\s+(.+?)\s*$", re.MULTILINE)
 _H1_PATTERN: Final[re.Pattern[str]] = H1_PATTERN
+# The writer's rule for an ``id:`` line in a frontmatter block YAML cannot load.
+_FRONTMATTER_ID_PATTERN: Final[re.Pattern[str]] = re.compile(
+    rf"(?m)^id:[ \t]*['\"]?([0-9A-HJKMNP-TV-Z]{{{NOTE_ID_LENGTH}}})['\"]?[ \t]*$"
+)
 
 
 class DuplicateNoteIdentityError(ValueError):
@@ -93,6 +102,23 @@ class DuplicateNoteIdentityError(ValueError):
     def __init__(self, note_id: str, first: str, second: str) -> None:
         paths = sorted((first, second))
         super().__init__(f"note ID {note_id} is claimed by {paths[0]!r} and {paths[1]!r}")
+
+
+@final
+class NoMemoryRoot(enum.Enum):
+    """Explicit answer that a reader serves no distinct memory vault.
+
+    ``memory_root=None`` keeps its historical meaning of "not given", which lets
+    the reader derive the root from the process settings. A caller that already
+    resolved its own settings to no memory vault must say so with
+    :data:`NO_MEMORY_ROOT`: passing ``None`` there let the process-global
+    ``DATACRON_MEMORY_ROOT`` bind an unrelated vault to the real memory vault.
+    """
+
+    NO_MEMORY_ROOT = "no_memory_root"
+
+
+NO_MEMORY_ROOT: Final = NoMemoryRoot.NO_MEMORY_ROOT
 
 
 @final
@@ -155,8 +181,9 @@ def build_configured_reader(
         id_store=id_store,
         read_only=read_only,
         admission_policy=effective_policy,
-        memory_root=resolved_memory,
+        memory_root=NO_MEMORY_ROOT if resolved_memory is None else resolved_memory,
         extra_read_vaults=resolved_extras,
+        settings=settings,
     )
 
 
@@ -175,6 +202,14 @@ def _walked_rel_path(path: Path, resolved_vault_root: Path) -> str:
     per note in the vault, so that pair dominated a sweep that otherwise only stats.
     """
     return str(PurePosixPath(*path.relative_to(resolved_vault_root).parts))
+
+
+def _is_linked_directory(path: Path) -> bool:
+    """Return whether ``path`` is a symlink, junction or mount point, by ``lstat``."""
+    try:
+        return is_link_stat(os.lstat(path))
+    except OSError:
+        return False
 
 
 def _coerce_datetime(value: object, fallback: datetime) -> datetime:
@@ -393,20 +428,40 @@ class FilesystemVaultReader:
         excluded_folders: frozenset[str] | None = None,
         excluded_files: frozenset[str] | None = None,
         admission_policy: NoteAdmissionPolicy | None = None,
-        memory_root: Path | None = None,
+        memory_root: Path | NoMemoryRoot | None = None,
         extra_read_vaults: Mapping[str, Path] | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self._vault_root = vault_root.expanduser().resolve()
-        self._memory_root = effective_memory_root(self._vault_root, memory_root=memory_root)
+        # ``settings`` carries the caller's binding, and the sentinel says "no memory vault"
+        # explicitly: either way the process environment's memory root is never adopted.
+        self._memory_root = (
+            None
+            if isinstance(memory_root, NoMemoryRoot)
+            else effective_memory_root(
+                self._vault_root,
+                memory_root=memory_root,
+                settings=settings,
+            )
+        )
         self._extra_read_vaults = effective_extra_read_vaults(
             self._vault_root,
             extra_read_vaults=extra_read_vaults,
+            settings=settings,
         )
         self._extra_read_by_folded: dict[str, tuple[str, Path]] = {
             prefix.casefold(): (prefix, root) for prefix, root in self._extra_read_vaults.items()
         }
+        # The memory root is settled by now. Passing ``None`` on would make the path
+        # helper consult the process settings again; naming the vault root itself is
+        # how it is told "no distinct memory vault".
         sidecar = (
-            sidecar_dir(self._vault_root, memory_root=self._memory_root) / ULID_SIDECAR_FILENAME
+            sidecar_dir(
+                self._vault_root,
+                memory_root=self._memory_root or self._vault_root,
+                settings=settings,
+            )
+            / ULID_SIDECAR_FILENAME
         )
         self._read_only = read_only
         self._id_store = id_store or JsonIdStore(sidecar, read_only=read_only)
@@ -497,6 +552,7 @@ class FilesystemVaultReader:
         stat = await asyncio.to_thread(resolved.stat)
         metadata: dict[str, Any]
         body: str
+        unparsed: str | None
         try:
             metadata, body = parse(raw_text)
         except FrontmatterError as exc:
@@ -507,9 +563,12 @@ class FilesystemVaultReader:
             )
             metadata = {}
             body = raw_text
+            unparsed = raw_text
+        else:
+            unparsed = None
 
         rel_path = self._rel_path_for_resolved(resolved)
-        note_id = await self._resolve_id(metadata, rel_path)
+        note_id = await self._resolve_id(metadata, rel_path, unparsed_raw=unparsed)
         title = resolve_note_title(
             metadata,
             body,
@@ -582,7 +641,13 @@ class FilesystemVaultReader:
         result: dict[str, tuple[Path, int]] = {}
         for path in self._collect_markdown_paths(self._vault_root):
             rel_path = self._rel_path_for_resolved(path)
-            result[rel_path] = (path, path.stat().st_mtime_ns)
+            try:
+                mtime_ns = path.stat().st_mtime_ns
+            except FileNotFoundError:
+                # Deleted or renamed between the walk and this stat: the note is
+                # simply no longer live, and the sweep must not abort over it.
+                continue
+            result[rel_path] = (path, mtime_ns)
         return result
 
     async def resolve_alias(self, alias: str) -> str | None:
@@ -664,10 +729,10 @@ class FilesystemVaultReader:
         if root == self._vault_root:
             if self._memory_root is not None:
                 memory_subtree = self._memory_root / MEMORY_SUBFOLDER_NAME
-                if memory_subtree.is_dir() and not memory_subtree.is_symlink():
+                if memory_subtree.is_dir() and not _is_linked_directory(memory_subtree):
                     self._collect_markdown_paths_into(memory_subtree, results)
             for extra_root in self._extra_read_vaults.values():
-                if extra_root.is_dir() and not extra_root.is_symlink():
+                if extra_root.is_dir() and not _is_linked_directory(extra_root):
                     self._collect_markdown_paths_into(extra_root, results)
         return results
 
@@ -683,6 +748,15 @@ class FilesystemVaultReader:
                 continue
             try:
                 is_directory = entry.is_dir(follow_symlinks=False)
+                # A Windows junction is not a symlink to ``DirEntry`` and reads as
+                # a plain directory, so the walk descended into it and listed its
+                # notes under a second path: twice in a fallback listing, and a
+                # DuplicateNoteIdentityError for the whole vault on the index
+                # path. The writer refuses the same links through this predicate.
+                # ``scandir`` carries the attributes and the reparse tag with the
+                # entry on Windows, so this asks the filesystem nothing new.
+                if is_directory and is_link_stat(entry.stat(follow_symlinks=False)):
+                    continue
             except OSError:
                 continue
             if is_directory:
@@ -709,10 +783,28 @@ class FilesystemVaultReader:
     def _should_skip_file(self, name: str) -> bool:
         return name.casefold() in self._admission_policy.excluded_files
 
-    async def _resolve_id(self, metadata: dict[str, object], rel_path: str) -> str:
+    async def _resolve_id(
+        self,
+        metadata: dict[str, object],
+        rel_path: str,
+        *,
+        unparsed_raw: str | None = None,
+    ) -> str:
+        """Return the note's identity: frontmatter id, sidecar mapping, then path.
+
+        ``unparsed_raw`` is the note text when its frontmatter could not be parsed.
+        The writer still finds an ``id:`` line in such a block by pattern, so the
+        reader does too: deriving and storing a path identity there gave the note
+        two identities, one per side.
+        """
         front_id = metadata.get("id")
         if isinstance(front_id, str) and len(front_id) == NOTE_ID_LENGTH:
             return front_id
+        if unparsed_raw is not None:
+            block = strict_frontmatter_block(unparsed_raw)
+            match = _FRONTMATTER_ID_PATTERN.search(block) if block is not None else None
+            if match is not None:
+                return match.group(1)
         existing = await self._id_store.get(rel_path)
         if existing:
             return existing
@@ -746,9 +838,12 @@ class FilesystemVaultReader:
                 exc,
             )
             metadata, body = {}, raw_text
+            unparsed: str | None = raw_text
+        else:
+            unparsed = None
         rel_path = self._rel_path_for_resolved(path)
         return _AliasRecord(
-            note_id=await self._resolve_id(metadata, rel_path),
+            note_id=await self._resolve_id(metadata, rel_path, unparsed_raw=unparsed),
             title=resolve_note_title(
                 metadata,
                 body,
