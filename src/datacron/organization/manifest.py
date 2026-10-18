@@ -38,6 +38,8 @@ from datacron.core.case_folding import case_folding_for, fold_path_key
 from datacron.core.config import (
     CANONICAL_ULID_PATTERN,
     LEGACY_NOTE_ID_PATTERN,
+    MEMORY_SUBFOLDER_NAME,
+    SIDECAR_DIR_NAME,
     OrganizationConfig,
     VaultConfig,
 )
@@ -58,6 +60,7 @@ from datacron.core.paths import (
     WINDOWS_RESERVED_NAMES,
     PathConfinementError,
     assert_within_paths,
+    is_memory_rel_path,
     read_ulid_sidecar_strict,
     reject_duplicate_json_keys,
     reject_nonfinite_json_constant,
@@ -1031,6 +1034,38 @@ def load_organization_bundle(manifest_path: Path, *, vault_root: Path) -> Organi
     )
 
 
+def _effective_scope_memory_root(
+    scope: VaultScope | None,
+    memory_root: Path | None = None,
+) -> Path | None:
+    if memory_root is not None:
+        return memory_root.expanduser().resolve()
+    raw = getattr(scope, "memory_root", None)
+    if isinstance(raw, Path):
+        return raw.expanduser().resolve()
+    return None
+
+
+def _root_for_rel_path(
+    vault_root: Path,
+    rel_path: str,
+    scope: VaultScope | None = None,
+    *,
+    memory_root: Path | None = None,
+) -> Path:
+    effective_mem = _effective_scope_memory_root(scope, memory_root)
+    if effective_mem is None:
+        return vault_root
+    normalized = rel_path.strip().replace("\\", "/").lstrip("/")
+    if (
+        normalized.casefold() == SIDECAR_DIR_NAME.casefold()
+        or normalized.casefold().startswith(f"{SIDECAR_DIR_NAME.casefold()}/")
+        or is_memory_rel_path(normalized)
+    ):
+        return effective_mem
+    return vault_root
+
+
 def _resolve_scoped_path(
     vault_root: Path,
     rel_path: str,
@@ -1038,16 +1073,18 @@ def _resolve_scoped_path(
     *,
     access: Literal["read", "write"],
     allow_missing: bool,
+    memory_root: Path | None = None,
 ) -> Path:
-    lexical = vault_root / PurePosixPath(rel_path)
+    target_root = _root_for_rel_path(vault_root, rel_path, scope, memory_root=memory_root)
+    lexical = target_root / PurePosixPath(rel_path)
     try:
         unlinked = assert_path_chain_without_links(
             lexical,
-            anchor=vault_root,
+            anchor=target_root,
             allow_missing=allow_missing,
         )
         scoped = scope.authorize_rel_path(rel_path, access)
-        confined = assert_within_paths(scoped, [vault_root], kind=access)
+        confined = assert_within_paths(scoped, [target_root], kind=access)
     except (FileNotFoundError, LinkedPathError, OSError, PathConfinementError, RuntimeError) as exc:
         raise OrganizationManifestError(
             "vault_path_invalid",
@@ -1063,7 +1100,11 @@ def _resolve_scoped_path(
 
 
 def _assert_target_spelling_matches_disk(
-    vault_root: Path, rel_path: str, *, include_leaf: bool = False
+    vault_root: Path,
+    rel_path: str,
+    *,
+    scope: VaultScope | None = None,
+    include_leaf: bool = False,
 ) -> None:
     """Refuse a path whose existing folders (and file) are spelled differently on disk.
 
@@ -1079,7 +1120,7 @@ def _assert_target_spelling_matches_disk(
     """
     parts = PurePosixPath(rel_path).parts
     checked = parts if include_leaf else parts[:-1]
-    current = vault_root
+    current = _root_for_rel_path(vault_root, rel_path, scope)
     for index, part in enumerate(checked):
         candidate = current / part
         is_leaf = index == len(parts) - 1
@@ -1123,7 +1164,7 @@ def _resolve_move_source(vault_root: Path, rel_path: str, scope: VaultScope) -> 
             "vault_path_invalid",
             f"Scope resolved two paths for move source {rel_path!r}",
         )
-    _assert_target_spelling_matches_disk(vault_root, rel_path, include_leaf=True)
+    _assert_target_spelling_matches_disk(vault_root, rel_path, scope=scope, include_leaf=True)
     return source_path
 
 
@@ -1158,6 +1199,8 @@ def _sidecar_identity_for(
     target_path: Path,
     vault_root: Path,
     sidecar_ids: Mapping[str, str],
+    *,
+    scope: VaultScope | None = None,
 ) -> str | None:
     """Return the sidecar identity the reader resolves for this note, or ``None``.
 
@@ -1169,8 +1212,9 @@ def _sidecar_identity_for(
     and only for the exact sidecar key: a case or spelling variant (``./``,
     ``//``) never gave the note its identity and must not give it one now.
     """
+    target_root = _root_for_rel_path(vault_root, rel_path, scope)
     try:
-        physical = target_path.resolve(strict=True).relative_to(vault_root).as_posix()
+        physical = target_path.resolve(strict=True).relative_to(target_root).as_posix()
     except (OSError, ValueError):
         return None
     if physical != rel_path:
@@ -1326,14 +1370,17 @@ def _read_vault_id_mapping(path: Path, *, vault_root: Path) -> tuple[bytes, dict
 
 def _load_vault_id_state(
     vault_root: Path,
+    *,
+    scope: VaultScope | None = None,
 ) -> tuple[bytes, dict[str, str], bytes, dict[str, str], dict[str, str]]:
-    sidecar = vault_root / ".datacron" / ULID_SIDECAR_FILENAME
-    migrated = vault_root / ".datacron" / MIGRATED_ULID_SIDECAR_FILENAME
+    sidecar_root = _effective_scope_memory_root(scope) or vault_root
+    sidecar = sidecar_root / ".datacron" / ULID_SIDECAR_FILENAME
+    migrated = sidecar_root / ".datacron" / MIGRATED_ULID_SIDECAR_FILENAME
     try:
-        primary_bytes, primary = _read_vault_id_mapping(sidecar, vault_root=vault_root)
+        primary_bytes, primary = _read_vault_id_mapping(sidecar, vault_root=sidecar_root)
         migrated_bytes, migrated_values = _read_vault_id_mapping(
             migrated,
-            vault_root=vault_root,
+            vault_root=sidecar_root,
         )
     except (LinkedPathError, OSError, ValueError, json.JSONDecodeError) as exc:
         raise OrganizationManifestError(
@@ -1355,7 +1402,7 @@ def _scope_excluded_folders(scope: VaultScope) -> frozenset[str]:
 def _assert_target_admitted_as_spelled(scope: VaultScope, vault_root: Path, rel_path: str) -> None:
     """Reject a target the note policy excludes or whose folders differ from disk."""
     _assert_target_note_admitted(scope, rel_path)
-    _assert_target_spelling_matches_disk(vault_root, rel_path)
+    _assert_target_spelling_matches_disk(vault_root, rel_path, scope=scope)
 
 
 def _assert_target_note_admitted(scope: VaultScope, rel_path: str) -> None:
@@ -1377,12 +1424,50 @@ def _assert_target_note_admitted(scope: VaultScope, rel_path: str) -> None:
         )
 
 
+def _rel_path_for_admitted_path(
+    path: Path,
+    *,
+    vault_root: Path,
+    scope: VaultScope | None = None,
+) -> str:
+    mem_root = _effective_scope_memory_root(scope)
+    if mem_root is not None and path.is_relative_to(mem_root):
+        return path.relative_to(mem_root).as_posix()
+    return path.relative_to(vault_root).as_posix()
+
+
+def _initial_admitted_roots(
+    vault_root: Path,
+    mem_root: Path | None,
+) -> list[tuple[Path, Path]]:
+    roots: list[tuple[Path, Path]] = [(vault_root, vault_root)]
+    if mem_root is None:
+        return roots
+    mem_subdir = mem_root / MEMORY_SUBFOLDER_NAME
+    try:
+        unlinked_mem = assert_path_chain_without_links(
+            mem_subdir,
+            anchor=mem_root,
+            allow_missing=True,
+        )
+    except (FileNotFoundError, LinkedPathError, OSError) as exc:
+        raise OrganizationManifestError(
+            "vault_path_invalid",
+            f"Linked or unreadable memory directory: {exc}",
+        ) from exc
+    if unlinked_mem.is_dir():
+        roots.append((mem_root, unlinked_mem))
+    return roots
+
+
 def _collect_admitted_note_paths(vault_root: Path, scope: VaultScope) -> tuple[Path, ...]:
-    pending = [vault_root]
+    mem_root = _effective_scope_memory_root(scope)
+    pending = _initial_admitted_roots(vault_root, mem_root)
+
     discovered: list[Path] = []
     excluded_folders = _scope_excluded_folders(scope)
     while pending:
-        directory = pending.pop()
+        anchor_root, directory = pending.pop()
         try:
             entries = tuple(directory.iterdir())
         except OSError as exc:
@@ -1391,8 +1476,15 @@ def _collect_admitted_note_paths(vault_root: Path, scope: VaultScope) -> tuple[P
                 f"Cannot enumerate vault directory {directory}: {exc}",
             ) from exc
         for entry in entries:
+            if (
+                mem_root is not None
+                and anchor_root == vault_root
+                and directory == vault_root
+                and entry.name.casefold() == MEMORY_SUBFOLDER_NAME.casefold()
+            ):
+                continue
             try:
-                unlinked = assert_path_chain_without_links(entry, anchor=vault_root)
+                unlinked = assert_path_chain_without_links(entry, anchor=anchor_root)
             except (FileNotFoundError, LinkedPathError, OSError) as exc:
                 raise OrganizationManifestError(
                     "vault_path_invalid",
@@ -1401,11 +1493,11 @@ def _collect_admitted_note_paths(vault_root: Path, scope: VaultScope) -> tuple[P
             if unlinked.is_dir():
                 if entry.name.startswith(".") or entry.name.casefold() in excluded_folders:
                     continue
-                pending.append(unlinked)
+                pending.append((anchor_root, unlinked))
                 continue
             if not unlinked.is_file() or unlinked.suffix.casefold() != _MARKDOWN_SUFFIX:
                 continue
-            rel_path = unlinked.relative_to(vault_root).as_posix()
+            rel_path = unlinked.relative_to(anchor_root).as_posix()
             try:
                 admitted = scope.authorize_note_rel_path(rel_path)
             except NoteAdmissionError:
@@ -1421,16 +1513,22 @@ def _collect_admitted_note_paths(vault_root: Path, scope: VaultScope) -> tuple[P
                     f"Scope redirected admitted note {rel_path!r}",
                 )
             discovered.append(unlinked)
-    return tuple(sorted(discovered, key=lambda path: path.relative_to(vault_root).as_posix()))
+    return tuple(
+        sorted(
+            discovered,
+            key=lambda path: _rel_path_for_admitted_path(path, vault_root=vault_root, scope=scope),
+        )
+    )
 
 
 def _read_projected_identity(
     path: Path,
     *,
     vault_root: Path,
+    scope: VaultScope | None = None,
     id_mappings: Mapping[str, str],
 ) -> _ProjectedIdentity:
-    rel_path = path.relative_to(vault_root).as_posix()
+    rel_path = _rel_path_for_admitted_path(path, vault_root=vault_root, scope=scope)
     try:
         raw_bytes = _read_bounded_bytes(
             path,
@@ -1485,7 +1583,12 @@ def _inventory_admitted_identities(
 ) -> dict[str, _ProjectedIdentity]:
     identities: dict[str, _ProjectedIdentity] = {}
     for path in _collect_admitted_note_paths(vault_root, scope):
-        identity = _read_projected_identity(path, vault_root=vault_root, id_mappings=id_mappings)
+        identity = _read_projected_identity(
+            path,
+            vault_root=vault_root,
+            scope=scope,
+            id_mappings=id_mappings,
+        )
         normalized = PurePosixPath(identity.rel_path).as_posix().casefold()
         existing = identities.get(normalized)
         if existing is not None:
@@ -2165,14 +2268,16 @@ def _validate_organization_bundle(
     resolved_vault: Path,
     scope: VaultScope,
 ) -> ValidatedOrganizationBundle:
-    if _is_within(bundle.bundle_root, resolved_vault) or _is_within(
-        resolved_vault,
-        bundle.bundle_root,
-    ):
-        raise OrganizationManifestError(
-            "bundle_path_invalid",
-            "organization bundle and validation vault must not overlap",
-        )
+    sidecar_root = _effective_scope_memory_root(scope) or resolved_vault
+    for check_root in {resolved_vault, sidecar_root}:
+        if _is_within(bundle.bundle_root, check_root) or _is_within(
+            check_root,
+            bundle.bundle_root,
+        ):
+            raise OrganizationManifestError(
+                "bundle_path_invalid",
+                "organization bundle and validation vault must not overlap",
+            )
     resolved_operations: list[ResolvedOrganizationOperation] = []
     preconditions: list[dict[str, object]] = []
     (
@@ -2192,7 +2297,7 @@ def _validate_organization_bundle(
         migrated_bytes,
         migrated_ids,
         sidecar_ids,
-    ) = _load_vault_id_state(resolved_vault)
+    ) = _load_vault_id_state(resolved_vault, scope=scope)
 
     for operation in bundle.manifest.operations:
         _assert_operation_organization_scope(operation, organization_scope)
@@ -2231,14 +2336,21 @@ def _validate_organization_bundle(
                     f"Scope resolved two paths for replace target {operation.target!r}",
                 )
             _assert_target_spelling_matches_disk(
-                resolved_vault, operation.target, include_leaf=True
+                resolved_vault,
+                operation.target,
+                scope=scope,
+                include_leaf=True,
             )
             _read_expected_note(
                 target_path,
                 expected_sha256=operation.expected_sha256,
                 expected_identity=operation.expected,
                 sidecar_identity=_sidecar_identity_for(
-                    operation.target, target_path, resolved_vault, sidecar_ids
+                    operation.target,
+                    target_path,
+                    resolved_vault,
+                    sidecar_ids,
+                    scope=scope,
                 ),
             )
             source_path = target_path
@@ -2300,7 +2412,7 @@ def _validate_organization_bundle(
         identity_sidecar_after_bytes,
         identity_sidecar_after_sha256,
     ) = _derive_identity_sidecar_update(
-        vault_root=resolved_vault,
+        vault_root=sidecar_root,
         operations=tuple(resolved_operations),
         primary_bytes=primary_bytes,
         primary=canonical_primary_ids,
@@ -2367,7 +2479,7 @@ def _validate_organization_bundle(
         identity_sidecar_after_bytes=identity_sidecar_after_bytes,
         identity_sidecar_after_sha256=identity_sidecar_after_sha256,
         migrated_identity_sidecar_path=(
-            resolved_vault / ".datacron" / MIGRATED_ULID_SIDECAR_FILENAME
+            sidecar_root / ".datacron" / MIGRATED_ULID_SIDECAR_FILENAME
         ),
         migrated_identity_sidecar_before_sha256=(
             sha256_bytes(migrated_bytes) if migrated_bytes else None

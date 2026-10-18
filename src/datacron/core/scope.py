@@ -324,6 +324,11 @@ class SingleTenantVaultScope:
         """Return the immutable note policy enforced by this scope."""
         return self._admission_policy
 
+    @property
+    def memory_root(self) -> Path | None:
+        """Return the resolved Dual-Vault memory root if configured, else None."""
+        return self._memory_root
+
     def _target_for_rel_path(self, rel_path: str) -> tuple[Path, str | Path, tuple[str, ...]]:
         normalized = rel_path.strip().replace("\\", "/").lstrip("/")
         parts = PurePosixPath(normalized).parts if normalized else ()

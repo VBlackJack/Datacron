@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, TypeAlias, cast
 from mcp.server.mcpserver import Context
 
 from datacron.core.batch_transaction import BatchApplyResult, BatchConflictError
-from datacron.core.config import VaultConfig
+from datacron.core.config import Settings, VaultConfig
 from datacron.core.durability import (
     DurabilityUnavailableError,
     ReadOnlyModeError,
@@ -35,7 +35,11 @@ from datacron.core.durability import (
 )
 from datacron.core.logger import get_logger
 from datacron.core.operation_log import OperationContext
-from datacron.core.paths import PathConfinementError, sidecar_vault_config
+from datacron.core.paths import (
+    PathConfinementError,
+    resolve_sidecar_root,
+    sidecar_vault_config,
+)
 from datacron.core.scope import (
     LinkedPathError,
     OrganizationBatchWriter,
@@ -163,9 +167,14 @@ def _load_expected_bundle(
     return bundle
 
 
-def _read_config_bytes(vault_root: Path) -> bytes:
+def _read_config_bytes(
+    vault_root: Path,
+    *,
+    settings: Settings | None = None,
+) -> bytes:
     """Read exact current VAULT.yaml bytes without following linked paths."""
-    config_path = sidecar_vault_config(vault_root)
+    sidecar_root = resolve_sidecar_root(vault_root, settings=settings)
+    config_path = sidecar_vault_config(vault_root, settings=settings)
     try:
         config_path.lstat()
     except FileNotFoundError:
@@ -173,7 +182,7 @@ def _read_config_bytes(vault_root: Path) -> bytes:
     except OSError as exc:
         raise OrganizationProjectionError("VAULT.yaml cannot be inspected safely") from exc
     try:
-        safe_path = assert_path_chain_without_links(config_path)
+        safe_path = assert_path_chain_without_links(config_path, anchor=sidecar_root)
         if not safe_path.is_file():
             raise OrganizationProjectionError("VAULT.yaml is not a regular file")
         with safe_path.open("rb") as handle:
@@ -224,6 +233,7 @@ def _project_report_hash(
             app.vault_root,
             validated.target_config,
             validated.projected_notes,
+            settings=app.settings,
         )
     except (OrganizationConfigurationError, PathConfinementError) as exc:
         raise OrganizationProjectionError(
@@ -272,7 +282,7 @@ def _assert_preview_token(preview: _OrganizationPreview, token: str) -> None:
 def _current_report_hash(app: DatacronApp) -> str:
     """Hash the planner report for the live post-transaction vault."""
     try:
-        raw_bytes = _read_config_bytes(app.vault_root)
+        raw_bytes = _read_config_bytes(app.vault_root, settings=app.settings)
         if raw_bytes:
             text = raw_bytes.decode("utf-8")
             _document, live_config = parse_organization_config_document(

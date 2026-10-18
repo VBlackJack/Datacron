@@ -864,7 +864,8 @@ def _split_path_list(value: str | list[str | Path] | None) -> list[Path]:
     return [Path(p).expanduser().resolve() for p in value]
 
 
-def _validate_extra_vault_prefix(raw_prefix: object) -> str:
+def validate_extra_vault_prefix(raw_prefix: object) -> str:
+    """Return the trimmed mount prefix, or raise when it is not one safe folder name."""
     if not isinstance(raw_prefix, str):
         raise TypeError("extra_read_vaults prefixes must be strings")
     prefix = raw_prefix.strip().strip("/\\")
@@ -923,7 +924,7 @@ def _parse_extra_read_vaults_value(value: object) -> dict[str, Path]:
     result: dict[str, Path] = {}
     seen_folded: set[str] = set()
     for raw_prefix, raw_target in raw_mapping.items():
-        prefix = _validate_extra_vault_prefix(raw_prefix)
+        prefix = validate_extra_vault_prefix(raw_prefix)
         folded = prefix.casefold()
         if folded in seen_folded:
             raise ValueError(f"Duplicate extra_read_vaults prefix: {prefix!r}")
