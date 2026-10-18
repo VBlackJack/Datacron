@@ -157,7 +157,8 @@
       "connected": "Connecté à Datacron {version}",
       "refresh": "Actualiser (F5)",
       "save": "Enregistrer (Ctrl+S)",
-      "language_label": "Langue"
+      "language_label": "Langue",
+      "busy": "Une autre opération est en cours ; attendez qu'elle se termine."
     },
     "nav": {
       "home": "Accueil",
@@ -196,9 +197,24 @@
       "sync_now": "Synchroniser l'index (incrémental)",
       "rebuild_now": "Reconstruction complète atomique",
       "migrate_title": "Migrer d'un Single-Vault vers Dual-Vault",
-      "migrate_desc": "Copie atomiquement .datacron/ et _memory/ vers le Vault Mémoire dédié avec vérification SHA-256 et nettoie le Vault Docs.",
+      "migrate_desc": "Copie .datacron/ et _memory/ vers le Vault Mémoire dédié avec vérification SHA-256, reconstruit l'index et reconfigure les clients MCP détectés. Les copies du Vault Docs ne sont supprimées que si vous décochez la case ci-dessous et confirmez.",
       "migrate_keep_source": "Conserver les fichiers sources dans le Vault Docs (--keep-source)",
-      "migrate_button": "Lancer la migration Dual-Vault"
+      "migrate_button": "Lancer la migration Dual-Vault",
+      "memory_from_env_hint": "Vault mémoire issu de l'environnement : {path}",
+      "migrate_reconfigure_clients": "Reconfigurer les clients MCP détectés pour la nouvelle organisation",
+      "migrate_cleanup_confirm": "Supprimer .datacron/ et _memory/ du Vault Docs après la copie vérifiée ? Tout client encore pointé vers l'ancienne organisation ne verra plus sa mémoire.",
+      "migrate_clients_reminder": "Les clients MCP n'ont pas été reconfigurés : ouvrez Clients MCP et configurez-les maintenant pour l'organisation Dual-Vault.",
+      "result_verified": "Fichiers vérifiés",
+      "result_resumed": "Déjà copiés par une exécution précédente",
+      "result_indexed": "Notes indexées",
+      "result_source_cleaned": "Source supprimée du Vault Docs",
+      "result_source_kept": "Source conservée dans le Vault Docs",
+      "result_clients": "Clients reconfigurés",
+      "result_warnings": "Avertissements",
+      "result_mode": "Mode",
+      "result_stats": "Statistiques",
+      "cleanup_only_button": "Supprimer la source migrée",
+      "cleanup_only_confirm": "Supprimer maintenant .datacron/ et _memory/ du Vault Docs ? C'est refusé si un fichier mémoire source n'est pas déjà dans le vault mémoire."
     },
     "search": {
       "headline": "Recherche interactive dans le Vault",
@@ -209,7 +225,8 @@
       "run_button": "Rechercher (Entrée)",
       "clear_button": "Effacer (Échap)",
       "empty_state": "Aucun fragment correspondant trouvé. Essayez d'élargir la requête ou de synchroniser l'index.",
-      "preview_title": "Aperçu du fragment et provenance"
+      "preview_title": "Aperçu du fragment et provenance",
+      "mode_label": "Mode de recherche"
     },
     "graph": {
       "headline": "Intégrité du graphe de connaissances & Compaction mémoire",
@@ -221,14 +238,25 @@
       "compaction_title": "Compaction intelligente de la mémoire",
       "compaction_days_label": "Compacter les journaux plus anciens que (jours)",
       "compaction_preview_btn": "Aperçu de la compaction (Dry-Run)",
-      "compaction_apply_btn": "Appliquer la compaction mensuelle"
+      "compaction_apply_btn": "Appliquer la compaction mensuelle",
+      "summary_title": "Synthèse",
+      "total_notes": "Notes",
+      "total_links": "Liens",
+      "resolved_links": "Liens résolus",
+      "none_found": "Aucun élément.",
+      "compaction_apply_confirm": "Appliquer la compaction mensuelle maintenant ? Les anciennes notes de journal sont réécrites en synthèses mensuelles."
     },
     "mcp": {
       "headline": "Assistants IA & Intégration des clients MCP",
       "client_label": "Client MCP cible",
       "scope_label": "Portée d'installation",
       "enable_write_label": "Activer les outils d'écriture confinés (_memory, _drafts, _journal)",
-      "configure_button": "Configurer le client sélectionné"
+      "configure_button": "Configurer le client sélectionné",
+      "status_configured": "configuré",
+      "status_not_configured": "non configuré",
+      "status_installed": "installé",
+      "status_failed": "échec",
+      "errors_title": "Erreurs"
     },
     "history": {
       "headline": "Journal des opérations & Audit de fiabilité",
@@ -243,7 +271,48 @@
       "durability_label": "Mode de durabilité des écritures",
       "timeout_label": "Délai d'expiration des opérations CLI (secondes)",
       "save_vault_config_btn": "Enregistrer VAULT.yaml (Protection CAS)",
-      "cas_hash_label": "Hash CAS de la configuration active"
+      "cas_hash_label": "Hash CAS de la configuration active",
+      "config_valid": "VAULT.yaml est valide",
+      "config_invalid": "VAULT.yaml est invalide : l'enregistrement est refusé tant qu'il n'est pas corrigé ou réinitialisé",
+      "config_absent": "Pas encore de VAULT.yaml : l'enregistrement le crée",
+      "errors_title": "Erreurs de validation",
+      "reset_label": "Réinitialiser VAULT.yaml avec les valeurs par défaut affichées (remplace le fichier invalide)",
+      "reset_confirm": "Remplacer le VAULT.yaml invalide par les valeurs par défaut affichées ? Son identité de vault, ses dossiers et ses réglages d'organisation sont perdus.",
+      "query_expansion_invalid": "L'expansion de requêtes doit être un objet JSON.",
+      "saved": "Réglages enregistrés.",
+      "nothing_to_save": "Rien à enregistrer."
+    },
+    "migration": {
+      "profile_not_updated": "La migration a réussi mais le profil Companion n'a pas pu être mis à jour ; indiquez {vault} comme vault de documentation et {memory_vault} comme vault mémoire, puis enregistrez la topologie.",
+      "client_manual": "{client} n'est pas configuré automatiquement ; collez-y à la main l'entrée Datacron pour l'organisation Dual-Vault."
+    },
+    "errors": {
+      "vault_required": "Configurez d'abord un vault de documentation principal valide.",
+      "profile_mapping_missing": "Objet 'profile' absent de la requête.",
+      "values_mapping_missing": "Objet 'values' absent de la requête.",
+      "preferences_mapping_missing": "Objet 'preferences' absent de la requête.",
+      "unknown_preference": "Champs de préférence inconnus : {keys}",
+      "profile_invalid": "Le profil Companion est invalide et n'a pas été modifié : {errors}",
+      "vault_config_invalid": "VAULT.yaml est invalide et n'a pas été modifié : {errors}. Corrigez le fichier ou choisissez une réinitialisation explicite.",
+      "migration_paths_required": "vault_path et memory_vault_path sont tous deux requis pour la migration.",
+      "cleanup_needs_confirmation": "La suppression de la source exige une confirmation explicite ; rien n'a été migré.",
+      "cleanup_needs_clients": "La suppression de la source exige de reconfigurer les clients MCP dans la même exécution ; sinon ils restent pointés vers la mémoire supprimée. Rien n'a été migré.",
+      "unknown_client": "Client MCP inconnu : {client}",
+      "unknown_scope": "Portée d'installation inconnue : {scope}",
+      "migration_os_error": "La migration s'est arrêtée sur une erreur du système de fichiers : {detail}. Le vault source n'a pas été nettoyé. Fermez tout serveur Datacron et tout client MCP qui l'utilise, vérifiez les chemins et les droits, puis relancez la migration : les fichiers déjà copiés sont vérifiés et conservés.",
+      "index_missing": "Base d'index introuvable ; lancez d'abord Synchroniser l'index.",
+      "integer_required": "{field} doit être un entier.",
+      "integer_range": "{field} doit être compris entre {minimum} et {maximum}.",
+      "invalid_host": "En-tête Host invalide.",
+      "invalid_host_or_origin": "En-tête Host ou Origin invalide.",
+      "invalid_token": "Jeton de session invalide.",
+      "not_found": "Introuvable.",
+      "internal": "Erreur interne du serveur",
+      "payload_too_large": "La requête dépasse la taille maximale autorisée.",
+      "invalid_content_length": "Content-Length doit être un entier positif ou nul.",
+      "invalid_json": "Le corps de la requête n'est pas du JSON UTF-8 valide.",
+      "body_not_object": "Le corps JSON de la requête doit être un objet.",
+      "busy": "Une autre opération sur le vault est en cours ; réessayez quand elle sera terminée."
     }
   },
   "eval": {
@@ -259,6 +328,21 @@
       "col_fresh": "Fraîcheur",
       "col_ms": "ms",
       "col_tok": "Tok"
+    }
+  },
+  "migration": {
+    "error": {
+      "symlink": "Migration refusée pour un lien symbolique ou un point d'analyse : {path}",
+      "lock_busy": "Un autre processus d'écriture Datacron détient le verrou du vault source : {vault}. Arrêtez les serveurs Datacron qui l'utilisent, puis réessayez.",
+      "pending_operations": "Le vault source {vault} a {count} opération(s) d'écriture en attente ; rien n'a été migré. Démarrez une fois le serveur Datacron sur ce vault pour les terminer, ou examinez-les avec `datacron ops inspect`, puis réessayez.",
+      "cleanup_blocked": "Nettoyage de la source refusé : {path} n'a pas pu être déplacé ({detail}). Rien n'a été supprimé et la copie dans le vault mémoire est complète et vérifiée. Fermez tout serveur et tout client Datacron qui utilise le vault de documentation, puis relancez le nettoyage de la source (Companion : Supprimer la source migrée ; ligne de commande : l'option de nettoyage seul de migrate-memory).",
+      "cleanup_rollback_incomplete": "Nettoyage de la source refusé : {path} n'a pas pu être déplacé ({detail}), et ces déplacements n'ont pas pu être annulés (emplacement d'origine <- emplacement actuel) : {stranded}. Rien n'a été supprimé ; remettez ces éléments en place à la main.",
+      "cleanup_without_copy": "Aucune migration terminée n'a été trouvée dans {memory_vault} ; lancez la migration complète avant un nettoyage seul.",
+      "cleanup_source_differs": "La source n'a pas été supprimée : {count} fichier(s) source ne sont pas dans le vault mémoire tels que copiés : {paths}. Copiez-les ou fusionnez-les d'abord dans le vault mémoire, ou relancez la migration complète tant que le vault mémoire n'a pas changé."
+    },
+    "warning": {
+      "tombstone_left": "La source a été retirée du vault de documentation, mais {path} n'a pas pu être supprimé ({detail}) ; supprimez-le à la main.",
+      "cleanup_skipped_client_errors": "La source a été conservée car un client MCP n'a pas pu être reconfiguré ; corrigez la configuration du client, puis lancez le nettoyage de la source (Companion : Supprimer la source migrée ; ligne de commande : l'option de nettoyage seul de migrate-memory)."
     }
   }
 }

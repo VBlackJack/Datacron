@@ -45,12 +45,12 @@ from datacron.companion.server import TOKEN_HEADER_NAME, create_companion_server
 from datacron.companion.ui import render_companion_html
 from datacron.config_contract import (
     CompanionProfile,
-    ConfigCasConflictError,
     read_companion_profile,
     write_companion_profile_cas,
     write_vault_config_cas,
 )
 from datacron.core.operation_log import OperationJournal, OperationRecord
+from datacron.i18n import t
 from datacron.migration import MigrationResult
 from datacron.setup_wizard import SetupPlan, run_setup
 
@@ -282,13 +282,20 @@ def test_companion_migration_enforces_cas_expected_hash(
         )
 
     monkeypatch.setattr("datacron.companion.api.migrate_vault_to_dual", _fake_migrate)
-    with pytest.raises(ConfigCasConflictError):
-        asyncio.run(
-            run_companion_migration(
-                {"vault_path": str(vault), "memory_vault_path": str(mem)},
-                profile_path=profile_path,
-            )
+    # The profile changed during the migration: the write stays CAS-protected, so it is
+    # merged onto the newer profile instead of overwriting it, and the migration that
+    # already happened is still reported (2026-10-18 audit, finding M).
+    result = asyncio.run(
+        run_companion_migration(
+            # No client reconfiguration: a test must never write a real client config.
+            {"vault_path": str(vault), "memory_vault_path": str(mem), "client": "none"},
+            profile_path=profile_path,
         )
+    )
+    assert result["migration"]["profile_updated"] is True
+    merged = read_companion_profile(profile_path).profile
+    assert merged.ui_language == "en"
+    assert merged.memory_vault_path == str(mem)
 
 
 def test_companion_server_hardening_host_csp_and_500_masking(
@@ -335,7 +342,8 @@ def test_companion_server_hardening_host_csp_and_500_masking(
         )
         r500 = _http_json(f"{url}api/sync", method="POST", token=token, body={})
         assert r500.status == 500
-        assert r500.data == {"error": "Internal server error"}
+        # The message comes from the catalog in the profile language (French by default).
+        assert r500.data == {"error": t("companion.errors.internal", locale="fr")}
         assert "secret-internal-path" not in json.dumps(r500.data)
     finally:
         server.shutdown()
