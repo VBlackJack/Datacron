@@ -157,6 +157,7 @@ def build_configured_reader(
         admission_policy=effective_policy,
         memory_root=resolved_memory,
         extra_read_vaults=resolved_extras,
+        settings=settings,
     )
 
 
@@ -395,18 +396,27 @@ class FilesystemVaultReader:
         admission_policy: NoteAdmissionPolicy | None = None,
         memory_root: Path | None = None,
         extra_read_vaults: Mapping[str, Path] | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self._vault_root = vault_root.expanduser().resolve()
-        self._memory_root = effective_memory_root(self._vault_root, memory_root=memory_root)
+        # ``settings`` carries the caller's binding: without it, a reader built for a
+        # vault with no memory root fell back to the process environment's memory root.
+        self._memory_root = effective_memory_root(
+            self._vault_root,
+            memory_root=memory_root,
+            settings=settings,
+        )
         self._extra_read_vaults = effective_extra_read_vaults(
             self._vault_root,
             extra_read_vaults=extra_read_vaults,
+            settings=settings,
         )
         self._extra_read_by_folded: dict[str, tuple[str, Path]] = {
             prefix.casefold(): (prefix, root) for prefix, root in self._extra_read_vaults.items()
         }
         sidecar = (
-            sidecar_dir(self._vault_root, memory_root=self._memory_root) / ULID_SIDECAR_FILENAME
+            sidecar_dir(self._vault_root, memory_root=self._memory_root, settings=settings)
+            / ULID_SIDECAR_FILENAME
         )
         self._read_only = read_only
         self._id_store = id_store or JsonIdStore(sidecar, read_only=read_only)

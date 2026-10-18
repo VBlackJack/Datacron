@@ -23,7 +23,7 @@ from typing import Annotated, Final
 import typer
 
 from datacron.cli_help import MEMORY_VAULT_HELP, VAULT_ROOT_HELP
-from datacron.core.config import Settings, get_settings
+from datacron.core.config import Settings
 from datacron.core.frontmatter import FrontmatterError
 from datacron.i18n import t
 from datacron.organization.library import audit_library, read_library
@@ -75,13 +75,9 @@ def _vault_root(
     """
     # The root CLI module mounts this sub-application, so the shared helpers are
     # imported when a command runs, not when the module loads.
-    from datacron.cli import _resolve_vault_root, _settings_for_cli_vault  # noqa: PLC0415
+    from datacron.cli import _bind_cli_vault  # noqa: PLC0415
 
-    settings = get_settings()
-    if memory_vault is not None:
-        settings = settings.model_copy(update={"memory_root": memory_vault.expanduser().resolve()})
-    vault_root = _resolve_vault_root(vault, settings, error_exit_code=_EXIT_INPUT_ERROR)
-    return vault_root, _settings_for_cli_vault(settings, vault_root, memory_root=memory_vault)
+    return _bind_cli_vault(vault, memory_vault, error_exit_code=_EXIT_INPUT_ERROR)
 
 
 @app.command()
