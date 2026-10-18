@@ -2958,7 +2958,7 @@ def config_get_cmd(
         help=MEMORY_VAULT_HELP,
     ),
     as_json: bool = typer.Option(
-        True,
+        False,
         "--json/--text",
         help="Emit machine-readable CAS configuration snapshot.",
     ),
@@ -3036,7 +3036,7 @@ def config_set_cmd(
         help="Require target file not to exist before writing.",
     ),
     as_json: bool = typer.Option(
-        True,
+        False,
         "--json/--text",
         help="Emit machine-readable CAS configuration snapshot.",
     ),

@@ -371,7 +371,7 @@ def test_cli_config_set_partial_merge_and_companion_vault_flag(tmp_path: Path) -
     runner = CliRunner()
     r_get = runner.invoke(
         app,
-        ["config", "get", "--target", "vault", "--vault", str(vault)],
+        ["config", "get", "--target", "vault", "--vault", str(vault), "--json"],
     )
     assert r_get.exit_code == 0, r_get.output
     snap = json.loads(r_get.stdout)
@@ -390,6 +390,7 @@ def test_cli_config_set_partial_merge_and_companion_vault_flag(tmp_path: Path) -
             snap["content_hash"],
             "--values-json",
             json.dumps({"query_expansion": {"k8s": ["kubernetes"]}}),
+            "--json",
         ],
     )
     assert r_set.exit_code == 0, r_set.output
