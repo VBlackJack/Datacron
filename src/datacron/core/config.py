@@ -95,8 +95,6 @@ DEFAULT_ARCHIVE_TAGS: Final[tuple[str, ...]] = (
     "memory/archive",
     "archive/compacted",
     "archive/journal-digest",
-    "status/archived",
-    "archived",
 )
 DEFAULT_STATE_NOTE_NAMESPACE: Final[str] = "kind"
 # BM25 column weights: the chunk body and its context (note title plus heading trail).
