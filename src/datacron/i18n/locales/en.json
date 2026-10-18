@@ -87,7 +87,11 @@
       "overlapping_roots": "Documentation vault and memory vault must not overlap: {vault} vs {memory_vault}",
       "missing_source": "Source vault has neither .datacron/VAULT.yaml nor _memory/ to migrate: {vault}",
       "target_conflict": "Target memory vault already contains a different file at {rel_path}; refusing to overwrite.",
-      "hash_mismatch": "SHA-256 verification failed after copying {rel_path}; source files were preserved."
+      "hash_mismatch": "SHA-256 verification failed after copying {rel_path}; source files were preserved.",
+      "error": {
+        "vault_not_found": "Vault path does not exist or is not a directory: {path}",
+        "unsafe_home_root": "Refusing to use the user profile root as a vault or memory vault."
+      }
     },
     "library": {
       "app_help": "Prepare readable offline navigation and sourced consolidation reviews.",
