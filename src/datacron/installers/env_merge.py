@@ -103,6 +103,7 @@ def merge_server_env(
     When ``supplied`` names a vault root or memory root other than the one
     ``existing`` was written for, preserved allowlist entries outside the active
     vault root(s) are dropped, and the variable with them when nothing is left.
+    A change of vault root also drops a memory root this run did not supply.
     """
     removed_keys = frozenset(removed)
     merged: dict[str, object] = {
@@ -122,11 +123,21 @@ def merge_server_env(
             or _normalized(old_memory_root) != _normalized(new_memory_root)
         )
     ) or (ENV_MEMORY_ROOT in removed_keys and old_memory_root is not None)
+    # A memory vault belongs to the docs vault it was configured with. Keeping
+    # it across a change of vault bound the new vault to the old one's memory,
+    # with read and write access to it.
+    memory_dropped = vault_changed and new_memory_root is None
+    if memory_dropped:
+        merged.pop(ENV_MEMORY_ROOT, None)
     if (vault_changed or memory_changed) and new_root is not None:
         active_roots: list[str] = [new_root]
         if new_memory_root is not None:
             active_roots.append(new_memory_root)
-        elif isinstance(old_memory_root, str) and ENV_MEMORY_ROOT not in removed_keys:
+        elif (
+            isinstance(old_memory_root, str)
+            and ENV_MEMORY_ROOT not in removed_keys
+            and not memory_dropped
+        ):
             active_roots.append(old_memory_root)
         for key in _VAULT_BOUND_PATH_KEYS:
             value = merged.get(key)
@@ -138,7 +149,8 @@ def merge_server_env(
             else:
                 del merged[key]
     merged.update(supplied)
-    _keep_memory_root_readable(merged, supplied)
+    if not vault_changed:
+        _keep_memory_root_readable(merged, supplied)
     return merged
 
 

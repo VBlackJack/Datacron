@@ -153,6 +153,7 @@ var
   MemoryVaultPath: String;
   ExistingConfigDetected: Boolean;
   SetupFailed: Boolean;
+  PathsPrepared: Boolean;
   UnregisterWarning: Boolean;
   ResetSwitchDefault: Integer;
   InitialWriteEnabled: Boolean;
@@ -177,6 +178,20 @@ begin
   Result := Trim(ExpandConstant('{param:' + Name + '|}'));
 end;
 
+function NormalizePathEntry(const Value: String): String;
+begin
+  Result := Trim(Value);
+  if (Length(Result) >= 2) and (Result[1] = '"') and
+     (Result[Length(Result)] = '"') then
+  begin
+    Delete(Result, Length(Result), 1);
+    Delete(Result, 1, 1);
+  end;
+  StringChangeEx(Result, '/', '\', True);
+  while (Length(Result) > 3) and (Result[Length(Result)] = '\') do
+    Delete(Result, Length(Result), 1);
+end;
+
 function SelectedVaultPath: String;
 begin
   if WizardSilent then
@@ -197,7 +212,13 @@ begin
     else
     begin
       Result := CommandLineValue('MEMORYVAULT');
-      if Result = '' then
+      { The recorded memory vault belongs to the recorded docs vault: a
+        different /VAULT= must not inherit it. }
+      if (Result = '') and (Trim(PreviousVaultPath) <> '') and
+         (CompareText(
+           NormalizePathEntry(CommandLineValue('VAULT')),
+           NormalizePathEntry(PreviousVaultPath)
+         ) = 0) then
         Result := Trim(PreviousMemoryVaultPath);
     end;
   end
@@ -215,7 +236,10 @@ end;
 
 function EffectiveMemoryVaultPath: String;
 begin
-  if MemoryVaultPath <> '' then
+  { Once PrepareToInstall has settled the paths, an empty memory vault is the
+    Single-Vault answer, the same one setup and the registry receive: the
+    shortcuts must not fall back to a field or a record that says otherwise. }
+  if PathsPrepared or (MemoryVaultPath <> '') then
     Result := MemoryVaultPath
   else
     Result := SelectedMemoryVaultPath;
@@ -452,6 +476,7 @@ begin
   VaultPath := '';
   MemoryVaultPath := '';
   SetupFailed := False;
+  PathsPrepared := False;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -514,20 +539,6 @@ begin
   );
 end;
 
-function NormalizePathEntry(const Value: String): String;
-begin
-  Result := Trim(Value);
-  if (Length(Result) >= 2) and (Result[1] = '"') and
-     (Result[Length(Result)] = '"') then
-  begin
-    Delete(Result, Length(Result), 1);
-    Delete(Result, 1, 1);
-  end;
-  StringChangeEx(Result, '/', '\', True);
-  while (Length(Result) > 3) and (Result[Length(Result)] = '\') do
-    Delete(Result, Length(Result), 1);
-end;
-
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
@@ -551,6 +562,7 @@ begin
     quoted safely at all and is refused. }
   VaultPath := NormalizePathEntry(SelectedVaultPath);
   MemoryVaultPath := NormalizePathEntry(SelectedMemoryVaultPath);
+  PathsPrepared := True;
   if (Pos('"', VaultPath) > 0) or (Pos('"', MemoryVaultPath) > 0) then
   begin
     Result := CustomMessage('VaultQuoteRejected');

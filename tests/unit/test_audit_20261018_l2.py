@@ -259,6 +259,48 @@ def test_merge_keeps_a_preserved_memory_root_readable() -> None:
     assert merged["DATACRON_READ_PATHS"] == os.pathsep.join([docs, memory])
 
 
+def test_merge_drops_the_old_memory_vault_when_the_vault_changes() -> None:
+    """A new vault must not be bound to the previous vault's memory, readable and writable."""
+    old_docs = str(Path("/vaults/a").resolve())
+    old_memory = str(Path("/vaults/a-memory").resolve())
+    new_docs = str(Path("/vaults/b").resolve())
+    merged = merge_server_env(
+        {
+            "DATACRON_VAULT_ROOT": old_docs,
+            "DATACRON_MEMORY_ROOT": old_memory,
+            "DATACRON_READ_PATHS": os.pathsep.join([old_docs, old_memory]),
+            "DATACRON_WRITE_PATHS": str(Path(old_memory) / "_memory"),
+        },
+        {"DATACRON_VAULT_ROOT": new_docs, "DATACRON_READ_PATHS": new_docs},
+    )
+
+    assert "DATACRON_MEMORY_ROOT" not in merged
+    assert merged["DATACRON_READ_PATHS"] == new_docs
+    assert "DATACRON_WRITE_PATHS" not in merged
+
+
+def test_setup_on_another_vault_does_not_inherit_the_old_memory_vault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docs, memory = _dual_vault(tmp_path)
+    env = _dual_vault_env(docs, memory)
+    env["DATACRON_WRITE_PATHS"] = str(memory / "_memory")
+    config = _cursor_entry(tmp_path, monkeypatch, env)
+    other = tmp_path / "other"
+    other.mkdir()
+
+    result = asyncio.run(
+        run_setup(SetupPlan(vault_path=other, client=CLIENT_ALL, build_index=False))
+    )
+
+    written = _written_env(config)
+    assert "DATACRON_MEMORY_ROOT" not in written
+    assert written["DATACRON_READ_PATHS"] == str(other.resolve())
+    assert "DATACRON_WRITE_PATHS" not in written
+    assert result.memory_vault_path is None
+    _server_builds(written, monkeypatch)
+
+
 # ---------------------------------------------------------------------------
 # F-12: the Claude Desktop writer merges like every other client writer
 # ---------------------------------------------------------------------------
@@ -347,6 +389,14 @@ def test_installer_silent_mode_falls_back_to_the_recorded_memory_vault() -> None
     selected = _routine("SelectedMemoryVaultPath")
     assert "Result := Trim(PreviousMemoryVaultPath);" in selected
     assert "CommandLineSwitchPresent('SINGLEVAULT')" in selected
+    assert re.search(
+        r"NormalizePathEntry\(CommandLineValue\('VAULT'\)\),\s+"
+        r"NormalizePathEntry\(PreviousVaultPath\)\s+\) = 0",
+        selected,
+    ), "only the recorded docs vault inherits the recorded memory vault"
+    assert selected.index("NormalizePathEntry") < selected.index(
+        "Result := Trim(PreviousMemoryVaultPath);"
+    )
     setup = _routine("RunDatacronSetup")
     assert "else if SingleVaultRequested then" in setup
     assert "' --single-vault'" in setup
@@ -366,6 +416,20 @@ def test_installer_companion_shortcut_names_the_vault() -> None:
     body = _source()
     assert 'Parameters: "{code:CompanionShortcutParameters}"' in body
     assert "Result := 'companion' + VaultArguments;" in _routine("CompanionShortcutParameters")
+    arguments = _routine("VaultArguments")
+    assert "if EffectiveMemoryVaultPath <> '' then" in arguments
+
+
+def test_installer_shortcuts_follow_the_single_vault_answer() -> None:
+    """After a Single-Vault run the shortcuts pass --vault alone, like setup and the registry."""
+    effective = _routine("EffectiveMemoryVaultPath")
+    assert "if PathsPrepared or (MemoryVaultPath <> '') then" in effective
+    prepare = _routine("PrepareToInstall")
+    assert prepare.index("MemoryVaultPath := NormalizePathEntry") < prepare.index(
+        "PathsPrepared := True;"
+    )
+    setup = _routine("RunDatacronSetup")
+    assert "RegDeleteValue(HKCU, InstallerStateKey, InstallerMemoryVaultValue);" in setup
 
 
 def test_installer_setup_messages_are_custom_messages() -> None:
