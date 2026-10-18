@@ -27,7 +27,7 @@ from pydantic_core import to_jsonable_python
 from datacron.core.config import CANONICAL_ULID_PATTERN, TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.frontmatter import matches_frontmatter_filter, normalize_tag_filter
 from datacron.core.hashing import FRESHNESS_CONTRACT_ID
-from datacron.core.markdown_headings import MarkdownHeading, markdown_headings
+from datacron.core.markdown_headings import MarkdownHeading, markdown_headings, split_markdown_lines
 from datacron.core.markdown_sections import heading_ancestry
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.core.paths import (
@@ -382,7 +382,7 @@ def _build_section_payload(
     offset: int,
     limit: int | None,
 ) -> dict[str, Any]:
-    lines = note.content.splitlines(keepends=True)
+    lines = split_markdown_lines(note.content)
     headings = markdown_headings(lines)
     matches: list[tuple[int, list[MarkdownHeading]]] = [
         (index, ancestors)
@@ -959,7 +959,7 @@ def _build_map_payload(
     app: DatacronApp, note: Note, *, offset: int = 0, limit: int | None = None
 ) -> dict[str, Any]:
     # One heading parse serves the map, the chunk protection and the title protection.
-    selected_headings = markdown_headings(note.content.splitlines(keepends=True))
+    selected_headings = markdown_headings(split_markdown_lines(note.content))
     chunks = protect_chunk_metadata(app, note, app.chunker.chunk(note), headings=selected_headings)
     headings: list[dict[str, Any]] = []
     line_offset = content_line_offset(note)

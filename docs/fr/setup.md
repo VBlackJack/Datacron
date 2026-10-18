@@ -258,7 +258,7 @@ datacron protocol uninstall --client all
 |---|---|---|
 | `DATACRON_VAULT_ROOT` | non définie | Fallback après `--vault` ; le répertoire courant n'est accepté que s'il contient `.datacron/VAULT.yaml`. |
 | `DATACRON_MEMORY_ROOT` | non définie | Racine optionnelle du vault mémoire dédié ; héberge `.datacron/` et `_memory/` en laissant `DATACRON_VAULT_ROOT` intact. |
-| `DATACRON_EXTRA_READ_VAULTS` | vide | Montages secondaires optionnels en lecture seule (`prefix=chemin` séparés par le séparateur OS ou objet JSON). |
+| `DATACRON_EXTRA_READ_VAULTS` | vide | Montages secondaires optionnels en lecture seule (`prefix=chemin` séparés par le séparateur OS ou objet JSON). Chaque préfixe devient un dossier de premier niveau du vault et l'emporte sur un dossier docs du même nom, comparé sans tenir compte de la casse : ce dossier docs sort du parcours, de l'index et de la recherche tant que le montage est configuré (ses fichiers restent sur le disque), même quand le chemin du montage n'existe pas. Le serveur journalise un avertissement au démarrage pour un tel dossier masqué et pour un chemin de montage qui n'est pas un dossier existant. Un montage qui contient la racine du vault, la racine mémoire ou un autre montage, ou qui se trouve à l'intérieur, est refusé. |
 | `DATACRON_READ_PATHS` | vide | Allowlist de lecture ; l'installateur la fixe au vault (et au vault mémoire s'il est configuré). |
 | `DATACRON_WRITE_PATHS` | vide | Allowlist d'écriture ; **vide = écriture désactivée**. |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | Nombre max de résultats retournés. |

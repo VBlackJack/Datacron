@@ -127,7 +127,8 @@
       "digest_item": "  [digest] {digest_rel_path} ({source_note_count} source notes)"
     },
     "config": {
-      "saved": "Configuration saved ({config_path}, hash={content_hash})."
+      "saved": "Configuration saved ({config_path}, hash={content_hash}).",
+      "invalid": "Invalid Datacron configuration: {detail}"
     },
     "companion": {
       "launching": "Datacron Companion listening on {url}",

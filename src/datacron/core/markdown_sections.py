@@ -27,6 +27,7 @@ from datacron.core.markdown_headings import (
     heading_identity,
     leaves_html_block_open,
     markdown_headings,
+    split_markdown_lines,
 )
 
 __all__ = [
@@ -178,7 +179,7 @@ def append_entry_to_heading(body: str, heading: str, entry: str) -> str:
     The entry lands at the end of the section's own content, before its first
     subsection, and the result must keep every existing heading readable.
     """
-    lines = body.splitlines(keepends=True)
+    lines = split_markdown_lines(body)
     section = _find_heading_section(lines, heading)
     if section is None:
         # The body now arrives with its exact trailing newlines instead of an
@@ -282,7 +283,7 @@ def verify_spliced_headings(
     content must close what it opens, even at the end of the note, where there is
     no later heading yet to swallow.
     """
-    inserted_lines = inserted.splitlines(keepends=True)
+    inserted_lines = split_markdown_lines(inserted)
     if _leaves_block_open(inserted_lines):
         raise SectionStructureError(
             "new content leaves a code fence, HTML comment or raw HTML block open; "
@@ -292,9 +293,7 @@ def verify_spliced_headings(
     expected = [(item.level, item.text) for item in before if item.start < start]
     expected += [(item.level, item.text) for item in markdown_headings(inserted_lines)]
     expected += [(item.level, item.text) for item in before if item.start >= end]
-    actual = [
-        (item.level, item.text) for item in markdown_headings(rendered.splitlines(keepends=True))
-    ]
+    actual = [(item.level, item.text) for item in markdown_headings(split_markdown_lines(rendered))]
     if actual != expected:
         raise SectionStructureError(
             "edit changes how the note's other headings are read; refusing a write "
@@ -325,14 +324,14 @@ def _context_spans(
     """
     body = "".join(lines)
     offset = (
-        len(source_context[: len(source_context) - len(body)].splitlines())
+        len(split_markdown_lines(source_context[: len(source_context) - len(body)]))
         if source_context.endswith(body)
         else None
     )
     return [
         (item.start + 1 + offset, item.end + offset)
         if offset is not None
-        else (1, len(source_context.splitlines()))
+        else (1, len(split_markdown_lines(source_context)))
         for item in items
     ]
 
@@ -480,7 +479,7 @@ def patch_note_preamble(body: str, new_content: str) -> str:
     Raises:
         ValueError: If no Markdown heading exists or the rendered body is unchanged.
     """
-    lines = body.splitlines(keepends=True)
+    lines = split_markdown_lines(body)
     headings = markdown_headings(lines)
     heading_index = headings[0].start if headings else None
     if heading_index is None:
@@ -596,7 +595,7 @@ def move_note_section(
     Raises:
         ValueError: If selection, hierarchy or exact boundary preservation is unsafe.
     """
-    lines = body.splitlines(keepends=True)
+    lines = split_markdown_lines(body)
     move = _select_move(
         lines,
         heading,
@@ -713,7 +712,7 @@ def _verify_move(body: str, reordered: list[str], rendered: str, move: _Move) ->
     if any(line and not line.endswith(("\n", "\r")) for line in reordered[:-1]):
         raise ValueError("move boundary requires an added newline; exact preservation refused")
     expected = _expected_headings(move)
-    actual = markdown_headings(rendered.splitlines(keepends=True))
+    actual = markdown_headings(split_markdown_lines(rendered))
     if [(item.level, item.text) for item in actual] != [
         (item.level, item.text) for item in expected
     ]:

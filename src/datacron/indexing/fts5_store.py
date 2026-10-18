@@ -34,6 +34,7 @@ from datacron.core.config import (
     DEFAULT_ARCHIVE_TAGS,
     DEFAULT_MAX_RESULT_COUNT,
     DEFAULT_VAULT_LOCK_TIMEOUT_SECONDS,
+    HISTORICAL_STATUSES,
     SEARCH_CONTENT_WEIGHT,
     SEARCH_CONTEXT_WEIGHT,
 )
@@ -68,6 +69,8 @@ Large enough that the commit stops dominating a cold index, small enough that th
 write lock is released often enough for another datacron process to make progress
 and that a crash loses only a bounded amount of work the next pass redoes anyway.
 """
+# Rows per keyset page of ``iter_all_chunks``; no read cursor outlives one page.
+_ITER_CHUNKS_PAGE_ROWS: Final[int] = 256
 
 _INDEX_WRITER_VERSION: Final[int] = 1
 """Which release's derived data a ``notes`` row carries.
@@ -96,6 +99,8 @@ _CREATE_NOTES_WRITER_VERSION_INDEX_SQL: Final[str] = (
 )
 
 _FTS5_TERM_PATTERN: Final[re.Pattern[str]] = re.compile(r"\w+", flags=re.UNICODE)
+# Word characters of ``\w`` that the unicode61 tokenizer treats as separators.
+_FTS5_SEPARATOR_WORD_CHARS: Final[str] = "_"
 
 _CREATE_NOTES_SQL: Final[str] = """
 CREATE TABLE IF NOT EXISTS notes (
@@ -397,6 +402,10 @@ _SEARCH_FRONTMATTER_PAIR_SQL: Final[str] = """
 """
 
 _LEGACY_SCORE_SQL: Final[str] = "bm25(chunks_fts)"
+# Equal BM25 scores are ordered by the note path and the chunk's place in it, not by
+# rowid: a rowid moves whenever a note is re-indexed, so an unrelated frontmatter edit
+# reordered tied results and changed which one a small limit kept.
+_SEARCH_ORDER_SQL: Final[str] = "raw_score, note_rel_path COLLATE BINARY, ordinal, chunk_id"
 
 
 def _weighted_score_sql() -> str:
@@ -423,7 +432,7 @@ def _search_sql(*, weighted: bool, scoped: bool, pair_count: int = 0) -> str:
         scope = _SEARCH_SCOPE_SQL + _SEARCH_FRONTMATTER_PAIR_SQL * pair_count
     return (
         f"SELECT {_SEARCH_COLUMNS_SQL} {score} AS raw_score, {snippets}\n"
-        f"FROM chunks_fts\n{scope}\nORDER BY raw_score\nLIMIT ?;"
+        f"FROM chunks_fts\n{scope}\nORDER BY {_SEARCH_ORDER_SQL}\nLIMIT ?;"
     )
 
 
@@ -847,7 +856,7 @@ ORDER BY indexed_at ASC;
 """
 
 _LIST_TEMPORAL_METADATA_SQL: Final[str] = """
-SELECT note_id, frontmatter_json
+SELECT note_id, frontmatter_json, tags_json
 FROM notes
 ORDER BY indexed_at ASC;
 """
@@ -869,9 +878,12 @@ SELECT
     line_start,
     line_end,
     wikilinks_out_json,
-    lang
+    lang,
+    rowid
 FROM chunks_fts
-ORDER BY rowid;
+WHERE rowid > ?
+ORDER BY rowid
+LIMIT ?;
 """
 
 
@@ -1177,12 +1189,22 @@ class SQLiteFTS5Store:
         ``content_hash`` is unchanged: refreshing the stored mtime lets the next
         repair skip the read+hash. Without it, a touched-but-unchanged note
         would be re-read on every search forever.
+
+        It goes through the same write unit as ``upsert_note``: inside a bulk scope it
+        joins the open batch instead of committing on its own, which after a mass touch
+        turned one batched commit into one durable commit per note, and left the scope
+        believing a transaction was open when the commit had already closed it.
         """
         connection = self._require_connection()
         self._require_writable()
         async with self._write_lock:
-            await connection.execute(_RECORD_MTIME_SQL, (fs_mtime_ns, note_id))
-            await connection.commit()
+            await self._begin_write_unit(connection)
+            try:
+                await connection.execute(_RECORD_MTIME_SQL, (fs_mtime_ns, note_id))
+            except Exception:
+                await self._abandon_write_unit(connection)
+                raise
+            await self._end_write_unit(connection)
 
     async def delete_note(self, note_id: str) -> None:
         """Remove a note, its chunks, and its path mapping if present."""
@@ -1564,7 +1586,7 @@ class SQLiteFTS5Store:
             rows = cast("list[sqlite3.Row]", await cursor.fetchall())
         metadata = {
             str(row["note_id"]): _temporal_meta_from_frontmatter(
-                row["frontmatter_json"], self._archive_tags
+                row["frontmatter_json"], self._archive_tags, tags_json=row["tags_json"]
             )
             for row in rows
         }
@@ -1629,11 +1651,38 @@ class SQLiteFTS5Store:
         return generation
 
     async def iter_all_chunks(self) -> AsyncIterator[Chunk]:
-        """Stream all indexed chunks in insertion/document order."""
+        """Stream all indexed chunks in insertion/document order.
+
+        The rows are fetched in bounded keyset pages and each page's cursor is closed
+        before any chunk is yielded. A consumer that awaits between chunks, such as the
+        regex fallback handing batches to a worker thread, used to keep one read cursor
+        open for its whole scan, and with it the shared lock that made a writer in
+        another Datacron process fail with "database is locked" after its busy timeout.
+        Between pages no lock is held, so the scan is not a snapshot: a note re-indexed
+        mid-scan gets new, higher rowids and its chunks would come round again. A chunk
+        id already yielded is skipped, so the same chunk never appears twice; a chunk
+        the re-index renamed (its section moved or was retitled) can still appear in
+        both its old and its new form.
+        """
         connection = self._require_connection()
-        async with connection.execute(_ITER_ALL_CHUNKS_SQL) as cursor:
-            async for row in cursor:
+        after_rowid = 0
+        seen: set[str] = set()
+        while True:
+            async with connection.execute(
+                _ITER_ALL_CHUNKS_SQL, (after_rowid, _ITER_CHUNKS_PAGE_ROWS)
+            ) as cursor:
+                rows = list(await cursor.fetchall())
+            if not rows:
+                return
+            after_rowid = int(rows[-1]["rowid"])
+            for row in rows:
+                chunk_id = str(row["chunk_id"])
+                if chunk_id in seen:
+                    continue
+                seen.add(chunk_id)
                 yield _chunk_from_row(row)
+            if len(rows) < _ITER_CHUNKS_PAGE_ROWS:
+                return
 
     async def stats(self) -> IndexStats:
         """Return aggregate index statistics."""
@@ -2036,7 +2085,15 @@ def _chunk_context(note_title: str, header_path: str) -> str:
 
 
 def _fts5_terms(query: str) -> list[str]:
-    return _FTS5_TERM_PATTERN.findall(query)
+    """Return the query's terms, without those the unicode61 tokenizer reads as nothing.
+
+    ``\\w`` admits the underscore, which unicode61 treats as a separator: a term made
+    of underscores only became an empty phrase that no row matches, so every query
+    holding one lost its AND tier and returned only tier 1 results.
+    """
+    return [
+        term for term in _FTS5_TERM_PATTERN.findall(query) if term.strip(_FTS5_SEPARATOR_WORD_CHARS)
+    ]
 
 
 def fts5_query_terms(query: str) -> list[str]:
@@ -2197,12 +2254,30 @@ def _wikilinks_from_json(value: Any) -> list[str]:
     return [str(item) for item in parsed]
 
 
-def _temporal_meta_from_frontmatter(value: Any, archive_tags: frozenset[str]) -> TemporalMeta:
+def _temporal_meta_from_frontmatter(
+    value: Any, archive_tags: frozenset[str], *, tags_json: Any = None
+) -> TemporalMeta:
+    """Read a note's retrieval lifecycle from its stored frontmatter and tags.
+
+    The archive tags are matched against the note's normalised tags, the ``tags_json``
+    column written from ``Note.tags``: that is the set ``extract_tags`` produces, with
+    the ``#`` prefix dropped, the case folded and the inline body tags included, and
+    the one the library and the planner read. Re-reading the raw frontmatter list
+    missed ``#meta/archive``, a body tag and a delimited string. A legacy row with no
+    stored tags falls back to extracting them from the frontmatter.
+    """
     if value is None:
         return TemporalMeta(confidence=None, supersedes=[])
     parsed = json.loads(str(value))
     if not isinstance(parsed, dict):
         raise ValueError("Stored frontmatter_json is not a JSON object.")
+    stored_tags = json.loads(str(tags_json)) if tags_json is not None else None
+    note_tags = (
+        coerce_string_list(stored_tags)
+        if isinstance(stored_tags, list)
+        else extract_tags(parsed, "")
+    )
+    status = str(parsed.get("status", "")).casefold()
     return TemporalMeta(
         confidence=_optional_str(parsed.get("confidence")),
         supersedes=coerce_string_list(parsed.get("supersedes"), split_delimited=False),
@@ -2211,11 +2286,10 @@ def _temporal_meta_from_frontmatter(value: Any, archive_tags: frozenset[str]) ->
         invalidated_by=_optional_str(parsed.get("invalidated_by")),
         archived=(
             parsed.get("archived") is True
-            or str(parsed.get("status", "")).casefold() == "archived"
-            or bool(
-                archive_tags & {tag.casefold() for tag in coerce_string_list(parsed.get("tags"))}
-            )
+            or status in HISTORICAL_STATUSES
+            or bool(archive_tags & {tag.casefold() for tag in note_tags})
         ),
+        status=status or None,
     )
 
 

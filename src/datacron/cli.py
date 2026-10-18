@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Final, NoReturn
 import click
 import typer
 import yaml
+from pydantic import ValidationError
 from rich.console import Console
 from rich.progress import Progress, TaskID, TextColumn
 
@@ -49,8 +50,10 @@ from datacron.core.config import (
     SIDECAR_DIR_NAME,
     VALID_DURABILITY_MODES,
     VAULT_CONFIG_FILENAME,
+    RootTopologyError,
     Settings,
     VaultConfig,
+    configuration_error_detail,
     get_settings,
     load_vault_config,
 )
@@ -285,7 +288,10 @@ def main(
 ) -> None:
     """Configure process logging except for the strictly read-only planner."""
     if ctx.invoked_subcommand not in {"reorganize", "library"}:
-        configure_logging()
+        try:
+            configure_logging()
+        except ValidationError as exc:
+            _error(t("cli.config.invalid", detail=configuration_error_detail(exc)))
 
 
 def _print(message: str) -> None:
@@ -2844,6 +2850,9 @@ def mcp_serve(
 
     try:
         asyncio.run(run_stdio(settings=settings, vault_root=vault_root))
+    except RootTopologyError as exc:
+        _LOGGER.error("cli.mcp_serve refused overlapping roots: %s", exc)
+        _error(t("cli.config.invalid", detail=str(exc)))
     except FileNotFoundError as exc:
         _LOGGER.error("cli.mcp_serve vault unavailable: %s", exc)
         typer.echo(f"Vault not found: {exc}", err=True)
@@ -3352,13 +3361,21 @@ def mcp_entry() -> None:
     (set by the installer), or uses the current directory only when it contains
     ``.datacron/VAULT.yaml``.
     """
-    settings = get_settings()
+    try:
+        settings = get_settings()
+    except ValidationError as exc:
+        typer.echo(t("cli.config.invalid", detail=configuration_error_detail(exc)), err=True)
+        raise SystemExit(1) from None
     vault_root = _resolve_vault_root(None, settings)
     _LOGGER.info("datacron-mcp script entry starting (vault=%s)", vault_root)
     from datacron.mcp.server import run_stdio  # noqa: PLC0415
 
     try:
         asyncio.run(run_stdio(settings=settings, vault_root=vault_root))
+    except RootTopologyError as exc:
+        _LOGGER.error("datacron-mcp refused overlapping roots: %s", exc)
+        typer.echo(t("cli.config.invalid", detail=str(exc)), err=True)
+        raise SystemExit(1) from None
     except KeyboardInterrupt:
         _LOGGER.info("datacron-mcp received KeyboardInterrupt; exiting cleanly")
 

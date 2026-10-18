@@ -260,6 +260,10 @@ def test_build_command_inserts_separator_before_dash_pattern() -> None:
         "datacronnote:*.[mM][dD]",
         "--type",
         "datacronnote",
+        "--no-ignore",
+        "--hidden",
+        "--glob",
+        "!.*/",
         "--",
         "-foo",
         ".",
@@ -270,7 +274,8 @@ def test_build_command_places_separator_after_glob_options() -> None:
     command = _build_command("rg", "-foo", glob="*.md")
     separator_index = command.index("--")
 
-    assert command[separator_index - 2 : separator_index] == ["--glob", "*.md"]
+    # The caller's glob comes before the dot-folder exclusion, which must win.
+    assert command[separator_index - 4 : separator_index] == ["--glob", "*.md", "--glob", "!.*/"]
     assert command[separator_index + 1 :] == ["-foo", "."]
 
 
@@ -648,7 +653,7 @@ async def test_glob_filter_is_passed_to_subprocess(
     )
 
     command = calls[0][0]
-    assert command[:11] == (
+    assert command[:15] == (
         "rg",
         "--json",
         "--crlf",
@@ -657,11 +662,15 @@ async def test_glob_filter_is_passed_to_subprocess(
         "datacronnote:*.[mM][dD]",
         "--type",
         "datacronnote",
+        "--no-ignore",
+        "--hidden",
         "--glob",
         "*.md",
+        "--glob",
+        "!.*/",
         "--",
     )
-    assert command[11:] == ("kafka", ".")
+    assert command[15:] == ("kafka", ".")
     assert calls[0][1]["cwd"] == indexed.vault_root
 
 
