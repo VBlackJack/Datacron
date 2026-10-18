@@ -29,8 +29,8 @@ from datacron.core.config import (
     VALID_DURABILITY_MODES,
     Settings,
     VaultConfig,
-    _validate_extra_vault_prefix,
     get_settings,
+    validate_extra_vault_prefix,
 )
 from datacron.core.durability import atomic_durable_write
 from datacron.core.paths import is_link_stat, resolve_sidecar_root, sidecar_vault_config
@@ -436,7 +436,7 @@ def _validate_companion_profile(raw: Mapping[str, Any]) -> CompanionProfile:
         if not prefix_str and not target_str:
             continue
         try:
-            validated_prefix = _validate_extra_vault_prefix(prefix_str)
+            validated_prefix = validate_extra_vault_prefix(prefix_str)
         except (ValueError, TypeError) as exc:
             raise ConfigValidationError(str(exc)) from exc
         if not target_str:
