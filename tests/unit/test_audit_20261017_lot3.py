@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import shutil
 import stat
 from pathlib import Path
 
@@ -37,6 +36,7 @@ from datacron.indexing.ripgrep import search_vault_regex
 from datacron.mcp.server import build_app
 from datacron.mcp.tools.search import _search_regex_impl
 from datacron.migration import (
+    MigrationError,
     SymlinkDetectedError,
     migrate_memory_to_dedicated_vault,
 )
@@ -142,7 +142,12 @@ def test_migrate_memory_deletes_sidecar_before_memory_when_cleaning_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When keep_source=False, .datacron is removed before _memory so DB locks preserve _memory."""
+    """When keep_source=False, the sidecar index moves first so a DB lock preserves _memory.
+
+    Cleanup moves the source entries into a tombstone before deleting anything; the
+    index directory, which a running server holds open, is the first move and
+    _memory the last.
+    """
     docs_vault = tmp_path / "docs-vault"
     memory_vault = tmp_path / "memory-vault"
     (docs_vault / MEMORY_SUBFOLDER_NAME).mkdir(parents=True)
@@ -152,24 +157,31 @@ def test_migrate_memory_deletes_sidecar_before_memory_when_cleaning_source(
     )
     initialize_vault(docs_vault)
 
-    removed_order: list[str] = []
-    real_rmtree = shutil.rmtree
+    moved_order: list[str] = []
+    real_replace = os.replace
+    docs_keys = _path_keys(docs_vault) | _path_keys(docs_vault / SIDECAR_DIR_NAME)
 
-    def tracking_rmtree(path: str | os.PathLike[str]) -> None:
-        target = Path(path)
-        if target.parent.resolve() == docs_vault.resolve():
-            removed_order.append(target.name)
-        real_rmtree(path)
+    def tracking_replace(
+        src: str | os.PathLike[str],
+        dst: str | os.PathLike[str],
+    ) -> None:
+        if _matches(Path(src).parent, docs_keys):
+            moved_order.append(Path(src).name)
+        real_replace(src, dst)
 
-    monkeypatch.setattr("datacron.migration.shutil.rmtree", tracking_rmtree)
+    monkeypatch.setattr("datacron.migration.os.replace", tracking_replace)
 
     outcome = asyncio.run(
         migrate_memory_to_dedicated_vault(docs_vault, memory_vault, keep_source=False)
     )
+    monkeypatch.setattr("datacron.migration.os.replace", real_replace)
     assert outcome.source_cleaned is True
-    assert removed_order == [SIDECAR_DIR_NAME, MEMORY_SUBFOLDER_NAME]
+    assert moved_order[0] == "index"
+    assert moved_order[-1] == MEMORY_SUBFOLDER_NAME
+    assert not (docs_vault / MEMORY_SUBFOLDER_NAME).exists()
+    assert not (docs_vault / SIDECAR_DIR_NAME).exists()
 
-    # Simulate a locked .datacron/index/datacron.db failing rmtree(.datacron): _memory must survive
+    # Simulate a locked .datacron/index/datacron.db: the move fails and nothing is removed.
     docs_locked = tmp_path / "docs-locked"
     memory_locked = tmp_path / "memory-locked"
     (docs_locked / MEMORY_SUBFOLDER_NAME).mkdir(parents=True)
@@ -178,21 +190,25 @@ def test_migrate_memory_deletes_sidecar_before_memory_when_cleaning_source(
         encoding="utf-8",
     )
     initialize_vault(docs_locked)
+    locked_index = _path_keys(docs_locked / SIDECAR_DIR_NAME / "index")
 
-    def failing_sidecar_rmtree(path: str | os.PathLike[str]) -> None:
-        target = Path(path)
-        if target.resolve() == (docs_locked / SIDECAR_DIR_NAME).resolve():
+    def failing_index_replace(
+        src: str | os.PathLike[str],
+        dst: str | os.PathLike[str],
+    ) -> None:
+        if _matches(src, locked_index):
             raise PermissionError("datacron.db is held open by another process")
-        real_rmtree(path)
+        real_replace(src, dst)
 
-    monkeypatch.setattr("datacron.migration.shutil.rmtree", failing_sidecar_rmtree)
+    monkeypatch.setattr("datacron.migration.os.replace", failing_index_replace)
 
-    with pytest.raises(PermissionError, match=r"datacron\.db"):
+    with pytest.raises(MigrationError, match=r"datacron\.db"):
         asyncio.run(
             migrate_memory_to_dedicated_vault(docs_locked, memory_locked, keep_source=False)
         )
 
     assert (docs_locked / MEMORY_SUBFOLDER_NAME / "INIT.md").is_file()
+    assert (docs_locked / SIDECAR_DIR_NAME / "VAULT.yaml").is_file()
 
 
 def test_graph_health_single_vault_vs_dual_vault_extra_mounts_and_unresolved_outgoing(

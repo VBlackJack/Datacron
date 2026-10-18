@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
@@ -25,6 +26,9 @@ from datacron.bootstrap import initialize_vault
 from datacron.config_contract import (
     ALLOWED_CLI_TIMEOUTS,
     CompanionProfile,
+    CompanionProfileSnapshot,
+    ConfigCasConflictError,
+    ConfigValidationError,
     VaultConfigSnapshot,
     read_companion_profile,
     read_vault_config_snapshot,
@@ -44,7 +48,7 @@ from datacron.core.scope import admits_note_path
 from datacron.core.security import SecretRedactor
 from datacron.core.vault import build_configured_reader
 from datacron.graph_health import analyze_vault_graph
-from datacron.i18n import t
+from datacron.i18n import DEFAULT_LOCALE, SUPPORTED_LOCALES, t
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.rebuild import rebuild_index_atomic
@@ -58,9 +62,12 @@ from datacron.mcp.server import build_app
 from datacron.mcp.tools.read import list_notes_impl
 from datacron.mcp.tools.search import search_regex_impl, search_text_impl
 from datacron.memory_compaction import DEFAULT_COMPACTION_DAYS, compact_vault_memory
-from datacron.migration import migrate_vault_to_dual
+from datacron.migration import MigrationError, migrate_vault_to_dual
 from datacron.setup_wizard import (
+    CLIENT_ALL,
     CLIENT_CHOICES,
+    CLIENT_NONE,
+    INSTALL_SCOPE_BOTH,
     INSTALL_SCOPE_CHOICES,
     SetupPlan,
     default_write_paths,
@@ -69,6 +76,7 @@ from datacron.setup_wizard import (
 
 __all__ = [
     "companion_i18n_bundle",
+    "companion_locale",
     "get_companion_graph_health",
     "get_companion_history",
     "get_companion_state",
@@ -80,12 +88,41 @@ __all__ = [
     "run_companion_migration",
     "run_companion_search",
     "run_companion_sync",
+    "save_companion_preferences",
     "save_companion_topology",
     "save_vault_config",
     "search_companion",
 ]
 
 _MAX_HISTORY_RECORDS: Final[int] = 25
+_NOTES_DEFAULT_LIMIT: Final[int] = 50
+_NOTES_MAX_LIMIT: Final[int] = 200
+_NOTES_MAX_OFFSET: Final[int] = 100_000
+_SEARCH_DEFAULT_LIMIT: Final[int] = 15
+_SEARCH_MAX_LIMIT: Final[int] = 100
+_HISTORY_MAX_LIMIT: Final[int] = 200
+_COMPACTION_MAX_DAYS: Final[int] = 3650
+# A profile written by somebody else while a migration ran is re-read and merged once more
+# before the migration reports the profile as not updated.
+_PROFILE_WRITE_ATTEMPTS: Final[int] = 2
+# The keyword the core VAULT.yaml writer takes to replace an invalid file on request.
+_CORE_RESET_PARAMETER: Final[str] = "reset"
+_PREFERENCE_FIELDS: Final[frozenset[str]] = frozenset(
+    {"ui_language", "cli_timeout_seconds", "durability"}
+)
+_GLOB_METACHARACTERS: Final[str] = "*?["
+_MEMORY_SOURCE_PROFILE: Final[str] = "profile"
+_MEMORY_SOURCE_ENVIRONMENT: Final[str] = "environment"
+_MEMORY_SOURCE_NONE: Final[str] = "none"
+
+
+def companion_locale(profile_path: Path | None = None) -> str:
+    """Return the Companion user's UI language, falling back to the default locale."""
+    try:
+        lang = read_companion_profile(profile_path).profile.ui_language
+    except (OSError, ValueError):
+        return DEFAULT_LOCALE
+    return lang if lang in SUPPORTED_LOCALES else DEFAULT_LOCALE
 
 
 def _parse_bounded_int(
@@ -95,24 +132,35 @@ def _parse_bounded_int(
     default: int,
     minimum: int,
     maximum: int,
+    locale: str = DEFAULT_LOCALE,
 ) -> int:
     if value is None or value == "":
         return default
     if isinstance(value, bool):
-        raise ValueError(f"{field_name} must be an integer")
+        raise ValueError(t("companion.errors.integer_required", locale=locale, field=field_name))
     try:
         parsed = int(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be an integer") from exc
+        raise ValueError(
+            t("companion.errors.integer_required", locale=locale, field=field_name)
+        ) from exc
     if parsed < minimum or parsed > maximum:
-        raise ValueError(f"{field_name} must be between {minimum} and {maximum}")
+        raise ValueError(
+            t(
+                "companion.errors.integer_range",
+                locale=locale,
+                field=field_name,
+                minimum=minimum,
+                maximum=maximum,
+            )
+        )
     return parsed
 
 
 _COMPANION_I18N_SECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
     (
         "app",
-        ("title", "subtitle", "connected", "refresh", "save", "language_label"),
+        ("title", "subtitle", "connected", "refresh", "save", "language_label", "busy"),
     ),
     (
         "nav",
@@ -146,6 +194,7 @@ _COMPANION_I18N_SECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
             "headline",
             "docs_vault_label",
             "memory_vault_label",
+            "memory_from_env_hint",
             "extra_vaults_label",
             "save_topology",
             "sync_now",
@@ -153,7 +202,19 @@ _COMPANION_I18N_SECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
             "migrate_title",
             "migrate_desc",
             "migrate_keep_source",
+            "migrate_reconfigure_clients",
             "migrate_button",
+            "migrate_cleanup_confirm",
+            "migrate_clients_reminder",
+            "result_verified",
+            "result_resumed",
+            "result_indexed",
+            "result_source_cleaned",
+            "result_source_kept",
+            "result_clients",
+            "result_warnings",
+            "result_mode",
+            "result_stats",
         ),
     ),
     (
@@ -162,6 +223,7 @@ _COMPANION_I18N_SECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
             "headline",
             "query_placeholder",
             "folder_placeholder",
+            "mode_label",
             "mode_fts",
             "mode_regex",
             "run_button",
@@ -175,19 +237,36 @@ _COMPANION_I18N_SECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
         (
             "headline",
             "analyze_button",
+            "summary_title",
+            "total_notes",
+            "total_links",
+            "resolved_links",
             "broken_links_title",
             "orphan_notes_title",
             "hub_notes_title",
             "cross_vault_title",
+            "none_found",
             "compaction_title",
             "compaction_days_label",
             "compaction_preview_btn",
             "compaction_apply_btn",
+            "compaction_apply_confirm",
         ),
     ),
     (
         "mcp",
-        ("headline", "client_label", "scope_label", "enable_write_label", "configure_button"),
+        (
+            "headline",
+            "client_label",
+            "scope_label",
+            "enable_write_label",
+            "configure_button",
+            "status_configured",
+            "status_not_configured",
+            "status_installed",
+            "status_failed",
+            "errors_title",
+        ),
     ),
     (
         "history",
@@ -204,6 +283,15 @@ _COMPANION_I18N_SECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
             "timeout_label",
             "save_vault_config_btn",
             "cas_hash_label",
+            "config_valid",
+            "config_invalid",
+            "config_absent",
+            "errors_title",
+            "reset_label",
+            "reset_confirm",
+            "query_expansion_invalid",
+            "saved",
+            "nothing_to_save",
         ),
     ),
 )
@@ -223,20 +311,40 @@ def companion_i18n_bundle(lang: str) -> dict[str, dict[str, str]]:
     return bundle
 
 
+def _resolve_runtime_roots(
+    profile: CompanionProfile,
+    env_settings: Settings,
+) -> tuple[Path | None, Path | None, str]:
+    """Resolve the docs vault, the memory vault and where the memory vault came from.
+
+    The environment memory root belongs to the environment vault root: it applies only
+    when that vault is the one this profile uses. Bound to any other vault it would
+    point that vault's sidecar and index at an unrelated memory vault. An empty profile
+    memory field then means Single-Vault.
+    """
+    env_vault = env_settings.vault_root.expanduser().resolve() if env_settings.vault_root else None
+    vault_str = profile.vault_path or (str(env_vault) if env_vault else "")
+    if not vault_str:
+        return None, None, _MEMORY_SOURCE_NONE
+    vault_root = Path(vault_str).expanduser().resolve()
+    memory_root: Path | None = None
+    source = _MEMORY_SOURCE_NONE
+    if profile.memory_vault_path:
+        memory_root = Path(profile.memory_vault_path).expanduser().resolve()
+        source = _MEMORY_SOURCE_PROFILE
+    elif env_settings.memory_root is not None and env_vault == vault_root:
+        memory_root = env_settings.memory_root.expanduser().resolve()
+        source = _MEMORY_SOURCE_ENVIRONMENT
+    if memory_root is not None and memory_root == vault_root:
+        return vault_root, None, _MEMORY_SOURCE_NONE
+    return vault_root, memory_root, source
+
+
 def _build_runtime_settings(profile: CompanionProfile) -> tuple[Path | None, Settings]:
     env_settings = get_settings()
-    vault_str = profile.vault_path or (
-        str(env_settings.vault_root) if env_settings.vault_root else ""
-    )
-    if not vault_str:
+    vault_root, memory_root, _source = _resolve_runtime_roots(profile, env_settings)
+    if vault_root is None:
         return None, env_settings
-    vault_root = Path(vault_str).expanduser().resolve()
-    mem_str = profile.memory_vault_path or (
-        str(env_settings.memory_root) if env_settings.memory_root else ""
-    )
-    memory_root = Path(mem_str).expanduser().resolve() if mem_str else None
-    if memory_root is not None and memory_root == vault_root:
-        memory_root = None
     extra_map: dict[str, Path] = {}
     for raw_prefix, raw_path in profile.extra_read_vaults.items():
         if not str(raw_path).strip():
@@ -266,6 +374,12 @@ def _build_runtime_settings(profile: CompanionProfile) -> tuple[Path | None, Set
         }
     )
     return vault_root, updated
+
+
+def _require_vault(vault_root: Path | None, locale: str) -> Path:
+    if vault_root is None or not vault_root.is_dir():
+        raise ValueError(t("companion.errors.vault_required", locale=locale))
+    return vault_root
 
 
 async def _read_index_stats(vault_root: Path | None, settings: Settings) -> dict[str, int]:
@@ -309,15 +423,15 @@ async def get_companion_state(profile_override: Path | None = None) -> dict[str,
     """Assemble the complete initial state for the Companion frontend."""
     profile_snap = read_companion_profile(profile_override)
     profile = profile_snap.profile
+    env_settings = get_settings()
     vault_root, settings = _build_runtime_settings(profile)
+    _vault, _memory, memory_source = _resolve_runtime_roots(profile, env_settings)
+    # The editable fields show what the profile stores, never a value inherited from
+    # the environment: saving the topology back must not persist the environment.
     effective_profile = CompanionProfile(
         vault_path=str(vault_root) if vault_root else profile.vault_path,
-        memory_vault_path=str(settings.memory_root)
-        if settings.memory_root
-        else profile.memory_vault_path,
-        extra_read_vaults={k: str(v) for k, v in settings.extra_read_vaults.items()}
-        if settings.extra_read_vaults
-        else profile.extra_read_vaults,
+        memory_vault_path=profile.memory_vault_path,
+        extra_read_vaults=dict(profile.extra_read_vaults),
         ui_language=profile.ui_language,
         cli_timeout_seconds=profile.cli_timeout_seconds,
         enable_write=profile.enable_write,
@@ -337,7 +451,7 @@ async def get_companion_state(profile_override: Path | None = None) -> dict[str,
         )
     )
     index_stats = await _read_index_stats(vault_root, settings)
-    is_dual = settings.memory_root is not None
+    is_dual = vault_root is not None and settings.memory_root is not None
     vault_ready = vault_root is not None and vault_root.is_dir()
     return {
         "version": __version__,
@@ -350,6 +464,8 @@ async def get_companion_state(profile_override: Path | None = None) -> dict[str,
             "vault_ready": vault_ready,
             "vault_mode": "dual" if is_dual else ("single" if vault_ready else "unconfigured"),
             "index_stats": index_stats,
+            "memory_root": str(settings.memory_root) if is_dual else None,
+            "memory_source": memory_source if is_dual else _MEMORY_SOURCE_NONE,
         },
         "mcp_targets": _discover_mcp_targets(vault_root),
         "choices": {
@@ -368,11 +484,12 @@ async def save_companion_topology(
     profile_path: Path | None = None,
 ) -> dict[str, Any]:
     """Validate and save Companion topology & preferences under CAS protection."""
+    locale = companion_locale(profile_path)
     expected_hash = payload.get("expected_hash")
     exp_str = str(expected_hash) if isinstance(expected_hash, str) and expected_hash else None
     values = payload.get("profile")
     if not isinstance(values, Mapping):
-        raise ValueError("Missing 'profile' mapping in request payload")
+        raise ValueError(t("companion.errors.profile_mapping_missing", locale=locale))
     snap = write_companion_profile_cas(
         values,
         path=profile_path,
@@ -387,29 +504,118 @@ async def save_companion_topology(
     return await get_companion_state(profile_path)
 
 
+def _profile_values(snapshot: CompanionProfileSnapshot, locale: str) -> dict[str, Any]:
+    """Return the stored profile as a mapping, refusing to rebuild an invalid one."""
+    if snapshot.present and not snapshot.valid:
+        raise ConfigValidationError(
+            t(
+                "companion.errors.profile_invalid",
+                locale=locale,
+                errors="; ".join(snapshot.errors),
+            )
+        )
+    return asdict(snapshot.profile)
+
+
+async def save_companion_preferences(
+    payload: Mapping[str, Any],
+    *,
+    profile_path: Path | None = None,
+) -> dict[str, Any]:
+    """Save UI preferences alone: no topology change and no vault initialization.
+
+    A language switch or a preference change goes through here, so it can never
+    persist a typed but unsaved vault path or create a vault at it.
+    """
+    locale = companion_locale(profile_path)
+    preferences = payload.get("preferences")
+    if not isinstance(preferences, Mapping):
+        raise ValueError(t("companion.errors.preferences_mapping_missing", locale=locale))
+    unknown = sorted(set(preferences) - _PREFERENCE_FIELDS)
+    if unknown:
+        raise ValueError(
+            t("companion.errors.unknown_preference", locale=locale, keys=", ".join(unknown))
+        )
+    snapshot = read_companion_profile(profile_path)
+    expected_hash = payload.get("expected_hash")
+    exp_str = (
+        str(expected_hash)
+        if isinstance(expected_hash, str) and expected_hash
+        else snapshot.content_hash
+    )
+    values = _profile_values(snapshot, locale)
+    values.update(preferences)
+    written = write_companion_profile_cas(values, path=profile_path, expected_hash=exp_str)
+    return {
+        "profile_snapshot": written.to_dict(),
+        "i18n": companion_i18n_bundle(written.profile.ui_language),
+    }
+
+
+def _write_vault_config(
+    vault_root: Path,
+    values: Mapping[str, Any],
+    *,
+    settings: Settings,
+    expected_hash: str | None,
+    reset: bool,
+) -> VaultConfigSnapshot:
+    extra: dict[str, Any] = {}
+    if reset and _CORE_RESET_PARAMETER in inspect.signature(write_vault_config_cas).parameters:
+        extra[_CORE_RESET_PARAMETER] = True
+    return write_vault_config_cas(
+        vault_root,
+        values,
+        settings=settings,
+        expected_hash=expected_hash,
+        **extra,
+    )
+
+
 async def save_vault_config(
     payload: Mapping[str, Any],
     *,
     profile_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Validate and atomically save `.datacron/VAULT.yaml` under CAS protection."""
+    """Save the fields the user edited in `.datacron/VAULT.yaml` under CAS protection.
+
+    Only the edited fields are sent to the writer, which keeps every other key of the
+    file as it is on disk. The snapshot values are never merged in: for an invalid file
+    they are the defaults, and writing them would replace the vault identity, folders
+    and organization with defaults. An invalid file is refused unless the user asks for
+    an explicit reset. ``expected_hash`` is the hash the edit was based on, so an
+    external edit made since the Settings view was loaded is a CAS conflict.
+    """
     profile_snap = read_companion_profile(profile_path)
+    locale = companion_locale(profile_path)
     vault_root, settings = _build_runtime_settings(profile_snap.profile)
-    if vault_root is None or not vault_root.is_dir():
-        raise ValueError("Configure a valid primary documentation vault first")
+    resolved_root = _require_vault(vault_root, locale)
     expected_hash = payload.get("expected_hash")
     exp_str = str(expected_hash) if isinstance(expected_hash, str) and expected_hash else None
     values = payload.get("values")
     if not isinstance(values, Mapping):
-        raise ValueError("Missing 'values' mapping in request payload")
-    current = read_vault_config_snapshot(vault_root, settings=settings)
-    merged: dict[str, Any] = dict(current.values)
-    merged.update(values)
-    vault_snap = write_vault_config_cas(
-        vault_root,
-        merged,
+        raise ValueError(t("companion.errors.values_mapping_missing", locale=locale))
+    reset = payload.get("reset") is True
+    current = read_vault_config_snapshot(resolved_root, settings=settings)
+    if current.present and not current.valid and not reset:
+        raise ConfigValidationError(
+            t(
+                "companion.errors.vault_config_invalid",
+                locale=locale,
+                errors="; ".join(current.errors),
+            )
+        )
+    if not values and not reset:
+        return {"vault_config_snapshot": current.to_dict(), "unchanged": True}
+    # A reset is an explicit request to start again from the defaults the Settings
+    # view displays for an invalid file, with the user's edits on top.
+    to_write: dict[str, Any] = {**current.values, **values} if reset else dict(values)
+    vault_snap = _write_vault_config(
+        resolved_root,
+        to_write,
         settings=settings,
         expected_hash=exp_str,
+        reset=reset,
     )
     return {"vault_config_snapshot": vault_snap.to_dict()}
 
@@ -421,21 +627,21 @@ async def run_companion_sync(
 ) -> dict[str, Any]:
     """Run incremental index reconciliation or atomic full index rebuild."""
     profile_snap = read_companion_profile(profile_path)
+    locale = companion_locale(profile_path)
     vault_root, settings = _build_runtime_settings(profile_snap.profile)
-    if vault_root is None or not vault_root.is_dir():
-        raise ValueError("Configure a valid primary documentation vault first")
-    sidecar_target = settings.memory_root if settings.memory_root is not None else vault_root
+    resolved_root = _require_vault(vault_root, locale)
+    sidecar_target = settings.memory_root if settings.memory_root is not None else resolved_root
     initialize_vault(sidecar_target)
-    cfg_path = sidecar_vault_config(vault_root, settings=settings)
+    cfg_path = sidecar_vault_config(resolved_root, settings=settings)
     vault_cfg = load_vault_config(cfg_path) or VaultConfig()
     full_rebuild = bool(payload.get("rebuild", False))
     if full_rebuild:
-        rebuild_stats = await rebuild_index_atomic(vault_root, settings, vault_cfg)
+        rebuild_stats = await rebuild_index_atomic(resolved_root, settings, vault_cfg)
         return {"mode": "rebuild", "stats": dict(rebuild_stats)}
-    db_path = sidecar_index_db(vault_root, settings=settings)
+    db_path = sidecar_index_db(resolved_root, settings=settings)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     reader = build_configured_reader(
-        vault_root,
+        resolved_root,
         read_only=False,
         settings=settings,
     )
@@ -452,32 +658,103 @@ async def run_companion_sync(
         await store.close()
 
 
+def _write_migrated_profile(
+    vault_path: Path,
+    memory_vault_path: Path,
+    *,
+    profile_path: Path | None,
+    locale: str,
+) -> tuple[bool, list[str]]:
+    """Point the profile at the migrated layout without ever failing the migration.
+
+    The migration has already happened when this runs. A concurrent profile write is
+    merged by re-reading the latest profile and applying the two paths again; when it
+    still cannot be written, a warning tells the user what to set by hand.
+    """
+    for _attempt in range(_PROFILE_WRITE_ATTEMPTS):
+        snapshot = read_companion_profile(profile_path)
+        if snapshot.present and not snapshot.valid:
+            break
+        values = asdict(snapshot.profile)
+        values["vault_path"] = str(vault_path)
+        values["memory_vault_path"] = str(memory_vault_path)
+        try:
+            write_companion_profile_cas(
+                values,
+                path=profile_path,
+                expected_hash=snapshot.content_hash,
+            )
+        except ConfigCasConflictError:
+            continue
+        except (ConfigValidationError, OSError):
+            break
+        return True, []
+    return False, [
+        t(
+            "companion.migration.profile_not_updated",
+            locale=locale,
+            vault=vault_path,
+            memory_vault=memory_vault_path,
+        )
+    ]
+
+
+def _migration_options(payload: Mapping[str, Any], locale: str) -> tuple[bool, str, str]:
+    keep_source = payload.get("keep_source", True) is not False
+    client = str(payload.get("client", CLIENT_ALL)).strip()
+    if client not in CLIENT_CHOICES:
+        raise ValueError(t("companion.errors.unknown_client", locale=locale, client=client))
+    install_scope = str(payload.get("install_scope", INSTALL_SCOPE_BOTH)).strip()
+    if install_scope not in INSTALL_SCOPE_CHOICES:
+        raise ValueError(t("companion.errors.unknown_scope", locale=locale, scope=install_scope))
+    if not keep_source:
+        if payload.get("confirm_cleanup") is not True:
+            raise MigrationError(t("companion.errors.cleanup_needs_confirmation", locale=locale))
+        if client == CLIENT_NONE:
+            raise MigrationError(t("companion.errors.cleanup_needs_clients", locale=locale))
+    return keep_source, client, install_scope
+
+
 async def run_companion_migration(
     payload: Mapping[str, Any],
     *,
     profile_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Execute atomic Single-Vault to Dual-Vault migration and update profile."""
+    """Execute the Single-Vault to Dual-Vault migration and update the profile.
+
+    The source is kept unless the request confirms the cleanup explicitly, and the
+    detected MCP clients are reconfigured by default, before any cleanup, so no client
+    is left bound to a vault whose memory has moved.
+    """
     profile_snap = read_companion_profile(profile_path)
+    locale = companion_locale(profile_path)
     vault_str = str(payload.get("vault_path") or profile_snap.profile.vault_path).strip()
     mem_str = str(
         payload.get("memory_vault_path") or profile_snap.profile.memory_vault_path
     ).strip()
     if not vault_str or not mem_str:
-        raise ValueError("Both vault_path and memory_vault_path are required for migration")
-    keep_source = bool(payload.get("keep_source", False))
-    result = await migrate_vault_to_dual(
-        Path(vault_str),
-        Path(mem_str),
-        keep_source=keep_source,
-    )
-    updated_profile = asdict(profile_snap.profile)
-    updated_profile["vault_path"] = str(result.vault_path)
-    updated_profile["memory_vault_path"] = str(result.memory_vault_path)
-    write_companion_profile_cas(
-        updated_profile,
-        path=profile_path,
-        expected_hash=profile_snap.content_hash,
+        raise ValueError(t("companion.errors.migration_paths_required", locale=locale))
+    keep_source, client, install_scope = _migration_options(payload, locale)
+    try:
+        result = await migrate_vault_to_dual(
+            Path(vault_str),
+            Path(mem_str),
+            keep_source=keep_source,
+            client=client,
+            install_scope=install_scope,
+            enable_write=profile_snap.profile.enable_write,
+        )
+    except MigrationError:
+        raise
+    except OSError as exc:
+        raise MigrationError(
+            t("companion.errors.migration_os_error", locale=locale, detail=str(exc))
+        ) from exc
+    profile_updated, profile_warnings = _write_migrated_profile(
+        result.vault_path,
+        result.memory_vault_path,
+        profile_path=profile_path,
+        locale=locale,
     )
     return {
         "migration": {
@@ -486,9 +763,23 @@ async def run_companion_migration(
             "copied_sidecar_files": result.copied_sidecar_files,
             "copied_memory_files": result.copied_memory_files,
             "verified_files": result.verified_files,
+            "resumed_files": result.resumed_files,
             "indexed_notes": result.indexed_notes,
             "indexed_chunks": result.indexed_chunks,
             "source_cleaned": result.source_cleaned,
+            "clients_reconfigured": client != CLIENT_NONE,
+            "client_installs": [
+                {
+                    "client_id": item.client_id,
+                    "display_name": item.display_name,
+                    "scope": item.scope,
+                    "installed": item.installed,
+                }
+                for item in result.client_installs
+            ],
+            "client_errors": list(result.client_errors),
+            "profile_updated": profile_updated,
+            "warnings": [*result.warnings, *profile_warnings],
         }
     }
 
@@ -499,19 +790,22 @@ async def list_companion_notes(
     profile_path: Path | None = None,
 ) -> dict[str, Any]:
     """List notes in the configured vault(s) with bounded limit and offset."""
+    locale = companion_locale(profile_path)
     limit = _parse_bounded_int(
         payload.get("limit"),
         field_name="limit",
-        default=50,
+        default=_NOTES_DEFAULT_LIMIT,
         minimum=1,
-        maximum=200,
+        maximum=_NOTES_MAX_LIMIT,
+        locale=locale,
     )
     offset = _parse_bounded_int(
         payload.get("offset"),
         field_name="offset",
         default=0,
         minimum=0,
-        maximum=100_000,
+        maximum=_NOTES_MAX_OFFSET,
+        locale=locale,
     )
     folder_raw = str(payload.get("folder") or "").strip()
     folder = folder_raw if folder_raw else None
@@ -535,23 +829,41 @@ async def list_companion_notes(
         await app.store.close()
 
 
+def _folder_to_regex_glob(folder: str | None) -> str | None:
+    """Map the Search view's folder filter to the vault glob search_regex expects.
+
+    The text search takes a folder; the regex search takes a glob, where a bare
+    folder name only matches a file of that name. A value without glob syntax is a
+    folder and becomes ``<folder>/**``; a value with glob syntax passes unchanged.
+    """
+    if folder is None:
+        return None
+    normalized = folder.replace("\\", "/").strip("/")
+    if not normalized:
+        return None
+    if any(char in normalized for char in _GLOB_METACHARACTERS):
+        return normalized
+    return f"{normalized}/**"
+
+
 async def run_companion_search(
     payload: Mapping[str, Any],
     *,
     profile_path: Path | None = None,
 ) -> dict[str, Any]:
     """Run FTS5 or Regex search across the configured vault(s)."""
+    locale = companion_locale(profile_path)
     limit = _parse_bounded_int(
         payload.get("limit"),
         field_name="limit",
-        default=15,
+        default=_SEARCH_DEFAULT_LIMIT,
         minimum=1,
-        maximum=100,
+        maximum=_SEARCH_MAX_LIMIT,
+        locale=locale,
     )
     profile_snap = read_companion_profile(profile_path)
     vault_root, settings = _build_runtime_settings(profile_snap.profile)
-    if vault_root is None or not vault_root.is_dir():
-        raise ValueError("Configure a valid primary documentation vault first")
+    resolved_root = _require_vault(vault_root, locale)
     query = str(payload.get("query") or "").strip()
     if not query:
         return {
@@ -563,14 +875,19 @@ async def run_companion_search(
     folder_raw = str(payload.get("folder") or "").strip()
     folder = folder_raw if folder_raw else None
     mode = str(payload.get("mode") or "fts").strip().lower()
-    app = build_app(settings=settings, vault_root=vault_root)
-    db_path = sidecar_index_db(vault_root, settings=settings)
+    app = build_app(settings=settings, vault_root=resolved_root)
+    db_path = sidecar_index_db(resolved_root, settings=settings)
     if not db_path.is_file():
-        raise ValueError("Index database not found; run Synchronize Index first")
+        raise ValueError(t("companion.errors.index_missing", locale=locale))
     await app.store.open(db_path)
     try:
         if mode == "regex":
-            return await search_regex_impl(app, pattern=query, glob=folder, limit=limit)
+            return await search_regex_impl(
+                app,
+                pattern=query,
+                glob=_folder_to_regex_glob(folder),
+                limit=limit,
+            )
         return await search_text_impl(
             app,
             query=query,
@@ -593,9 +910,8 @@ async def run_companion_graph_health(
     """Run knowledge-graph link integrity and topology diagnostics."""
     profile_snap = read_companion_profile(profile_path)
     vault_root, settings = _build_runtime_settings(profile_snap.profile)
-    if vault_root is None or not vault_root.is_dir():
-        raise ValueError("Configure a valid primary documentation vault first")
-    report = await analyze_vault_graph(vault_root, settings=settings)
+    resolved_root = _require_vault(vault_root, companion_locale(profile_path))
+    report = await analyze_vault_graph(resolved_root, settings=settings)
     payload_dict = report.to_dict()
     if SecretRedactor.retrieval_enabled(settings):
         redactor = SecretRedactor.from_settings(settings)
@@ -609,20 +925,21 @@ async def run_companion_compaction(
     profile_path: Path | None = None,
 ) -> dict[str, Any]:
     """Preview or apply smart monthly memory compaction."""
+    locale = companion_locale(profile_path)
     days = _parse_bounded_int(
         payload.get("older_than_days"),
         field_name="older_than_days",
         default=DEFAULT_COMPACTION_DAYS,
         minimum=0,
-        maximum=3650,
+        maximum=_COMPACTION_MAX_DAYS,
+        locale=locale,
     )
     profile_snap = read_companion_profile(profile_path)
     vault_root, settings = _build_runtime_settings(profile_snap.profile)
-    if vault_root is None or not vault_root.is_dir():
-        raise ValueError("Configure a valid primary documentation vault first")
+    resolved_root = _require_vault(vault_root, locale)
     dry_run = bool(payload.get("dry_run", True))
     report = await compact_vault_memory(
-        vault_root,
+        resolved_root,
         settings=settings,
         older_than_days=days,
         dry_run=dry_run,
@@ -642,17 +959,16 @@ async def run_companion_mcp_setup(
     """Configure MCP client registrations using SetupPlan and run_setup."""
     profile_snap = read_companion_profile(profile_path)
     vault_root, settings = _build_runtime_settings(profile_snap.profile)
-    if vault_root is None or not vault_root.is_dir():
-        raise ValueError("Configure a valid primary documentation vault first")
+    resolved_root = _require_vault(vault_root, companion_locale(profile_path))
     client = str(payload.get("client", "all")).strip()
     scope = str(payload.get("install_scope", "both")).strip()
     enable_write = bool(payload.get("enable_write", profile_snap.profile.enable_write))
     write_roots = (
-        default_write_paths(vault_root, memory_root=settings.memory_root) if enable_write else []
+        default_write_paths(resolved_root, memory_root=settings.memory_root) if enable_write else []
     )
     res = await run_setup(
         SetupPlan(
-            vault_path=vault_root,
+            vault_path=resolved_root,
             memory_vault_path=settings.memory_root,
             build_index=False,
             enable_write=enable_write,
@@ -690,7 +1006,8 @@ async def get_companion_history(
         field_name="limit",
         default=_MAX_HISTORY_RECORDS,
         minimum=1,
-        maximum=200,
+        maximum=_HISTORY_MAX_LIMIT,
+        locale=companion_locale(profile_path),
     )
     profile_snap = read_companion_profile(profile_path)
     vault_root, settings = _build_runtime_settings(profile_snap.profile)

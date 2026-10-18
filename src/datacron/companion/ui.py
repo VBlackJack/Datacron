@@ -15,12 +15,17 @@
 
 from __future__ import annotations
 
+import html
 import json
+import re
+from collections.abc import Mapping
 from typing import Final
 
 from datacron.companion.theme import DARK_THEME_COLORS, LAYOUT_TOKENS
 
 __all__ = ["render_companion_html"]
+
+_DEFAULT_HTML_LANG: Final[str] = "fr"
 
 _CSS_TEMPLATE: Final[str] = """
 :root {
@@ -201,6 +206,13 @@ textarea { font-family: var(--font-mono); min-height: 90px; resize: vertical; }
   cursor: pointer;
 }
 .list-item:hover { border-color: var(--border); }
+.headline:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.hint { font-size: 12px; color: var(--text-secondary); }
+.panel h3 { font-size: 13px; margin: 10px 0 6px 0; color: var(--text-primary); }
+.panel ul { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.panel li { overflow-wrap: anywhere; }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+[hidden] { display: none !important; }
 """
 
 _HTML_BODY: Final[str] = """
@@ -227,7 +239,7 @@ _HTML_BODY: Final[str] = """
 
   <main class="main-area">
     <section id="tab-home" class="page active">
-      <h1 class="headline" data-i18n="home.headline"></h1>
+      <h1 class="headline" tabindex="-1" data-i18n="home.headline"></h1>
       <div class="card">
         <div class="row">
           <span id="home-status-badge" class="badge badge-ok"></span>
@@ -268,12 +280,13 @@ _HTML_BODY: Final[str] = """
     </section>
 
     <section id="tab-vaults" class="page">
-      <h1 class="headline" data-i18n="vaults.headline"></h1>
+      <h1 class="headline" tabindex="-1" data-i18n="vaults.headline"></h1>
       <div class="card">
         <label for="inp-vault" data-i18n="vaults.docs_vault_label"></label>
         <input type="text" id="inp-vault" />
         <label for="inp-mem-vault" data-i18n="vaults.memory_vault_label"></label>
-        <input type="text" id="inp-mem-vault" />
+        <input type="text" id="inp-mem-vault" aria-describedby="mem-env-hint" />
+        <p class="hint" id="mem-env-hint" hidden></p>
         <label for="inp-extra-vaults" data-i18n="vaults.extra_vaults_label"></label>
         <textarea id="inp-extra-vaults"></textarea>
         <div class="row">
@@ -287,19 +300,23 @@ _HTML_BODY: Final[str] = """
         <h2 data-i18n="vaults.migrate_title"></h2>
         <p data-i18n="vaults.migrate_desc"></p>
         <label class="row">
-          <input type="checkbox" id="chk-keep-source" />
+          <input type="checkbox" id="chk-keep-source" checked />
           <span data-i18n="vaults.migrate_keep_source"></span>
+        </label>
+        <label class="row">
+          <input type="checkbox" id="chk-migrate-clients" checked />
+          <span data-i18n="vaults.migrate_reconfigure_clients"></span>
         </label>
         <div class="row">
           <button class="btn btn-primary" id="btn-migrate-dual"
             data-i18n="vaults.migrate_button"></button>
         </div>
-        <div id="vaults-output" class="mono-box"></div>
+        <div id="vaults-output" class="mono-box panel" aria-live="polite"></div>
       </div>
     </section>
 
     <section id="tab-search" class="page">
-      <h1 class="headline" data-i18n="search.headline"></h1>
+      <h1 class="headline" tabindex="-1" data-i18n="search.headline"></h1>
       <div class="card">
         <div class="grid-2">
           <input type="text" id="inp-search-query" aria-label="Search query"
@@ -311,7 +328,7 @@ _HTML_BODY: Final[str] = """
         </div>
         <div class="row">
           <select id="sel-search-mode" aria-label="Search mode"
-            data-i18n-aria="search.headline" style="width:180px;">
+            data-i18n-aria="search.mode_label" style="width:180px;">
             <option value="fts" data-i18n="search.mode_fts"></option>
             <option value="regex" data-i18n="search.mode_regex"></option>
           </select>
@@ -330,13 +347,13 @@ _HTML_BODY: Final[str] = """
     </section>
 
     <section id="tab-graph" class="page">
-      <h1 class="headline" data-i18n="graph.headline"></h1>
+      <h1 class="headline" tabindex="-1" data-i18n="graph.headline"></h1>
       <div class="card">
         <div class="row">
           <button class="btn btn-primary" id="btn-graph-analyze"
             data-i18n="graph.analyze_button"></button>
         </div>
-        <div id="graph-output" class="mono-box"></div>
+        <div id="graph-output" class="mono-box panel" aria-live="polite"></div>
       </div>
       <div class="card">
         <h2 data-i18n="graph.compaction_title"></h2>
@@ -353,7 +370,7 @@ _HTML_BODY: Final[str] = """
     </section>
 
     <section id="tab-mcp" class="page">
-      <h1 class="headline" data-i18n="mcp.headline"></h1>
+      <h1 class="headline" tabindex="-1" data-i18n="mcp.headline"></h1>
       <div class="card">
         <div class="grid-2">
           <div>
@@ -373,24 +390,35 @@ _HTML_BODY: Final[str] = """
           <button class="btn btn-primary" id="btn-mcp-configure"
             data-i18n="mcp.configure_button"></button>
         </div>
-        <div id="mcp-targets-box" class="mono-box"></div>
+        <div id="mcp-targets-box" class="mono-box panel" aria-live="polite"></div>
       </div>
     </section>
 
     <section id="tab-history" class="page">
-      <h1 class="headline" data-i18n="history.headline"></h1>
+      <h1 class="headline" tabindex="-1" data-i18n="history.headline"></h1>
       <div class="card">
         <div class="row">
           <button class="btn btn-primary" id="btn-history-reload"
             data-i18n="history.reload_button"></button>
         </div>
-        <div id="history-output" class="mono-box"></div>
+        <div id="history-output" class="mono-box panel"></div>
       </div>
     </section>
 
     <section id="tab-settings" class="page">
-      <h1 class="headline" data-i18n="settings.headline"></h1>
+      <h1 class="headline" tabindex="-1" data-i18n="settings.headline"></h1>
       <div class="card">
+        <div class="row">
+          <span class="badge" id="lbl-vault-cfg-status" role="status"></span>
+        </div>
+        <div id="vault-cfg-errors" class="mono-box panel" hidden>
+          <h3 data-i18n="settings.errors_title"></h3>
+          <ul id="vault-cfg-error-list"></ul>
+        </div>
+        <label class="row" id="row-vault-cfg-reset" hidden>
+          <input type="checkbox" id="chk-vault-cfg-reset" />
+          <span data-i18n="settings.reset_label"></span>
+        </label>
         <label for="txt-excluded" data-i18n="settings.excluded_folders_label"></label>
         <textarea id="txt-excluded"></textarea>
         <label for="txt-archive-tags" data-i18n="settings.archive_tags_label"></label>
@@ -424,6 +452,26 @@ _HTML_BODY: Final[str] = """
 
 _JS_APP: Final[str] = """
 let APP_STATE = null;
+// The VAULT.yaml hash and values the Settings view was loaded with: a save sends only
+// the fields edited since, and fails with a conflict if the file changed meanwhile.
+let VAULT_CFG_BASE = null;
+let BUSY = false;
+
+function i18nText(dotted) {
+  const source = (APP_STATE && APP_STATE.i18n) || FALLBACK_I18N;
+  return resolveI18n(source, dotted);
+}
+
+function formatText(template, params) {
+  return template.replace(/\\{(\\w+)\\}/g, (whole, name) =>
+    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : whole
+  );
+}
+
+function setStatus(text) {
+  const statusEl = document.getElementById("status-message");
+  if (statusEl) statusEl.textContent = text;
+}
 
 async function apiCall(path, method = "GET", body = null) {
   const headers = { "X-Datacron-Token": SESSION_TOKEN };
@@ -439,15 +487,24 @@ async function apiCall(path, method = "GET", body = null) {
 }
 
 async function runAction(btn, fn) {
-  if (btn) btn.disabled = true;
+  if (BUSY) {
+    setStatus(i18nText("app.busy"));
+    return;
+  }
+  BUSY = true;
+  const buttons = Array.from(document.querySelectorAll("button.btn"));
+  const previous = buttons.map((b) => b.disabled);
+  buttons.forEach((b) => { b.disabled = true; });
+  document.body.setAttribute("aria-busy", "true");
   try {
     await fn();
   } catch (err) {
-    const msg = err && err.message ? err.message : String(err);
-    const statusEl = document.getElementById("status-message");
-    if (statusEl) statusEl.textContent = msg;
+    setStatus(err && err.message ? err.message : String(err));
   } finally {
-    if (btn) btn.disabled = false;
+    buttons.forEach((b, i) => { b.disabled = previous[i]; });
+    document.body.removeAttribute("aria-busy");
+    BUSY = false;
+    updateVaultCfgSaveState();
   }
 }
 
@@ -479,7 +536,7 @@ function applyTranslations(i18n, currentLang) {
   if (titleVal) document.title = titleVal;
 }
 
-function activateTab(tabName) {
+function activateTab(tabName, moveFocus) {
   document.querySelectorAll(".nav-btn").forEach((btn) => {
     const isActive = btn.getAttribute("data-tab") === tabName;
     btn.classList.toggle("active", isActive);
@@ -492,6 +549,11 @@ function activateTab(tabName) {
   document.querySelectorAll(".page").forEach((sec) => {
     sec.classList.toggle("active", sec.id === "tab-" + tabName);
   });
+  if (moveFocus) {
+    const page = document.getElementById("tab-" + tabName);
+    const heading = page ? page.querySelector(".headline") : null;
+    if (heading) heading.focus();
+  }
 }
 
 function populateSelect(id, items, selectedVal) {
@@ -506,15 +568,201 @@ function populateSelect(id, items, selectedVal) {
   });
 }
 
+function appendRows(container, title, rows) {
+  if (title) {
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    container.appendChild(heading);
+  }
+  const list = document.createElement("ul");
+  rows.forEach(([label, value]) => {
+    const item = document.createElement("li");
+    item.textContent = label + ": " + String(value);
+    list.appendChild(item);
+  });
+  container.appendChild(list);
+}
+
+function appendList(container, title, lines) {
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  container.appendChild(heading);
+  const list = document.createElement("ul");
+  const shown = lines.length ? lines : [i18nText("graph.none_found")];
+  shown.forEach((line) => {
+    const item = document.createElement("li");
+    item.textContent = line;
+    list.appendChild(item);
+  });
+  container.appendChild(list);
+}
+
+function renderGraph(out) {
+  const box = document.getElementById("graph-output");
+  box.replaceChildren();
+  appendRows(box, i18nText("graph.summary_title"), [
+    [i18nText("graph.total_notes"), out.total_notes],
+    [i18nText("graph.total_links"), out.total_links],
+    [i18nText("graph.resolved_links"), out.resolved_links]
+  ]);
+  appendList(box, i18nText("graph.broken_links_title") + " (" + out.broken_link_count + ")",
+    (out.broken_links || []).map((b) => b.source_rel_path + " -> [[" + b.target_alias + "]]"));
+  appendList(box, i18nText("graph.orphan_notes_title") + " (" + out.orphan_note_count + ")",
+    (out.orphan_notes || []).map((o) => o.rel_path));
+  appendList(box, i18nText("graph.hub_notes_title"),
+    (out.hub_notes || []).map((h) =>
+      h.rel_path + " (" + h.incoming_count + " / " + h.outgoing_count + ")"));
+  appendList(box, i18nText("graph.cross_vault_title") + " (" + out.cross_vault_link_count + ")",
+    (out.cross_vault_links || []).map((c) =>
+      c.source_vault + ":" + c.source_rel_path + " -> " +
+      c.target_vault + ":" + c.target_rel_path));
+}
+
+function renderMcpTargets(targets) {
+  const box = document.getElementById("mcp-targets-box");
+  box.replaceChildren();
+  appendList(box, i18nText("mcp.headline"), (targets || []).map((tgt) =>
+    tgt.display_name + " (" + tgt.scope + "): " +
+    i18nText(tgt.already_configured ? "mcp.status_configured" : "mcp.status_not_configured") +
+    " - " + tgt.config_path));
+}
+
+function renderMcpSetup(out) {
+  const box = document.getElementById("mcp-targets-box");
+  box.replaceChildren();
+  appendList(box, i18nText("mcp.headline"), (out.installed || []).map((item) =>
+    item.display_name + " (" + item.scope + "): " +
+    i18nText(item.installed ? "mcp.status_installed" : "mcp.status_failed") +
+    (item.detail ? " - " + item.detail : "")));
+  if (out.errors && out.errors.length) {
+    appendList(box, i18nText("mcp.errors_title"), out.errors);
+  }
+}
+
+function renderSync(out) {
+  const box = document.getElementById("vaults-output");
+  box.replaceChildren();
+  appendRows(box, null, [[i18nText("vaults.result_mode"), out.mode]]);
+  appendRows(box, i18nText("vaults.result_stats"),
+    Object.entries(out.stats || {}).map(([key, value]) => [key, value]));
+}
+
+function renderMigration(mig, clientsRequested) {
+  const box = document.getElementById("vaults-output");
+  box.replaceChildren();
+  appendRows(box, null, [
+    [i18nText("vaults.docs_vault_label"), mig.vault_path],
+    [i18nText("vaults.memory_vault_label"), mig.memory_vault_path],
+    [i18nText("vaults.result_verified"), mig.verified_files],
+    [i18nText("vaults.result_resumed"), mig.resumed_files],
+    [i18nText("vaults.result_indexed"), mig.indexed_notes]
+  ]);
+  const sourceState = document.createElement("h3");
+  sourceState.textContent = i18nText(mig.source_cleaned
+    ? "vaults.result_source_cleaned" : "vaults.result_source_kept");
+  box.appendChild(sourceState);
+  if (clientsRequested) {
+    appendList(box, i18nText("vaults.result_clients"), (mig.client_installs || []).map((item) =>
+      item.display_name + " (" + item.scope + "): " +
+      i18nText(item.installed ? "mcp.status_installed" : "mcp.status_failed")));
+  }
+  const warnings = [...(mig.warnings || []), ...(mig.client_errors || [])];
+  if (!clientsRequested) warnings.push(i18nText("vaults.migrate_clients_reminder"));
+  if (warnings.length) appendList(box, i18nText("vaults.result_warnings"), warnings);
+}
+
+function renderHistory(out) {
+  const box = document.getElementById("history-output");
+  box.replaceChildren();
+  const ops = out.operations || [];
+  if (!ops.length) {
+    box.textContent = i18nText("history.empty_log");
+    return;
+  }
+  appendList(box, i18nText("history.headline"),
+    ops.map((op) => op.timestamp + "  " + op.tool + "  " + op.rel_path));
+}
+
+function vaultCfgFieldValues() {
+  const excluded = document.getElementById("txt-excluded").value
+    .split("\\n").map((s) => s.trim()).filter(Boolean);
+  const archive = document.getElementById("txt-archive-tags").value
+    .split("\\n").map((s) => s.trim()).filter(Boolean);
+  let qexp = null;
+  try {
+    qexp = JSON.parse(document.getElementById("txt-query-exp").value || "{}");
+  } catch (err) {
+    qexp = null;
+  }
+  if (qexp === null || typeof qexp !== "object" || Array.isArray(qexp)) {
+    throw new Error(i18nText("settings.query_expansion_invalid"));
+  }
+  return { excluded_folders: excluded, archive_tags: archive, query_expansion: qexp };
+}
+
+function vaultCfgResetRequested() {
+  return Boolean(VAULT_CFG_BASE && !VAULT_CFG_BASE.valid &&
+    document.getElementById("chk-vault-cfg-reset").checked);
+}
+
+function updateVaultCfgSaveState() {
+  const btn = document.getElementById("btn-save-vault-cfg");
+  if (!btn || BUSY) return;
+  btn.disabled = Boolean(VAULT_CFG_BASE && !VAULT_CFG_BASE.valid && !vaultCfgResetRequested());
+}
+
+function renderVaultCfg(vcfg) {
+  const values = vcfg.values || {};
+  VAULT_CFG_BASE = {
+    hash: vcfg.content_hash,
+    valid: Boolean(vcfg.valid),
+    values: {
+      excluded_folders: values.excluded_folders || [],
+      archive_tags: values.archive_tags || [],
+      query_expansion: values.query_expansion || {}
+    }
+  };
+  const base = VAULT_CFG_BASE.values;
+  document.getElementById("txt-excluded").value = base.excluded_folders.join("\\n");
+  document.getElementById("txt-archive-tags").value = base.archive_tags.join("\\n");
+  document.getElementById("txt-query-exp").value = JSON.stringify(
+    VAULT_CFG_BASE.values.query_expansion, null, 2
+  );
+  document.getElementById("lbl-cas-hash").textContent = vcfg.content_hash;
+  const status = document.getElementById("lbl-vault-cfg-status");
+  const errorsBox = document.getElementById("vault-cfg-errors");
+  const errorList = document.getElementById("vault-cfg-error-list");
+  const resetRow = document.getElementById("row-vault-cfg-reset");
+  errorList.replaceChildren();
+  document.getElementById("chk-vault-cfg-reset").checked = false;
+  if (!vcfg.valid) {
+    status.textContent = i18nText("settings.config_invalid");
+    status.className = "badge badge-err";
+    (vcfg.errors || []).forEach((msg) => {
+      const item = document.createElement("li");
+      item.textContent = msg;
+      errorList.appendChild(item);
+    });
+    errorsBox.hidden = false;
+    resetRow.hidden = false;
+  } else {
+    const statusKey = vcfg.present ? "settings.config_valid" : "settings.config_absent";
+    status.textContent = i18nText(statusKey);
+    status.className = "badge badge-ok";
+    errorsBox.hidden = true;
+    resetRow.hidden = true;
+  }
+  updateVaultCfgSaveState();
+}
+
 function renderState(state) {
   APP_STATE = state;
   const prof = state.profile_snapshot.profile;
   applyTranslations(state.i18n, prof.ui_language);
-  const vcfg = state.vault_config_snapshot;
   const rdy = state.readiness;
 
   document.getElementById("lang-select").value = prof.ui_language;
-  document.getElementById("status-message").textContent = state.i18n.app.connected;
+  setStatus(state.i18n.app.connected);
   document.getElementById("stat-notes").textContent = String(rdy.index_stats.note_count);
   document.getElementById("stat-chunks").textContent = String(rdy.index_stats.chunk_count);
   document.getElementById("stat-gen").textContent = String(rdy.index_stats.generation);
@@ -533,25 +781,31 @@ function renderState(state) {
   }
 
   document.getElementById("inp-vault").value = prof.vault_path || "";
-  document.getElementById("inp-mem-vault").value = prof.memory_vault_path || "";
+  const memInput = document.getElementById("inp-mem-vault");
+  memInput.value = prof.memory_vault_path || "";
+  const memHint = document.getElementById("mem-env-hint");
+  if (rdy.memory_source === "environment" && rdy.memory_root) {
+    memInput.setAttribute("placeholder", rdy.memory_root);
+    memHint.textContent = formatText(state.i18n.vaults.memory_from_env_hint, {
+      path: rdy.memory_root
+    });
+    memHint.hidden = false;
+  } else {
+    memInput.removeAttribute("placeholder");
+    memHint.textContent = "";
+    memHint.hidden = true;
+  }
   const extraLines = Object.entries(prof.extra_read_vaults || {}).map(([k, v]) => k + "=" + v);
   document.getElementById("inp-extra-vaults").value = extraLines.join("\\n");
 
-  document.getElementById("txt-excluded").value = (vcfg.values.excluded_folders || []).join("\\n");
-  document.getElementById("txt-archive-tags").value = (vcfg.values.archive_tags || []).join("\\n");
-  document.getElementById("txt-query-exp").value = JSON.stringify(
-    vcfg.values.query_expansion || {}, null, 2
-  );
-  document.getElementById("lbl-cas-hash").textContent = vcfg.content_hash;
+  renderVaultCfg(state.vault_config_snapshot);
 
   populateSelect("sel-mcp-client", state.choices.clients, "all");
   populateSelect("sel-mcp-scope", state.choices.scopes, "both");
   populateSelect("sel-durability", state.choices.durability_modes, prof.durability);
   populateSelect("sel-timeout", state.choices.timeouts, prof.cli_timeout_seconds);
   document.getElementById("chk-mcp-write").checked = Boolean(prof.enable_write);
-  document.getElementById("mcp-targets-box").textContent = JSON.stringify(
-    state.mcp_targets, null, 2
-  );
+  renderMcpTargets(state.mcp_targets);
 }
 
 async function refreshState() {
@@ -588,23 +842,54 @@ async function saveTopology() {
   renderState(st);
 }
 
+async function savePreferences(preferences) {
+  const res = await apiCall("/api/preferences", "POST", {
+    expected_hash: APP_STATE ? APP_STATE.profile_snapshot.content_hash : null,
+    preferences
+  });
+  if (APP_STATE) APP_STATE.profile_snapshot.content_hash = res.profile_snapshot.content_hash;
+  return res;
+}
+
+async function saveLanguage() {
+  await savePreferences({ ui_language: document.getElementById("lang-select").value });
+  await refreshState();
+}
+
 async function saveVaultConfig() {
-  const excluded = document.getElementById("txt-excluded").value
-    .split("\\n").map((s) => s.trim()).filter(Boolean);
-  const archive = document.getElementById("txt-archive-tags").value
-    .split("\\n").map((s) => s.trim()).filter(Boolean);
-  const qexp = JSON.parse(document.getElementById("txt-query-exp").value || "{}");
-  await saveTopology();
-  const res = await apiCall("/api/vault-config", "POST", {
-    expected_hash: APP_STATE.vault_config_snapshot.content_hash,
-    values: {
-      excluded_folders: excluded,
-      archive_tags: archive,
-      query_expansion: qexp
+  if (!APP_STATE || !VAULT_CFG_BASE) return;
+  const current = vaultCfgFieldValues();
+  const reset = vaultCfgResetRequested();
+  if (!VAULT_CFG_BASE.valid && !reset) {
+    throw new Error(i18nText("settings.config_invalid"));
+  }
+  const edited = {};
+  Object.keys(current).forEach((key) => {
+    if (reset || JSON.stringify(current[key]) !== JSON.stringify(VAULT_CFG_BASE.values[key])) {
+      edited[key] = current[key];
     }
   });
-  APP_STATE.vault_config_snapshot = res.vault_config_snapshot;
-  document.getElementById("lbl-cas-hash").textContent = res.vault_config_snapshot.content_hash;
+  const prof = APP_STATE.profile_snapshot.profile;
+  const preferences = {};
+  const durability = document.getElementById("sel-durability").value;
+  const timeout = parseInt(document.getElementById("sel-timeout").value || "0", 10);
+  if (durability && durability !== prof.durability) preferences.durability = durability;
+  if (timeout && timeout !== prof.cli_timeout_seconds) preferences.cli_timeout_seconds = timeout;
+  if (!Object.keys(edited).length && !Object.keys(preferences).length) {
+    setStatus(i18nText("settings.nothing_to_save"));
+    return;
+  }
+  if (reset && !window.confirm(i18nText("settings.reset_confirm"))) return;
+  if (Object.keys(edited).length) {
+    await apiCall("/api/vault-config", "POST", {
+      expected_hash: VAULT_CFG_BASE.hash,
+      values: edited,
+      reset
+    });
+  }
+  if (Object.keys(preferences).length) await savePreferences(preferences);
+  await refreshState();
+  setStatus(i18nText("settings.saved"));
 }
 
 async function executeSearch() {
@@ -617,7 +902,7 @@ async function executeSearch() {
   listEl.innerHTML = "";
   const items = res.results || [];
   if (!items.length) {
-    listEl.textContent = APP_STATE ? APP_STATE.i18n.search.empty_state : "";
+    listEl.textContent = i18nText("search.empty_state");
     return;
   }
   items.forEach((item) => {
@@ -649,57 +934,68 @@ function clearSearch() {
   document.getElementById("search-preview-box").textContent = "";
 }
 
+async function runMigration() {
+  const keepSource = document.getElementById("chk-keep-source").checked;
+  const reconfigure = document.getElementById("chk-migrate-clients").checked;
+  if (!keepSource && !window.confirm(i18nText("vaults.migrate_cleanup_confirm"))) return;
+  const out = await apiCall("/api/migrate", "POST", {
+    vault_path: document.getElementById("inp-vault").value.trim(),
+    memory_vault_path: document.getElementById("inp-mem-vault").value.trim(),
+    keep_source: keepSource,
+    confirm_cleanup: !keepSource,
+    client: reconfigure ? "all" : "none",
+    install_scope: "both"
+  });
+  await refreshState();
+  renderMigration(out.migration, reconfigure);
+}
+
 window.addEventListener("DOMContentLoaded", () => {
+  applyTranslations(FALLBACK_I18N, document.documentElement.lang);
   document.querySelectorAll(".nav-btn").forEach((btn) => {
-    btn.addEventListener("click", () => activateTab(btn.getAttribute("data-tab")));
+    btn.addEventListener("click", () => activateTab(btn.getAttribute("data-tab"), true));
   });
   document.querySelectorAll("[data-jump]").forEach((el) => {
     const target = el.getAttribute("data-jump");
-    el.addEventListener("click", () => activateTab(target));
+    el.addEventListener("click", () => activateTab(target, true));
     el.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" || ev.key === " ") {
         ev.preventDefault();
-        activateTab(target);
+        activateTab(target, true);
       }
     });
   });
-  document.getElementById("home-cta-vaults").addEventListener("click", () => activateTab("vaults"));
-  document.getElementById("home-cta-search").addEventListener("click", () => activateTab("search"));
+  document.getElementById("home-cta-vaults").addEventListener("click",
+    () => activateTab("vaults", true));
+  document.getElementById("home-cta-search").addEventListener("click",
+    () => activateTab("search", true));
   const homeSyncBtn = document.getElementById("home-cta-sync");
   homeSyncBtn.addEventListener("click", () => runAction(homeSyncBtn, async () => {
     const out = await apiCall("/api/sync", "POST", { rebuild: false });
-    document.getElementById("vaults-output").textContent = JSON.stringify(out, null, 2);
     await refreshState();
+    renderSync(out);
   }));
   const globalRefreshBtn = document.getElementById("btn-global-refresh");
   globalRefreshBtn.addEventListener("click", () => runAction(globalRefreshBtn, refreshState));
   document.getElementById("lang-select").addEventListener("change", () =>
-    runAction(null, saveTopology)
+    runAction(null, saveLanguage)
   );
   const saveTopoBtn = document.getElementById("btn-save-topology");
   saveTopoBtn.addEventListener("click", () => runAction(saveTopoBtn, saveTopology));
   const syncIncBtn = document.getElementById("btn-sync-inc");
   syncIncBtn.addEventListener("click", () => runAction(syncIncBtn, async () => {
     const out = await apiCall("/api/sync", "POST", { rebuild: false });
-    document.getElementById("vaults-output").textContent = JSON.stringify(out, null, 2);
     await refreshState();
+    renderSync(out);
   }));
   const syncRebuildBtn = document.getElementById("btn-sync-rebuild");
   syncRebuildBtn.addEventListener("click", () => runAction(syncRebuildBtn, async () => {
     const out = await apiCall("/api/sync", "POST", { rebuild: true });
-    document.getElementById("vaults-output").textContent = JSON.stringify(out, null, 2);
     await refreshState();
+    renderSync(out);
   }));
   const migrateBtn = document.getElementById("btn-migrate-dual");
-  migrateBtn.addEventListener("click", () => runAction(migrateBtn, async () => {
-    const out = await apiCall("/api/migrate", "POST", {
-      vault_path: document.getElementById("inp-vault").value.trim(),
-      memory_vault_path: document.getElementById("inp-mem-vault").value.trim(),
-      keep_source: document.getElementById("chk-keep-source").checked
-    });
-    document.getElementById("vaults-output").textContent = JSON.stringify(out, null, 2);
-    await refreshState();
-  }));
+  migrateBtn.addEventListener("click", () => runAction(migrateBtn, runMigration));
   const searchRunBtn = document.getElementById("btn-search-run");
   searchRunBtn.addEventListener("click", () => runAction(searchRunBtn, executeSearch));
   document.getElementById("btn-search-clear").addEventListener("click", clearSearch);
@@ -717,8 +1013,7 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   const graphBtn = document.getElementById("btn-graph-analyze");
   graphBtn.addEventListener("click", () => runAction(graphBtn, async () => {
-    const out = await apiCall("/api/graph-health", "POST", {});
-    document.getElementById("graph-output").textContent = JSON.stringify(out, null, 2);
+    renderGraph(await apiCall("/api/graph-health", "POST", {}));
   }));
   const compactPrevBtn = document.getElementById("btn-compact-preview");
   compactPrevBtn.addEventListener("click", () => runAction(compactPrevBtn, async () => {
@@ -730,6 +1025,7 @@ window.addEventListener("DOMContentLoaded", () => {
   }));
   const compactApplyBtn = document.getElementById("btn-compact-apply");
   compactApplyBtn.addEventListener("click", () => runAction(compactApplyBtn, async () => {
+    if (!window.confirm(i18nText("graph.compaction_apply_confirm"))) return;
     const out = await apiCall("/api/compact-memory", "POST", {
       older_than_days: parseInt(document.getElementById("inp-compact-days").value || "30", 10),
       dry_run: false
@@ -739,33 +1035,34 @@ window.addEventListener("DOMContentLoaded", () => {
   }));
   const mcpBtn = document.getElementById("btn-mcp-configure");
   mcpBtn.addEventListener("click", () => runAction(mcpBtn, async () => {
-    const out = await apiCall("/api/mcp-setup", "POST", {
+    renderMcpSetup(await apiCall("/api/mcp-setup", "POST", {
       client: document.getElementById("sel-mcp-client").value,
       install_scope: document.getElementById("sel-mcp-scope").value,
       enable_write: document.getElementById("chk-mcp-write").checked
-    });
-    document.getElementById("mcp-targets-box").textContent = JSON.stringify(out, null, 2);
+    }));
   }));
   const historyBtn = document.getElementById("btn-history-reload");
   historyBtn.addEventListener("click", () => runAction(historyBtn, async () => {
-    const out = await apiCall("/api/history", "POST", {});
-    document.getElementById("history-output").textContent =
-      (out.operations && out.operations.length)
-        ? JSON.stringify(out.operations, null, 2)
-        : APP_STATE.i18n.history.empty_log;
+    renderHistory(await apiCall("/api/history", "POST", {}));
   }));
   const saveVaultCfgBtn = document.getElementById("btn-save-vault-cfg");
   saveVaultCfgBtn.addEventListener("click", () => runAction(saveVaultCfgBtn, saveVaultConfig));
+  document.getElementById("chk-vault-cfg-reset").addEventListener("change",
+    updateVaultCfgSaveState);
   window.addEventListener("keydown", (ev) => {
     if (ev.key === "F5") { ev.preventDefault(); runAction(globalRefreshBtn, refreshState); }
     if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s") {
       ev.preventDefault();
-      runAction(saveVaultCfgBtn, saveVaultConfig);
+      if (!saveVaultCfgBtn.disabled) runAction(saveVaultCfgBtn, saveVaultConfig);
     }
   });
   runAction(null, refreshState);
 });
 """
+
+_I18N_TEXT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r'(?P<open>data-i18n="(?P<key>[a-z_]+\.[a-z0-9_]+)"[^>]*>)(?P<close></)'
+)
 
 
 def _render_css() -> str:
@@ -777,21 +1074,56 @@ def _render_css() -> str:
     return css
 
 
-def render_companion_html(session_token: str) -> str:
-    """Render the self-contained Dracula-themed Companion HTML shell."""
+def _lookup(bundle: Mapping[str, Mapping[str, str]], dotted: str) -> str:
+    section, _sep, key = dotted.partition(".")
+    return str(bundle.get(section, {}).get(key, ""))
+
+
+def _fill_fallback_labels(body: str, bundle: Mapping[str, Mapping[str, str]]) -> str:
+    """Write every static label into the HTML, so the page reads before any script runs."""
+
+    def _replace(match: re.Match[str]) -> str:
+        text = _lookup(bundle, match.group("key"))
+        return f"{match.group('open')}{html.escape(text)}{match.group('close')}"
+
+    return _I18N_TEXT_PATTERN.sub(_replace, body)
+
+
+def _script_json(value: object) -> str:
+    """Serialize ``value`` for an inline script without letting it close the element."""
+    return json.dumps(value).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+
+
+def render_companion_html(
+    session_token: str,
+    *,
+    i18n: Mapping[str, Mapping[str, str]] | None = None,
+    lang: str = _DEFAULT_HTML_LANG,
+    nonce: str | None = None,
+) -> str:
+    """Render the self-contained Dracula-themed Companion HTML shell.
+
+    ``i18n`` is the Companion catalog bundle for ``lang``: its labels are written into
+    the markup and handed to the script, so the page is readable even when the state
+    request fails. ``nonce`` is the per-response script nonce the CSP header allows.
+    """
     css = _render_css()
-    token_literal = json.dumps(session_token)
+    bundle: Mapping[str, Mapping[str, str]] = i18n or {}
+    body = _fill_fallback_labels(_HTML_BODY, bundle) if bundle else _HTML_BODY
+    nonce_attr = f' nonce="{html.escape(nonce)}"' if nonce else ""
     return (
         "<!DOCTYPE html>\n"
-        '<html lang="fr">\n'
+        f'<html lang="{html.escape(lang)}">\n'
         "<head>\n"
         '  <meta charset="utf-8" />\n'
         '  <meta name="viewport" content="width=device-width, initial-scale=1" />\n'
+        f"  <title>{html.escape(_lookup(bundle, 'app.title'))}</title>\n"
         f"  <style>{css}</style>\n"
         "</head>\n"
         "<body>\n"
-        f"{_HTML_BODY}\n"
-        f"  <script>const SESSION_TOKEN = {token_literal};\n{_JS_APP}</script>\n"
+        f"{body}\n"
+        f"  <script{nonce_attr}>const SESSION_TOKEN = {_script_json(session_token)};\n"
+        f"const FALLBACK_I18N = {_script_json(dict(bundle))};\n{_JS_APP}</script>\n"
         "</body>\n"
         "</html>\n"
     )
