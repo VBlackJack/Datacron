@@ -24,6 +24,7 @@ import http.client
 import json
 import os
 import re
+import stat
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -34,6 +35,7 @@ from typing import Any
 import pytest
 import yaml
 
+from datacron import migration as migration_module
 from datacron.bootstrap import initialize_vault
 from datacron.companion import api as companion_api
 from datacron.companion.api import (
@@ -74,6 +76,20 @@ from datacron.migration import MigrationError, MigrationResult, migrate_vault_to
 
 _SHORT_LOCK_TIMEOUT_SECONDS = 0.2
 _VALID_VAULT_ID = "01J00000000000000000000777"
+_PROFILE_ENV_VARS = ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME")
+_CORE_HAS_ALLOW_RESET = (
+    "allow_reset" in __import__("inspect").signature(write_vault_config_cas).parameters
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_user_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point every per-user config location at a temp dir: no run may touch a real client."""
+    fake_home = tmp_path / "fake-home"
+    fake_home.mkdir()
+    for name in _PROFILE_ENV_VARS:
+        monkeypatch.setenv(name, str(fake_home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
 
 
 def _profile(tmp_path: Path, vault: Path, **extra: Any) -> Path:
@@ -215,6 +231,19 @@ def test_vault_config_reset_is_explicit(tmp_path: Path) -> None:
         )
     assert cfg.read_bytes() == before
 
+
+@pytest.mark.skipif(
+    not _CORE_HAS_ALLOW_RESET,
+    reason="the core VAULT.yaml writer takes allow_reset from lot L1 on",
+)
+def test_vault_config_explicit_reset_replaces_an_invalid_file(tmp_path: Path) -> None:
+    """With the reset flag the Companion passes allow_reset and the file is replaced."""
+    vault = tmp_path / "vault"
+    initialize_vault(vault)
+    cfg = _vault_yaml(vault)
+    cfg.write_text("vault_id: VID2\nexcluded_folders: [a, b\n", encoding="utf-8")
+    profile_path = _profile(tmp_path, vault)
+    snap = read_vault_config_snapshot(vault)
     result = asyncio.run(
         save_vault_config(
             {
@@ -273,7 +302,11 @@ def test_environment_memory_root_applies_only_to_the_environment_vault(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A profile on another vault with an empty memory field is Single-Vault."""
+    """Same rule as the server: the environment memory root is ignored for a foreign vault.
+
+    Foreign means DATACRON_VAULT_ROOT is set and names another vault; with no
+    environment vault root, the environment memory root applies.
+    """
     env_vault = tmp_path / "env-vault"
     env_memory = tmp_path / "env-memory"
     other_vault = tmp_path / "other-vault"
@@ -298,6 +331,11 @@ def test_environment_memory_root_applies_only_to_the_environment_vault(
     assert state["profile_snapshot"]["profile"]["memory_vault_path"] == ""
     assert state["readiness"]["memory_source"] == "environment"
     assert state["readiness"]["vault_mode"] == "dual"
+
+    monkeypatch.delenv("DATACRON_VAULT_ROOT")
+    reset_settings_cache()
+    _root, unset_settings = _build_runtime_settings(CompanionProfile(vault_path=str(other_vault)))
+    assert unset_settings.memory_root == env_memory.resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +535,11 @@ def test_migration_cleanup_is_all_or_nothing_and_can_be_retried(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A cleanup that cannot move `_memory/` puts every entry back; the retry finishes."""
+    """A cleanup that cannot move `_memory/` puts every entry back and is only a warning.
+
+    The copy and the reindex succeeded, so the call returns the migration; a cleanup-only
+    rerun then removes the source.
+    """
     docs = _single_vault(tmp_path / "docs")
     memory = tmp_path / "memory"
     real_replace = os.replace
@@ -509,18 +551,116 @@ def test_migration_cleanup_is_all_or_nothing_and_can_be_retried(
         real_replace(src, dst)
 
     monkeypatch.setattr("datacron.migration.os.replace", _failing_replace)
-    with pytest.raises(MigrationError, match="editor"):
-        asyncio.run(migrate_vault_to_dual(docs, memory, keep_source=False))
+    result = asyncio.run(migrate_vault_to_dual(docs, memory, keep_source=False))
     monkeypatch.setattr("datacron.migration.os.replace", real_replace)
+    assert result.source_cleaned is False
+    assert any("editor" in warning for warning in result.warnings)
+    assert result.verified_files >= 1
     assert (docs / MEMORY_SUBFOLDER_NAME / "fact.md").is_file()
     assert _vault_yaml(docs).is_file()
     assert not [p for p in (docs / SIDECAR_DIR_NAME).iterdir() if "tombstone" in p.name]
 
-    retried = asyncio.run(migrate_vault_to_dual(docs, memory, keep_source=False))
-    assert retried.source_cleaned is True
+    cleaned = asyncio.run(migrate_vault_to_dual(docs, memory, cleanup_only=True))
+    assert cleaned.source_cleaned is True
     assert not (docs / MEMORY_SUBFOLDER_NAME).exists()
     assert not (docs / SIDECAR_DIR_NAME).exists()
     assert (memory / MEMORY_SUBFOLDER_NAME / "fact.md").read_text(encoding="utf-8").endswith("v1\n")
+
+
+def test_migration_rollback_failure_names_what_is_left_where(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A move that cannot be undone is named with its current location; nothing is deleted."""
+    docs = _single_vault(tmp_path / "docs")
+    memory = tmp_path / "memory"
+    real_replace = os.replace
+    memory_source = os.path.normcase(str((docs / MEMORY_SUBFOLDER_NAME).resolve()))
+    sidecar = os.path.normcase(str((docs / SIDECAR_DIR_NAME).resolve()))
+
+    def _failing_replace(src: Any, dst: Any) -> None:
+        src_key = os.path.normcase(os.path.abspath(os.fspath(src)))
+        dst_key = os.path.normcase(os.path.abspath(os.fspath(dst)))
+        if src_key == memory_source:
+            raise PermissionError("a note is open in an editor")
+        if "tombstone" in src_key and dst_key == os.path.normcase(
+            os.path.join(sidecar, "VAULT.yaml")
+        ):
+            raise PermissionError("VAULT.yaml is open")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("datacron.migration.os.replace", _failing_replace)
+    result = asyncio.run(migrate_vault_to_dual(docs, memory, keep_source=False))
+    monkeypatch.setattr("datacron.migration.os.replace", real_replace)
+    assert result.source_cleaned is False
+    stranded = [warning for warning in result.warnings if " <- " in warning]
+    assert stranded, result.warnings
+    assert "VAULT.yaml" in stranded[0]
+    assert (docs / MEMORY_SUBFOLDER_NAME / "fact.md").is_file()
+
+
+def test_migration_reports_an_incomplete_tombstone_deletion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Leftovers of the deletion are a warning, and the source is not reported cleaned."""
+    docs = _single_vault(tmp_path / "docs")
+    memory = tmp_path / "memory"
+    monkeypatch.setattr("datacron.migration._delete_tree", lambda _root: ["locked.bin"])
+    result = asyncio.run(migrate_vault_to_dual(docs, memory, keep_source=False))
+    assert result.source_cleaned is False
+    assert any("locked.bin" in warning for warning in result.warnings)
+
+
+def test_migration_delete_tree_clears_read_only_files(tmp_path: Path) -> None:
+    """A read-only file in the tombstone is deleted, not left behind."""
+    root = tmp_path / "tombstone"
+    (root / "sub").mkdir(parents=True)
+    locked = root / "sub" / "ro.md"
+    locked.write_text("x", encoding="utf-8")
+    os.chmod(locked, stat.S_IREAD)
+    assert migration_module._delete_tree(root) == []
+    assert not root.exists()
+
+
+def test_cleanup_only_removes_the_source_after_dual_vault_writes(tmp_path: Path) -> None:
+    """After the memory vault is written to, a full rerun refuses but a cleanup-only run works."""
+    docs = _single_vault(tmp_path / "docs")
+    memory = tmp_path / "memory"
+    asyncio.run(migrate_vault_to_dual(docs, memory, keep_source=True))
+    oplog = memory / SIDECAR_DIR_NAME / OPLOG_DIR_NAME / "operations.jsonl"
+    oplog.parent.mkdir(parents=True, exist_ok=True)
+    oplog.write_text('{"after": "switch"}\n', encoding="utf-8")
+    (docs / SIDECAR_DIR_NAME / OPLOG_DIR_NAME).mkdir(parents=True, exist_ok=True)
+    (docs / SIDECAR_DIR_NAME / OPLOG_DIR_NAME / "operations.jsonl").write_text(
+        '{"before": "switch"}\n', encoding="utf-8"
+    )
+    (memory / MEMORY_SUBFOLDER_NAME / "fact.md").write_text("# Fact\n\nedited\n", encoding="utf-8")
+
+    cleaned = asyncio.run(migrate_vault_to_dual(docs, memory, cleanup_only=True))
+    assert cleaned.source_cleaned is True
+    assert not (docs / MEMORY_SUBFOLDER_NAME).exists()
+    assert (
+        (memory / MEMORY_SUBFOLDER_NAME / "fact.md")
+        .read_text(encoding="utf-8")
+        .endswith("edited\n")
+    )
+
+
+def test_cleanup_only_refuses_source_files_missing_from_the_memory_vault(tmp_path: Path) -> None:
+    """A source note changed after the copy, and not in the memory vault, blocks the cleanup."""
+    docs = _single_vault(tmp_path / "docs")
+    memory = tmp_path / "memory"
+    with pytest.raises(MigrationError):
+        asyncio.run(migrate_vault_to_dual(docs, memory, cleanup_only=True))
+
+    asyncio.run(migrate_vault_to_dual(docs, memory, keep_source=True))
+    (docs / MEMORY_SUBFOLDER_NAME / "late.md").write_text("# Late\n", encoding="utf-8")
+    (docs / MEMORY_SUBFOLDER_NAME / "fact.md").write_text("# Fact\n\nsource v2\n", encoding="utf-8")
+    with pytest.raises(MigrationError, match=r"late\.md") as excinfo:
+        asyncio.run(migrate_vault_to_dual(docs, memory, cleanup_only=True))
+    assert "fact.md" in str(excinfo.value)
+    assert (docs / MEMORY_SUBFOLDER_NAME / "late.md").is_file()
 
 
 def test_migration_resumes_over_its_own_previous_copy(tmp_path: Path) -> None:
@@ -558,7 +698,7 @@ def test_migration_keeps_the_source_when_client_reconfiguration_fails(
     assert (docs / MEMORY_SUBFOLDER_NAME / "fact.md").is_file()
 
 
-def _fake_result(vault: Path, memory: Path) -> MigrationResult:
+def _fake_result(vault: Path, memory: Path, *, source_cleaned: bool = False) -> MigrationResult:
     return MigrationResult(
         vault_path=vault,
         memory_vault_path=memory,
@@ -567,8 +707,31 @@ def _fake_result(vault: Path, memory: Path) -> MigrationResult:
         verified_files=2,
         indexed_notes=1,
         indexed_chunks=1,
-        source_cleaned=False,
+        source_cleaned=source_cleaned,
     )
+
+
+class _FakeClients:
+    """Stand-in for client discovery and setup: records plans, never writes a config."""
+
+    def __init__(self, settings: dict[str, tuple[bool, bool] | None]) -> None:
+        self.settings = settings
+        self.plans: list[Any] = []
+
+    def discover(self, *, scopes: tuple[str, ...], project_dir: Path) -> list[Any]:
+        return [SimpleNamespace(client_id=client_id) for client_id in self.settings]
+
+    def existing(self, _vault: Path, client: str, _scope: str) -> tuple[bool, bool] | None:
+        return self.settings.get(client)
+
+    async def setup(self, plan: Any) -> Any:
+        self.plans.append(plan)
+        return SimpleNamespace(client_installs=[], client_errors=[], stdio_config=None)
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(companion_api, "discover_targets", self.discover)
+        monkeypatch.setattr(companion_api, "existing_client_settings", self.existing)
+        monkeypatch.setattr(companion_api, "run_setup", self.setup)
 
 
 def test_companion_migration_defaults_keep_source_and_reconfigure_clients(
@@ -584,19 +747,90 @@ def test_companion_migration_defaults_keep_source_and_reconfigure_clients(
 
     async def _fake(vault_root: Path, memory_root: Path, **kwargs: Any) -> MigrationResult:
         calls.append(kwargs)
-        return _fake_result(vault_root, memory_root)
+        return _fake_result(
+            vault_root, memory_root, source_cleaned=bool(kwargs.get("cleanup_only"))
+        )
 
     monkeypatch.setattr(companion_api, "migrate_vault_to_dual", _fake)
+    clients = _FakeClients({"cursor": (True, False)})
+    clients.install(monkeypatch)
     payload = {"vault_path": str(vault), "memory_vault_path": str(memory)}
-    asyncio.run(run_companion_migration(payload, profile_path=profile_path))
-    assert calls[0]["keep_source"] is True
-    assert calls[0]["client"] == "all"
+    out = asyncio.run(run_companion_migration(payload, profile_path=profile_path))
+    assert calls == [{"keep_source": True, "client": "none"}]
+    assert [plan.install_scope for plan in clients.plans] == ["user"]
+    assert out["migration"]["source_cleaned"] is False
 
     with pytest.raises(MigrationError):
         asyncio.run(
             run_companion_migration({**payload, "keep_source": False}, profile_path=profile_path)
         )
     assert len(calls) == 1
+
+    confirmed = {**payload, "keep_source": False, "confirm_cleanup": True}
+    out = asyncio.run(run_companion_migration(confirmed, profile_path=profile_path))
+    assert calls[-1] == {"cleanup_only": True}
+    assert out["migration"]["source_cleaned"] is True
+
+
+def test_companion_migration_keeps_each_client_write_setting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A writable client stays writable, a read-only or unregistered one gets no write access."""
+    vault = tmp_path / "vault"
+    initialize_vault(vault)
+    memory = tmp_path / "memory"
+    profile_path = _profile(tmp_path, vault, enable_write=True)
+
+    async def _fake(vault_root: Path, memory_root: Path, **_kwargs: Any) -> MigrationResult:
+        return _fake_result(vault_root, memory_root)
+
+    monkeypatch.setattr(companion_api, "migrate_vault_to_dual", _fake)
+    clients = _FakeClients({"cursor": (True, False), "lmstudio": (False, True), "codex-cli": None})
+    clients.install(monkeypatch)
+    payload = {"vault_path": str(vault), "memory_vault_path": str(memory)}
+    asyncio.run(run_companion_migration(payload, profile_path=profile_path))
+    by_client = {plan.client: plan for plan in clients.plans}
+    assert set(by_client) == {"cursor", "lmstudio", "codex-cli"}
+    assert by_client["cursor"].enable_write is True
+    assert by_client["cursor"].write_paths
+    assert by_client["lmstudio"].enable_write is False
+    assert by_client["lmstudio"].read_only is True
+    assert by_client["codex-cli"].enable_write is False
+    assert by_client["codex-cli"].write_paths == []
+
+    single = _FakeClients({"cursor": (False, False), "lmstudio": None})
+    single.install(monkeypatch)
+    asyncio.run(run_companion_migration(payload, profile_path=profile_path))
+    assert [(plan.client, plan.enable_write) for plan in single.plans] == [("all", False)]
+
+
+def test_companion_cleanup_only_is_exposed_and_needs_confirmation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Companion finishes a kept-source migration through the engine's cleanup-only mode."""
+    vault = tmp_path / "vault"
+    initialize_vault(vault)
+    memory = tmp_path / "memory"
+    profile_path = _profile(tmp_path, vault)
+    calls: list[dict[str, Any]] = []
+
+    async def _fake(vault_root: Path, memory_root: Path, **kwargs: Any) -> MigrationResult:
+        calls.append(kwargs)
+        return _fake_result(vault_root, memory_root, source_cleaned=True)
+
+    monkeypatch.setattr(companion_api, "migrate_vault_to_dual", _fake)
+    payload = {"vault_path": str(vault), "memory_vault_path": str(memory), "cleanup_only": True}
+    with pytest.raises(MigrationError):
+        asyncio.run(run_companion_migration(payload, profile_path=profile_path))
+    out = asyncio.run(
+        run_companion_migration({**payload, "confirm_cleanup": True}, profile_path=profile_path)
+    )
+    assert calls == [{"cleanup_only": True}]
+    assert out["migration"]["source_cleaned"] is True
+    html = render_companion_html("tok")
+    assert "window.confirm" in _js_function(html, "runCleanupOnly")
 
 
 def test_companion_migration_maps_os_errors_and_survives_profile_conflicts(
@@ -608,7 +842,7 @@ def test_companion_migration_maps_os_errors_and_survives_profile_conflicts(
     initialize_vault(vault)
     memory = tmp_path / "memory"
     profile_path = _profile(tmp_path, vault, ui_language="en")
-    payload = {"vault_path": str(vault), "memory_vault_path": str(memory)}
+    payload = {"vault_path": str(vault), "memory_vault_path": str(memory), "client": "none"}
 
     async def _denied(*_args: Any, **_kwargs: Any) -> MigrationResult:
         raise PermissionError("access denied: datacron.db")

@@ -183,7 +183,9 @@
       "result_clients": "Reconfigured clients",
       "result_warnings": "Warnings",
       "result_mode": "Mode",
-      "result_stats": "Statistics"
+      "result_stats": "Statistics",
+      "cleanup_only_button": "Remove the migrated source",
+      "cleanup_only_confirm": "Remove .datacron/ and _memory/ from the Docs Vault now? This is refused unless every source memory file is already in the memory vault."
     },
     "search": {
       "headline": "Interactive Vault Search",
@@ -252,7 +254,8 @@
       "nothing_to_save": "Nothing to save."
     },
     "migration": {
-      "profile_not_updated": "The migration succeeded but the Companion profile could not be updated; set the docs vault to {vault} and the memory vault to {memory_vault}, then save the topology."
+      "profile_not_updated": "The migration succeeded but the Companion profile could not be updated; set the docs vault to {vault} and the memory vault to {memory_vault}, then save the topology.",
+      "client_manual": "{client} is not configured automatically; paste the Datacron entry for the Dual-Vault layout into it by hand."
     },
     "errors": {
       "vault_required": "Configure a valid primary documentation vault first.",
@@ -303,11 +306,14 @@
       "symlink": "Refusing to migrate symlink or reparse point: {path}",
       "lock_busy": "Another Datacron writer holds the source vault lock: {vault}. Stop the Datacron servers using it, then retry.",
       "pending_operations": "The source vault {vault} has {count} pending write operation(s); nothing was migrated. Start the Datacron server once on this vault to finish them, or inspect them with `datacron ops inspect`, then retry.",
-      "cleanup_blocked": "Source cleanup refused: {path} could not be moved ({detail}). Nothing was deleted and the copy in the memory vault is complete and verified. Close every Datacron server and client using the documentation vault, then rerun the migration to finish the cleanup."
+      "cleanup_blocked": "Source cleanup refused: {path} could not be moved ({detail}). Nothing was deleted and the copy in the memory vault is complete and verified. Close every Datacron server and client using the documentation vault, then run the source cleanup again (Companion: Remove the migrated source; command line: the cleanup-only option of migrate-memory).",
+      "cleanup_rollback_incomplete": "Source cleanup refused: {path} could not be moved ({detail}), and these moves could not be undone (original <- current location): {stranded}. Nothing was deleted; move these entries back by hand.",
+      "cleanup_without_copy": "No completed migration was found in {memory_vault}; run the full migration before a cleanup-only run.",
+      "cleanup_source_differs": "The source was not removed: {count} source file(s) are not in the memory vault as copied: {paths}. Copy or merge them into the memory vault first, or run the full migration again while the memory vault is unchanged."
     },
     "warning": {
       "tombstone_left": "The source was moved out of the documentation vault, but {path} could not be deleted ({detail}); delete it by hand.",
-      "cleanup_skipped_client_errors": "The source was kept because an MCP client could not be reconfigured; fix the client configuration, then rerun the migration to remove the source."
+      "cleanup_skipped_client_errors": "The source was kept because an MCP client could not be reconfigured; fix the client configuration, then run the source cleanup (Companion: Remove the migrated source; command line: the cleanup-only option of migrate-memory)."
     }
   }
 }

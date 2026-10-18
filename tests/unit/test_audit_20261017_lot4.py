@@ -287,7 +287,8 @@ def test_companion_migration_enforces_cas_expected_hash(
     # already happened is still reported (2026-10-18 audit, finding M).
     result = asyncio.run(
         run_companion_migration(
-            {"vault_path": str(vault), "memory_vault_path": str(mem)},
+            # No client reconfiguration: a test must never write a real client config.
+            {"vault_path": str(vault), "memory_vault_path": str(mem), "client": "none"},
             profile_path=profile_path,
         )
     )

@@ -310,6 +310,8 @@ _HTML_BODY: Final[str] = """
         <div class="row">
           <button class="btn btn-primary" id="btn-migrate-dual"
             data-i18n="vaults.migrate_button"></button>
+          <button class="btn" id="btn-cleanup-only"
+            data-i18n="vaults.cleanup_only_button"></button>
         </div>
         <div id="vaults-output" class="mono-box panel" aria-live="polite"></div>
       </div>
@@ -944,10 +946,22 @@ async function runMigration() {
     keep_source: keepSource,
     confirm_cleanup: !keepSource,
     client: reconfigure ? "all" : "none",
-    install_scope: "both"
+    install_scope: "user"
   });
   await refreshState();
   renderMigration(out.migration, reconfigure);
+}
+
+async function runCleanupOnly() {
+  if (!window.confirm(i18nText("vaults.cleanup_only_confirm"))) return;
+  const out = await apiCall("/api/migrate", "POST", {
+    vault_path: document.getElementById("inp-vault").value.trim(),
+    memory_vault_path: document.getElementById("inp-mem-vault").value.trim(),
+    cleanup_only: true,
+    confirm_cleanup: true
+  });
+  await refreshState();
+  renderMigration(out.migration, true);
 }
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -996,6 +1010,8 @@ window.addEventListener("DOMContentLoaded", () => {
   }));
   const migrateBtn = document.getElementById("btn-migrate-dual");
   migrateBtn.addEventListener("click", () => runAction(migrateBtn, runMigration));
+  const cleanupBtn = document.getElementById("btn-cleanup-only");
+  cleanupBtn.addEventListener("click", () => runAction(cleanupBtn, runCleanupOnly));
   const searchRunBtn = document.getElementById("btn-search-run");
   searchRunBtn.addEventListener("click", () => runAction(searchRunBtn, executeSearch));
   document.getElementById("btn-search-clear").addEventListener("click", clearSearch);

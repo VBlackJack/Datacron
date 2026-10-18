@@ -18,10 +18,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import stat
 from collections.abc import AsyncIterator
-from contextlib import ExitStack, asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
@@ -29,7 +28,10 @@ from uuid import uuid4
 
 from datacron.bootstrap import initialize_vault
 from datacron.core.config import (
+    HISTORY_DIR_NAME,
+    INDEX_DIR_NAME,
     MEMORY_SUBFOLDER_NAME,
+    OPLOG_DIR_NAME,
     SIDECAR_DIR_NAME,
     Settings,
     VaultConfig,
@@ -39,6 +41,7 @@ from datacron.core.config import (
 from datacron.core.durability import UnexpectedRecoveryEntryError, atomic_durable_write
 from datacron.core.operation_log import OperationJournal
 from datacron.core.paths import PathConfinementError, is_link_stat, sidecar_vault_config
+from datacron.core.vault import ULID_SIDECAR_FILENAME
 from datacron.core.vault_writer import FilesystemVaultWriter, VaultLockBusyError
 from datacron.i18n import t
 from datacron.indexing.rebuild import rebuild_index_atomic
@@ -66,9 +69,13 @@ _EXCLUDED_SIDECAR_SUFFIXES: Final[frozenset[str]] = frozenset(
     {".lock", ".db", ".db-wal", ".db-shm", ".rebuild"}
 )
 # Sidecar entries that belong to this machine's process state, never to the migrated vault.
-_EXCLUDED_SIDECAR_DIRS: Final[frozenset[str]] = frozenset({"index", "locks"})
 _LOCKS_DIR_NAME: Final[str] = "locks"
-_INDEX_DIR_NAME: Final[str] = "index"
+_INDEX_DIR_NAME: Final[str] = INDEX_DIR_NAME
+_LOGS_DIR_NAME: Final[str] = "logs"
+_SCRUBBER_DIR_NAME: Final[str] = "scrubber"
+# Suffix JsonIdStore gives the identity file it merges after a vault migration.
+_MIGRATED_SUFFIX: Final[str] = ".migrated"
+_EXCLUDED_SIDECAR_DIRS: Final[frozenset[str]] = frozenset({_INDEX_DIR_NAME, _LOCKS_DIR_NAME})
 # The writer-wide lock every note transaction takes first (see FilesystemVaultWriter).
 _MUTATION_LOCK_KEY: Final[str] = "mutation"
 # Kept in the destination sidecar: the SHA-256 of every file a previous run wrote, so a
@@ -77,6 +84,22 @@ COPY_MANIFEST_FILENAME: Final[str] = "migration-manifest.json"
 _COPY_MANIFEST_VERSION: Final[int] = 1
 # Source entries are renamed under this prefix inside the source sidecar before deletion.
 _TOMBSTONE_PREFIX: Final[str] = "migration-tombstone-"
+# Sidecar entries whose source copy legitimately diverges from the memory vault once the
+# clients write there: a cleanup-only run does not compare them.
+_DIVERGING_SIDECAR_ENTRIES: Final[frozenset[str]] = frozenset(
+    {
+        OPLOG_DIR_NAME,
+        HISTORY_DIR_NAME,
+        INDEX_DIR_NAME,
+        _LOCKS_DIR_NAME,
+        _LOGS_DIR_NAME,
+        _SCRUBBER_DIR_NAME,
+        ULID_SIDECAR_FILENAME,
+        f"{ULID_SIDECAR_FILENAME}{_MIGRATED_SUFFIX}",
+    }
+)
+# Error and warning messages list at most this many paths.
+_MAX_LISTED_PATHS: Final[int] = 10
 
 
 class MigrationError(ValueError):
@@ -362,7 +385,8 @@ def _quarantine_source(resolved_vault: Path) -> Path:
     Each move is a same-volume rename, so it either happens whole or not at all. The
     index directory goes first: an index database held open by a running server makes
     that rename fail before anything else has moved. On any failure every completed move
-    is undone, so the source is left exactly as it was.
+    is undone, so the source is left exactly as it was; a move that cannot be undone is
+    named in the error, with where its content now lives.
     """
     src_sidecar = resolved_vault / SIDECAR_DIR_NAME
     src_sidecar.mkdir(parents=True, exist_ok=True)
@@ -385,14 +409,69 @@ def _quarantine_source(resolved_vault: Path) -> Path:
         try:
             os.replace(original, target)
         except OSError as exc:
-            for done_original, done_target in reversed(completed):
-                os.replace(done_target, done_original)
-            tombstone.rmdir()
+            stranded = _undo_moves(completed)
+            if stranded:
+                raise MigrationError(
+                    t(
+                        "migration.error.cleanup_rollback_incomplete",
+                        path=original,
+                        detail=exc,
+                        stranded="; ".join(stranded),
+                    )
+                ) from exc
+            with suppress(OSError):
+                tombstone.rmdir()
             raise MigrationError(
                 t("migration.error.cleanup_blocked", path=original, detail=exc)
             ) from exc
         completed.append((original, target))
     return tombstone
+
+
+def _undo_moves(completed: list[tuple[Path, Path]]) -> list[str]:
+    """Undo every completed move, newest first; return ``original <- current`` for failures."""
+    stranded: list[str] = []
+    for done_original, done_target in reversed(completed):
+        try:
+            os.replace(done_target, done_original)
+        except OSError:
+            stranded.append(f"{done_original} <- {done_target}")
+    return stranded
+
+
+def _delete_tree(root: Path) -> list[str]:
+    """Delete ``root`` bottom-up, clearing read-only bits; return the paths left behind."""
+    left: list[str] = []
+
+    def _remove(path: Path, *, directory: bool) -> None:
+        try:
+            if directory:
+                path.rmdir()
+            else:
+                path.unlink()
+        except PermissionError:
+            try:
+                os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+                if directory:
+                    path.rmdir()
+                else:
+                    path.unlink()
+            except OSError:
+                left.append(str(path))
+        except OSError:
+            left.append(str(path))
+
+    for current, dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
+        current_path = Path(current)
+        for filename in filenames:
+            _remove(current_path / filename, directory=False)
+        for dirname in dirnames:
+            child = current_path / dirname
+            if os.path.lexists(child):
+                _remove(child, directory=not os.path.islink(child))
+    if os.path.lexists(root):
+        _remove(root, directory=True)
+    return left
 
 
 def _remove_lock_leftovers(resolved_vault: Path) -> None:
@@ -409,6 +488,99 @@ def _remove_lock_leftovers(resolved_vault: Path) -> None:
         return
 
 
+def _clean_source(resolved_vault: Path, warnings: list[str]) -> bool:
+    """Quarantine then delete the source; return whether the source is fully gone.
+
+    A refusal to move (the source is intact) or an incomplete deletion is reported as a
+    warning: by then the copy, the reindex and the client reconfiguration have succeeded,
+    and failing the whole call would hide that.
+    """
+    try:
+        tombstone = _quarantine_source(resolved_vault)
+    except MigrationError as exc:
+        warnings.append(str(exc))
+        return False
+    left = _delete_tree(tombstone)
+    if left:
+        warnings.append(
+            t(
+                "migration.warning.tombstone_left",
+                path=tombstone,
+                detail="; ".join(left[:_MAX_LISTED_PATHS]),
+            )
+        )
+        return False
+    return True
+
+
+def _verify_cleanup_matches_destination(resolved_vault: Path, resolved_memory: Path) -> None:
+    """Refuse a cleanup-only run unless deleting the source loses nothing.
+
+    Every source `_memory/` file must be byte-identical to its destination copy, or still
+    hold the exact bytes a previous run copied (the destination copy may have been edited
+    since the switch). Sidecar state that legitimately diverges after the switch (journal,
+    history, index, identities, logs) is ignored; any other sidecar file must have been
+    copied at least once.
+    """
+    manifest = _read_copy_manifest(resolved_memory)
+    if not manifest or not (resolved_memory / SIDECAR_DIR_NAME / "VAULT.yaml").is_file():
+        raise MigrationError(
+            t("migration.error.cleanup_without_copy", memory_vault=resolved_memory)
+        )
+    sidecar_pairs, memory_pairs = _collect_migration_pairs(resolved_vault, resolved_memory)
+    differing: list[str] = []
+    for src_file, dst_file, rel_label in memory_pairs:
+        source_digest = _sha256_file(src_file)
+        if dst_file.is_file() and _sha256_file(dst_file) == source_digest:
+            continue
+        if manifest.get(rel_label) == source_digest:
+            continue
+        differing.append(rel_label)
+    for _src_file, dst_file, rel_label in sidecar_pairs:
+        if rel_label.split("/")[1] in _DIVERGING_SIDECAR_ENTRIES:
+            continue
+        if not dst_file.is_file() and rel_label not in manifest:
+            differing.append(rel_label)
+    if differing:
+        shown = ", ".join(differing[:_MAX_LISTED_PATHS])
+        raise MigrationError(
+            t("migration.error.cleanup_source_differs", count=len(differing), paths=shown)
+        )
+
+
+async def _cleanup_source_only(
+    resolved_vault: Path,
+    resolved_memory: Path,
+    base: Settings,
+) -> MigrationResult:
+    warnings: list[str] = []
+    async with _source_write_lock(resolved_vault, base):
+        _verify_cleanup_matches_destination(resolved_vault, resolved_memory)
+        tombstone = _quarantine_source(resolved_vault)
+        left = _delete_tree(tombstone)
+        if left:
+            warnings.append(
+                t(
+                    "migration.warning.tombstone_left",
+                    path=tombstone,
+                    detail="; ".join(left[:_MAX_LISTED_PATHS]),
+                )
+            )
+    if not left:
+        _remove_lock_leftovers(resolved_vault)
+    return MigrationResult(
+        vault_path=resolved_vault,
+        memory_vault_path=resolved_memory,
+        copied_sidecar_files=0,
+        copied_memory_files=0,
+        verified_files=0,
+        indexed_notes=0,
+        indexed_chunks=0,
+        source_cleaned=not left,
+        warnings=warnings,
+    )
+
+
 async def migrate_vault_to_dual(
     vault_root: Path,
     memory_root: Path,
@@ -418,6 +590,7 @@ async def migrate_vault_to_dual(
     install_scope: str = INSTALL_SCOPE_BOTH,
     enable_write: bool = True,
     settings: Settings | None = None,
+    cleanup_only: bool = False,
 ) -> MigrationResult:
     """Copy `.datacron/` and `_memory/` to `memory_root`, verify SHA-256, reindex, then clean.
 
@@ -426,14 +599,20 @@ async def migrate_vault_to_dual(
     first and deletes only that tombstone, so it never stops halfway through the user's
     notes. A run that stopped earlier can be rerun: files already copied are verified
     and kept, and files a previous run wrote are refreshed from the source.
+
+    ``cleanup_only`` finishes a migration whose source was kept: nothing is copied,
+    reindexed or reconfigured; the source is removed once every source `_memory/` file is
+    proven to be in the memory vault. It works after the memory vault has been written
+    to, when a full rerun would refuse the diverged sidecar.
     """
     resolved_vault, resolved_memory = _validate_migration_roots(vault_root, memory_root)
     base = settings or get_settings()
+    if cleanup_only:
+        return await _cleanup_source_only(resolved_vault, resolved_memory, base)
     warnings: list[str] = []
     client_installs: list[InstallOutcome] = []
     client_errors: list[str] = []
     source_cleaned = False
-    tombstone: Path | None = None
 
     async with _source_write_lock(resolved_vault, base):
         sidecar_pairs, memory_pairs = _collect_migration_pairs(resolved_vault, resolved_memory)
@@ -483,12 +662,7 @@ async def migrate_vault_to_dual(
         if not keep_source and client_errors:
             warnings.append(t("migration.warning.cleanup_skipped_client_errors"))
         elif not keep_source:
-            tombstone = _quarantine_source(resolved_vault)
-            source_cleaned = True
-            try:
-                shutil.rmtree(tombstone)
-            except OSError as exc:
-                warnings.append(t("migration.warning.tombstone_left", path=tombstone, detail=exc))
+            source_cleaned = _clean_source(resolved_vault, warnings)
 
     if source_cleaned:
         _remove_lock_leftovers(resolved_vault)

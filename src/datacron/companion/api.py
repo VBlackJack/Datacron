@@ -15,9 +15,8 @@
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Mapping
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Final
 
@@ -56,21 +55,24 @@ from datacron.indexing.reconcile import reconcile
 from datacron.installers.mcp_clients import (
     SCOPE_PROJECT,
     SCOPE_USER,
+    InstallOutcome,
     discover_targets,
 )
 from datacron.mcp.server import build_app
 from datacron.mcp.tools.read import list_notes_impl
 from datacron.mcp.tools.search import search_regex_impl, search_text_impl
 from datacron.memory_compaction import DEFAULT_COMPACTION_DAYS, compact_vault_memory
-from datacron.migration import MigrationError, migrate_vault_to_dual
+from datacron.migration import MigrationError, MigrationResult, migrate_vault_to_dual
 from datacron.setup_wizard import (
     CLIENT_ALL,
     CLIENT_CHOICES,
     CLIENT_NONE,
-    INSTALL_SCOPE_BOTH,
     INSTALL_SCOPE_CHOICES,
+    INSTALL_SCOPE_PROJECT,
+    INSTALL_SCOPE_USER,
     SetupPlan,
     default_write_paths,
+    existing_client_settings,
     run_setup,
 )
 
@@ -105,8 +107,6 @@ _COMPACTION_MAX_DAYS: Final[int] = 3650
 # A profile written by somebody else while a migration ran is re-read and merged once more
 # before the migration reports the profile as not updated.
 _PROFILE_WRITE_ATTEMPTS: Final[int] = 2
-# The keyword the core VAULT.yaml writer takes to replace an invalid file on request.
-_CORE_RESET_PARAMETER: Final[str] = "reset"
 _PREFERENCE_FIELDS: Final[frozenset[str]] = frozenset(
     {"ui_language", "cli_timeout_seconds", "durability"}
 )
@@ -206,6 +206,8 @@ _COMPANION_I18N_SECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
             "migrate_button",
             "migrate_cleanup_confirm",
             "migrate_clients_reminder",
+            "cleanup_only_button",
+            "cleanup_only_confirm",
             "result_verified",
             "result_resumed",
             "result_indexed",
@@ -317,10 +319,10 @@ def _resolve_runtime_roots(
 ) -> tuple[Path | None, Path | None, str]:
     """Resolve the docs vault, the memory vault and where the memory vault came from.
 
-    The environment memory root belongs to the environment vault root: it applies only
-    when that vault is the one this profile uses. Bound to any other vault it would
-    point that vault's sidecar and index at an unrelated memory vault. An empty profile
-    memory field then means Single-Vault.
+    The environment memory root follows the server's rule (core.paths.effective_memory_root):
+    it applies when the environment sets no vault root, or sets the vault this profile
+    uses. Bound to a foreign vault it would point that vault's sidecar and index at an
+    unrelated memory vault, so an empty profile memory field then means Single-Vault.
     """
     env_vault = env_settings.vault_root.expanduser().resolve() if env_settings.vault_root else None
     vault_str = profile.vault_path or (str(env_vault) if env_vault else "")
@@ -332,7 +334,7 @@ def _resolve_runtime_roots(
     if profile.memory_vault_path:
         memory_root = Path(profile.memory_vault_path).expanduser().resolve()
         source = _MEMORY_SOURCE_PROFILE
-    elif env_settings.memory_root is not None and env_vault == vault_root:
+    elif env_settings.memory_root is not None and env_vault in (None, vault_root):
         memory_root = env_settings.memory_root.expanduser().resolve()
         source = _MEMORY_SOURCE_ENVIRONMENT
     if memory_root is not None and memory_root == vault_root:
@@ -560,9 +562,8 @@ def _write_vault_config(
     expected_hash: str | None,
     reset: bool,
 ) -> VaultConfigSnapshot:
-    extra: dict[str, Any] = {}
-    if reset and _CORE_RESET_PARAMETER in inspect.signature(write_vault_config_cas).parameters:
-        extra[_CORE_RESET_PARAMETER] = True
+    # The core writer refuses to replace an invalid file unless allow_reset says so.
+    extra: dict[str, Any] = {"allow_reset": True} if reset else {}
     return write_vault_config_cas(
         vault_root,
         values,
@@ -699,63 +700,108 @@ def _write_migrated_profile(
     ]
 
 
-def _migration_options(payload: Mapping[str, Any], locale: str) -> tuple[bool, str, str]:
-    keep_source = payload.get("keep_source", True) is not False
+@dataclass(frozen=True, slots=True)
+class _MigrationOptions:
+    keep_source: bool
+    cleanup_only: bool
+    client: str
+    install_scope: str
+
+
+def _migration_options(payload: Mapping[str, Any], locale: str) -> _MigrationOptions:
+    cleanup_only = payload.get("cleanup_only") is True
+    keep_source = False if cleanup_only else payload.get("keep_source", True) is not False
     client = str(payload.get("client", CLIENT_ALL)).strip()
     if client not in CLIENT_CHOICES:
         raise ValueError(t("companion.errors.unknown_client", locale=locale, client=client))
-    install_scope = str(payload.get("install_scope", INSTALL_SCOPE_BOTH)).strip()
+    install_scope = str(payload.get("install_scope", INSTALL_SCOPE_USER)).strip()
     if install_scope not in INSTALL_SCOPE_CHOICES:
         raise ValueError(t("companion.errors.unknown_scope", locale=locale, scope=install_scope))
     if not keep_source:
         if payload.get("confirm_cleanup") is not True:
             raise MigrationError(t("companion.errors.cleanup_needs_confirmation", locale=locale))
-        if client == CLIENT_NONE:
+        if client == CLIENT_NONE and not cleanup_only:
             raise MigrationError(t("companion.errors.cleanup_needs_clients", locale=locale))
-    return keep_source, client, install_scope
+    return _MigrationOptions(keep_source, cleanup_only, client, install_scope)
 
 
-async def run_companion_migration(
-    payload: Mapping[str, Any],
+def _client_ids_to_reconfigure(vault_root: Path, client: str, install_scope: str) -> list[str]:
+    if client != CLIENT_ALL:
+        return [client]
+    scopes = {
+        INSTALL_SCOPE_USER: (SCOPE_USER,),
+        INSTALL_SCOPE_PROJECT: (SCOPE_PROJECT,),
+    }.get(install_scope, (SCOPE_USER, SCOPE_PROJECT))
+    targets = discover_targets(scopes=scopes, project_dir=vault_root)
+    return sorted({target.client_id for target in targets})
+
+
+async def _reconfigure_clients(
+    vault_root: Path,
+    memory_root: Path,
     *,
-    profile_path: Path | None = None,
-) -> dict[str, Any]:
-    """Execute the Single-Vault to Dual-Vault migration and update the profile.
+    client: str,
+    install_scope: str,
+    locale: str,
+) -> tuple[list[InstallOutcome], list[str], list[str]]:
+    """Point the clients at the Dual-Vault layout, each keeping its own write setting.
 
-    The source is kept unless the request confirms the cleanup explicitly, and the
-    detected MCP clients are reconfigured by default, before any cleanup, so no client
-    is left bound to a vault whose memory has moved.
+    The write and read-only settings come from each client's current entry for this
+    vault, as the command line does: rewriting an entry must neither grant write access
+    to a read-only client nor take it from a writable one. A client with no entry for
+    the vault is registered without write access. Clients sharing one setting are
+    written in one run; otherwise each client gets its own run.
     """
-    profile_snap = read_companion_profile(profile_path)
-    locale = companion_locale(profile_path)
-    vault_str = str(payload.get("vault_path") or profile_snap.profile.vault_path).strip()
-    mem_str = str(
-        payload.get("memory_vault_path") or profile_snap.profile.memory_vault_path
-    ).strip()
-    if not vault_str or not mem_str:
-        raise ValueError(t("companion.errors.migration_paths_required", locale=locale))
-    keep_source, client, install_scope = _migration_options(payload, locale)
-    try:
-        result = await migrate_vault_to_dual(
-            Path(vault_str),
-            Path(mem_str),
-            keep_source=keep_source,
-            client=client,
-            install_scope=install_scope,
-            enable_write=profile_snap.profile.enable_write,
+    groups: dict[tuple[bool, bool], list[str]] = {}
+    for client_id in _client_ids_to_reconfigure(vault_root, client, install_scope):
+        current = existing_client_settings(vault_root, client_id, install_scope)
+        key = (bool(current[0]), bool(current[1])) if current is not None else (False, False)
+        groups.setdefault(key, []).append(client_id)
+    runs: list[tuple[str, bool, bool]] = []
+    if client == CLIENT_ALL and len(groups) == 1:
+        (write, read_only), _ids = next(iter(groups.items()))
+        runs.append((CLIENT_ALL, write, read_only))
+    else:
+        runs.extend(
+            (client_id, write, read_only)
+            for (write, read_only), ids in groups.items()
+            for client_id in ids
         )
-    except MigrationError:
-        raise
-    except OSError as exc:
-        raise MigrationError(
-            t("companion.errors.migration_os_error", locale=locale, detail=str(exc))
-        ) from exc
-    profile_updated, profile_warnings = _write_migrated_profile(
-        result.vault_path,
-        result.memory_vault_path,
-        profile_path=profile_path,
-        locale=locale,
-    )
+    installs: list[InstallOutcome] = []
+    errors: list[str] = []
+    notes: list[str] = []
+    for run_client, write, read_only in runs:
+        result = await run_setup(
+            SetupPlan(
+                vault_path=vault_root,
+                memory_vault_path=memory_root,
+                build_index=False,
+                enable_write=write,
+                write_paths=default_write_paths(vault_root, memory_root=memory_root)
+                if write
+                else [],
+                client=run_client,
+                install_scope=install_scope,
+                read_only=True if read_only else None,
+            )
+        )
+        installs.extend(result.client_installs)
+        errors.extend(result.client_errors)
+        if result.stdio_config is not None:
+            notes.append(t("companion.migration.client_manual", locale=locale, client=run_client))
+    return installs, errors, notes
+
+
+def _migration_payload(
+    result: MigrationResult,
+    *,
+    source_cleaned: bool,
+    clients_reconfigured: bool,
+    installs: list[InstallOutcome],
+    client_errors: list[str],
+    profile_updated: bool,
+    warnings: list[str],
+) -> dict[str, Any]:
     return {
         "migration": {
             "vault_path": str(result.vault_path),
@@ -766,8 +812,8 @@ async def run_companion_migration(
             "resumed_files": result.resumed_files,
             "indexed_notes": result.indexed_notes,
             "indexed_chunks": result.indexed_chunks,
-            "source_cleaned": result.source_cleaned,
-            "clients_reconfigured": client != CLIENT_NONE,
+            "source_cleaned": source_cleaned,
+            "clients_reconfigured": clients_reconfigured,
             "client_installs": [
                 {
                     "client_id": item.client_id,
@@ -775,13 +821,114 @@ async def run_companion_migration(
                     "scope": item.scope,
                     "installed": item.installed,
                 }
-                for item in result.client_installs
+                for item in installs
             ],
-            "client_errors": list(result.client_errors),
+            "client_errors": client_errors,
             "profile_updated": profile_updated,
-            "warnings": [*result.warnings, *profile_warnings],
+            "warnings": warnings,
         }
     }
+
+
+async def _run_engine(
+    vault_path: Path,
+    memory_path: Path,
+    *,
+    locale: str,
+    **kwargs: Any,
+) -> MigrationResult:
+    try:
+        return await migrate_vault_to_dual(vault_path, memory_path, **kwargs)
+    except MigrationError:
+        raise
+    except OSError as exc:
+        raise MigrationError(
+            t("companion.errors.migration_os_error", locale=locale, detail=str(exc))
+        ) from exc
+
+
+async def run_companion_migration(
+    payload: Mapping[str, Any],
+    *,
+    profile_path: Path | None = None,
+) -> dict[str, Any]:
+    """Execute the Single-Vault to Dual-Vault migration and update the profile.
+
+    The copy runs with the source kept. The detected MCP clients are then reconfigured
+    by default, each keeping its current write setting, and only after that, and only
+    when the request confirms it, is the source removed through the engine's
+    cleanup-only mode. A cleanup refused at that point is a warning on the successful
+    migration. ``cleanup_only`` alone finishes an earlier migration whose source was kept.
+    """
+    profile_snap = read_companion_profile(profile_path)
+    locale = companion_locale(profile_path)
+    vault_str = str(payload.get("vault_path") or profile_snap.profile.vault_path).strip()
+    mem_str = str(
+        payload.get("memory_vault_path") or profile_snap.profile.memory_vault_path
+    ).strip()
+    if not vault_str or not mem_str:
+        raise ValueError(t("companion.errors.migration_paths_required", locale=locale))
+    options = _migration_options(payload, locale)
+    vault_path, memory_path = Path(vault_str), Path(mem_str)
+    if options.cleanup_only:
+        cleaned = await _run_engine(vault_path, memory_path, locale=locale, cleanup_only=True)
+        return _migration_payload(
+            cleaned,
+            source_cleaned=cleaned.source_cleaned,
+            clients_reconfigured=False,
+            installs=[],
+            client_errors=[],
+            profile_updated=False,
+            warnings=list(cleaned.warnings),
+        )
+    result = await _run_engine(
+        vault_path,
+        memory_path,
+        locale=locale,
+        keep_source=True,
+        client=CLIENT_NONE,
+    )
+    warnings = list(result.warnings)
+    installs: list[InstallOutcome] = []
+    client_errors: list[str] = []
+    reconfigure = options.client != CLIENT_NONE
+    if reconfigure:
+        installs, client_errors, notes = await _reconfigure_clients(
+            result.vault_path,
+            result.memory_vault_path,
+            client=options.client,
+            install_scope=options.install_scope,
+            locale=locale,
+        )
+        warnings.extend(notes)
+    source_cleaned = False
+    if not options.keep_source and client_errors:
+        warnings.append(t("migration.warning.cleanup_skipped_client_errors", locale=locale))
+    elif not options.keep_source:
+        try:
+            cleaned = await migrate_vault_to_dual(
+                result.vault_path, result.memory_vault_path, cleanup_only=True
+            )
+        except (MigrationError, OSError) as exc:
+            warnings.append(str(exc))
+        else:
+            source_cleaned = cleaned.source_cleaned
+            warnings.extend(cleaned.warnings)
+    profile_updated, profile_warnings = _write_migrated_profile(
+        result.vault_path,
+        result.memory_vault_path,
+        profile_path=profile_path,
+        locale=locale,
+    )
+    return _migration_payload(
+        result,
+        source_cleaned=source_cleaned,
+        clients_reconfigured=reconfigure,
+        installs=installs,
+        client_errors=client_errors,
+        profile_updated=profile_updated,
+        warnings=[*warnings, *profile_warnings],
+    )
 
 
 async def list_companion_notes(

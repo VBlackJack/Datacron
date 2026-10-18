@@ -183,7 +183,9 @@
       "result_clients": "Clients reconfigurés",
       "result_warnings": "Avertissements",
       "result_mode": "Mode",
-      "result_stats": "Statistiques"
+      "result_stats": "Statistiques",
+      "cleanup_only_button": "Supprimer la source migrée",
+      "cleanup_only_confirm": "Supprimer maintenant .datacron/ et _memory/ du Vault Docs ? C'est refusé si un fichier mémoire source n'est pas déjà dans le vault mémoire."
     },
     "search": {
       "headline": "Recherche interactive dans le Vault",
@@ -252,7 +254,8 @@
       "nothing_to_save": "Rien à enregistrer."
     },
     "migration": {
-      "profile_not_updated": "La migration a réussi mais le profil Companion n'a pas pu être mis à jour ; indiquez {vault} comme vault de documentation et {memory_vault} comme vault mémoire, puis enregistrez la topologie."
+      "profile_not_updated": "La migration a réussi mais le profil Companion n'a pas pu être mis à jour ; indiquez {vault} comme vault de documentation et {memory_vault} comme vault mémoire, puis enregistrez la topologie.",
+      "client_manual": "{client} n'est pas configuré automatiquement ; collez-y à la main l'entrée Datacron pour l'organisation Dual-Vault."
     },
     "errors": {
       "vault_required": "Configurez d'abord un vault de documentation principal valide.",
@@ -303,11 +306,14 @@
       "symlink": "Migration refusée pour un lien symbolique ou un point d'analyse : {path}",
       "lock_busy": "Un autre processus d'écriture Datacron détient le verrou du vault source : {vault}. Arrêtez les serveurs Datacron qui l'utilisent, puis réessayez.",
       "pending_operations": "Le vault source {vault} a {count} opération(s) d'écriture en attente ; rien n'a été migré. Démarrez une fois le serveur Datacron sur ce vault pour les terminer, ou examinez-les avec `datacron ops inspect`, puis réessayez.",
-      "cleanup_blocked": "Nettoyage de la source refusé : {path} n'a pas pu être déplacé ({detail}). Rien n'a été supprimé et la copie dans le vault mémoire est complète et vérifiée. Fermez tout serveur et tout client Datacron qui utilise le vault de documentation, puis relancez la migration pour terminer le nettoyage."
+      "cleanup_blocked": "Nettoyage de la source refusé : {path} n'a pas pu être déplacé ({detail}). Rien n'a été supprimé et la copie dans le vault mémoire est complète et vérifiée. Fermez tout serveur et tout client Datacron qui utilise le vault de documentation, puis relancez le nettoyage de la source (Companion : Supprimer la source migrée ; ligne de commande : l'option de nettoyage seul de migrate-memory).",
+      "cleanup_rollback_incomplete": "Nettoyage de la source refusé : {path} n'a pas pu être déplacé ({detail}), et ces déplacements n'ont pas pu être annulés (emplacement d'origine <- emplacement actuel) : {stranded}. Rien n'a été supprimé ; remettez ces éléments en place à la main.",
+      "cleanup_without_copy": "Aucune migration terminée n'a été trouvée dans {memory_vault} ; lancez la migration complète avant un nettoyage seul.",
+      "cleanup_source_differs": "La source n'a pas été supprimée : {count} fichier(s) source ne sont pas dans le vault mémoire tels que copiés : {paths}. Copiez-les ou fusionnez-les d'abord dans le vault mémoire, ou relancez la migration complète tant que le vault mémoire n'a pas changé."
     },
     "warning": {
       "tombstone_left": "La source a été retirée du vault de documentation, mais {path} n'a pas pu être supprimé ({detail}) ; supprimez-le à la main.",
-      "cleanup_skipped_client_errors": "La source a été conservée car un client MCP n'a pas pu être reconfiguré ; corrigez la configuration du client, puis relancez la migration pour supprimer la source."
+      "cleanup_skipped_client_errors": "La source a été conservée car un client MCP n'a pas pu être reconfiguré ; corrigez la configuration du client, puis lancez le nettoyage de la source (Companion : Supprimer la source migrée ; ligne de commande : l'option de nettoyage seul de migrate-memory)."
     }
   }
 }

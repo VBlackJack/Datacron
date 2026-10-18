@@ -36,7 +36,6 @@ from datacron.indexing.ripgrep import search_vault_regex
 from datacron.mcp.server import build_app
 from datacron.mcp.tools.search import _search_regex_impl
 from datacron.migration import (
-    MigrationError,
     SymlinkDetectedError,
     migrate_memory_to_dedicated_vault,
 )
@@ -202,10 +201,12 @@ def test_migrate_memory_deletes_sidecar_before_memory_when_cleaning_source(
 
     monkeypatch.setattr("datacron.migration.os.replace", failing_index_replace)
 
-    with pytest.raises(MigrationError, match=r"datacron\.db"):
-        asyncio.run(
-            migrate_memory_to_dedicated_vault(docs_locked, memory_locked, keep_source=False)
-        )
+    # The copy and reindex succeeded, so the refused cleanup is a warning on the result.
+    locked_outcome = asyncio.run(
+        migrate_memory_to_dedicated_vault(docs_locked, memory_locked, keep_source=False)
+    )
+    assert locked_outcome.source_cleaned is False
+    assert any("datacron.db" in warning for warning in locked_outcome.warnings)
 
     assert (docs_locked / MEMORY_SUBFOLDER_NAME / "INIT.md").is_file()
     assert (docs_locked / SIDECAR_DIR_NAME / "VAULT.yaml").is_file()
