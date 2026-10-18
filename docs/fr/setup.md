@@ -371,6 +371,8 @@ Pour la suite, passe au [guide utilisateur](user-guide.md).
 - **Migration atomique Single-Vault vers Dual-Vault (`datacron migrate-memory`)** : copie `.datacron/` et `_memory/` depuis un vault unique existant vers un vault mémoire dédié, vérifie chaque fichier copié par SHA-256, reconstruit l'index FTS5 sur les deux racines et reconfigure les clients MCP détectés (`--client all --scope user` par défaut ; `--client none` les laisse inchangés). Les copies sources sont conservées, sauf si vous passez `--cleanup-source`. `--enable-write` / `--no-write` fixent la liste d'écriture autorisée des clients reconfigurés ; omis, chaque client garde son réglage d'écriture actuel.
 
   **Arrêtez d'abord les clients MCP et les serveurs Datacron en cours d'exécution** : une écriture faite pendant la copie n'est pas reportée. Ensuite, redémarrez les clients, vérifiez qu'ils lisent le vault mémoire, puis supprimez `.datacron/` et `_memory/` du vault de documentation (ou relancez avec `--cleanup-source`). Avec `--client none`, lancez `datacron setup --memory-vault ...` pour diriger les clients vers le nouvel emplacement.
+
+  Pour supprimer plus tard la source conservée sans recopier, lancez `datacron migrate-memory --vault ... --memory-vault ... --cleanup-only` : il vérifie le `_memory/` source par rapport au vault mémoire (ou au manifeste de copie), puis supprime les `.datacron/` et `_memory/` sources. Il ne modifie aucun client et ne se combine ni avec `--cleanup-source`, ni avec `--client`, `--scope` ou les options d'écriture.
   ```bash
   datacron migrate-memory --vault /chemin/vers/docs --memory-vault /chemin/vers/memoire
   ```

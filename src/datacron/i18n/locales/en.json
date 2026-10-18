@@ -64,7 +64,8 @@
       "keep_source": "Keep the original .datacron/ and _memory/ in the documentation vault (default). Pass --cleanup-source to remove them once the copy is verified.",
       "migrate_client": "MCP client to reconfigure for the new memory vault ({choices}). Default: all detected clients; 'none' leaves every client unchanged.",
       "migrate_enable_write": "Enable or remove the write allowlist in the reconfigured clients. Omitted, the current write setting of each client entry is kept.",
-      "reset_invalid": "Allow the write to replace an invalid or unreadable file with defaults plus the given values. Without it, an invalid file is refused, never reset."
+      "reset_invalid": "Allow the write to replace an invalid or unreadable file with defaults plus the given values. Without it, an invalid file is refused, never reset.",
+      "migrate_cleanup_only": "Copy nothing: verify the source _memory/ against the memory vault (or the copy manifest) of an earlier migration, then remove the source .datacron/ and _memory/. Cannot be combined with --keep-source/--cleanup-source, --client, --scope or --enable-write/--no-write."
     },
     "setup": {
       "memory_vault_explain_1": "Dual-Vault mode separates your documentation vault from Datacron's sidecar (.datacron/) and agent memory (_memory/).",
@@ -97,7 +98,10 @@
       },
       "follow_up_restart": "Next: restart the MCP clients so they load the new memory vault.",
       "follow_up_clients": "Next: no client was reconfigured (--client none). Run `datacron setup` with --memory-vault, or the clients keep reading the old location.",
-      "follow_up_source": "The source copy was kept. Once the clients use the memory vault, remove .datacron/ and _memory/ from the documentation vault."
+      "follow_up_source": "The source copy was kept. Once the clients use the memory vault, remove .datacron/ and _memory/ from the documentation vault.",
+      "cleanup_only_conflict": "--cleanup-only copies nothing and changes no client; remove {options}.",
+      "cleanup_only_unsupported": "This Datacron build cannot run migrate-memory --cleanup-only; update Datacron.",
+      "cleanup_only_completed": "Source cleanup complete: .datacron/ and _memory/ removed from {vault} after verification against {memory_vault}."
     },
     "library": {
       "app_help": "Prepare readable offline navigation and sourced consolidation reviews.",

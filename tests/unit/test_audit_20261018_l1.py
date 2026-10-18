@@ -605,6 +605,127 @@ def test_migrate_memory_cleans_the_source_only_on_request(
     assert captured["client"] == "none"
 
 
+def _migration_result(vault_root: Path, memory_root: Path) -> MigrationResult:
+    return MigrationResult(
+        vault_path=vault_root,
+        memory_vault_path=memory_root,
+        copied_sidecar_files=0,
+        copied_memory_files=0,
+        verified_files=0,
+        indexed_notes=0,
+        indexed_chunks=0,
+        source_cleaned=True,
+    )
+
+
+def test_migrate_memory_cleanup_only_is_passed_through_alone(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    captured: dict[str, Any] = {}
+
+    async def fake_migrate(
+        vault_root: Path,
+        memory_root: Path,
+        **kwargs: Any,
+    ) -> MigrationResult:
+        captured.update(kwargs)
+        return _migration_result(vault_root, memory_root)
+
+    def no_client_lookup(*args: object) -> None:
+        raise AssertionError("cleanup-only must not read client configurations")
+
+    monkeypatch.setattr(migration_module, "migrate_vault_to_dual", fake_migrate)
+    monkeypatch.setattr(cli_module, "existing_client_settings", no_client_lookup)
+
+    result = runner.invoke(
+        app,
+        [
+            "migrate-memory",
+            "--vault",
+            str(vault),
+            "--memory-vault",
+            str(tmp_path / "memory"),
+            "--cleanup-only",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["cleanup_only"] is True
+    assert not {"client", "install_scope", "enable_write", "keep_source"} & set(captured)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [["--cleanup-source"], ["--client", "none"], ["--scope", "user"], ["--no-write"]],
+)
+def test_migrate_memory_cleanup_only_refuses_other_migration_options(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extra: list[str],
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    calls: list[object] = []
+
+    async def fake_migrate(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(migration_module, "migrate_vault_to_dual", fake_migrate)
+
+    result = runner.invoke(
+        app,
+        [
+            "migrate-memory",
+            "--vault",
+            str(vault),
+            "--memory-vault",
+            str(tmp_path / "memory"),
+            "--cleanup-only",
+            *extra,
+        ],
+    )
+
+    assert result.exit_code == _EXIT_USAGE, result.output
+    assert calls == []
+
+
+def test_migrate_memory_cleanup_only_reports_an_engine_without_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+
+    async def old_migrate(
+        vault_root: Path,
+        memory_root: Path,
+        *,
+        keep_source: bool = False,
+        settings: object = None,
+    ) -> MigrationResult:
+        return _migration_result(vault_root, memory_root)
+
+    monkeypatch.setattr(migration_module, "migrate_vault_to_dual", old_migrate)
+
+    result = runner.invoke(
+        app,
+        [
+            "migrate-memory",
+            "--vault",
+            str(vault),
+            "--memory-vault",
+            str(tmp_path / "memory"),
+            "--cleanup-only",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), result.exception
+
+
 # ---------------------------------------------------------------------------
 # E-4: a mistyped vault path is refused, not created
 # ---------------------------------------------------------------------------

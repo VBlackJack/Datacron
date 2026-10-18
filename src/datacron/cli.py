@@ -1354,6 +1354,7 @@ _REORGANIZE_BAD_CONFIG: Final[str] = "Invalid organization configuration: {detai
 _EXIT_DEVIATIONS_FOUND: Final[int] = 1
 _EXIT_CONFIGURATION_ERROR: Final[int] = 2
 _EXIT_USAGE_ERROR: Final[int] = 2
+_PARAMETER_SOURCE_COMMAND_LINE: Final[str] = "COMMANDLINE"
 _EXIT_SCRUB_ANOMALIES: Final[int] = 2
 
 
@@ -2031,6 +2032,7 @@ def setup(
 
 @app.command(name="migrate-memory", help=t("cli.migrate_memory.help"))
 def migrate_memory(
+    ctx: typer.Context,
     vault: Path | None = typer.Option(None, "--vault", "-v", help=VAULT_ROOT_HELP),
     memory_vault: Path = typer.Option(..., "--memory-vault", help=MEMORY_VAULT_HELP),
     keep_source: bool = typer.Option(
@@ -2053,6 +2055,11 @@ def migrate_memory(
         "--enable-write/--no-write",
         help=t("cli.help.migrate_enable_write"),
     ),
+    cleanup_only: bool = typer.Option(
+        False,
+        "--cleanup-only",
+        help=t("cli.help.migrate_cleanup_only"),
+    ),
 ) -> None:
     """Split an existing single vault into a clean Docs Vault and a Memory Vault."""
     from datacron.migration import MigrationError, migrate_vault_to_dual  # noqa: PLC0415
@@ -2060,6 +2067,19 @@ def migrate_memory(
     settings = get_settings()
     vault_root = _resolve_vault_root(vault, settings)
     target_memory = _guard_vault_target(memory_vault.expanduser().resolve())
+    if cleanup_only:
+        explicit = [
+            f"--{name.replace('_', '-')}"
+            for name in ("keep_source", "client", "scope", "enable_write")
+            if _given_on_command_line(ctx, name)
+        ]
+        if explicit:
+            _error(
+                t("cli.migrate_memory.cleanup_only_conflict", options=", ".join(explicit)),
+                exit_code=_EXIT_USAGE_ERROR,
+            )
+        _run_migration_cleanup_only(vault_root, target_memory, settings)
+        return
     if client not in CLIENT_CHOICES:
         _error(f"Unknown client {client!r}. Expected one of {list(CLIENT_CHOICES)}.")
     if scope not in INSTALL_SCOPE_CHOICES:
@@ -2127,6 +2147,50 @@ def migrate_memory(
         for err_msg in outcome.client_errors:
             typer.secho(f"  error: {err_msg}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
+
+
+def _given_on_command_line(ctx: typer.Context, name: str) -> bool:
+    """Tell whether an option was typed, not defaulted.
+
+    Typer may run on its own copy of Click, whose ``ParameterSource`` is a different
+    enum class from ``click.core``'s, so the member is compared by name.
+    """
+    source = ctx.get_parameter_source(name)
+    return source is not None and source.name == _PARAMETER_SOURCE_COMMAND_LINE
+
+
+def _run_migration_cleanup_only(vault_root: Path, memory_root: Path, settings: Settings) -> None:
+    """Verify an earlier copy, then remove the source ``.datacron/`` and ``_memory/``."""
+    from datacron.migration import MigrationError, migrate_vault_to_dual  # noqa: PLC0415
+
+    started = _log_invocation(
+        "migrate_memory.cleanup_only",
+        vault=str(vault_root),
+        memory_vault=str(memory_root),
+    )
+    try:
+        # A migration engine without the cleanup-only mode rejects the keyword when the
+        # coroutine is created, before anything runs.
+        pending = migrate_vault_to_dual(  # type: ignore[call-arg,unused-ignore]
+            vault_root,
+            memory_root,
+            cleanup_only=True,
+            settings=settings,
+        )
+    except TypeError:
+        _error(t("cli.migrate_memory.cleanup_only_unsupported"))
+    try:
+        outcome = asyncio.run(pending)
+    except (MigrationError, NotADirectoryError, OSError, ValueError) as exc:
+        _error(str(exc))
+    _print(
+        t(
+            "cli.migrate_memory.cleanup_only_completed",
+            vault=outcome.vault_path,
+            memory_vault=outcome.memory_vault_path,
+        )
+    )
+    _log_completion("migrate_memory.cleanup_only", started)
 
 
 # Installer reset invocation:
