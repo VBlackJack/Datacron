@@ -371,6 +371,45 @@ def test_write_vault_config_cas_rejects_symlink_and_preserves_existing_keys(
         )
 
 
+def test_write_vault_config_cas_does_not_freeze_unchanged_archive_tags(tmp_path: Path) -> None:
+    """A save that echoes the displayed archive list must not pin today's defaults."""
+    vault_root = tmp_path / "vault"
+    sidecar = vault_root / ".datacron"
+    sidecar.mkdir(parents=True)
+    config_path = sidecar / "VAULT.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"schema_version": 1, "vault_id": "vault-plain-01"}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    snapshot = read_vault_config_snapshot(vault_root)
+    echoed = write_vault_config_cas(
+        vault_root,
+        {"archive_tags": snapshot.values["archive_tags"], "history_retention_days": 60},
+        expected_hash=snapshot.content_hash,
+    )
+    persisted = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert "archive_tags" not in persisted
+    assert persisted["history_retention_days"] == 60
+    assert echoed.values["archive_tags"] == snapshot.values["archive_tags"]
+
+    changed = write_vault_config_cas(
+        vault_root,
+        {"archive_tags": ["status/retired"]},
+        expected_hash=echoed.content_hash,
+    )
+    persisted = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert persisted["archive_tags"] == ["status/retired"]
+
+    write_vault_config_cas(
+        vault_root,
+        {"history_retention_days": 90},
+        expected_hash=changed.content_hash,
+    )
+    persisted = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert persisted["archive_tags"] == ["status/retired"]
+
+
 @pytest.mark.parametrize("bad_prefix", ["_memory", ".datacron", "../escape", "a/b"])
 def test_companion_profile_rejects_invalid_extra_read_vault_prefixes(
     tmp_path: Path,

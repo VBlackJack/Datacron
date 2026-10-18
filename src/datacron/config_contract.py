@@ -323,6 +323,25 @@ def _sync_archive_tags_into_organization(
         merged_raw["organization"] = org_copy
 
 
+def _keeps_top_level_archive_tags(
+    existing_raw: Mapping[str, Any],
+    requested: list[str] | None,
+    effective: Mapping[str, Any],
+) -> bool:
+    """Persist a top-level archive_tags only when the vault declares it or the caller changes it.
+
+    The Companion sends back the list it displays. Writing that list unchanged would freeze
+    the current defaults into VAULT.yaml, where a top-level key overrides later defaults.
+    """
+    if "archive_tags" in existing_raw:
+        return True
+    if requested is None:
+        return False
+    current = effective.get("archive_tags")
+    current_tags = current if isinstance(current, list) else []
+    return {tag.casefold() for tag in requested} != {str(tag).casefold() for tag in current_tags}
+
+
 def write_vault_config_cas(
     vault_root: Path,
     values: Mapping[str, Any],
@@ -354,6 +373,7 @@ def write_vault_config_cas(
         if not isinstance(raw_arch, list) or not all(isinstance(x, str) for x in raw_arch):
             raise ConfigValidationError("archive_tags must be a list of strings")
         custom_archive = [x.strip() for x in raw_arch if x.strip()]
+    requested_archive = custom_archive
 
     current = read_vault_config_snapshot(vault_root, settings=active_settings)
     _verify_cas_precondition(
@@ -383,8 +403,11 @@ def write_vault_config_cas(
         custom_archive,
         preserved_raw=merged_raw,
     )
+    persisted_dict = dict(dumped_dict)
+    if not _keeps_top_level_archive_tags(existing_raw, requested_archive, current.values):
+        persisted_dict.pop("archive_tags", None)
     rendered = yaml.safe_dump(
-        dumped_dict,
+        persisted_dict,
         sort_keys=False,
         allow_unicode=True,
     )
