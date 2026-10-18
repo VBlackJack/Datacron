@@ -32,7 +32,7 @@ import stat
 import sys
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Final, Literal, Protocol, cast
 
@@ -60,6 +60,7 @@ from datacron.core.paths import (
     sidecar_vault_config,
 )
 from datacron.core.vault import build_configured_reader
+from datacron.i18n import t
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.reconcile import reconcile
@@ -109,6 +110,7 @@ __all__ = [
     "configure_user_write_env",
     "default_write_paths",
     "existing_client_settings",
+    "existing_memory_vault",
     "get_user_write_env",
     "reset_user_state",
     "run_setup",
@@ -220,7 +222,11 @@ class SetupPlan:
         vault_path: Markdown vault root to initialize and serve.
         memory_vault_path: Optional dedicated memory vault root. When set,
             ``.datacron/`` and ``_memory/`` live under this directory while
-            ``vault_path`` remains untouched by Datacron sidecars.
+            ``vault_path`` remains untouched by Datacron sidecars. When unset,
+            a memory vault the existing client entry for ``vault_path`` names
+            is kept, unless ``single_vault`` is set.
+        single_vault: Return a Dual-Vault install to Single-Vault: the client
+            entry loses ``DATACRON_MEMORY_ROOT`` instead of keeping it.
         build_index: Whether to build the FTS5 index during setup.
         enable_write: ``True`` enables the confined write tools, ``False``
             removes an existing write allowlist from the client config, and
@@ -245,6 +251,7 @@ class SetupPlan:
 
     vault_path: Path
     memory_vault_path: Path | None = None
+    single_vault: bool = False
     build_index: bool = True
     enable_write: bool | None = None
     write_paths: list[Path] = field(default_factory=list)
@@ -319,6 +326,8 @@ def _validate_plan(plan: SetupPlan) -> None:
         raise ValueError("Machine-wide write configuration requires enable_write.")
     if plan.enable_write is False and plan.write_paths:
         raise ValueError("Write paths cannot be combined with an explicit write opt-out.")
+    if plan.single_vault and plan.memory_vault_path is not None:
+        raise ValueError(t("cli.setup.single_vault_conflict"))
 
 
 def _scopes_for(install_scope: str) -> tuple[str, ...]:
@@ -723,6 +732,7 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
     _validate_plan(plan)
     warnings: list[str] = []
     settings = get_settings()
+    plan = _inherit_memory_vault(plan, warnings)
 
     _LOGGER.info(
         "cli.setup started (vault=%s, memory_vault=%s, client=%s)",
@@ -892,17 +902,15 @@ def _effective_settings(
     return first
 
 
-def existing_client_settings(
+def _existing_vault_envs(
     vault_root: Path,
     client: str,
     install_scope: str,
-) -> tuple[bool, bool] | None:
-    """Return ``(writing, read_only)`` held by an existing entry for this vault.
+) -> list[Mapping[str, object]] | None:
+    """Return the Datacron entries written for ``vault_root`` this run would touch.
 
-    Interactive setup offers these as the prompt defaults, so pressing Enter on
-    a rerun keeps the current setting instead of answering "no". The first
-    Datacron entry written for ``vault_root`` among the clients this run would
-    configure decides; ``None`` means there is none, or none could be read.
+    The clients and scopes are the ones setup would configure. ``None`` means
+    a client config could not be read.
     """
     envs: list[Mapping[str, object]] = []
     try:
@@ -918,16 +926,84 @@ def existing_client_settings(
     except (ClaudeDesktopConfigError, MCPClientError, OSError, ValueError) as exc:
         _LOGGER.warning("cli.setup could not read existing client settings: %s", exc)
         return None
-    for env in envs:
-        if env_names_vault(env, vault_root):
-            write_paths, read_only = _env_settings(env)
-            return bool(write_paths), read_only
+    return [env for env in envs if env_names_vault(env, vault_root)]
+
+
+def existing_client_settings(
+    vault_root: Path,
+    client: str,
+    install_scope: str,
+) -> tuple[bool, bool] | None:
+    """Return ``(writing, read_only)`` held by an existing entry for this vault.
+
+    Interactive setup offers these as the prompt defaults, so pressing Enter on
+    a rerun keeps the current setting instead of answering "no". The first
+    Datacron entry written for ``vault_root`` among the clients this run would
+    configure decides; ``None`` means there is none, or none could be read.
+    """
+    envs = _existing_vault_envs(vault_root, client, install_scope)
+    if not envs:
+        return None
+    write_paths, read_only = _env_settings(envs[0])
+    return bool(write_paths), read_only
+
+
+def existing_memory_vault(
+    vault_root: Path,
+    client: str,
+    install_scope: str,
+) -> Path | None:
+    """Return the dedicated memory vault an existing entry for this vault names.
+
+    The first entry written for ``vault_root`` that holds a memory root other
+    than ``vault_root`` itself decides; ``None`` means Single-Vault, no entry,
+    or no readable config.
+    """
+    resolved_vault = Path(os.path.normcase(str(vault_root.expanduser().resolve())))
+    for env in _existing_vault_envs(vault_root, client, install_scope) or []:
+        value = env.get(_ENV_MEMORY_ROOT)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        memory_root = Path(value.strip()).expanduser().resolve()
+        if Path(os.path.normcase(str(memory_root))) != resolved_vault:
+            return memory_root
     return None
+
+
+def _inherit_memory_vault(plan: SetupPlan, warnings: list[str]) -> SetupPlan:
+    """Keep the memory vault of a Dual-Vault install a rerun did not name.
+
+    Re-running setup, or a silent installer upgrade, without --memory-vault
+    kept DATACRON_MEMORY_ROOT in every merged entry but rewrote
+    DATACRON_READ_PATHS to the docs vault alone, so the server refused to
+    start, and the bootstrap created a fresh .datacron in the docs vault the
+    Dual-Vault layout promises to leave untouched. The rerun now carries on in
+    Dual-Vault mode; --single-vault is the explicit way back.
+    """
+    if plan.memory_vault_path is not None or plan.single_vault:
+        return plan
+    inherited = existing_memory_vault(plan.vault_path, plan.client, plan.install_scope)
+    if inherited is None:
+        return plan
+    warnings.append(t("cli.setup.memory_vault_kept", path=str(inherited)))
+    _LOGGER.info("cli.setup kept the memory vault of the existing entry: %s", inherited)
+    # The caller derived its default allowlist before the memory vault was
+    # known, so it names the docs vault's _memory. The defaults are derived
+    # again for the layout setup now keeps; an explicit allowlist is left as is.
+    single_vault_defaults = default_write_paths(plan.vault_path.expanduser().resolve())
+    write_paths = (
+        []
+        if [path.expanduser().resolve() for path in plan.write_paths] == single_vault_defaults
+        else plan.write_paths
+    )
+    return replace(plan, memory_vault_path=inherited, write_paths=write_paths)
 
 
 def _removed_env_keys(plan: SetupPlan) -> tuple[str, ...]:
     """Return the client env keys this run explicitly turns off."""
     removed: list[str] = []
+    if plan.single_vault:
+        removed.append(_ENV_MEMORY_ROOT)
     if plan.enable_write is False:
         removed.append(_ENV_WRITE_PATHS)
     if plan.read_only is False:

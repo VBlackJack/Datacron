@@ -65,13 +65,16 @@
       "migrate_client": "MCP client to reconfigure for the new memory vault ({choices}). Default: all detected clients; 'none' leaves every client unchanged.",
       "migrate_enable_write": "Enable or remove the write allowlist in the reconfigured clients. Omitted, the current write setting of each client entry is kept.",
       "reset_invalid": "Allow the write to replace an invalid or unreadable file with defaults plus the given values. Without it, an invalid file is refused, never reset.",
-      "migrate_cleanup_only": "Copy nothing: verify the source _memory/ against the memory vault (or the copy manifest) of an earlier migration, then remove the source .datacron/ and _memory/. Cannot be combined with --keep-source/--cleanup-source, --client, --scope or --enable-write/--no-write."
+      "migrate_cleanup_only": "Copy nothing: verify the source _memory/ against the memory vault (or the copy manifest) of an earlier migration, then remove the source .datacron/ and _memory/. Cannot be combined with --keep-source/--cleanup-source, --client, --scope or --enable-write/--no-write.",
+      "single_vault": "Return a Dual-Vault install to Single-Vault: the client entry drops DATACRON_MEMORY_ROOT instead of keeping it."
     },
     "setup": {
       "memory_vault_explain_1": "Dual-Vault mode separates your documentation vault from Datacron's sidecar (.datacron/) and agent memory (_memory/).",
       "memory_vault_explain_2": "Default: disabled (empty), which keeps everything inside the main vault.",
       "memory_vault_explain_3": "Enter a directory path to store .datacron/ and _memory/ in a dedicated memory vault.",
-      "memory_vault_prompt": "Memory vault path (leave empty for single-vault)"
+      "memory_vault_prompt": "Memory vault path (leave empty for single-vault)",
+      "memory_vault_kept": "Kept the dedicated memory vault {path} named by the existing client entry. Pass --single-vault to return to Single-Vault.",
+      "single_vault_conflict": "--single-vault cannot be combined with --memory-vault or --dual-vault."
     },
     "status": {
       "memory_root": "  memory_root: {memory_root}",
