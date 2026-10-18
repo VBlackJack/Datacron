@@ -48,6 +48,21 @@ def _make_fake_link_stat(real_stat: os.stat_result) -> os.stat_result:
     return os.stat_result((st_mode, *real_stat[1:]))
 
 
+def _path_keys(target: Path) -> frozenset[str]:
+    """Spellings of target, computed before os.lstat is patched.
+
+    Patching datacron.migration.os.lstat replaces os.lstat process-wide, and
+    Path.resolve() calls it on POSIX, so the fake must never resolve.
+    """
+    return frozenset(
+        os.path.normcase(os.path.abspath(candidate)) for candidate in (target, target.resolve())
+    )
+
+
+def _matches(path: str | os.PathLike[str], keys: frozenset[str]) -> bool:
+    return os.path.normcase(os.path.abspath(os.fspath(path))) in keys
+
+
 def test_migrate_memory_rejects_symlinks_inside_memory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -61,10 +76,11 @@ def test_migrate_memory_rejects_symlinks_inside_memory(
     initialize_vault(docs_vault)
 
     real_lstat = os.lstat
+    linked_note_keys = _path_keys(linked_note)
 
     def fake_lstat(path: str | os.PathLike[str]) -> os.stat_result:
         st = real_lstat(path)
-        if Path(path).resolve() == linked_note.resolve():
+        if _matches(path, linked_note_keys):
             return _make_fake_link_stat(st)
         return st
 
@@ -89,10 +105,11 @@ def test_migrate_memory_rejects_directory_symlink_inside_memory(
     initialize_vault(docs_vault)
 
     real_lstat = os.lstat
+    linked_dir_keys = _path_keys(linked_dir)
 
     def fake_lstat(path: str | os.PathLike[str]) -> os.stat_result:
         st = real_lstat(path)
-        if Path(path).resolve() == linked_dir.resolve():
+        if _matches(path, linked_dir_keys):
             return _make_fake_link_stat(st)
         return st
 
