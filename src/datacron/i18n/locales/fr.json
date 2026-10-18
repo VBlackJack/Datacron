@@ -65,13 +65,16 @@
       "migrate_client": "Client MCP à reconfigurer pour le nouveau vault mémoire ({choices}). Par défaut : tous les clients détectés ; 'none' laisse chaque client inchangé.",
       "migrate_enable_write": "Activer ou retirer la liste d'écriture autorisée dans les clients reconfigurés. Omis, le réglage d'écriture actuel de l'entrée client est conservé.",
       "reset_invalid": "Autoriser l'écriture à remplacer un fichier invalide ou illisible par les valeurs par défaut et les valeurs fournies. Sans cette option, un fichier invalide est refusé, jamais réinitialisé.",
-      "migrate_cleanup_only": "Ne rien copier : vérifier le _memory/ source par rapport au vault mémoire (ou au manifeste de copie) d'une migration précédente, puis supprimer les .datacron/ et _memory/ sources. Incompatible avec --keep-source/--cleanup-source, --client, --scope et --enable-write/--no-write."
+      "migrate_cleanup_only": "Ne rien copier : vérifier le _memory/ source par rapport au vault mémoire (ou au manifeste de copie) d'une migration précédente, puis supprimer les .datacron/ et _memory/ sources. Incompatible avec --keep-source/--cleanup-source, --client, --scope et --enable-write/--no-write.",
+      "single_vault": "Ramener une installation Dual-Vault en vault unique : l'entrée cliente perd DATACRON_MEMORY_ROOT au lieu de le conserver."
     },
     "setup": {
       "memory_vault_explain_1": "Le mode Dual-Vault sépare votre vault de documentation du sidecar Datacron (.datacron/) et de la mémoire agent (_memory/).",
       "memory_vault_explain_2": "Défaut : désactivé (vide), ce qui conserve tout dans le vault principal.",
       "memory_vault_explain_3": "Saisissez un chemin de dossier pour stocker .datacron/ et _memory/ dans un vault mémoire dédié.",
-      "memory_vault_prompt": "Chemin du vault mémoire (laisser vide pour un vault unique)"
+      "memory_vault_prompt": "Chemin du vault mémoire (laisser vide pour un vault unique)",
+      "memory_vault_kept": "Vault mémoire dédié {path} conservé, tel que l'entrée cliente existante le nomme. Passez --single-vault pour revenir à un vault unique.",
+      "single_vault_conflict": "--single-vault ne peut pas être combiné avec --memory-vault ou --dual-vault."
     },
     "status": {
       "memory_root": "  memory_root: {memory_root}",
