@@ -239,7 +239,7 @@ def test_cli_setup_single_vault_conflicts_with_memory_vault(tmp_path: Path) -> N
     )
 
     assert result.exit_code != 0
-    assert "--single-vault" in result.output
+    assert "cannot be combined" in result.output, "refused as a conflict, not as an unknown flag"
 
 
 def test_merge_keeps_a_preserved_memory_root_readable() -> None:
