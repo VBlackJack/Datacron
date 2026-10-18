@@ -9,6 +9,30 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- **Read response ceiling (`DATACRON_MAX_READ_RESPONSE_CHARS`)**: the complete serialized JSON
+  response of `get_note` and `list_notes` is bounded (default `131072` characters, minimum
+  `4096`), metadata, wrappers and escaping included. Listings may return fewer notes than
+  requested and continue through `next_offset`; a chunk or map entry that cannot fit returns an
+  explicit error instead of a shortened identity.
+- **`get_note(format="metadata")`**: pages the sanitized frontmatter as a JSON string in
+  `metadata_json` (`offset` / `limit` count characters). Inline metadata too large for the
+  ceiling is replaced with empty fields and `metadata_truncated: true`.
+- **Paginated `get_note(format="map")`**: `offset` / `limit` count heading entries, with
+  `total` and `next_offset`.
+- **Top-level `archive_tags:` in `.datacron/VAULT.yaml`**: when present, it takes precedence
+  over `organization.tags.archive_tags` and the defaults.
+
+### Changed
+
+- **Default archive tags**: `archive/compacted` and `archive/journal-digest` join
+  `meta/archive` and `memory/archive`, so digests and compacted journal notes written by
+  `compact-memory` are marked archived in every vault that does not declare its own list.
+- **Daily log files**: the file logger switches to the new local day's file at midnight
+  without renaming open files on Windows, appends to the same day's file after a restart, and
+  prunes dated logs older than 14 days at startup and on date changes.
+
 ## [2026.1016.00] - 2026-10-16
 
 ### Added

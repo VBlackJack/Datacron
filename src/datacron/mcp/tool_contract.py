@@ -19,7 +19,7 @@ from typing import Any, Literal, NotRequired, Required, TypeAlias
 
 from typing_extensions import TypedDict
 
-GetNoteFormat: TypeAlias = Literal["full", "map", "chunk"]
+GetNoteFormat: TypeAlias = Literal["full", "map", "chunk", "metadata"]
 VaultSourceKind: TypeAlias = Literal["docs", "memory"]
 MemoryOrigin: TypeAlias = Literal["ai", "human", "merged"]
 MemoryConfidence: TypeAlias = Literal["high", "medium", "low", "needs_verification"]
@@ -63,6 +63,7 @@ class NoteSummaryOutput(TypedDict):
     frontmatter: dict[str, Any]
     created: str
     updated: str
+    metadata_truncated: NotRequired[bool | None]
     source_vault: NotRequired[VaultSourceKind]
     writable: NotRequired[bool]
 
@@ -142,7 +143,7 @@ class NoteSectionOutput(TypedDict):
 
 
 class GetNoteOutput(TypedDict, total=False):
-    """Successful ``get_note`` payload across full, map, and chunk formats."""
+    """Successful ``get_note`` payload across body, map, chunk, and metadata formats."""
 
     format: Required[GetNoteFormat]
     rel_path: Required[str]
@@ -176,6 +177,10 @@ class GetNoteOutput(TypedDict, total=False):
     line_end: int | None
     prev_chunk_id: str | None
     next_chunk_id: str | None
+    metadata_truncated: bool | None
+    metadata_json: str | None
+    total: int | None
+    returned: int | None
     source_vault: VaultSourceKind | None
     writable: bool | None
 
