@@ -50,6 +50,7 @@ from datacron.core.config import (
     VaultConfig,
 )
 from datacron.core.durability import (
+    DurabilityStatus,
     RecoveryRequiredError,
     UnexpectedRecoveryEntryError,
     WritePolicy,
@@ -191,7 +192,7 @@ class FilesystemVaultWriter:
         self._operation_fault_injector = operation_fault_injector
         self._write_policy = write_policy or WritePolicy(
             settings,
-            probe_directory_durability(self._sidecar_root),
+            self._probe_write_roots_durability(),
         )
         self._secret_redactor = SecretRedactor.from_settings(settings)
         self._operation_journal = OperationJournal(
@@ -207,6 +208,37 @@ class FilesystemVaultWriter:
             memory_root=self._memory_root,
         )
         self._recovery_outcome = RecoveryOutcome()
+
+    def _probe_write_roots_durability(self) -> DurabilityStatus:
+        """Probe every root this writer puts notes under; report the weakest one.
+
+        In Dual-Vault mode the sidecar lives on the memory root while docs notes
+        are written under the vault root, which can sit on another filesystem.
+        Probing the sidecar root alone let strict mode write docs notes on a
+        backend that cannot flush a directory entry.
+        """
+        status = probe_directory_durability(self._sidecar_root)
+        if self._memory_root is None or not status.directory_flush_supported:
+            return status
+        if not self._vault_root.is_dir() or not self._docs_root_writable():
+            # A docs root no write path reaches never receives a note, so its
+            # backend must not make strict mode refuse memory writes.
+            return status
+        docs_status = probe_directory_durability(self._vault_root)
+        return status if docs_status.directory_flush_supported else docs_status
+
+    def _docs_root_writable(self) -> bool:
+        """Return whether a configured write path reaches docs notes in the vault root."""
+        memory_root = self._memory_root
+        for write_path in self._settings.write_paths:
+            resolved = write_path.expanduser().resolve()
+            if memory_root is not None and resolved.is_relative_to(memory_root):
+                continue
+            if resolved.is_relative_to(self._vault_root) or self._vault_root.is_relative_to(
+                resolved
+            ):
+                return True
+        return False
 
     @property
     def recovery_blocked(self) -> tuple[BlockedOperation, ...]:
@@ -588,7 +620,13 @@ class FilesystemVaultWriter:
             _check_expected_hash(expected_hash, current_bytes)
             if current_bytes is not None and not overwrite:
                 raise FileExistsError(f"{safe_rel_path} already exists.")
-            if expected_hash is None:
+            if expected_hash is None and not (current_bytes is None and not overwrite):
+                # A creation at an absent path has nothing to clobber, so the
+                # baseline guard does not apply to it. The journal keeps the last
+                # bytes it wrote there after the note is deleted by hand, moved by
+                # a manifest or removed by compaction, and the guard then refused
+                # the path forever: the expected_hash it suggested is refused by
+                # every creation, so no retry could ever succeed.
                 self._check_committed_baseline(safe_rel_path, current_bytes)
             if note_id is not None and self._ulid_exists(note_id):
                 raise UlidCollisionError(f"ULID collision: {note_id} already exists")
@@ -1549,6 +1587,18 @@ class FilesystemVaultWriter:
 
     def _resolve_target(self, rel_path: str) -> tuple[Path, Path]:
         assert_vault_rel_path(rel_path)
+        # The link check reads the lexical spelling, before anything resolves it
+        # or creates a folder along it. It used to run on the resolved target,
+        # after mkdir: resolution had already followed any symlink or junction on
+        # the way, so the check could only ever see the place it led to, and the
+        # missing folders had been created there first.
+        lexical = resolve_vault_rel_target(
+            self._vault_root,
+            rel_path,
+            memory_root=self._memory_root,
+            settings=self._settings,
+        ).expanduser()
+        assert_path_chain_without_links(lexical, allow_missing=True)
         candidate = self._resolve_record_candidate(rel_path)
         target = assert_within_write_paths(candidate, self._settings)
         return target, self._safe_relative_path(target)
