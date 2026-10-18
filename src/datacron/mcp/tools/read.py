@@ -200,6 +200,9 @@ async def _list_notes_impl(
     return payload
 
 
+list_notes_impl = _list_notes_impl
+
+
 async def _list_notes_from_index(
     app: DatacronApp,
     *,

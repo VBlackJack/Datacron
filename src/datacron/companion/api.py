@@ -35,9 +35,9 @@ from datacron.core.config import (
     VALID_DURABILITY_MODES,
     Settings,
     VaultConfig,
-    _validate_extra_vault_prefix,
     get_settings,
     load_vault_config,
+    validate_extra_vault_prefix,
 )
 from datacron.core.paths import sidecar_index_db, sidecar_vault_config
 from datacron.core.scope import admits_note_path
@@ -55,7 +55,7 @@ from datacron.installers.mcp_clients import (
     discover_targets,
 )
 from datacron.mcp.server import build_app
-from datacron.mcp.tools.read import _list_notes_impl
+from datacron.mcp.tools.read import list_notes_impl
 from datacron.mcp.tools.search import search_regex_impl, search_text_impl
 from datacron.memory_compaction import DEFAULT_COMPACTION_DAYS, compact_vault_memory
 from datacron.migration import migrate_vault_to_dual
@@ -242,7 +242,7 @@ def _build_runtime_settings(profile: CompanionProfile) -> tuple[Path | None, Set
         if not str(raw_path).strip():
             continue
         try:
-            clean_prefix = _validate_extra_vault_prefix(raw_prefix)
+            clean_prefix = validate_extra_vault_prefix(raw_prefix)
         except (TypeError, ValueError):
             continue
         extra_map[clean_prefix] = Path(raw_path).expanduser().resolve()
@@ -524,7 +524,7 @@ async def list_companion_notes(
     if db_path.is_file():
         await app.store.open(db_path, read_only=True)
     try:
-        return await _list_notes_impl(
+        return await list_notes_impl(
             app,
             folder=folder,
             tags=None,

@@ -26,6 +26,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+import click
 import pytest
 from typer.testing import CliRunner
 
@@ -396,9 +397,9 @@ def test_cli_config_set_partial_merge_and_companion_vault_flag(tmp_path: Path) -
     assert updated["values"]["query_expansion"]["k8s"] == ["kubernetes"]
     assert updated["values"]["excluded_folders"] == ["Archive", "Drafts"]
 
-    r_comp = runner.invoke(app, ["companion", "--help"])
+    r_comp = runner.invoke(app, ["companion", "--help"], terminal_width=240)
     assert r_comp.exit_code == 0
-    assert "--vault" in r_comp.stdout
+    assert "--vault" in click.unstyle(r_comp.stdout)
 
 
 def test_setup_wizard_build_index_honors_archive_tags(
