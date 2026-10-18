@@ -183,6 +183,7 @@ def build_configured_reader(
         admission_policy=effective_policy,
         memory_root=NO_MEMORY_ROOT if resolved_memory is None else resolved_memory,
         extra_read_vaults=resolved_extras,
+        settings=settings,
     )
 
 
@@ -429,16 +430,24 @@ class FilesystemVaultReader:
         admission_policy: NoteAdmissionPolicy | None = None,
         memory_root: Path | NoMemoryRoot | None = None,
         extra_read_vaults: Mapping[str, Path] | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self._vault_root = vault_root.expanduser().resolve()
+        # ``settings`` carries the caller's binding, and the sentinel says "no memory vault"
+        # explicitly: either way the process environment's memory root is never adopted.
         self._memory_root = (
             None
             if isinstance(memory_root, NoMemoryRoot)
-            else effective_memory_root(self._vault_root, memory_root=memory_root)
+            else effective_memory_root(
+                self._vault_root,
+                memory_root=memory_root,
+                settings=settings,
+            )
         )
         self._extra_read_vaults = effective_extra_read_vaults(
             self._vault_root,
             extra_read_vaults=extra_read_vaults,
+            settings=settings,
         )
         self._extra_read_by_folded: dict[str, tuple[str, Path]] = {
             prefix.casefold(): (prefix, root) for prefix, root in self._extra_read_vaults.items()
@@ -447,7 +456,11 @@ class FilesystemVaultReader:
         # helper consult the process settings again; naming the vault root itself is
         # how it is told "no distinct memory vault".
         sidecar = (
-            sidecar_dir(self._vault_root, memory_root=self._memory_root or self._vault_root)
+            sidecar_dir(
+                self._vault_root,
+                memory_root=self._memory_root or self._vault_root,
+                settings=settings,
+            )
             / ULID_SIDECAR_FILENAME
         )
         self._read_only = read_only

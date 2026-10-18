@@ -61,7 +61,11 @@
       "vault_root": "Vault root. Fallback: DATACRON_VAULT_ROOT, then cwd containing VAULT.yaml under .datacron.",
       "memory_vault": "Dedicated memory vault root (.datacron/ and _memory/ live here). Fallback: DATACRON_MEMORY_ROOT.",
       "dual_vault": "Prompt interactively for a dedicated memory vault path during setup.",
-      "keep_source": "Keep original .datacron/ and _memory/ directories in the documentation vault after migration."
+      "keep_source": "Keep the original .datacron/ and _memory/ in the documentation vault (default). Pass --cleanup-source to remove them once the copy is verified.",
+      "migrate_client": "MCP client to reconfigure for the new memory vault ({choices}). Default: all detected clients; 'none' leaves every client unchanged.",
+      "migrate_enable_write": "Enable or remove the write allowlist in the reconfigured clients. Omitted, the current write setting of each client entry is kept.",
+      "reset_invalid": "Allow the write to replace an invalid or unreadable file with defaults plus the given values. Without it, an invalid file is refused, never reset.",
+      "migrate_cleanup_only": "Copy nothing: verify the source _memory/ against the memory vault (or the copy manifest) of an earlier migration, then remove the source .datacron/ and _memory/. Cannot be combined with --keep-source/--cleanup-source, --client, --scope or --enable-write/--no-write."
     },
     "setup": {
       "memory_vault_explain_1": "Dual-Vault mode separates your documentation vault from Datacron's sidecar (.datacron/) and agent memory (_memory/).",
@@ -82,7 +86,7 @@
       "indexed_line": "  indexed:      {notes} notes ({chunks} chunks)",
       "source_cleaned_line": "  source:       {state}",
       "state_cleaned": "cleaned (.datacron/ and _memory/ removed from docs vault)",
-      "state_kept": "preserved (--keep-source)",
+      "state_kept": "preserved (default; --cleanup-source removes it)",
       "same_root": "Memory vault must be a different directory from the documentation vault: {path}",
       "overlapping_roots": "Documentation vault and memory vault must not overlap: {vault} vs {memory_vault}",
       "missing_source": "Source vault has neither .datacron/VAULT.yaml nor _memory/ to migrate: {vault}",
@@ -91,7 +95,13 @@
       "error": {
         "vault_not_found": "Vault path does not exist or is not a directory: {path}",
         "unsafe_home_root": "Refusing to use the user profile root as a vault or memory vault."
-      }
+      },
+      "follow_up_restart": "Next: restart the MCP clients so they load the new memory vault.",
+      "follow_up_clients": "Next: no client was reconfigured (--client none). Run `datacron setup` with --memory-vault, or the clients keep reading the old location.",
+      "follow_up_source": "The source copy was kept. Once the clients use the memory vault, remove .datacron/ and _memory/ from the documentation vault.",
+      "cleanup_only_conflict": "--cleanup-only copies nothing and changes no client; remove {options}.",
+      "cleanup_only_unsupported": "This Datacron build cannot run migrate-memory --cleanup-only; update Datacron.",
+      "cleanup_only_completed": "Source cleanup complete: .datacron/ and _memory/ removed from {vault} after verification against {memory_vault}."
     },
     "library": {
       "app_help": "Prepare readable offline navigation and sourced consolidation reviews.",
@@ -118,7 +128,22 @@
     },
     "companion": {
       "launching": "Datacron Companion listening on {url}",
-      "press_ctrl_c": "Press Ctrl+C to stop the Companion server."
+      "press_ctrl_c": "Press Ctrl+C to stop the Companion server.",
+      "profile_not_saved": "Companion profile not saved: {detail}"
+    },
+    "warning": {
+      "env_memory_root_ignored": "DATACRON_MEMORY_ROOT ({memory_root}) belongs to the vault named by DATACRON_VAULT_ROOT, not to {vault}; it is ignored. Pass --memory-vault to use a dedicated memory vault.",
+      "env_memory_root_used": "Using the memory vault {memory_root} from DATACRON_MEMORY_ROOT for {vault} (DATACRON_VAULT_ROOT is unset). Pass --memory-vault to choose another one."
+    },
+    "error": {
+      "vault_not_found": "Vault path does not exist or is not a directory: {path}",
+      "self_contained_vault_with_env_memory": "{vault} has its own .datacron/VAULT.yaml, but DATACRON_MEMORY_ROOT ({memory_root}) would bind it to another memory vault, and DATACRON_VAULT_ROOT is unset. Pass --memory-vault, or set DATACRON_VAULT_ROOT to the vault that memory root belongs to."
+    },
+    "eval": {
+      "failed": "Evaluation failed: {detail}"
+    },
+    "scrub": {
+      "failed": "Integrity scrub failed: {detail}"
     }
   },
   "companion": {

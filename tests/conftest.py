@@ -59,6 +59,31 @@ def _settings_env_var(name: str, field: FieldInfo) -> str:
 _ENV_VARS: Final[tuple[str, ...]] = tuple(
     sorted(_settings_env_var(name, field) for name, field in Settings.model_fields.items())
 )
+# Client installers locate their config files from the user profile (Path.home(),
+# APPDATA, LOCALAPPDATA, XDG_CONFIG_HOME). A test that reaches one with a real profile
+# rewrites the developer's own MCP client configs, so every test gets a private profile.
+_PROFILE_DIR_NAME: Final[str] = "user-profile"
+_PROFILE_ENV_DIRS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
+    ("HOME", ()),
+    ("USERPROFILE", ()),
+    ("APPDATA", ("AppData", "Roaming")),
+    ("LOCALAPPDATA", ("AppData", "Local")),
+    ("XDG_CONFIG_HOME", (".config",)),
+)
+# On Windows, expanduser falls back to these when USERPROFILE is missing.
+_PROFILE_FALLBACK_ENV_VARS: Final[tuple[str, ...]] = ("HOMEDRIVE", "HOMEPATH")
+
+
+def _isolate_user_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point every user-profile lookup at a fresh directory under ``tmp_path``."""
+    profile = tmp_path / _PROFILE_DIR_NAME
+    for key, parts in _PROFILE_ENV_DIRS:
+        target = profile.joinpath(*parts)
+        target.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv(key, str(target))
+    for key in _PROFILE_FALLBACK_ENV_VARS:
+        monkeypatch.delenv(key, raising=False)
+    return profile
 
 
 @pytest.fixture(autouse=True)
@@ -66,9 +91,10 @@ def _isolated_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> Iterator[None]:
-    """Strip Datacron env vars and point logs to a tmp dir before every test."""
+    """Strip Datacron env vars, isolate the user profile and point logs to a tmp dir."""
     for key in _ENV_VARS:
         monkeypatch.delenv(key, raising=False)
+    _isolate_user_profile(monkeypatch, tmp_path)
     monkeypatch.setenv("DATACRON_LOG_DIR", str(tmp_path / "logs"))
     reset_settings_cache()
     yield
