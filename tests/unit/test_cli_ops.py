@@ -728,9 +728,16 @@ class TestOpsRepairId:
         real_scan = scan_vault_read_only
         scan_calls = 0
 
-        def _scan_then_edit(vault_root: Path) -> ReliabilityScan:
+        def _scan_then_edit(
+            vault_root: Path,
+            *,
+            memory_root: Path | None = None,
+            extra_read_vaults: dict[str, Path] | None = None,
+        ) -> ReliabilityScan:
             nonlocal scan_calls
-            scan = real_scan(vault_root)
+            scan = real_scan(
+                vault_root, memory_root=memory_root, extra_read_vaults=extra_read_vaults
+            )
             scan_calls += 1
             if scan_calls == 1:
                 target.write_bytes(concurrent)
@@ -830,6 +837,8 @@ class TestOpsRepairId:
             rel_path: str,
             note_id: str,
             sources: dict[str, str],
+            *,
+            settings: Settings | None = None,
         ) -> tuple[bool, str | None, str | None]:
             assert lock_held
             return await _apply_id_source_realignments(
@@ -837,6 +846,7 @@ class TestOpsRepairId:
                 rel_path,
                 note_id,
                 sources,
+                settings=settings,
             )
 
         monkeypatch.setattr(FilesystemVaultWriter, "lock_note_identity", _tracked_lock)

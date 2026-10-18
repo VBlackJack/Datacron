@@ -206,3 +206,4 @@ def test_dual_vault_memory_field_is_exposed_and_wired() -> None:
     assert "VaultPage.Add(CustomMessage('MemoryVaultLabel'));" in body
     assert "MemoryVaultPath := NormalizePathEntry(SelectedMemoryVaultPath);" in body
     assert "' --memory-vault ' + AddQuotes(MemoryVaultPath)" in body
+    assert "Parameters := Parameters + ' --no-write';" in body
