@@ -121,6 +121,13 @@ class TestEnvLoading:
         settings = Settings()
         assert settings.get_note_max_tokens == 12345
 
+    def test_env_read_response_ceiling(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATACRON_MAX_READ_RESPONSE_CHARS", "8192")
+        assert Settings().max_read_response_chars == 8192
+        monkeypatch.setenv("DATACRON_MAX_READ_RESPONSE_CHARS", "4095")
+        with pytest.raises(ValidationError):
+            Settings()
+
     def test_env_eval_regression_tolerance(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("DATACRON_EVAL_REGRESSION_TOLERANCE", "0.05")
 
