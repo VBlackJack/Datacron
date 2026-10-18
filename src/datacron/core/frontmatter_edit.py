@@ -53,7 +53,7 @@ _UNLOCATED_FRONTMATTER_MESSAGE: Final[str] = (
 _UNVERIFIED_FRONTMATTER_MESSAGE: Final[str] = (
     "the edited frontmatter did not read back as requested, so the note was left unchanged"
 )
-_BOM: Final[str] = "﻿"
+_BOM: Final[str] = "\ufeff"
 _YAML_WHITESPACE: Final[str] = " \t\r\n"
 # Plain, single-quoted and double-quoted scalars sit on their key's line and can
 # have their value replaced in place; block scalars (| and >) cannot.
