@@ -716,6 +716,7 @@ async def test_rename_note_section_and_structured_tool_schemas_are_2020_12_compa
         "full",
         "map",
         "chunk",
+        "metadata",
     ]
     create_properties = tools["create_note_ai"].input_schema["properties"]
     set_frontmatter_properties = tools["set_frontmatter"].input_schema["properties"]

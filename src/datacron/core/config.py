@@ -90,7 +90,12 @@ MAX_SEARCH_QUERY_TERMS: Final[int] = 64
 # The one place that names the archive tags and the state-note namespace. A vault
 # overrides the archive tags in its organization tag policy; the index, the library
 # and the planner read them from here or from that policy, never from a local copy.
-DEFAULT_ARCHIVE_TAGS: Final[tuple[str, ...]] = ("meta/archive", "memory/archive")
+DEFAULT_ARCHIVE_TAGS: Final[tuple[str, ...]] = (
+    "meta/archive",
+    "memory/archive",
+    "archive/compacted",
+    "archive/journal-digest",
+)
 DEFAULT_STATE_NOTE_NAMESPACE: Final[str] = "kind"
 # BM25 column weights: the chunk body and its context (note title plus heading trail).
 SEARCH_CONTENT_WEIGHT: Final[float] = 1.0
@@ -122,6 +127,10 @@ DEFAULT_CHUNK_MAX_TOKENS: Final[int] = 1024
 # generous, so a single get_note returns most notes whole while pagination
 # (offset/limit/next_offset) remains the safety valve for pathologically large notes.
 DEFAULT_GET_NOTE_MAX_TOKENS: Final[int] = 25000
+# Separate serialized envelope ceiling; body token budgets do not include JSON escaping.
+DEFAULT_MAX_READ_RESPONSE_CHARS: Final[int] = 128 * 1024
+MIN_READ_RESPONSE_CHARS: Final[int] = 4096
+DEFAULT_LOG_RETENTION_DAYS: Final[int] = 14
 # Forty-two months. Retention decides when the only stored copy of a previous
 # version of a note is deleted, and a project can sit untouched for months and then
 # resume, so a window measured in weeks silently discarded the history of everything
@@ -686,10 +695,26 @@ class VaultConfig(BaseModel):
     excluded_folders: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FOLDERS))
     excluded_files: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_FILES))
     query_expansion: dict[str, list[str]] = Field(default_factory=default_query_expansion)
+    top_level_archive_tags: tuple[str, ...] | None = Field(
+        default=None,
+        alias="archive_tags",
+        exclude=True,
+    )
     # Absent block means the feature is inert: every existing vault keeps its
     # exact current behaviour, which is the non-regression guarantee for vaults
     # already published against earlier releases.
     organization: OrganizationConfig | None = None
+
+    @field_validator("top_level_archive_tags", mode="before")
+    @classmethod
+    def _normalize_top_level_archive_tags(cls, value: object) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("archive_tags must be a list of strings")
+        return tuple(_normalize_tag_value(item, what="archive_tags entry") for item in value)
 
     @field_validator("organization", mode="before")
     @classmethod
@@ -702,9 +727,12 @@ class VaultConfig(BaseModel):
 
     @property
     def archive_tags(self) -> frozenset[str]:
-        """Casefolded tags that mark an archived note: the policy's, else the defaults."""
-        policy = self.organization.tags if self.organization is not None else None
-        declared = policy.archive_tags if policy is not None else DEFAULT_ARCHIVE_TAGS
+        """Casefolded tags that mark an archived note: top-level, policy's, or defaults."""
+        if self.top_level_archive_tags is not None:
+            declared: tuple[str, ...] = self.top_level_archive_tags
+        else:
+            policy = self.organization.tags if self.organization is not None else None
+            declared = policy.archive_tags if policy is not None else DEFAULT_ARCHIVE_TAGS
         return frozenset(tag.casefold() for tag in declared)
 
     @field_validator("line_endings", mode="before")
@@ -1022,6 +1050,9 @@ class Settings(BaseSettings):
     )
     chunk_max_tokens: int = Field(default=DEFAULT_CHUNK_MAX_TOKENS, ge=1)
     get_note_max_tokens: int = Field(default=DEFAULT_GET_NOTE_MAX_TOKENS, ge=1)
+    max_read_response_chars: int = Field(
+        default=DEFAULT_MAX_READ_RESPONSE_CHARS, ge=MIN_READ_RESPONSE_CHARS
+    )
     redact_secrets: str = DEFAULT_REDACT_SECRETS
     secret_redaction_patterns: Annotated[list[str], NoDecode] = Field(default_factory=list)
     read_only: bool = False
