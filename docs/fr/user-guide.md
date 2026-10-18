@@ -25,7 +25,11 @@ il renvoie à Claude uniquement les notes ou fragments (chunks) pertinents. Conc
   `<vault_content>...</vault_content>`, accompagné des métadonnées de provenance (`source_vault` et
   `writable`) indiquant si chaque note provient du vault documentaire principal, d'un vault mémoire
   dédié Dual-Vault (`DATACRON_MEMORY_ROOT`) ou d'un vault secondaire monté en lecture seule
-  (`DATACRON_EXTRA_READ_VAULTS`).
+  (`DATACRON_EXTRA_READ_VAULTS`). `source_vault` vaut `docs`, `memory` ou `extra` ; une note
+  `extra` porte aussi `source_mount`, le préfixe du montage qui la nomme.
+- Quand un autre processus d'écriture Datacron tient le verrou du vault, un outil d'écriture
+  refuse avec le code `vault_lock_busy` et `retryable: true` : rien n'a été écrit, et le même
+  appel peut être relancé un instant plus tard.
 - Tes notes restent des fichiers Markdown normaux, modifiables à la main à tout moment.
 
 ## Les outils, par usage

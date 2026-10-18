@@ -27,9 +27,14 @@ from urllib.parse import quote, unquote, urlsplit
 
 from mistletoe import block_token
 
-from datacron.core.config import DEFAULT_ARCHIVE_TAGS, Settings, load_vault_config
+from datacron.core.config import (
+    DEFAULT_ARCHIVE_TAGS,
+    HISTORICAL_STATUSES,
+    Settings,
+    load_vault_config,
+)
 from datacron.core.frontmatter import coerce_string_list, parse
-from datacron.core.markdown_headings import markdown_headings, token_text
+from datacron.core.markdown_headings import markdown_headings, split_markdown_lines, token_text
 from datacron.core.models import ChunkType, Note
 from datacron.core.paths import (
     effective_extra_read_vaults,
@@ -198,7 +203,7 @@ def build_link_index(notes: list[Note]) -> LinkIndex:
 
 
 def _heading_anchors(note: Note) -> set[str]:
-    headings = markdown_headings(note.content.splitlines(keepends=True))
+    headings = markdown_headings(split_markdown_lines(note.content))
     anchors = {heading.text.casefold() for heading in headings}
     anchors.update(
         re.sub(r"[^\w\- ]", "", heading.text.casefold()).replace(" ", "-") for heading in headings
@@ -279,7 +284,7 @@ def lifecycle(
     meta = note.frontmatter
     if note.id in superseded or meta.get("invalid_at") or meta.get("archived") is True:
         return "historical"
-    if str(meta.get("status", "")).casefold() in {"archived", "historical", "superseded"}:
+    if str(meta.get("status", "")).casefold() in HISTORICAL_STATUSES:
         return "historical"
     archived_tags = {tag.casefold() for tag in archive_tags}
     if archived_tags.intersection(tag.casefold() for tag in note.tags):
@@ -324,7 +329,7 @@ def _size_findings(note: Note, options: LibraryOptions) -> list[Finding]:
         findings.append(
             Finding(code="LONG_NOTE", path=note.rel_path, detail=str(len(note.content)))
         )
-    lines = note.content.splitlines(keepends=True)
+    lines = split_markdown_lines(note.content)
     headings = markdown_headings(lines)
     for i, heading in enumerate(headings):
         end = next((h.start for h in headings[i + 1 :] if h.level <= heading.level), len(lines))

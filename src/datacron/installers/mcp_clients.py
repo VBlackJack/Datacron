@@ -48,7 +48,7 @@ from datacron.installers.claude_desktop import (
     ClaudeDesktopConfigError,
     config_path_for_platform,
 )
-from datacron.installers.env_merge import merge_server_env
+from datacron.installers.env_merge import merge_server_entry
 from datacron.installers.foreign_files import replace_foreign_file
 
 __all__ = [
@@ -539,36 +539,6 @@ def _stdio_entry(
     return entry
 
 
-def _merged_entry(
-    existing: object,
-    entry: dict[str, Any],
-    removed_env: tuple[str, ...] = (),
-) -> dict[str, Any]:
-    """Return ``entry`` laid over the Datacron entry the client already holds.
-
-    The entry was replaced wholesale, so re-running setup, which the Windows
-    installer does on every upgrade with its write box unchecked by default,
-    dropped DATACRON_WRITE_PATHS and turned a writable vault read-only without a
-    word, together with any proxy variable, ``disabled`` flag or ``autoApprove``
-    list the user had added. What this call supplies still wins; every other key
-    and environment variable is kept. The Claude Desktop writer already kept the
-    DATACRON_* variables for the same reason. ``removed_env`` names what an
-    explicit "off" drops; see :func:`merge_server_env`.
-    """
-    if not isinstance(existing, dict):
-        return entry
-    merged: dict[str, Any] = {**existing, **{k: v for k, v in entry.items() if k != "env"}}
-    existing_env = existing.get("env")
-    env = merge_server_env(
-        existing_env if isinstance(existing_env, dict) else {},
-        entry.get("env", {}),
-        removed=removed_env,
-    )
-    if env or isinstance(existing_env, dict):
-        merged["env"] = env
-    return merged
-
-
 def _entry_env(entry: dict[str, Any]) -> Mapping[str, object]:
     env = entry.get("env")
     return dict(env) if isinstance(env, dict) else {}
@@ -586,7 +556,7 @@ def _merge_json(
         raise MCPClientError(
             f"{path}: existing {servers_key!r} is not an object; refusing to edit."
         )
-    merged = _merged_entry(servers.get(_SERVER_NAME), entry, removed_env)
+    merged = merge_server_entry(servers.get(_SERVER_NAME), entry, removed_env)
     servers[_SERVER_NAME] = merged
     serialized = json.dumps(config, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     _atomic_write(path, serialized.encode("utf-8"))
@@ -608,7 +578,7 @@ def _merge_toml(
     entry: dict[str, Any] = {"command": command, "args": list(args)}
     if env:
         entry["env"] = dict(env)
-    merged = _merged_entry(servers.get(_SERVER_NAME), entry, removed_env)
+    merged = merge_server_entry(servers.get(_SERVER_NAME), entry, removed_env)
     servers[_SERVER_NAME] = merged
     _atomic_write(path, tomli_w.dumps(config).encode("utf-8"))
     return _entry_env(merged)

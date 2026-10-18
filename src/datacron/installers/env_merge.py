@@ -27,7 +27,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 __all__ = [
     "ENV_MEMORY_ROOT",
@@ -37,6 +37,7 @@ __all__ = [
     "ENV_WRITE_PATHS",
     "env_flag_enabled",
     "env_names_vault",
+    "merge_server_entry",
     "merge_server_env",
     "split_env_paths",
 ]
@@ -102,6 +103,7 @@ def merge_server_env(
     When ``supplied`` names a vault root or memory root other than the one
     ``existing`` was written for, preserved allowlist entries outside the active
     vault root(s) are dropped, and the variable with them when nothing is left.
+    A change of vault root also drops a memory root this run did not supply.
     """
     removed_keys = frozenset(removed)
     merged: dict[str, object] = {
@@ -121,11 +123,21 @@ def merge_server_env(
             or _normalized(old_memory_root) != _normalized(new_memory_root)
         )
     ) or (ENV_MEMORY_ROOT in removed_keys and old_memory_root is not None)
+    # A memory vault belongs to the docs vault it was configured with. Keeping
+    # it across a change of vault bound the new vault to the old one's memory,
+    # with read and write access to it.
+    memory_dropped = vault_changed and new_memory_root is None
+    if memory_dropped:
+        merged.pop(ENV_MEMORY_ROOT, None)
     if (vault_changed or memory_changed) and new_root is not None:
         active_roots: list[str] = [new_root]
         if new_memory_root is not None:
             active_roots.append(new_memory_root)
-        elif isinstance(old_memory_root, str) and ENV_MEMORY_ROOT not in removed_keys:
+        elif (
+            isinstance(old_memory_root, str)
+            and ENV_MEMORY_ROOT not in removed_keys
+            and not memory_dropped
+        ):
             active_roots.append(old_memory_root)
         for key in _VAULT_BOUND_PATH_KEYS:
             value = merged.get(key)
@@ -137,4 +149,58 @@ def merge_server_env(
             else:
                 del merged[key]
     merged.update(supplied)
+    if not vault_changed:
+        _keep_memory_root_readable(merged, supplied)
+    return merged
+
+
+def _keep_memory_root_readable(merged: dict[str, object], supplied: Mapping[str, str]) -> None:
+    """Add a preserved memory root to a read allowlist this run supplied.
+
+    A rerun that did not name the memory vault kept ``DATACRON_MEMORY_ROOT``
+    from the entry while laying its own docs-only ``DATACRON_READ_PATHS`` over
+    it, and the server refuses to start when the memory root is outside the
+    read allowlist. A read allowlist the caller did not supply is the user's and
+    is left alone.
+    """
+    if ENV_READ_PATHS not in supplied or ENV_MEMORY_ROOT in supplied:
+        return
+    memory_root = merged.get(ENV_MEMORY_ROOT)
+    read_value = merged.get(ENV_READ_PATHS)
+    if not isinstance(memory_root, str) or not memory_root.strip():
+        return
+    if not isinstance(read_value, str):
+        return
+    if _paths_inside_any(memory_root, split_env_paths(read_value)):
+        return
+    merged[ENV_READ_PATHS] = os.pathsep.join([*split_env_paths(read_value), memory_root.strip()])
+
+
+def merge_server_entry(
+    existing: object,
+    entry: dict[str, Any],
+    removed_env: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Return ``entry`` laid over the Datacron entry a client config already holds.
+
+    The entry was replaced wholesale, so re-running setup dropped
+    DATACRON_WRITE_PATHS and turned a writable vault read-only without a word,
+    together with any proxy variable, ``disabled`` flag or ``autoApprove`` list
+    the user had added. What this call supplies still wins; every other key and
+    environment variable is kept. ``removed_env`` names what an explicit "off"
+    drops; see :func:`merge_server_env`. Every client writer, Claude Desktop's
+    included, goes through here.
+    """
+    if not isinstance(existing, dict):
+        return entry
+    merged: dict[str, Any] = {**existing, **{k: v for k, v in entry.items() if k != "env"}}
+    existing_env = existing.get("env")
+    supplied_env = entry.get("env", {})
+    env = merge_server_env(
+        existing_env if isinstance(existing_env, dict) else {},
+        supplied_env if isinstance(supplied_env, dict) else {},
+        removed=removed_env,
+    )
+    if env or isinstance(existing_env, dict):
+        merged["env"] = env
     return merged

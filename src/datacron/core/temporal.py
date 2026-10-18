@@ -23,6 +23,8 @@ from datacron.core.models import SearchResult
 
 __all__ = ["TemporalMeta", "rerank_temporal"]
 
+_SUPERSEDED_STATUS = "superseded"
+
 
 @dataclass(frozen=True)
 class TemporalMeta:
@@ -34,6 +36,9 @@ class TemporalMeta:
     invalid_at: str | None = None
     invalidated_by: str | None = None
     archived: bool = False
+    # Casefolded frontmatter ``status``, so a note retired as ``superseded`` is labelled
+    # superseded rather than archived.
+    status: str | None = None
 
 
 def rerank_temporal(
@@ -74,6 +79,7 @@ def rerank_temporal(
         lifecycle = (
             "superseded"
             if result.chunk.note_id in superseded_ids
+            or (item is not None and item.status == _SUPERSEDED_STATUS)
             else "invalidated"
             if item and item.invalid_at is not None
             else "archived"

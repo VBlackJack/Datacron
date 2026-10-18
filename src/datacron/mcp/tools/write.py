@@ -35,7 +35,12 @@ from datacron.core.frontmatter import (
     has_ambiguous_leading_delimiter_block,
     serialize,
 )
-from datacron.core.markdown_headings import heading_before, heading_identity, markdown_headings
+from datacron.core.markdown_headings import (
+    heading_before,
+    heading_identity,
+    markdown_headings,
+    split_markdown_lines,
+)
 from datacron.core.markdown_sections import (
     HEADING_SUGGESTION_MAX_CHARS,
     HeadingNotFoundError,
@@ -57,7 +62,7 @@ from datacron.core.operation_log import (
 )
 from datacron.core.paths import PathConfinementError
 from datacron.core.scope import NoteAdmissionError
-from datacron.core.vault_writer import UlidCollisionError
+from datacron.core.vault_writer import UlidCollisionError, VaultLockBusyError
 from datacron.core.write_request import ReplayedWriteError
 from datacron.indexing.reconcile import ReconcileStats
 from datacron.mcp.tools.payloads import (
@@ -86,6 +91,7 @@ from datacron.mcp.tools.write_validation import (
     _validate_backlog_last_id,
     _validate_delete_note_section_request,
     _validate_expected_hash,
+    _validate_last_verified_date,
     _validate_memory_frontmatter,
     _validate_patch_note_preamble_request,
     _validate_patch_note_section_request,
@@ -164,7 +170,8 @@ async def _execute_write_tool(
             writes_configured=bool(app.settings.write_paths),
         )
         return _error_response(tool, mapped, started, **audit_fields)
-    except (NoteAdmissionError, RecoveryRequiredError) as exc:
+    except (NoteAdmissionError, RecoveryRequiredError, VaultLockBusyError) as exc:
+        # A lock held by another writer is mapped to a retryable vault_lock_busy.
         # A note admission refusal comes from the scoped writer before the note is
         # opened, so it carries no heading suggestion and says nothing about whether
         # the note exists.
@@ -309,6 +316,13 @@ async def _create_note_ai_impl(
             tags=tags,
         )
         cleaned_rejected = _validate_rejected_entries(rejected) if rejected is not None else None
+        # set_frontmatter refused a malformed last_verified while create_note_ai wrote
+        # it as given, so a note could be created with a value no later edit accepts.
+        cleaned_last_verified = (
+            _validate_last_verified_date(last_verified)
+            if last_verified and last_verified.strip()
+            else None
+        )
         _enforce_tag_policy(app, cleaned["rel_path"], cleaned["tags"], body)
         now = datetime.now(tz=UTC)
         for attempt in range(_ULID_CREATE_ATTEMPTS):
@@ -320,9 +334,7 @@ async def _create_note_ai_impl(
                 "updated": now.isoformat(),
                 "origin": cleaned["origin"],
                 "confidence": cleaned["confidence"],
-                "last_verified": (
-                    last_verified.strip() if last_verified else now.date().isoformat()
-                ),
+                "last_verified": cleaned_last_verified or now.date().isoformat(),
                 "supersedes": _clean_string_list(supersedes or []),
                 "tags": cleaned["tags"],
             }
@@ -808,7 +820,7 @@ async def _patch_note_section_impl(
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             if has_ambiguous_leading_delimiter_block(raw):
                 raise ValueError(_AMBIGUOUS_LEADING_BLOCK_MESSAGE)
-            lines = body.splitlines(keepends=True)
+            lines = split_markdown_lines(body)
             content_start, content_end = find_section_span(
                 lines,
                 cleaned_heading,
@@ -987,7 +999,7 @@ async def _rename_note_section_impl(
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             if has_ambiguous_leading_delimiter_block(raw):
                 raise ValueError(_AMBIGUOUS_LEADING_BLOCK_MESSAGE)
-            lines = body.splitlines(keepends=True)
+            lines = split_markdown_lines(body)
             try:
                 content_start, _content_end = find_section_span(
                     lines,
@@ -1131,7 +1143,7 @@ async def _delete_note_section_impl(
             metadata, body, has_bom = _parse_preserving_bom_and_body_eols(raw)
             if has_ambiguous_leading_delimiter_block(raw):
                 raise ValueError(_AMBIGUOUS_LEADING_BLOCK_MESSAGE)
-            lines = body.splitlines(keepends=True)
+            lines = split_markdown_lines(body)
             content_start, content_end = find_section_span(
                 lines,
                 cleaned_heading,
