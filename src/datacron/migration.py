@@ -16,7 +16,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
@@ -31,7 +33,7 @@ from datacron.core.config import (
     load_vault_config,
 )
 from datacron.core.durability import atomic_durable_write
-from datacron.core.paths import sidecar_vault_config
+from datacron.core.paths import PathConfinementError, is_link_stat, sidecar_vault_config
 from datacron.i18n import t
 from datacron.indexing.rebuild import rebuild_index_atomic
 from datacron.setup_wizard import (
@@ -48,6 +50,8 @@ if TYPE_CHECKING:
 __all__ = [
     "MigrationError",
     "MigrationResult",
+    "SymlinkDetectedError",
+    "migrate_memory_to_dedicated_vault",
     "migrate_vault_to_dual",
 ]
 
@@ -58,6 +62,10 @@ _EXCLUDED_SIDECAR_SUFFIXES: Final[frozenset[str]] = frozenset(
 
 class MigrationError(ValueError):
     """Raised when a Dual-Vault migration preflight or verification check fails."""
+
+
+class SymlinkDetectedError(MigrationError, PathConfinementError):
+    """Raised when a symlink or Windows reparse point is encountered during migration."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,9 +97,12 @@ def _should_skip_sidecar_file(rel_path: Path) -> bool:
 def _validate_migration_roots(vault_root: Path, memory_root: Path) -> tuple[Path, Path]:
     resolved_vault = vault_root.expanduser().resolve()
     resolved_memory = memory_root.expanduser().resolve()
+    home_root = Path.home().expanduser().resolve()
+    if home_root in {resolved_vault, resolved_memory}:
+        raise MigrationError(t("cli.migrate_memory.error.unsafe_home_root"))
     if not resolved_vault.is_dir():
         raise NotADirectoryError(
-            f"Vault path does not exist or is not a directory: {resolved_vault}"
+            t("cli.migrate_memory.error.vault_not_found", path=str(resolved_vault))
         )
     if resolved_vault == resolved_memory:
         raise MigrationError(t("cli.migrate_memory.same_root", path=resolved_vault))
@@ -105,41 +116,73 @@ def _validate_migration_roots(vault_root: Path, memory_root: Path) -> tuple[Path
                 memory_vault=resolved_memory,
             )
         )
-    has_sidecar = (resolved_vault / SIDECAR_DIR_NAME / "VAULT.yaml").is_file()
-    has_memory = (resolved_vault / MEMORY_SUBFOLDER_NAME).is_dir()
+    has_sidecar = (resolved_vault / SIDECAR_DIR_NAME / "VAULT.yaml").exists()
+    has_memory = (resolved_vault / MEMORY_SUBFOLDER_NAME).exists()
     if not has_sidecar and not has_memory:
         raise MigrationError(t("cli.migrate_memory.missing_source", vault=resolved_vault))
     return resolved_vault, resolved_memory
+
+
+def _collect_tree_pairs(
+    src_dir: Path,
+    dst_dir: Path,
+    prefix_name: str,
+    *,
+    skip_sidecar_excludes: bool,
+) -> list[tuple[Path, Path, str]]:
+    try:
+        dir_stat = os.lstat(src_dir)
+    except FileNotFoundError:
+        return []
+    if is_link_stat(dir_stat):
+        raise SymlinkDetectedError(f"Refusing to migrate symlink or reparse point: {src_dir}")
+    if not stat.S_ISDIR(dir_stat.st_mode):
+        return []
+
+    pairs: list[tuple[Path, Path, str]] = []
+    for root_str, dirnames, filenames in os.walk(src_dir, followlinks=False):
+        root_path = Path(root_str)
+        dirnames.sort()
+        for dirname in dirnames:
+            dir_entry = root_path / dirname
+            if is_link_stat(os.lstat(dir_entry)):
+                raise SymlinkDetectedError(
+                    f"Refusing to migrate symlink or reparse point: {dir_entry}"
+                )
+        for filename in sorted(filenames):
+            file_entry = root_path / filename
+            file_stat = os.lstat(file_entry)
+            if is_link_stat(file_stat):
+                raise SymlinkDetectedError(
+                    f"Refusing to migrate symlink or reparse point: {file_entry}"
+                )
+            if not stat.S_ISREG(file_stat.st_mode):
+                continue
+            rel_in_dir = file_entry.relative_to(src_dir)
+            if skip_sidecar_excludes and _should_skip_sidecar_file(rel_in_dir):
+                continue
+            rel_label = (Path(prefix_name) / rel_in_dir).as_posix()
+            dst_file = dst_dir / rel_in_dir
+            pairs.append((file_entry, dst_file, rel_label))
+    return pairs
 
 
 def _collect_migration_pairs(
     resolved_vault: Path,
     resolved_memory: Path,
 ) -> tuple[list[tuple[Path, Path, str]], list[tuple[Path, Path, str]]]:
-    sidecar_pairs: list[tuple[Path, Path, str]] = []
-    src_sidecar = resolved_vault / SIDECAR_DIR_NAME
-    if src_sidecar.is_dir():
-        for src_file in sorted(src_sidecar.rglob("*")):
-            if not src_file.is_file():
-                continue
-            rel_in_sidecar = src_file.relative_to(src_sidecar)
-            if _should_skip_sidecar_file(rel_in_sidecar):
-                continue
-            rel_label = (Path(SIDECAR_DIR_NAME) / rel_in_sidecar).as_posix()
-            dst_file = resolved_memory / SIDECAR_DIR_NAME / rel_in_sidecar
-            sidecar_pairs.append((src_file, dst_file, rel_label))
-
-    memory_pairs: list[tuple[Path, Path, str]] = []
-    src_memory = resolved_vault / MEMORY_SUBFOLDER_NAME
-    if src_memory.is_dir():
-        for src_file in sorted(src_memory.rglob("*")):
-            if not src_file.is_file():
-                continue
-            rel_in_memory = src_file.relative_to(src_memory)
-            rel_label = (Path(MEMORY_SUBFOLDER_NAME) / rel_in_memory).as_posix()
-            dst_file = resolved_memory / MEMORY_SUBFOLDER_NAME / rel_in_memory
-            memory_pairs.append((src_file, dst_file, rel_label))
-
+    sidecar_pairs = _collect_tree_pairs(
+        resolved_vault / SIDECAR_DIR_NAME,
+        resolved_memory / SIDECAR_DIR_NAME,
+        SIDECAR_DIR_NAME,
+        skip_sidecar_excludes=True,
+    )
+    memory_pairs = _collect_tree_pairs(
+        resolved_vault / MEMORY_SUBFOLDER_NAME,
+        resolved_memory / MEMORY_SUBFOLDER_NAME,
+        MEMORY_SUBFOLDER_NAME,
+        skip_sidecar_excludes=False,
+    )
     return sidecar_pairs, memory_pairs
 
 
@@ -173,10 +216,11 @@ async def migrate_vault_to_dual(
 ) -> MigrationResult:
     """Atomically copy `.datacron/` and `_memory/` to `memory_root`, verify SHA-256, and reindex."""
     resolved_vault, resolved_memory = _validate_migration_roots(vault_root, memory_root)
+    sidecar_pairs, memory_pairs = _collect_migration_pairs(resolved_vault, resolved_memory)
+
     resolved_memory.mkdir(parents=True, exist_ok=True)
     (resolved_memory / MEMORY_SUBFOLDER_NAME).mkdir(parents=True, exist_ok=True)
 
-    sidecar_pairs, memory_pairs = _collect_migration_pairs(resolved_vault, resolved_memory)
     all_pairs = [*sidecar_pairs, *memory_pairs]
     verified_files = _copy_and_verify_pairs(all_pairs)
 
@@ -200,12 +244,14 @@ async def migrate_vault_to_dual(
     rebuilt = await rebuild_index_atomic(resolved_vault, dual_settings, vault_cfg)
 
     if not keep_source:
-        src_memory = resolved_vault / MEMORY_SUBFOLDER_NAME
-        if src_memory.exists():
-            shutil.rmtree(src_memory)
+        # Remove .datacron/ before _memory/ so that an open SQLite handle on Windows
+        # fails before any user memory notes are deleted from the source vault.
         src_sidecar = resolved_vault / SIDECAR_DIR_NAME
         if src_sidecar.exists():
             shutil.rmtree(src_sidecar)
+        src_memory = resolved_vault / MEMORY_SUBFOLDER_NAME
+        if src_memory.exists():
+            shutil.rmtree(src_memory)
 
     client_installs: list[InstallOutcome] = []
     client_errors: list[str] = []
@@ -236,3 +282,6 @@ async def migrate_vault_to_dual(
         client_installs=client_installs,
         client_errors=client_errors,
     )
+
+
+migrate_memory_to_dedicated_vault = migrate_vault_to_dual
