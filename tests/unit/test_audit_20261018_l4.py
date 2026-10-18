@@ -209,7 +209,9 @@ def test_masked_docs_folder_and_missing_mount_are_reported(
         settings=Settings(vault_root=vault, extra_read_vaults={"other": elsewhere}),
         vault_root=vault,
     )
-    assert warnings == []
+    # Only mount warnings are in scope: a host without ripgrep adds its own warning.
+    mount_warnings = [item for item in warnings if item.startswith("extra_read_vaults mount")]
+    assert mount_warnings == []
 
 
 # Review follow-up: roots bound after Settings was built --------------------------------
