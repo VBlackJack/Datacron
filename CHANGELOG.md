@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.1018.00] - 2026-10-18
+
 ### Added
 
 - **Read response ceiling (`DATACRON_MAX_READ_RESPONSE_CHARS`)**: the complete serialized JSON
