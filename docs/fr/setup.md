@@ -364,28 +364,32 @@ Pour la suite, passe au [guide utilisateur](user-guide.md).
 
 ## 12. Datacron Companion, migration Dual-Vault et maintenance CLI
 
-- **Panneau de contrôle graphique (`datacron companion`)** : lance un panneau de contrôle local sur `127.0.0.1` (protection CSRF par jeton de session et validation `Host`/`Origin`) avec 7 vues (Tableau de bord, Vaults & Topologie, Recherche & Aperçu, Graphe & Compaction, Clients MCP, Historique & Audit, Réglages) et bascule FR/EN à chaud :
+- **Panneau de contrôle graphique (`datacron companion`)** : lance un panneau de contrôle local sur `127.0.0.1` (protection CSRF par jeton de session et validation `Host`/`Origin`) avec 7 vues (Tableau de bord, Vaults & Topologie, Recherche & Aperçu, Graphe & Compaction, Clients MCP, Historique & Audit, Réglages) et bascule FR/EN à chaud. `--vault` et `--memory-vault` sont enregistrés dans le profil Companion avant le démarrage ; un profil invalide est refusé plutôt que remplacé :
   ```bash
   datacron companion --vault /chemin/vers/vault
   ```
-- **Migration atomique Single-Vault vers Dual-Vault (`datacron migrate-memory`)** : copie `.datacron/` et `_memory/` depuis un vault unique existant vers un vault mémoire dédié, vérifie chaque fichier copié par SHA-256, reconstruit l'index FTS5 sur les deux racines et nettoie les anciennes copies (ajouter `--keep-source` pour les conserver) :
+- **Migration atomique Single-Vault vers Dual-Vault (`datacron migrate-memory`)** : copie `.datacron/` et `_memory/` depuis un vault unique existant vers un vault mémoire dédié, vérifie chaque fichier copié par SHA-256, reconstruit l'index FTS5 sur les deux racines et reconfigure les clients MCP détectés (`--client all --scope user` par défaut ; `--client none` les laisse inchangés). Les copies sources sont conservées, sauf si vous passez `--cleanup-source`. `--enable-write` / `--no-write` fixent la liste d'écriture autorisée des clients reconfigurés ; omis, chaque client garde son réglage d'écriture actuel.
+
+  **Arrêtez d'abord les clients MCP et les serveurs Datacron en cours d'exécution** : une écriture faite pendant la copie n'est pas reportée. Ensuite, redémarrez les clients, vérifiez qu'ils lisent le vault mémoire, puis supprimez `.datacron/` et `_memory/` du vault de documentation (ou relancez avec `--cleanup-source`). Avec `--client none`, lancez `datacron setup --memory-vault ...` pour diriger les clients vers le nouvel emplacement.
   ```bash
   datacron migrate-memory --vault /chemin/vers/docs --memory-vault /chemin/vers/memoire
   ```
-- **Santé du graphe et intégrité des liens (`datacron graph-health`)** : analyse le vault (ainsi que le vault mémoire et les vaults secondaires montés) pour signaler les wikilinks cassés, les notes orphelines hors journal, les notes pivots (hubs) et les liens inter-vaults :
+- **Santé du graphe et intégrité des liens (`datacron graph-health`)** : analyse le vault (ainsi que le vault mémoire et les vaults secondaires montés) pour signaler les wikilinks cassés, les notes orphelines hors journal, les notes pivots (hubs) et les liens inter-vaults. Le vault se donne avec `--vault` (ou en argument positionnel) :
   ```bash
   datacron graph-health --vault /chemin/vers/vault --json
   ```
-- **Compaction intelligente de la mémoire (`datacron compact-memory`)** : consolide les notes `_memory/journal/` plus anciennes que `--older-than-days` (défaut `30`) en digests mensuels (`_memory/archive/journal-YYYY-MM.md`) en préservant les wikilinks et en marquant `status: archived` :
+- **Compaction intelligente de la mémoire (`datacron compact-memory`)** : consolide les notes `_memory/journal/` plus anciennes que `--older-than-days` (défaut `30`) en digests mensuels (`_memory/archive/journal-YYYY-MM.md`) en préservant les wikilinks. Avec `--apply`, chaque journal source compacté reçoit les tags `archive/compacted` et `memory/archive` et un champ `compacted_into` qui nomme son digest ; son `status` n'est pas modifié. Le vault se donne avec `--vault` (ou en argument positionnel) :
   ```bash
   datacron compact-memory --vault /chemin/vers/vault --older-than-days 30 --dry-run
   datacron compact-memory --vault /chemin/vers/vault --older-than-days 30 --apply
   ```
-- **Configuration versionnée sous CAS (`datacron config get` / `datacron config set`)** : lit et met à jour atomiquement `.datacron/VAULT.yaml` ou `companion.json` sous Compare-And-Swap (`--expected-hash` ou `--expect-absent`) :
+- **Configuration versionnée sous CAS (`datacron config get` / `datacron config set`)** : lit et met à jour atomiquement `.datacron/VAULT.yaml` ou, avec `--target companion`, le profil Companion `companion.json`, sous Compare-And-Swap (`--expected-hash` ou `--expect-absent`). `config set` n'écrit que les clés dont la valeur change, par-dessus le contenu existant du fichier ; il ne réécrit jamais les valeurs par défaut. Un fichier illisible ou invalide est refusé (code `6`) au lieu d'être remplacé par les valeurs par défaut : corrigez-le, ou passez `--reset-invalid` pour repartir des valeurs par défaut et des valeurs fournies. Un `--vault` inexistant est refusé (code `2`) :
   ```bash
-  datacron config get /chemin/vers/vault --json
-  datacron config set /chemin/vers/vault --expected-hash sha256:... --values-json '{"excluded_folders":[".git"]}'
+  datacron config get --vault /chemin/vers/vault --json
+  datacron config set --vault /chemin/vers/vault --expected-hash sha256:... --values-json '{"excluded_folders":[".git"]}'
+  datacron config set --target companion --values-json '{"cli_timeout_seconds":60}'
   ```
+- **Vault mémoire de l'environnement et `--vault` explicite** : `DATACRON_MEMORY_ROOT` et `DATACRON_WRITE_PATHS` décrivent le vault désigné par `DATACRON_VAULT_ROOT`. Une commande lancée sur un autre vault, ou lancée alors que `DATACRON_VAULT_ROOT` n'est pas défini, les ignore (un avertissement le signale) et travaille en Single-Vault sur ce vault ; passez `--memory-vault` pour lui donner un vault mémoire dédié.
 
 ## Construire l'exécutable autonome (optionnel)
 

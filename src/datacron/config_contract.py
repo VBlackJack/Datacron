@@ -60,6 +60,7 @@ __all__ = [
     "SymlinkDetectedError",
     "VaultConfigSnapshot",
     "companion_config_path",
+    "merge_companion_profile_values",
     "read_companion_profile",
     "read_vault_config_snapshot",
     "write_companion_profile_cas",
@@ -323,23 +324,51 @@ def _sync_archive_tags_into_organization(
         merged_raw["organization"] = org_copy
 
 
-def _keeps_top_level_archive_tags(
-    existing_raw: Mapping[str, Any],
-    requested: list[str] | None,
-    effective: Mapping[str, Any],
-) -> bool:
-    """Persist a top-level archive_tags only when the vault declares it or the caller changes it.
+def _archive_tags_changed(requested: list[str], effective: Mapping[str, Any]) -> bool:
+    """Persist a top-level archive_tags only when the caller changes the effective list.
 
     The Companion sends back the list it displays. Writing that list unchanged would freeze
-    the current defaults into VAULT.yaml, where a top-level key overrides later defaults.
+    the current defaults into VAULT.yaml, where a top-level key overrides later defaults. A
+    list the vault already declares stays as stored when it is not changed.
     """
-    if "archive_tags" in existing_raw:
-        return True
-    if requested is None:
-        return False
     current = effective.get("archive_tags")
     current_tags = current if isinstance(current, list) else []
     return {tag.casefold() for tag in requested} != {str(tag).casefold() for tag in current_tags}
+
+
+def _changed_values(requested: Mapping[str, Any], current: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the part of ``requested`` that differs from the effective ``current`` values.
+
+    Callers send either one key (the CLI) or the whole displayed configuration (the
+    Companion). Persisting the echoed values would freeze every model default into
+    VAULT.yaml, so only what actually changed is kept. A nested mapping is compared
+    key by key; one that drops a key the current value holds is a replacement and is
+    kept whole, otherwise the removal would be lost.
+    """
+    changed: dict[str, Any] = {}
+    for key, value in requested.items():
+        if key in current and current[key] == value:
+            continue
+        existing = current.get(key)
+        if isinstance(value, dict) and isinstance(existing, dict) and set(existing).issubset(value):
+            nested = _changed_values(value, existing)
+            if nested:
+                changed[key] = nested
+            continue
+        changed[key] = value
+    return changed
+
+
+def _merge_changed_into_raw(raw: Mapping[str, Any], changed: Mapping[str, Any]) -> dict[str, Any]:
+    """Apply a delta from :func:`_changed_values` onto the stored raw mapping."""
+    merged: dict[str, Any] = dict(raw)
+    for key, value in changed.items():
+        existing = merged.get(key)
+        if isinstance(value, dict) and isinstance(existing, dict):
+            merged[key] = _merge_changed_into_raw(existing, value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def write_vault_config_cas(
@@ -349,31 +378,28 @@ def write_vault_config_cas(
     settings: Settings | None = None,
     expected_hash: str | None = None,
     expect_absent: bool = False,
+    allow_reset: bool = False,
 ) -> VaultConfigSnapshot:
-    """Validate and atomically write `.datacron/VAULT.yaml` under CAS protection."""
+    """Validate and atomically write `.datacron/VAULT.yaml` under CAS protection.
+
+    Only the keys whose value differs from the current effective configuration are
+    written, on top of the file's existing raw content. A present file that does not
+    parse or validate is refused: its snapshot carries defaults, and writing them back
+    would silently replace the vault identity and settings. ``allow_reset`` is the
+    explicit opt-in that discards the stored content and starts again from defaults.
+    """
     resolved_root = vault_root.expanduser().resolve()
     active_settings = settings or get_settings()
     raw_cfg_path = sidecar_vault_config(resolved_root, settings=active_settings)
     _verify_config_path_without_links(resolved_root, raw_cfg_path, active_settings)
 
-    raw_dict = dict(values)
-    unknown_keys = sorted(set(raw_dict) - _ALLOWED_VAULT_CONFIG_KEYS)
-    if unknown_keys:
-        raise ConfigValidationError(f"Unknown VAULT.yaml fields: {unknown_keys}")
-    if "schema_version" in raw_dict:
-        sv = raw_dict["schema_version"]
-        if isinstance(sv, bool) or not isinstance(sv, int) or sv < 1:
-            raise ConfigValidationError("schema_version must be a positive integer")
-    if "read_only" in raw_dict and not isinstance(raw_dict["read_only"], bool):
-        raise ConfigValidationError("read_only must be a boolean")
-
-    custom_archive: list[str] | None = None
-    if "archive_tags" in raw_dict:
-        raw_arch = raw_dict.pop("archive_tags")
+    requested = dict(values)
+    requested_archive: list[str] | None = None
+    if "archive_tags" in requested:
+        raw_arch = requested.pop("archive_tags")
         if not isinstance(raw_arch, list) or not all(isinstance(x, str) for x in raw_arch):
             raise ConfigValidationError("archive_tags must be a list of strings")
-        custom_archive = [x.strip() for x in raw_arch if x.strip()]
-    requested_archive = custom_archive
+        requested_archive = [x.strip() for x in raw_arch if x.strip()]
 
     current = read_vault_config_snapshot(vault_root, settings=active_settings)
     _verify_cas_precondition(
@@ -382,15 +408,30 @@ def write_vault_config_cas(
         expected_hash=expected_hash,
         expect_absent=expect_absent,
     )
+    if current.present and not current.valid and not allow_reset:
+        raise ConfigValidationError(
+            f"Refusing to overwrite invalid VAULT.yaml ({current.config_path}): "
+            f"{'; '.join(current.errors)}. Fix the file, or reset it to defaults explicitly."
+        )
+
+    changed = _changed_values(requested, current.values)
+    unknown_keys = sorted(set(changed) - _ALLOWED_VAULT_CONFIG_KEYS)
+    if unknown_keys:
+        raise ConfigValidationError(f"Unknown VAULT.yaml fields: {unknown_keys}")
+    if "schema_version" in changed:
+        sv = changed["schema_version"]
+        if isinstance(sv, bool) or not isinstance(sv, int) or sv < 1:
+            raise ConfigValidationError("schema_version must be a positive integer")
+    if "read_only" in changed and not isinstance(changed["read_only"], bool):
+        raise ConfigValidationError("read_only must be a boolean")
 
     cfg_path = Path(current.config_path)
     _verify_config_path_without_links(resolved_root, cfg_path, active_settings)
-    existing_raw = _load_existing_vault_yaml_dict(cfg_path)
-    if custom_archive is None:
-        custom_archive = _extract_raw_archive_tags(existing_raw)
-
-    merged_raw: dict[str, Any] = {**existing_raw, **raw_dict}
-    _sync_archive_tags_into_organization(merged_raw, custom_archive)
+    existing_raw = {} if not current.valid else _load_existing_vault_yaml_dict(cfg_path)
+    merged_raw = _merge_changed_into_raw(existing_raw, changed)
+    if requested_archive is not None and _archive_tags_changed(requested_archive, current.values):
+        merged_raw["archive_tags"] = requested_archive
+        _sync_archive_tags_into_organization(merged_raw, requested_archive)
 
     try:
         validated = VaultConfig.model_validate(merged_raw)
@@ -398,16 +439,8 @@ def write_vault_config_cas(
         raise ConfigValidationError(str(exc)) from exc
 
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    dumped_dict = _dump_vault_config_values(
-        validated,
-        custom_archive,
-        preserved_raw=merged_raw,
-    )
-    persisted_dict = dict(dumped_dict)
-    if not _keeps_top_level_archive_tags(existing_raw, requested_archive, current.values):
-        persisted_dict.pop("archive_tags", None)
     rendered = yaml.safe_dump(
-        persisted_dict,
+        merged_raw,
         sort_keys=False,
         allow_unicode=True,
     )
@@ -419,7 +452,11 @@ def write_vault_config_cas(
         present=True,
         content_hash=_sha256_prefixed(raw_bytes),
         valid=True,
-        values=dumped_dict,
+        values=_dump_vault_config_values(
+            validated,
+            _extract_raw_archive_tags(merged_raw),
+            preserved_raw=merged_raw,
+        ),
         errors=[],
     )
 
@@ -517,6 +554,36 @@ def read_companion_profile(path: Path | None = None) -> CompanionProfileSnapshot
             profile=CompanionProfile(),
             errors=[str(exc)],
         )
+
+
+def merge_companion_profile_values(
+    current: CompanionProfileSnapshot,
+    changes: Mapping[str, Any],
+    *,
+    allow_reset: bool = False,
+) -> dict[str, Any]:
+    """Merge partial changes onto the stored Companion profile, never onto defaults.
+
+    An invalid profile's snapshot carries the defaults, so merging onto it would
+    rewrite every stored field, ``enable_write`` included, while reporting success.
+    Such a profile is refused unless ``allow_reset`` explicitly discards it.
+    """
+    if current.present and not current.valid:
+        if not allow_reset:
+            raise ConfigValidationError(
+                f"Refusing to overwrite invalid Companion profile ({current.config_path}): "
+                f"{'; '.join(current.errors)}. Fix the file, or reset it to defaults explicitly."
+            )
+        return dict(changes)
+    stored: dict[str, Any] = {}
+    if current.present:
+        try:
+            decoded = json.loads(Path(current.config_path).read_bytes().decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ConfigValidationError(f"Companion profile does not load: {exc}") from exc
+        if isinstance(decoded, dict):
+            stored = decoded
+    return {**stored, **changes}
 
 
 def write_companion_profile_cas(

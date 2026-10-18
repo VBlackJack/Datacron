@@ -467,13 +467,13 @@ def test_extra_read_vaults_multi_vault_mounts_read_search_and_refuse_writes(
     asyncio.run(_exercise())
 
 
-def test_migrate_memory_default_cleans_source_and_keep_source_preserves(
+def test_migrate_memory_cleanup_source_cleans_and_keep_source_preserves(
     tmp_path: Path,
 ) -> None:
-    """migrate-memory verifies SHA-256, rebuilds index, and cleans source unless --keep-source."""
+    """migrate-memory verifies SHA-256, rebuilds index, and cleans source on --cleanup-source."""
     runner = CliRunner()
 
-    # 1. Default behavior: cleans .datacron/ and _memory/ from docs_vault after verification
+    # 1. --cleanup-source removes .datacron/ and _memory/ from docs_vault after verification
     docs_vault = tmp_path / "single-vault"
     memory_vault = tmp_path / "memory-vault"
     (docs_vault / "Guides").mkdir(parents=True)
@@ -497,6 +497,9 @@ def test_migrate_memory_default_cleans_source_and_keep_source_preserves(
             str(docs_vault),
             "--memory-vault",
             str(memory_vault),
+            "--cleanup-source",
+            "--client",
+            "none",
         ],
     )
     assert res.exit_code == 0, res.output
@@ -538,6 +541,8 @@ def test_migrate_memory_default_cleans_source_and_keep_source_preserves(
             "--memory-vault",
             str(memory_keep),
             "--keep-source",
+            "--client",
+            "none",
         ],
     )
     assert keep_res.exit_code == 0, keep_res.output
