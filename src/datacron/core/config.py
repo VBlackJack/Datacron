@@ -21,6 +21,7 @@ via :func:`reset_settings_cache`.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from datetime import date, datetime
@@ -43,6 +44,10 @@ from datacron.core.memory_protocol import (
 )
 from datacron.core.query_expansion import default_query_expansion, normalize_term_map
 from datacron.i18n import t
+
+# The datacron logger factory imports this module, so the stdlib call is used here; the
+# name is already under the ``datacron`` namespace that factory configures.
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 ULID_LENGTH: Final[int] = 26
 CANONICAL_ULID_REGEX: Final[str] = rf"^[0-9A-HJKMNP-TV-Z]{{{ULID_LENGTH}}}$"
@@ -96,6 +101,10 @@ DEFAULT_ARCHIVE_TAGS: Final[tuple[str, ...]] = (
     "archive/compacted",
     "archive/journal-digest",
 )
+# Frontmatter ``status`` values that retire a note, compared casefolded. The index
+# demotes such a note and the offline library classes it historical: one set, so the
+# two never disagree about the same note.
+HISTORICAL_STATUSES: Final[frozenset[str]] = frozenset({"archived", "historical", "superseded"})
 DEFAULT_STATE_NOTE_NAMESPACE: Final[str] = "kind"
 # BM25 column weights: the chunk body and its context (note title plus heading trail).
 SEARCH_CONTENT_WEIGHT: Final[float] = 1.0
@@ -936,6 +945,90 @@ def _parse_extra_read_vaults_value(value: object) -> dict[str, Path]:
     return result
 
 
+def _roots_overlap(first: Path, second: Path) -> bool:
+    """Return whether one resolved root is the other or contains it."""
+    return first == second or first.is_relative_to(second) or second.is_relative_to(first)
+
+
+def extra_mount_warnings(vault_root: Path, extra_read_vaults: dict[str, Path]) -> list[str]:
+    """Return one message per mount that hides docs notes or reads nothing.
+
+    A mount prefix is a top-level folder name of the merged vault, compared without
+    case, and the mount always wins: a docs folder of the same name drops out of the
+    walk, the index and search, even when the mount path does not exist. The masking
+    is the documented rule and stays; these messages make it visible at startup
+    instead of letting the docs notes vanish silently.
+    """
+    messages: list[str] = []
+    folded_prefixes = {prefix.casefold(): prefix for prefix in extra_read_vaults}
+    try:
+        top_level = sorted(
+            entry.name
+            for entry in vault_root.iterdir()
+            if entry.name.casefold() in folded_prefixes and entry.is_dir()
+        )
+    except OSError:
+        top_level = []
+    for folder in top_level:
+        prefix = folded_prefixes[folder.casefold()]
+        messages.append(
+            f"extra_read_vaults mount {prefix!r} masks the docs folder {folder!r} of "
+            f"{vault_root}: its notes are left out of the index and search while the "
+            "mount is configured; rename the folder or choose another prefix"
+        )
+    for prefix, mount_root in extra_read_vaults.items():
+        if not mount_root.is_dir():
+            messages.append(
+                f"extra_read_vaults mount {prefix!r} points to {mount_root}, which is not "
+                "an existing folder: the mount reads no notes"
+            )
+    return messages
+
+
+def validate_root_topology(
+    vault_root: Path | None,
+    memory_root: Path | None,
+    extra_read_vaults: dict[str, Path],
+) -> None:
+    """Refuse a vault, memory and mount layout whose roots contain one another.
+
+    Every root is walked on its own and its notes keyed relative to it, so a root that
+    sits inside another one is read twice under two identities: a mount above the vault
+    re-keys every docs note under a read-only prefix, a mount inside it lists its notes
+    twice, a memory root inside the docs vault puts ``_memory`` in the docs scope, and a
+    memory root above it claims every docs path for the memory scope. A memory root equal
+    to the vault root is the single-vault layout and stays valid. Paths are compared
+    resolved and with the platform's path semantics (case-insensitive on Windows).
+    """
+    dual_memory = memory_root if memory_root is not None and memory_root != vault_root else None
+    if vault_root is not None and dual_memory is not None:
+        if vault_root.is_relative_to(dual_memory):
+            raise ValueError(
+                f"memory_root {dual_memory} contains vault_root {vault_root}; "
+                "the two vaults must be separate folders, for example siblings"
+            )
+        if dual_memory.is_relative_to(vault_root):
+            raise ValueError(
+                f"memory_root {dual_memory} is inside vault_root {vault_root}; "
+                "the two vaults must be separate folders, for example siblings"
+            )
+    named_roots = [("vault_root", vault_root), ("memory_root", dual_memory)]
+    mounts = list(extra_read_vaults.items())
+    for index, (prefix, mount_root) in enumerate(mounts):
+        for name, root in named_roots:
+            if root is not None and _roots_overlap(mount_root, root):
+                raise ValueError(
+                    f"extra_read_vaults mount {prefix!r} ({mount_root}) overlaps {name} "
+                    f"{root}; a mount must neither contain nor sit inside it"
+                )
+        for other_prefix, other_root in mounts[index + 1 :]:
+            if _roots_overlap(mount_root, other_root):
+                raise ValueError(
+                    f"extra_read_vaults mounts {prefix!r} ({mount_root}) and "
+                    f"{other_prefix!r} ({other_root}) overlap; mounts must be disjoint folders"
+                )
+
+
 @final
 class Settings(BaseSettings):
     """Datacron runtime settings.
@@ -1127,6 +1220,14 @@ class Settings(BaseSettings):
     @classmethod
     def _parse_extra_read_vaults(cls, value: object) -> dict[str, Path]:
         return _parse_extra_read_vaults_value(value)
+
+    @model_validator(mode="after")
+    def _refuse_overlapping_roots(self) -> Settings:
+        validate_root_topology(self.vault_root, self.memory_root, self.extra_read_vaults)
+        if self.vault_root is not None and self.extra_read_vaults:
+            for message in extra_mount_warnings(self.vault_root, self.extra_read_vaults):
+                _LOGGER.warning(message)
+        return self
 
     @model_validator(mode="after")
     def _extend_read_paths_with_extra_vaults(self) -> Settings:

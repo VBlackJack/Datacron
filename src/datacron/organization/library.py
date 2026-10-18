@@ -27,7 +27,12 @@ from urllib.parse import quote, unquote, urlsplit
 
 from mistletoe import block_token
 
-from datacron.core.config import DEFAULT_ARCHIVE_TAGS, Settings, load_vault_config
+from datacron.core.config import (
+    DEFAULT_ARCHIVE_TAGS,
+    HISTORICAL_STATUSES,
+    Settings,
+    load_vault_config,
+)
 from datacron.core.frontmatter import coerce_string_list, parse
 from datacron.core.markdown_headings import markdown_headings, token_text
 from datacron.core.models import ChunkType, Note
@@ -279,7 +284,7 @@ def lifecycle(
     meta = note.frontmatter
     if note.id in superseded or meta.get("invalid_at") or meta.get("archived") is True:
         return "historical"
-    if str(meta.get("status", "")).casefold() in {"archived", "historical", "superseded"}:
+    if str(meta.get("status", "")).casefold() in HISTORICAL_STATUSES:
         return "historical"
     archived_tags = {tag.casefold() for tag in archive_tags}
     if archived_tags.intersection(tag.casefold() for tag in note.tags):

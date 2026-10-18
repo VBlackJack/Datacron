@@ -26,7 +26,12 @@ from mistletoe import block_token
 from datacron.core.config import DEFAULT_CHUNK_MAX_TOKENS, TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.hashing import hash_text
 from datacron.core.logger import get_logger
-from datacron.core.markdown_headings import html_comment_lines, token_text
+from datacron.core.markdown_headings import (
+    html_comment_lines,
+    normalized_line_ends,
+    split_markdown_lines,
+    token_text,
+)
 from datacron.core.markdown_sections import heading_ancestry
 from datacron.core.models import Chunk, ChunkType, Note
 from datacron.indexing.wikilinks import OpenFence, extract_wikilink_targets, open_fence_after
@@ -38,7 +43,7 @@ _HEADING_SEPARATOR: Final[str] = " / "
 # a note name, not a paragraph, so this is generous; the bound is what keeps an
 # adversarial line of nothing but "[[" from turning the scan quadratic.
 _WIKILINK_SCAN_WINDOW: Final[int] = 256
-CHUNKER_VERSION: Final[int] = 2
+CHUNKER_VERSION: Final[int] = 3
 """Version of the chunks this chunker produces for unchanged note bytes.
 
 Bumped whenever a release changes the chunks of a note whose bytes did not move
@@ -47,6 +52,8 @@ that wrote it; a pass that finds another one re-chunks every note, because the
 mtime gate and the content hash both say an unchanged note is up to date.
 Version 2: headings inside HTML comments, inline triple backticks, and escaped
 table pipes in wikilinks.
+Version 3: lines split on ``\\r\\n``, ``\\r`` and ``\\n`` only, so U+2028, NEL, VT and FF
+no longer start a line and chunk line numbers agree with ripgrep's.
 """
 
 __all__ = ["CHUNKER_VERSION", "MarkdownChunker", "content_line_offset"]
@@ -91,9 +98,9 @@ class MarkdownChunker:
             raise
 
     def _chunk(self, note: Note) -> list[Chunk]:
-        source_lines = note.content.splitlines(keepends=True)
+        source_lines = split_markdown_lines(note.content)
         line_offset = content_line_offset(note)
-        document = block_token.Document(source_lines)
+        document = block_token.Document(normalized_line_ends(source_lines))
         blocks = list(document.children or [])
         # One heading model with the map and the write selectors: a heading line
         # inside an HTML comment is not a heading there, so it is not one here. A

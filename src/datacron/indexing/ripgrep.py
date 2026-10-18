@@ -50,6 +50,7 @@ from datacron.core.config import (
     has_catastrophic_regex_shape,
 )
 from datacron.core.logger import get_logger
+from datacron.core.markdown_headings import split_markdown_lines
 from datacron.core.models import Chunk, SearchResult
 from datacron.core.paths import effective_extra_read_vaults, effective_memory_root
 from datacron.core.protocols import FTS5Store
@@ -74,6 +75,12 @@ _NOTE_TYPE_NAME: Final[str] = "datacronnote"
 # extension: a note named ``Upper.MD`` was indexed and found by search_text, and
 # never reached by search_regex. A character class matches every case variant.
 _NOTE_TYPE_DEFINITION: Final[str] = f"{_NOTE_TYPE_NAME}:*.[mM][dD]"
+# A gitignore-style negation: no slash before the trailing one, so it prunes a dot
+# folder at any depth, the way the vault walk skips it.
+_DOT_FOLDER_EXCLUSION_GLOB: Final[str] = "!.*/"
+# Floor for the indexed fallback's share of the search deadline: a spent deadline then
+# ends in the fallback's own timeout error, which names the remedies.
+_MIN_FALLBACK_BUDGET_SECONDS: Final[float] = 0.001
 _STDERR_TRUNCATION_MARKER: Final[str] = "\n... (ripgrep diagnostics truncated)"
 _RISKY_REPETITION_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"\([^)]*(?:\||[+*])[^)]*\)(?:[+*]|\{)"
@@ -237,9 +244,19 @@ class RipgrepWrapper:
 
         combined: list[SearchResult] = []
         last_error: RipgrepError | None = None
+        # One deadline for the whole search, not one per root: with a memory vault and
+        # mounts, a per-root timeout let one call run for several times the setting.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
         for root_prefix, root_dir in roots_to_search:
             remaining = limit - len(combined)
             if remaining <= 0:
+                break
+            budget = deadline - loop.time()
+            if budget <= 0:
+                last_error = RipgrepError(
+                    None, f"ripgrep search timed out after {timeout_seconds} seconds"
+                )
                 break
             try:
                 part = await _search_single_root(
@@ -251,7 +268,7 @@ class RipgrepWrapper:
                     rank_offset=len(combined),
                     store=store,
                     resolved_rg_path=resolved_rg_path,
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=budget,
                     admit=admit,
                     max_frame_bytes=max_frame_bytes or DEFAULT_REGEX_MAX_FRAME_BYTES,
                     shadowed_prefixes=shadowed_prefixes if root_prefix is None else (),
@@ -267,15 +284,22 @@ class RipgrepWrapper:
                         if fallback_max_pattern_length is None
                         else fallback_max_pattern_length
                     ),
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=max(deadline - loop.time(), _MIN_FALLBACK_BUDGET_SECONDS),
                     admit=admit,
                 )
             except RipgrepError as exc:
                 last_error = exc
                 continue
             combined.extend(part)
-        if not combined and last_error is not None:
-            raise last_error
+        if last_error is not None:
+            if not combined:
+                raise last_error
+            # The caller receives what the other roots found; the log says the answer
+            # is partial, since the result list itself has no place to carry that.
+            _LOGGER.warning(
+                "search_regex returned partial results: a searched root failed (%s)",
+                last_error,
+            )
         return combined
 
 
@@ -615,10 +639,17 @@ def _build_command(rg_path: str, pattern: str, glob: str | None) -> list[str]:
         _NOTE_TYPE_DEFINITION,
         "--type",
         _NOTE_TYPE_NAME,
+        # The vault walk behind search_text reads no .gitignore, .ignore or .rgignore
+        # and admits dot files, so ripgrep must not filter on either: a note listed
+        # in a .gitignore was found by one search and silently missed by the other.
+        # Dot folders stay out, as they do in the walk; the exclusion comes after the
+        # caller's glob because a later glob takes precedence in ripgrep.
+        "--no-ignore",
+        "--hidden",
     ]
     if glob:
         command.extend(["--glob", glob])
-    command.extend(["--", pattern, "."])
+    command.extend(["--glob", _DOT_FOLDER_EXCLUSION_GLOB, "--", pattern, "."])
     return command
 
 
@@ -759,7 +790,7 @@ def _scan_indexed_chunks(
 
 
 def _first_matching_line_snippet(content: str, pattern: re.Pattern[str]) -> str | None:
-    lines = content.splitlines() or [content]
+    lines = [line.rstrip("\r\n") for line in split_markdown_lines(content)] or [content]
     for line in lines:
         match = pattern.search(line)
         if match is not None:

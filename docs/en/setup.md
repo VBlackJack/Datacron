@@ -251,7 +251,7 @@ datacron protocol uninstall --client all
 |---|---|---|
 | `DATACRON_VAULT_ROOT` | unset | Fallback after `--vault`; the current directory is accepted only when it contains `.datacron/VAULT.yaml`. |
 | `DATACRON_MEMORY_ROOT` | unset | Optional dedicated memory vault root; hosts `.datacron/` and `_memory/` while keeping `DATACRON_VAULT_ROOT` free of both. |
-| `DATACRON_EXTRA_READ_VAULTS` | empty | Optional read-only secondary vault mounts (`prefix=path` separated by the OS path separator or a JSON object). |
+| `DATACRON_EXTRA_READ_VAULTS` | empty | Optional read-only secondary vault mounts (`prefix=path` separated by the OS path separator or a JSON object). Each prefix becomes a top-level folder of the vault and wins over a docs folder of the same name, compared without case: that docs folder drops out of the walk, the index and search while the mount is configured (its files stay on disk), even when the mount path does not exist. The server logs a warning at startup for such a masked folder and for a mount path that is not an existing folder. A mount that contains, or sits inside, the vault root, the memory root or another mount is refused. |
 | `DATACRON_READ_PATHS` | empty | Read allowlist; the installer sets it to the vault (and memory vault when configured). |
 | `DATACRON_WRITE_PATHS` | empty | Write allowlist; **empty = writing disabled**. |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | Maximum number of results returned. |

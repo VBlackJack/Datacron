@@ -19,6 +19,7 @@ import re
 from collections.abc import Iterator
 from typing import Final, TypeAlias, final
 
+from datacron.core.markdown_headings import split_markdown_lines
 from datacron.core.models import Chunk, ChunkType, Wikilink
 
 __all__ = [
@@ -158,7 +159,7 @@ def _excluded_code_ranges(
 
 def _frontmatter_range(content: str) -> tuple[int, int] | None:
     offset = 1 if content.startswith("\ufeff") else 0
-    lines = content[offset:].splitlines(keepends=True)
+    lines = split_markdown_lines(content[offset:])
     if not lines or lines[0].strip() != "---":
         return None
     position = offset + len(lines[0])
@@ -195,7 +196,7 @@ def _fence_ranges(
     opening: tuple[str, int, int] | None = (
         None if open_fence is None else (open_fence[0], open_fence[1], 0)
     )
-    for line in content.splitlines(keepends=True):
+    for line in split_markdown_lines(content):
         start = position
         end = position + len(line)
         position = end

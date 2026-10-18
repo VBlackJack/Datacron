@@ -99,10 +99,17 @@ def test_real_rg_retains_default_hidden_directory_policy(
     assert paths == {"_memory/visible.md"}
 
 
-def test_real_rg_retains_default_ignore_policy(tmp_path: Path, rg_path: str) -> None:
+def test_real_rg_reads_no_ignore_file_and_skips_dot_folders(tmp_path: Path, rg_path: str) -> None:
+    # The vault walk behind search_text reads no ignore file and admits dot files but
+    # not dot folders; ripgrep must cover exactly the same notes.
     (tmp_path / ".ignore").write_text("ignored/\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("gitignored.md\n", encoding="utf-8")
     (tmp_path / "ignored").mkdir()
     (tmp_path / "ignored/probe.md").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "gitignored.md").write_text("needle\n", encoding="utf-8")
+    (tmp_path / ".dotfile.md").write_text("needle\n", encoding="utf-8")
+    (tmp_path / ".obsidian").mkdir()
+    (tmp_path / ".obsidian/hidden.md").write_text("needle\n", encoding="utf-8")
     (tmp_path / "visible.md").write_text("needle\n", encoding="utf-8")
     result = subprocess.run(
         _build_command(rg_path, "needle", None),
@@ -111,13 +118,12 @@ def test_real_rg_retains_default_ignore_policy(tmp_path: Path, rg_path: str) -> 
         text=True,
         check=True,
     )
-    assert "ignored/probe.md" not in result.stdout.replace("\\\\", "/")
     matches = [json.loads(line) for line in result.stdout.splitlines()]
     assert {
         Path(event["data"]["path"]["text"]).as_posix()
         for event in matches
         if event["type"] == "match"
-    } == {"visible.md"}
+    } == {"visible.md", "ignored/probe.md", "gitignored.md", ".dotfile.md"}
 
 
 @pytest.fixture
