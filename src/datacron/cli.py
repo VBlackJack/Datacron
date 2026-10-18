@@ -46,7 +46,9 @@ from datacron.cli_library import app as library_app
 from datacron.core.config import (
     DEFAULT_DURABILITY_MODE,
     LOG_FILENAME_PATTERN,
+    SIDECAR_DIR_NAME,
     VALID_DURABILITY_MODES,
+    VAULT_CONFIG_FILENAME,
     Settings,
     VaultConfig,
     get_settings,
@@ -358,20 +360,26 @@ def _settings_for_cli_vault(
     vault_root: Path,
     *,
     memory_root: Path | None = None,
+    explicit_vault: bool = False,
 ) -> Settings:
     """Bind a CLI vault without widening configured non-empty scopes.
 
-    The environment memory root and write paths describe the environment vault. They
-    apply only when that vault is the one this command works on (the rule of
-    ``effective_memory_root``). Bound to any other vault, they used to point the
-    command at the environment's memory vault: indexing a test vault rewrote the real
-    memory index. A distinct memory vault for another vault needs ``--memory-vault``.
+    The environment memory root follows the server's rule (``effective_memory_root``):
+    it applies unless ``DATACRON_VAULT_ROOT`` names another vault. Bound to that other
+    vault, it used to point the command at the environment's memory vault: indexing a
+    test vault rewrote the real memory index. A distinct memory vault for another vault
+    needs ``--memory-vault``.
+
+    With ``DATACRON_VAULT_ROOT`` unset, an explicit ``--vault`` cannot be checked against
+    the environment. A vault that holds its own ``.datacron/VAULT.yaml`` is self-contained
+    and is refused rather than bound to the environment memory vault; any other explicit
+    vault is bound with a warning that names the memory vault in use.
     """
     resolved_vault = vault_root.expanduser().resolve()
     env_vault = (
         settings.vault_root.expanduser().resolve() if settings.vault_root is not None else None
     )
-    foreign_vault = env_vault != resolved_vault
+    foreign_vault = env_vault is not None and env_vault != resolved_vault
     resolved_memory: Path | None
     if memory_root is not None:
         resolved_memory = memory_root.expanduser().resolve()
@@ -389,6 +397,23 @@ def _settings_for_cli_vault(
             )
     else:
         resolved_memory = settings.memory_root
+        if resolved_memory is not None and env_vault is None and explicit_vault:
+            env_memory = resolved_memory.expanduser().resolve()
+            own_config = resolved_vault / SIDECAR_DIR_NAME / VAULT_CONFIG_FILENAME
+            if env_memory != resolved_vault and own_config.is_file():
+                _error(
+                    t(
+                        "cli.error.self_contained_vault_with_env_memory",
+                        vault=resolved_vault,
+                        memory_root=env_memory,
+                    ),
+                    exit_code=_EXIT_USAGE_ERROR,
+                )
+            typer.secho(
+                t("cli.warning.env_memory_root_used", memory_root=env_memory, vault=resolved_vault),
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
     updates: dict[str, object] = {"vault_root": vault_root, "memory_root": resolved_memory}
     roots: list[Path] = [resolved_vault]
     if resolved_memory is not None and resolved_memory != resolved_vault:
@@ -421,7 +446,12 @@ def _bind_cli_vault(
     vault_root = _resolve_vault_root(vault, base_settings, error_exit_code=error_exit_code)
     if require_existing and not vault_root.is_dir():
         _error(t("cli.error.vault_not_found", path=vault_root), exit_code=_EXIT_USAGE_ERROR)
-    return vault_root, _settings_for_cli_vault(base_settings, vault_root, memory_root=memory_vault)
+    return vault_root, _settings_for_cli_vault(
+        base_settings,
+        vault_root,
+        memory_root=memory_vault,
+        explicit_vault=vault is not None,
+    )
 
 
 def _load_vault_yaml(
@@ -3209,6 +3239,9 @@ def companion_cmd(
         changes: dict[str, str] = {}
         if vault is not None:
             changes["vault_path"] = str(_guard_vault_target(vault.expanduser().resolve()))
+            # An explicit vault without --memory-vault is a single-vault choice: keeping
+            # the stored memory vault would go on syncing into it.
+            changes["memory_vault_path"] = ""
         if memory_vault is not None:
             changes["memory_vault_path"] = str(
                 _guard_vault_target(memory_vault.expanduser().resolve())

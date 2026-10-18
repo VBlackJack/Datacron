@@ -24,6 +24,7 @@ import yaml
 from typer.testing import CliRunner
 
 import datacron.cli as cli_module
+import datacron.companion as companion_module
 import datacron.migration as migration_module
 from datacron.bootstrap import initialize_vault
 from datacron.cli import _prompt_memory_vault, _settings_for_cli_vault, app
@@ -45,6 +46,23 @@ _ECHO_RETENTION: Final[int] = 90
 _TIMEOUT_SECONDS: Final[int] = 60
 
 runner = CliRunner()
+_HOME_VARIABLES: Final[tuple[str, ...]] = (
+    "HOME",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "XDG_CONFIG_HOME",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep every command away from the real client configurations and profile."""
+    home = tmp_path / "home"
+    home.mkdir()
+    for name in _HOME_VARIABLES:
+        monkeypatch.setenv(name, str(home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
 
 
 def _vault_yaml(vault_root: Path) -> Path:
@@ -243,6 +261,72 @@ def test_echoed_snapshot_does_not_freeze_model_defaults(tmp_path: Path) -> None:
     assert written.values["vault_id"] == _KEPT_VAULT_ID
 
 
+def _folders_vault(tmp_path: Path) -> tuple[Path, Path]:
+    vault = tmp_path / "vault"
+    config = _write_vault_yaml(
+        vault,
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "vault_id": _KEPT_VAULT_ID,
+                "folders": {"inbox": "notes/inbox", "journal": "_memory/journal"},
+            },
+            sort_keys=False,
+        ),
+    )
+    return vault, config
+
+
+@pytest.mark.parametrize(
+    ("folders", "expected"),
+    [({"inbox": "notes/inbox"}, {"inbox": "notes/inbox"}), ({}, {})],
+)
+def test_removing_or_clearing_a_mapping_key_is_persisted(
+    tmp_path: Path,
+    folders: dict[str, str],
+    expected: dict[str, str],
+) -> None:
+    vault, config = _folders_vault(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["config", "set", "--vault", str(vault), "--values-json", json.dumps({"folders": folders})],
+    )
+
+    assert result.exit_code == 0, result.output
+    persisted = yaml.safe_load(config.read_text(encoding="utf-8"))
+    assert persisted["folders"] == expected
+    assert persisted["vault_id"] == _KEPT_VAULT_ID
+
+
+def test_query_expansion_removal_does_not_persist_derived_pairs(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    config = _write_vault_yaml(
+        vault,
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "query_expansion": {"alpha": ["beta"], "gamma": ["delta"]},
+            },
+            sort_keys=False,
+        ),
+    )
+    snapshot = read_vault_config_snapshot(vault)
+    displayed = dict(snapshot.values["query_expansion"])
+    assert displayed["beta"] == ["alpha"]
+    displayed.pop("gamma")
+    displayed.pop("delta")
+
+    write_vault_config_cas(
+        vault,
+        {**snapshot.values, "query_expansion": displayed},
+        expected_hash=snapshot.content_hash,
+    )
+
+    persisted = yaml.safe_load(config.read_text(encoding="utf-8"))
+    assert persisted["query_expansion"] == {"alpha": ["beta"]}
+
+
 # ---------------------------------------------------------------------------
 # D-4 / E-2: the environment memory root belongs to the environment vault
 # ---------------------------------------------------------------------------
@@ -283,6 +367,32 @@ def test_index_on_another_vault_leaves_the_environment_memory_vault_alone(
     monkeypatch: pytest.MonkeyPatch,
     command: str,
 ) -> None:
+    env_vault = tmp_path / "env-vault"
+    env_vault.mkdir()
+    env_memory = tmp_path / "env-memory"
+    env_memory.mkdir()
+    other = tmp_path / "other"
+    initialize_vault(other)
+    (other / "note.md").write_text("# Note\n\nBody.\n", encoding="utf-8")
+    _set_env(
+        monkeypatch,
+        DATACRON_VAULT_ROOT=str(env_vault),
+        DATACRON_MEMORY_ROOT=str(env_memory),
+    )
+
+    result = runner.invoke(app, [command, "--vault", str(other)])
+
+    assert result.exit_code == 0, result.output
+    assert not (env_memory / ".datacron").exists()
+    assert any((other / ".datacron" / "index").iterdir())
+
+
+@pytest.mark.parametrize("command", ["index", "reindex"])
+def test_self_contained_vault_is_refused_when_only_the_memory_root_is_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
     env_memory = tmp_path / "env-memory"
     env_memory.mkdir()
     other = tmp_path / "other"
@@ -292,20 +402,47 @@ def test_index_on_another_vault_leaves_the_environment_memory_vault_alone(
 
     result = runner.invoke(app, [command, "--vault", str(other)])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == _EXIT_USAGE, result.output
+    assert isinstance(result.exception, SystemExit), result.exception
     assert not (env_memory / ".datacron").exists()
-    assert any((other / ".datacron" / "index").iterdir())
+
+    explicit = runner.invoke(app, [command, "--vault", str(other), "--memory-vault", str(other)])
+    assert explicit.exit_code == 0, explicit.output
+    assert not (env_memory / ".datacron").exists()
+
+
+def test_unset_vault_root_keeps_the_server_rule_for_a_docs_vault(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_memory = tmp_path / "env-memory"
+    docs = tmp_path / "docs"
+    env_memory.mkdir()
+    docs.mkdir()
+    _set_env(monkeypatch, DATACRON_MEMORY_ROOT=str(env_memory))
+    settings = get_settings()
+
+    explicit = _settings_for_cli_vault(settings, docs.resolve(), explicit_vault=True)
+    discovered = _settings_for_cli_vault(settings, docs.resolve())
+
+    assert explicit.memory_root == env_memory.resolve()
+    assert discovered.memory_root == env_memory.resolve()
 
 
 def test_setup_ignores_environment_memory_root_of_another_vault(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    env_vault = tmp_path / "env-vault"
     env_memory = tmp_path / "env-memory"
-    env_memory.mkdir()
     other = tmp_path / "other"
-    other.mkdir()
-    _set_env(monkeypatch, DATACRON_MEMORY_ROOT=str(env_memory))
+    for root in (env_vault, env_memory, other):
+        root.mkdir()
+    _set_env(
+        monkeypatch,
+        DATACRON_VAULT_ROOT=str(env_vault),
+        DATACRON_MEMORY_ROOT=str(env_memory),
+    )
 
     resolved = _prompt_memory_vault(
         None,
@@ -315,6 +452,52 @@ def test_setup_ignores_environment_memory_root_of_another_vault(
     )
 
     assert resolved is None
+
+
+class _IdleServer:
+    def serve_forever(self) -> None:
+        return None
+
+    def server_close(self) -> None:
+        return None
+
+
+def _stub_companion_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_create(*, port: int) -> tuple[_IdleServer, str, str]:
+        return _IdleServer(), "http://127.0.0.1:0/", "token"
+
+    monkeypatch.setattr(companion_module, "create_companion_server", fake_create)
+
+
+def test_companion_vault_without_memory_vault_clears_the_stored_memory_vault(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    memory = tmp_path / "memory"
+    vault.mkdir()
+    memory.mkdir()
+    profile = tmp_path / "companion.json"
+    profile.write_text(
+        json.dumps({"vault_path": str(vault), "memory_vault_path": str(memory)}),
+        encoding="utf-8",
+    )
+    _set_env(monkeypatch, DATACRON_COMPANION_CONFIG=str(profile))
+    _stub_companion_server(monkeypatch)
+
+    result = runner.invoke(app, ["companion", "--vault", str(vault), "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    stored = json.loads(profile.read_text(encoding="utf-8"))
+    assert stored["memory_vault_path"] == ""
+
+    both = runner.invoke(
+        app,
+        ["companion", "--vault", str(vault), "--memory-vault", str(memory), "--no-browser"],
+    )
+    assert both.exit_code == 0, both.output
+    stored = json.loads(profile.read_text(encoding="utf-8"))
+    assert stored["memory_vault_path"] == str(memory.resolve())
 
 
 # ---------------------------------------------------------------------------

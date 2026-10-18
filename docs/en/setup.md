@@ -353,7 +353,7 @@ For the next steps, move on to the [user guide](user-guide.md).
 
 ## 12. Datacron Companion, Dual-Vault migration & maintenance CLI
 
-- **Graphical Control Panel (`datacron companion`)**: launches a local control panel on `127.0.0.1` (session-token CSRF and `Host`/`Origin` validation) with 7 tabs (Dashboard, Vaults & Topology, Search & Preview, Graph & Compaction, MCP Clients, History & Audit, Settings) and live FR/EN switching. `--vault` and `--memory-vault` are saved into the Companion profile before it starts; an invalid profile is refused rather than replaced:
+- **Graphical Control Panel (`datacron companion`)**: launches a local control panel on `127.0.0.1` (session-token CSRF and `Host`/`Origin` validation) with 7 tabs (Dashboard, Vaults & Topology, Search & Preview, Graph & Compaction, MCP Clients, History & Audit, Settings) and live FR/EN switching. `--vault` and `--memory-vault` are saved into the Companion profile before it starts; `--vault` without `--memory-vault` is a single-vault choice and clears the stored memory vault. An invalid profile is refused rather than replaced:
   ```bash
   datacron companion --vault /path/to/vault
   ```
@@ -378,7 +378,7 @@ For the next steps, move on to the [user guide](user-guide.md).
   datacron config set --vault /path/to/vault --expected-hash sha256:... --values-json '{"excluded_folders":[".git"]}'
   datacron config set --target companion --values-json '{"cli_timeout_seconds":60}'
   ```
-- **Environment memory vault and an explicit `--vault`**: `DATACRON_MEMORY_ROOT` and `DATACRON_WRITE_PATHS` describe the vault named by `DATACRON_VAULT_ROOT`. A command run on another vault, or run while `DATACRON_VAULT_ROOT` is unset, ignores them (a warning says so) and works in single-vault mode on that vault; pass `--memory-vault` to give it a dedicated memory vault.
+- **Environment memory vault and an explicit `--vault`**: CLI commands follow the MCP server's rule: `DATACRON_MEMORY_ROOT` applies unless `DATACRON_VAULT_ROOT` names another vault. A command run on another vault ignores `DATACRON_MEMORY_ROOT` and the `DATACRON_WRITE_PATHS` entries outside that vault (a warning says so) and works in single-vault mode; pass `--memory-vault` to give it a dedicated memory vault. When `DATACRON_VAULT_ROOT` is unset, an explicit `--vault` is bound to the environment memory vault with a warning naming it, except a vault that holds its own `.datacron/VAULT.yaml`: that self-contained vault is refused (exit `2`) until you pass `--memory-vault` or set `DATACRON_VAULT_ROOT`.
 
 ## Build the standalone executable (optional)
 

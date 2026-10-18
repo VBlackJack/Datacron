@@ -128,10 +128,12 @@
       "profile_not_saved": "Profil Companion non enregistré : {detail}"
     },
     "warning": {
-      "env_memory_root_ignored": "DATACRON_MEMORY_ROOT ({memory_root}) ne s'applique que si DATACRON_VAULT_ROOT désigne {vault} ; il est ignoré. Passer --memory-vault pour utiliser un vault mémoire dédié."
+      "env_memory_root_ignored": "DATACRON_MEMORY_ROOT ({memory_root}) appartient au vault désigné par DATACRON_VAULT_ROOT, pas à {vault} ; il est ignoré. Passer --memory-vault pour utiliser un vault mémoire dédié.",
+      "env_memory_root_used": "Utilisation du vault mémoire {memory_root} de DATACRON_MEMORY_ROOT pour {vault} (DATACRON_VAULT_ROOT n'est pas défini). Passer --memory-vault pour en choisir un autre."
     },
     "error": {
-      "vault_not_found": "Le chemin du vault n'existe pas ou n'est pas un répertoire : {path}"
+      "vault_not_found": "Le chemin du vault n'existe pas ou n'est pas un répertoire : {path}",
+      "self_contained_vault_with_env_memory": "{vault} a son propre .datacron/VAULT.yaml, mais DATACRON_MEMORY_ROOT ({memory_root}) le lierait à un autre vault mémoire, et DATACRON_VAULT_ROOT n'est pas défini. Passer --memory-vault, ou définir DATACRON_VAULT_ROOT sur le vault auquel appartient ce vault mémoire."
     },
     "eval": {
       "failed": "Échec de l'évaluation : {detail}"

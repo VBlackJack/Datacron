@@ -342,21 +342,72 @@ def _changed_values(requested: Mapping[str, Any], current: Mapping[str, Any]) ->
     Callers send either one key (the CLI) or the whole displayed configuration (the
     Companion). Persisting the echoed values would freeze every model default into
     VAULT.yaml, so only what actually changed is kept. A nested mapping is compared
-    key by key; one that drops a key the current value holds is a replacement and is
-    kept whole, otherwise the removal would be lost.
+    key by key; one that drops a key the current value holds is a replacement, marked
+    with :class:`_MappingReplacement` so the merge removes the key instead of merging
+    the stored one back.
     """
     changed: dict[str, Any] = {}
     for key, value in requested.items():
         if key in current and current[key] == value:
             continue
         existing = current.get(key)
-        if isinstance(value, dict) and isinstance(existing, dict) and set(existing).issubset(value):
-            nested = _changed_values(value, existing)
-            if nested:
-                changed[key] = nested
+        if isinstance(value, dict) and isinstance(existing, dict):
+            if set(existing).issubset(value):
+                nested = _changed_values(value, existing)
+                if nested:
+                    changed[key] = nested
+            else:
+                changed[key] = _MappingReplacement(dict(value), dict(existing))
             continue
         changed[key] = value
     return changed
+
+
+@dataclass(frozen=True, slots=True)
+class _MappingReplacement:
+    """A requested mapping that removes keys from the effective one it replaces."""
+
+    requested: dict[str, Any]
+    current: dict[str, Any]
+
+
+def _requested_key_for(raw_key: object, requested: Mapping[str, Any]) -> str | None:
+    """Find the requested key a stored key stands for (exact, then case-insensitive)."""
+    text = str(raw_key)
+    if text in requested:
+        return text
+    folded = text.strip().casefold()
+    return next((key for key in requested if str(key).strip().casefold() == folded), None)
+
+
+def _replace_mapping(stored: object, replacement: _MappingReplacement) -> dict[str, Any]:
+    """Build the stored mapping a replacement leaves, without persisting derived entries.
+
+    A stored mapping keeps the entries the caller kept, in their stored spelling, and
+    gains only the entries that are new or changed against the effective value. The
+    effective value can hold entries derived from the stored ones (the reverse pairs of
+    ``query_expansion``), which must not be written out. Without a stored mapping, the
+    effective one comes from defaults, and the requested mapping is written whole to
+    override them.
+    """
+    requested = replacement.requested
+    if not isinstance(stored, dict):
+        return dict(requested)
+    result: dict[str, Any] = {}
+    claimed: set[str] = set()
+    for raw_key, raw_value in stored.items():
+        match = _requested_key_for(raw_key, requested)
+        if match is None:
+            continue
+        claimed.add(match)
+        unchanged = requested[match] == replacement.current.get(match)
+        result[raw_key] = raw_value if unchanged else requested[match]
+    for key, value in requested.items():
+        if key in claimed:
+            continue
+        if key not in replacement.current or replacement.current[key] != value:
+            result[key] = value
+    return result
 
 
 def _merge_changed_into_raw(raw: Mapping[str, Any], changed: Mapping[str, Any]) -> dict[str, Any]:
@@ -364,8 +415,12 @@ def _merge_changed_into_raw(raw: Mapping[str, Any], changed: Mapping[str, Any]) 
     merged: dict[str, Any] = dict(raw)
     for key, value in changed.items():
         existing = merged.get(key)
-        if isinstance(value, dict) and isinstance(existing, dict):
-            merged[key] = _merge_changed_into_raw(existing, value)
+        if isinstance(value, _MappingReplacement):
+            merged[key] = _replace_mapping(existing, value)
+        elif isinstance(value, dict):
+            merged[key] = _merge_changed_into_raw(
+                existing if isinstance(existing, dict) else {}, value
+            )
         else:
             merged[key] = value
     return merged

@@ -364,7 +364,7 @@ Pour la suite, passe au [guide utilisateur](user-guide.md).
 
 ## 12. Datacron Companion, migration Dual-Vault et maintenance CLI
 
-- **Panneau de contrôle graphique (`datacron companion`)** : lance un panneau de contrôle local sur `127.0.0.1` (protection CSRF par jeton de session et validation `Host`/`Origin`) avec 7 vues (Tableau de bord, Vaults & Topologie, Recherche & Aperçu, Graphe & Compaction, Clients MCP, Historique & Audit, Réglages) et bascule FR/EN à chaud. `--vault` et `--memory-vault` sont enregistrés dans le profil Companion avant le démarrage ; un profil invalide est refusé plutôt que remplacé :
+- **Panneau de contrôle graphique (`datacron companion`)** : lance un panneau de contrôle local sur `127.0.0.1` (protection CSRF par jeton de session et validation `Host`/`Origin`) avec 7 vues (Tableau de bord, Vaults & Topologie, Recherche & Aperçu, Graphe & Compaction, Clients MCP, Historique & Audit, Réglages) et bascule FR/EN à chaud. `--vault` et `--memory-vault` sont enregistrés dans le profil Companion avant le démarrage ; `--vault` sans `--memory-vault` est un choix Single-Vault et efface le vault mémoire enregistré. Un profil invalide est refusé plutôt que remplacé :
   ```bash
   datacron companion --vault /chemin/vers/vault
   ```
@@ -389,7 +389,7 @@ Pour la suite, passe au [guide utilisateur](user-guide.md).
   datacron config set --vault /chemin/vers/vault --expected-hash sha256:... --values-json '{"excluded_folders":[".git"]}'
   datacron config set --target companion --values-json '{"cli_timeout_seconds":60}'
   ```
-- **Vault mémoire de l'environnement et `--vault` explicite** : `DATACRON_MEMORY_ROOT` et `DATACRON_WRITE_PATHS` décrivent le vault désigné par `DATACRON_VAULT_ROOT`. Une commande lancée sur un autre vault, ou lancée alors que `DATACRON_VAULT_ROOT` n'est pas défini, les ignore (un avertissement le signale) et travaille en Single-Vault sur ce vault ; passez `--memory-vault` pour lui donner un vault mémoire dédié.
+- **Vault mémoire de l'environnement et `--vault` explicite** : les commandes CLI suivent la règle du serveur MCP : `DATACRON_MEMORY_ROOT` s'applique sauf si `DATACRON_VAULT_ROOT` désigne un autre vault. Une commande lancée sur un autre vault ignore `DATACRON_MEMORY_ROOT` et les entrées de `DATACRON_WRITE_PATHS` hors de ce vault (un avertissement le signale) et travaille en Single-Vault ; passez `--memory-vault` pour lui donner un vault mémoire dédié. Quand `DATACRON_VAULT_ROOT` n'est pas défini, un `--vault` explicite est lié au vault mémoire de l'environnement avec un avertissement qui le nomme, sauf un vault qui possède son propre `.datacron/VAULT.yaml` : ce vault autonome est refusé (code `2`) tant que vous ne passez pas `--memory-vault` ou ne définissez pas `DATACRON_VAULT_ROOT`.
 
 ## Construire l'exécutable autonome (optionnel)
 
