@@ -61,13 +61,16 @@
       "vault_root": "Vault root. Fallback: DATACRON_VAULT_ROOT, then cwd containing VAULT.yaml under .datacron.",
       "memory_vault": "Dedicated memory vault root (.datacron/ and _memory/ live here). Fallback: DATACRON_MEMORY_ROOT.",
       "dual_vault": "Prompt interactively for a dedicated memory vault path during setup.",
-      "keep_source": "Keep original .datacron/ and _memory/ directories in the documentation vault after migration."
+      "keep_source": "Keep original .datacron/ and _memory/ directories in the documentation vault after migration.",
+      "single_vault": "Return a Dual-Vault install to Single-Vault: the client entry drops DATACRON_MEMORY_ROOT instead of keeping it."
     },
     "setup": {
       "memory_vault_explain_1": "Dual-Vault mode separates your documentation vault from Datacron's sidecar (.datacron/) and agent memory (_memory/).",
       "memory_vault_explain_2": "Default: disabled (empty), which keeps everything inside the main vault.",
       "memory_vault_explain_3": "Enter a directory path to store .datacron/ and _memory/ in a dedicated memory vault.",
-      "memory_vault_prompt": "Memory vault path (leave empty for single-vault)"
+      "memory_vault_prompt": "Memory vault path (leave empty for single-vault)",
+      "memory_vault_kept": "Kept the dedicated memory vault {path} named by the existing client entry. Pass --single-vault to return to Single-Vault.",
+      "single_vault_conflict": "--single-vault cannot be combined with --memory-vault or --dual-vault."
     },
     "status": {
       "memory_root": "  memory_root: {memory_root}",

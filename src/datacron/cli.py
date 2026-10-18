@@ -1811,6 +1811,11 @@ def setup(
         "--dual-vault",
         help=t("cli.help.dual_vault"),
     ),
+    single_vault: bool = typer.Option(
+        False,
+        "--single-vault",
+        help=t("cli.help.single_vault"),
+    ),
     client: str | None = typer.Option(
         None,
         "--client",
@@ -1899,6 +1904,7 @@ def setup(
         memory_vault,
         dual_vault=dual_vault,
         assume_yes=assume_yes,
+        single_vault=single_vault,
     )
     if reset and not assume_yes:
         _explain(_SetupPrompt.RESET)
@@ -1955,6 +1961,7 @@ def setup(
     plan = SetupPlan(
         vault_path=resolved_vault,
         memory_vault_path=resolved_memory_vault,
+        single_vault=single_vault,
         build_index=build_index,
         enable_write=resolved_enable_write,
         write_paths=resolved_write_paths,
@@ -2108,8 +2115,13 @@ def _prompt_memory_vault(
     *,
     dual_vault: bool,
     assume_yes: bool,
+    single_vault: bool = False,
 ) -> Path | None:
     """Resolve an explicit, environment-configured, or interactively prompted memory vault root."""
+    if single_vault:
+        if memory_vault is not None or dual_vault:
+            _error(t("cli.setup.single_vault_conflict"))
+        return None
     if memory_vault is not None:
         return _guard_vault_target(memory_vault.expanduser().resolve())
     settings = get_settings()

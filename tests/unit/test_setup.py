@@ -842,7 +842,7 @@ def test_windows_installer_write_page_uses_plain_language() -> None:
     )
     assert len(french_write_messages) == 5
     assert all(message.isascii() for message in french_write_messages)
-    assert "WritePage.Values[0] := False;" in installer
+    assert "WritePage.Values[0] := InitialWriteEnabled;" in installer
     assert "WritePage.Values[1] := False;" in installer
     assert "WritePage.CheckListBox.OnClickCheck := @WritePageClickCheck;" in installer
 

@@ -103,9 +103,11 @@ def test_shortcut_command_lines_quote_unconditionally() -> None:
 
     assert "AddQuotes(" not in builder, "the shortcut builder must not rely on the space heuristic"
     assert "'\"' + ExpandConstant" in builder, "the executable is quoted explicitly"
-    assert "--vault \"' + EffectiveVaultPath + '\"" in builder, (
-        "the vault path is quoted explicitly"
-    )
+    assert "VaultArguments" in builder, "the vault arguments come from the quoting helper"
+    arguments = body[body.index("function VaultArguments") : start]
+    assert "QuotedArgument(EffectiveVaultPath)" in arguments, "the vault path is quoted explicitly"
+    quoting = body[body.index("function QuotedArgument") : body.index("function VaultArguments")]
+    assert "'\"' + Value + '\"'" in quoting, "the quoting helper quotes unconditionally"
     assert "/s /k" in builder, "cmd needs /s to strip exactly the outer quote pair"
 
 
@@ -205,5 +207,5 @@ def test_dual_vault_memory_field_is_exposed_and_wired() -> None:
     assert "VaultPage.Add(CustomMessage('PrimaryVaultLabel'));" in body
     assert "VaultPage.Add(CustomMessage('MemoryVaultLabel'));" in body
     assert "MemoryVaultPath := NormalizePathEntry(SelectedMemoryVaultPath);" in body
-    assert "' --memory-vault ' + AddQuotes(MemoryVaultPath)" in body
+    assert "' --memory-vault ' + QuotedArgument(MemoryVaultPath)" in body
     assert "Parameters := Parameters + ' --no-write';" in body

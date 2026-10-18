@@ -72,7 +72,7 @@ english.MemoryVaultLabel=Dedicated Memory Vault (optional Dual-Vault mode - leav
 english.IndexNow=Index this vault now
 english.WritePageCaption=Allow note writing
 english.WritePageDescription=Choose whether your AI assistants can create notes.
-english.WritePageSubCaption=By default, your AI assistants (Claude, Cursor...) can READ your notes but never change them. Check the first box to also let them create and update notes - only inside three dedicated subfolders (_memory, _drafts, _journal; in Dual-Vault mode, _memory lives in your Memory Vault). Everything else stays untouched. If unsure, leave unchecked: you can enable this later by running Datacron Setup again.
+english.WritePageSubCaption=By default, your AI assistants (Claude, Cursor...) can READ your notes but never change them. Check the first box to also let them create and update notes - only inside three dedicated subfolders (_memory, _drafts, _journal; in Dual-Vault mode, _memory lives in your Memory Vault). Everything else stays untouched. The box shows the choice this installer last recorded; leaving it as it is keeps the current permission, and unchecking a checked box removes it.
 english.EnableWriteTools=Let my AI assistants write notes (in 3 dedicated subfolders only)
 english.MachineWideWrite=Remember this permission for AI assistants installed later
 english.VaultRequiredSilent=/VAULT=<path> is required for a silent Datacron installation.
@@ -85,6 +85,10 @@ english.ResetFailed=Datacron could not reset its configuration and generated ind
 english.UnregisterFailed=Datacron could not remove every MCP client entry. The operation will continue; review the client configurations manually.
 english.ProtocolFailed=Datacron was registered, but its memory instructions could not be installed in every detected AI client. Run Datacron Setup again or use "datacron protocol install --client all".
 english.ProtocolRemoveFailed=Datacron could not remove every installed memory-instruction block. The operation will continue; review the client instruction files manually.
+english.SetupStartFailed=Could not start datacron.exe.
+english.SetupExitCode=datacron setup returned exit code %1.
+english.WriteSwitchConflict=/ENABLEWRITE and /DISABLEWRITE cannot be combined.
+english.SingleVaultConflict=/SINGLEVAULT and /MEMORYVAULT= cannot be combined.
 french.ReinstallCaption=Configuration Datacron existante
 french.ReinstallDescription=Choisissez ce que cette installation doit faire avec le vault selectionne.
 french.ReinstallSubCaption=Garder conserve la configuration et l'index genere. Reinitialiser les supprime avant le setup ; les identites de notes, l'audit, les logs et les fichiers Markdown restent inchanges.
@@ -98,7 +102,7 @@ french.MemoryVaultLabel=Vault Memoire dedie (mode Dual-Vault optionnel - laisser
 french.IndexNow=Indexer ce vault maintenant
 french.WritePageCaption=Autoriser l'ecriture de notes
 french.WritePageDescription=Choisissez si vos assistants IA peuvent creer des notes.
-french.WritePageSubCaption=Par defaut, vos assistants IA (Claude, Cursor...) peuvent LIRE vos notes mais jamais les modifier. Cochez la premiere case pour leur permettre aussi de creer et mettre a jour des notes - uniquement dans trois sous-dossiers dedies (_memory, _drafts, _journal ; en mode Dual-Vault, _memory est place dans votre Vault Memoire). Tout le reste de vos notes reste intouchable. Dans le doute, laissez decoche : vous pourrez l'activer plus tard en relancant Datacron Setup.
+french.WritePageSubCaption=Par defaut, vos assistants IA (Claude, Cursor...) peuvent LIRE vos notes mais jamais les modifier. Cochez la premiere case pour leur permettre aussi de creer et mettre a jour des notes - uniquement dans trois sous-dossiers dedies (_memory, _drafts, _journal ; en mode Dual-Vault, _memory est place dans votre Vault Memoire). Tout le reste de vos notes reste intouchable. La case reprend le dernier choix enregistre par cet installeur ; la laisser telle quelle conserve l'autorisation actuelle, et decocher une case cochee la retire.
 french.EnableWriteTools=Autoriser mes assistants IA a ecrire des notes (dans 3 sous-dossiers dedies uniquement)
 french.MachineWideWrite=Retenir cette autorisation pour les assistants IA installes plus tard
 french.VaultRequiredSilent=/VAULT=<chemin> est obligatoire pour une installation silencieuse de Datacron.
@@ -111,12 +115,16 @@ french.ResetFailed=Datacron n'a pas pu reinitialiser sa configuration et son ind
 french.UnregisterFailed=Datacron n'a pas pu retirer toutes les entrees des clients MCP. L'operation continue ; verifiez manuellement les configurations clientes.
 french.ProtocolFailed=Datacron a ete enregistre, mais ses instructions memoire n'ont pas pu etre installees dans tous les clients IA detectes. Relancez Datacron Setup ou utilisez "datacron protocol install --client all".
 french.ProtocolRemoveFailed=Datacron n'a pas pu retirer tous les blocs d'instructions memoire installes. L'operation continue ; verifiez manuellement les fichiers d'instructions des clients.
+french.SetupStartFailed=Impossible de lancer datacron.exe.
+french.SetupExitCode=datacron setup a retourne le code de sortie %1.
+french.WriteSwitchConflict=/ENABLEWRITE et /DISABLEWRITE ne peuvent pas etre combines.
+french.SingleVaultConflict=/SINGLEVAULT et /MEMORYVAULT= ne peuvent pas etre combines.
 
 [Files]
 Source: "..\..\dist\datacron.exe"; DestDir: "{app}"; DestName: "datacron.exe"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Datacron Companion"; Filename: "{app}\datacron.exe"; Parameters: "companion"
+Name: "{group}\Datacron Companion"; Filename: "{app}\datacron.exe"; Parameters: "{code:CompanionShortcutParameters}"
 Name: "{group}\Datacron Status"; Filename: "{cmd}"; Parameters: "{code:StatusShortcutParameters}"
 Name: "{group}\Datacron Setup"; Filename: "{cmd}"; Parameters: "{code:SetupShortcutParameters}"
 
@@ -125,6 +133,13 @@ const
   InstallerStateKey = 'Software\Datacron';
   InstallerVaultValue = 'VaultRoot';
   InstallerMemoryVaultValue = 'MemoryVaultRoot';
+  InstallerWriteValue = 'WriteToolsEnabled';
+  InstallerWriteEnvValue = 'WriteEnvAdded';
+  UserEnvironmentKey = 'Environment';
+  WriteEnvName = 'DATACRON_WRITE_PATHS';
+  WriteChoiceKeep = 0;
+  WriteChoiceEnable = 1;
+  WriteChoiceDisable = 2;
 
 var
   VaultPage: TInputDirWizardPage;
@@ -140,6 +155,7 @@ var
   SetupFailed: Boolean;
   UnregisterWarning: Boolean;
   ResetSwitchDefault: Integer;
+  InitialWriteEnabled: Boolean;
 
 function CommandLineSwitchPresent(const Name: String): Boolean;
 var
@@ -171,8 +187,20 @@ end;
 
 function SelectedMemoryVaultPath: String;
 begin
+  { A silent upgrade without /MEMORYVAULT= used to run setup as Single-Vault
+    against a Dual-Vault install. The recorded memory vault is the default;
+    /SINGLEVAULT is the explicit way back. }
   if WizardSilent then
-    Result := CommandLineValue('MEMORYVAULT')
+  begin
+    if CommandLineSwitchPresent('SINGLEVAULT') then
+      Result := ''
+    else
+    begin
+      Result := CommandLineValue('MEMORYVAULT');
+      if Result = '' then
+        Result := Trim(PreviousMemoryVaultPath);
+    end;
+  end
   else
     Result := Trim(VaultPage.Values[1]);
 end;
@@ -191,6 +219,19 @@ begin
     Result := MemoryVaultPath
   else
     Result := SelectedMemoryVaultPath;
+end;
+
+function SingleVaultRequested: Boolean;
+begin
+  { An empty memory field alone is not a choice: a Dual-Vault install made with
+    "datacron setup" is not in the registry, and setup keeps the memory vault
+    its client entry names. Clearing a field this installer had filled is the
+    choice, and so is /SINGLEVAULT. }
+  if WizardSilent then
+    Result := CommandLineSwitchPresent('SINGLEVAULT')
+  else
+    Result := (Trim(PreviousMemoryVaultPath) <> '') and
+      (Trim(VaultPage.Values[1]) = '');
 end;
 
 function ResetConfigurationRequested: Boolean;
@@ -214,7 +255,7 @@ begin
     Result := IndexNowCheckBox.Checked;
 end;
 
-function WriteToolsRequested: Boolean;
+function WriteToolsChecked: Boolean;
 begin
   if WizardSilent then
     Result := CommandLineSwitchPresent('ENABLEWRITE')
@@ -222,15 +263,54 @@ begin
     Result := WritePage.Values[0];
 end;
 
+function WriteChoice: Integer;
+begin
+  { Tri-state. Passing --no-write whenever the box was unchecked removed write
+    access from every client on any upgrade that did not tick it again, and the
+    silent path, which has no box, did the same without /ENABLEWRITE. Only a
+    change the operator made reaches setup; anything else keeps the entry. }
+  Result := WriteChoiceKeep;
+  if WizardSilent then
+  begin
+    if CommandLineSwitchPresent('ENABLEWRITE') then
+      Result := WriteChoiceEnable
+    else if CommandLineSwitchPresent('DISABLEWRITE') then
+      Result := WriteChoiceDisable;
+  end
+  else if WritePage.Values[0] and not InitialWriteEnabled then
+    Result := WriteChoiceEnable
+  else if InitialWriteEnabled and not WritePage.Values[0] then
+    Result := WriteChoiceDisable;
+end;
+
 function MachineWideWriteRequested: Boolean;
 begin
   { Fail-safe: machine-wide is only honored when write tools are enabled. }
-  if not WriteToolsRequested then
+  if not WriteToolsChecked then
     Result := False
   else if WizardSilent then
     Result := CommandLineSwitchPresent('MACHINEWIDEWRITE')
   else
     Result := WritePage.Values[1];
+end;
+
+function QuotedArgument(const Value: String): String;
+begin
+  { Quote unconditionally, and double a trailing backslash. A drive root such
+    as G:\ keeps its backslash through normalization, and under the Windows
+    command-line rules a backslash before the closing quote escapes it: the
+    program then reads the quote and the rest of the line as part of the path. }
+  if (Length(Value) > 0) and (Value[Length(Value)] = '\') then
+    Result := '"' + Value + '\"'
+  else
+    Result := '"' + Value + '"';
+end;
+
+function VaultArguments: String;
+begin
+  Result := ' --vault ' + QuotedArgument(EffectiveVaultPath);
+  if EffectiveMemoryVaultPath <> '' then
+    Result := Result + ' --memory-vault ' + QuotedArgument(EffectiveMemoryVaultPath);
 end;
 
 function ShortcutParameters(const Subcommand: String): String;
@@ -243,10 +323,16 @@ begin
     Start menu shortcut the installer wrote. /s tells cmd to strip exactly the
     outer pair of quotes, which is what makes the inner quoting reliable. }
   Command := '"' + ExpandConstant('{app}\datacron.exe') + '"' +
-    ' ' + Subcommand + ' --vault "' + EffectiveVaultPath + '"';
-  if EffectiveMemoryVaultPath <> '' then
-    Command := Command + ' --memory-vault "' + EffectiveMemoryVaultPath + '"';
+    ' ' + Subcommand + VaultArguments;
   Result := '/s /k "' + Command + '"';
+end;
+
+function CompanionShortcutParameters(Param: String): String;
+begin
+  { The Companion shortcut launched without a vault, so it opened whatever
+    DATACRON_VAULT_ROOT or the working directory pointed at, not the vault this
+    installer configured. It starts datacron.exe directly, without cmd. }
+  Result := 'companion' + VaultArguments;
 end;
 
 function StatusShortcutParameters(Param: String): String;
@@ -270,6 +356,7 @@ procedure InitializeWizard;
 var
   InitialPath: String;
   InitialMemoryPath: String;
+  PreviousWriteChoice: String;
 begin
   { The switch chooses which option the page opens on; the operator still decides. }
   if CommandLineSwitchPresent('RESETCONFIG') then
@@ -349,8 +436,14 @@ begin
   );
   WritePage.Add(CustomMessage('EnableWriteTools'));
   WritePage.Add(CustomMessage('MachineWideWrite'));
-  { Fail-safe defaults: both opt-ins start unchecked. }
-  WritePage.Values[0] := False;
+  { The first box opens on the choice the last run of this installer recorded,
+    so leaving the page alone keeps it; without a record it starts unchecked,
+    and leaving it unchecked then changes nothing either. The machine-wide
+    opt-in always starts unchecked. }
+  PreviousWriteChoice := '';
+  RegQueryStringValue(HKCU, InstallerStateKey, InstallerWriteValue, PreviousWriteChoice);
+  InitialWriteEnabled := Trim(PreviousWriteChoice) = '1';
+  WritePage.Values[0] := InitialWriteEnabled;
   WritePage.Values[1] := False;
   WritePage.CheckListBox.OnClickCheck := @WritePageClickCheck;
 
@@ -438,6 +531,20 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
+  if WizardSilent and CommandLineSwitchPresent('ENABLEWRITE') and
+     CommandLineSwitchPresent('DISABLEWRITE') then
+  begin
+    MarkSetupFailure(CustomMessage('WriteSwitchConflict'));
+    Result := CustomMessage('WriteSwitchConflict');
+    Exit;
+  end;
+  if WizardSilent and CommandLineSwitchPresent('SINGLEVAULT') and
+     (CommandLineValue('MEMORYVAULT') <> '') then
+  begin
+    MarkSetupFailure(CustomMessage('SingleVaultConflict'));
+    Result := CustomMessage('SingleVaultConflict');
+    Exit;
+  end;
   { Normalize once, here, so every later use agrees: a path ending in a backslash
     would otherwise escape the closing quote of every Exec() and every shortcut
     command line built from it. A path carrying its own double quote cannot be
@@ -607,11 +714,53 @@ begin
   Log('Removed Datacron application directory from the user PATH.');
 end;
 
+procedure RecordWriteEnvReceipt(const HadWriteEnv: Boolean);
+var
+  WrittenValue: String;
+begin
+  { /MACHINEWIDEWRITE has setup create DATACRON_WRITE_PATHS in the user
+    environment, and uninstall left it behind, still granting write access to
+    any client started later. The receipt names what this install created, so
+    uninstall removes that value and nothing the user set themselves. }
+  if HadWriteEnv then
+    Exit;
+  if RegQueryStringValue(HKCU, UserEnvironmentKey, WriteEnvName, WrittenValue) then
+  begin
+    RegWriteStringValue(HKCU, InstallerStateKey, InstallerWriteEnvValue, WrittenValue);
+    Log('Recorded the user write allowlist created by this installation.');
+  end;
+end;
+
+procedure RemoveWriteEnvAdded;
+var
+  AddedValue: String;
+  CurrentValue: String;
+begin
+  if not RegQueryStringValue(HKCU, InstallerStateKey, InstallerWriteEnvValue, AddedValue) then
+  begin
+    Log('Leaving the user write allowlist alone: this installer did not create it.');
+    Exit;
+  end;
+  if not RegQueryStringValue(HKCU, UserEnvironmentKey, WriteEnvName, CurrentValue) then
+    Exit;
+  if CurrentValue <> AddedValue then
+  begin
+    Log('Leaving the user write allowlist alone: it changed after this installer created it.');
+    Exit;
+  end;
+  RegDeleteValue(HKCU, UserEnvironmentKey, WriteEnvName);
+  RegDeleteValue(HKCU, InstallerStateKey, InstallerWriteEnvValue);
+  Log('Removed the user write allowlist created by this installation.');
+end;
+
 procedure RunDatacronSetup;
 var
   ExecutablePath: String;
   Parameters: String;
   ResetConfiguration: Boolean;
+  Choice: Integer;
+  MachineWide: Boolean;
+  HadWriteEnv: Boolean;
   ResultCode: Integer;
 begin
   if not AddAppToUserPath then
@@ -629,7 +778,7 @@ begin
   begin
     Parameters :=
       'unregister --yes --client all --scope both --vault ' +
-      AddQuotes(PreviousVaultPath);
+      QuotedArgument(NormalizePathEntry(PreviousVaultPath));
     if not Exec(
       ExecutablePath,
       Parameters,
@@ -674,19 +823,27 @@ begin
     into the vault root, which the installer promises never to touch. Uninstall
     still unregisters both scopes, so files left by an earlier release go too. }
   Parameters :=
-    'setup --yes --client all --scope user --vault ' + AddQuotes(VaultPath);
+    'setup --yes --client all --scope user --vault ' + QuotedArgument(VaultPath);
   if MemoryVaultPath <> '' then
-    Parameters := Parameters + ' --memory-vault ' + AddQuotes(MemoryVaultPath);
+    Parameters := Parameters + ' --memory-vault ' + QuotedArgument(MemoryVaultPath)
+  else if SingleVaultRequested then
+    Parameters := Parameters + ' --single-vault';
   if ResetConfiguration then
     Parameters := Parameters + ' --reset';
   if not ShouldIndexNow then
     Parameters := Parameters + ' --no-index';
-  if WriteToolsRequested then
+  Choice := WriteChoice;
+  MachineWide := MachineWideWriteRequested;
+  { setup accepts --machine-wide-write only together with --enable-write. }
+  if MachineWide then
+    Choice := WriteChoiceEnable;
+  if Choice = WriteChoiceEnable then
     Parameters := Parameters + ' --enable-write'
-  else
+  else if Choice = WriteChoiceDisable then
     Parameters := Parameters + ' --no-write';
-  if MachineWideWriteRequested then
+  if MachineWide then
     Parameters := Parameters + ' --machine-wide-write';
+  HadWriteEnv := RegValueExists(HKCU, UserEnvironmentKey, WriteEnvName);
 
   if not Exec(
     ExecutablePath,
@@ -696,18 +853,24 @@ begin
     ewWaitUntilTerminated,
     ResultCode
   ) then
-    MarkSetupFailure('Could not start datacron.exe.')
+    MarkSetupFailure(CustomMessage('SetupStartFailed'))
   else if ResultCode <> 0 then
   begin
     if ResetConfiguration then
       MarkSetupFailure(CustomMessage('ResetFailed'))
     else
       MarkSetupFailure(
-        'datacron setup returned exit code ' + IntToStr(ResultCode) + '.'
+        FmtMessage(CustomMessage('SetupExitCode'), [IntToStr(ResultCode)])
       );
   end
   else
   begin
+    if Choice = WriteChoiceEnable then
+      RegWriteStringValue(HKCU, InstallerStateKey, InstallerWriteValue, '1')
+    else if Choice = WriteChoiceDisable then
+      RegWriteStringValue(HKCU, InstallerStateKey, InstallerWriteValue, '0');
+    if MachineWide then
+      RecordWriteEnvReceipt(HadWriteEnv);
     Parameters := 'protocol install --client all --scope user';
     if not Exec(
       ExecutablePath,
@@ -789,7 +952,7 @@ begin
       if HasStoredVault then
         Parameters :=
           'unregister --yes --client all --scope both --vault ' +
-          AddQuotes(StoredVault)
+          QuotedArgument(NormalizePathEntry(StoredVault))
       else
         Parameters := 'unregister --yes --client all --scope user';
 
@@ -830,6 +993,7 @@ begin
     end;
 
     RemoveAppFromUserPath;
+    RemoveWriteEnvAdded;
   end
   else if CurUninstallStep = usPostUninstall then
   begin
