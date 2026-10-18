@@ -430,8 +430,8 @@ datacron migrate-memory --vault /path/to/docs --memory-vault /path/to/memory
 datacron graph-health --vault /path/to/vault --json
 datacron compact-memory --vault /path/to/vault --older-than-days 30 --dry-run
 datacron compact-memory --vault /path/to/vault --older-than-days 30 --apply
-datacron config get /path/to/vault --json
-datacron config set /path/to/vault --expected-hash sha256:... --values-json '{"excluded_folders":[".git"]}'
+datacron config get --vault /path/to/vault --json
+datacron config set --vault /path/to/vault --expected-hash sha256:... --values-json '{"excluded_folders":[".git"]}'
 datacron setup --protocol           # also install client memory rules
 datacron protocol install --client all
 datacron protocol status --client all --scope user

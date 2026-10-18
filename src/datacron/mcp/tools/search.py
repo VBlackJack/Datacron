@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Awaitable, Callable, Sequence
+from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, Final
 
 from datacron.core.config import (
@@ -34,7 +35,6 @@ from datacron.core.paths import (
     PathConfinementError,
     effective_extra_read_vaults,
     effective_memory_root,
-    note_source_vault,
 )
 from datacron.core.scope import ScopedVaultReader
 from datacron.core.temporal import rerank_temporal
@@ -57,6 +57,7 @@ from datacron.mcp.tools.payloads import (
     _bounded_count,
     _error_response,
     _internal_error_response,
+    _note_source,
     _redact_retrieval_text,
     _sanitize_optional_retrieval_metadata,
     _sanitize_retrieval_metadata,
@@ -70,6 +71,13 @@ if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
 _ULID_PATTERN: Final[re.Pattern[str]] = CANONICAL_ULID_PATTERN
+# An absolute host path in a ripgrep diagnostic line, ``rg: <path>: <message>``. Only
+# a line that opens with the path is matched, so an echoed pattern is left alone.
+_HOST_PATH_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^(?P<lead>rg: )?(?:[A-Za-z]:[\\/]|\\\\|/)[^\r\n]*?(?=: )", re.MULTILINE
+)
+_PATH_SEPARATORS: Final[str] = "\\/"
+_HOST_PATH_PLACEHOLDER: Final[str] = r"\g<lead><path>"
 SEARCH_QUERY_TOO_LARGE_CODE: Final[str] = "search_query_too_large"
 
 
@@ -409,7 +417,7 @@ async def _search_regex_impl(
         # likely cause; it is still not the only one, and the message says so
         # rather than asserting a rejection over a stderr that reads "Access is
         # denied". An agent told its regex was rejected rewrites the regex.
-        message = exc.stderr.strip() or str(exc)
+        message = _strip_host_paths(app, exc.stderr.strip() or str(exc))
         return _error_response(
             "search_regex",
             ValueError(f"ripgrep returned no results and exited with an error: {message}"),
@@ -490,7 +498,7 @@ async def _get_backlinks_impl(
 
     try:
         repair = await _repair_index_on_read(app)
-        sources = await _find_backlink_sources(app, resolved_id, cleaned, bounded_limit)
+        sources, truncated = await _find_backlink_sources(app, resolved_id, cleaned, bounded_limit)
     except SearchIndexStaleError as exc:
         return _error_response(
             "get_backlinks", exc, started, target=target, resolved_note_id=resolved_id
@@ -510,8 +518,10 @@ async def _get_backlinks_impl(
         # more times than the cap returned exactly the cap with nothing to say the
         # rest existed. Every other listing on this surface carries a truncation
         # signal; this one could only mislead by omission, and a caller reading
-        # `returned` as a count answered "twenty notes reference this".
-        "truncated": len(sources) >= bounded_limit,
+        # `returned` as a count answered "twenty notes reference this". The scan
+        # looks for one source past the page, so exactly `limit` sources is not
+        # reported as truncated.
+        "truncated": truncated,
     }
     if repair["reindexed_notes"] or repair["deleted_notes"]:
         payload["index_repair"] = repair
@@ -560,7 +570,7 @@ def _search_result_summary(
         "line_start": chunk.line_start,
         "line_end": chunk.line_end,
         "token_count": chunk.token_count,
-        "source_vault": note_source_vault(chunk.note_rel_path),
+        **_note_source(app, chunk.note_rel_path),
         "writable": bool(
             app.write_policy.writes_allowed
             and app.scope.allows_rel_path(chunk.note_rel_path, "write")
@@ -696,13 +706,15 @@ async def _find_backlink_sources(
     target_note_id: str,
     target_alias: str,
     limit: int,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], bool]:
     """Scan indexed wikilink metadata and return source chunks pointing at the target.
 
     A chunk is considered a backlink source if any of its indexed wikilinks
     resolves (via :meth:`VaultReader.resolve_alias`) to ``target_note_id``.
     A small alias-resolution cache amortizes the per-link cost when multiple
     chunks reference the same target string.
+
+    Returns the page of sources and whether more sources exist past it.
     """
     target_alias_lower = target_alias.strip().lower()
     alias_cache: dict[str, str | None] = {target_alias_lower: target_note_id}
@@ -716,7 +728,13 @@ async def _find_backlink_sources(
     # model before the first candidate was examined, so stopping at the limit saved
     # nothing. The page is fetched whole afterwards, because the protection pass
     # compares each returned chunk against the note as it is on disk right now.
-    async for source in app.store.iter_wikilink_sources():
+    #
+    # The candidates are collected before any alias is resolved. Resolving can
+    # rebuild the alias index, which reads the whole vault, and a read cursor left
+    # open across that rebuild held the database snapshot for seconds: writers in
+    # another Datacron process then failed with "database is locked".
+    candidates = [source async for source in app.store.iter_wikilink_sources()]
+    for source in candidates:
         admitted = admission_cache.get(source.note_rel_path)
         if admitted is None:
             admitted = app.scope.allows_note_rel_path(source.note_rel_path)
@@ -731,8 +749,10 @@ async def _find_backlink_sources(
             continue
         seen_chunk_ids.add(source.chunk_id)
         matched_ids.append(source.chunk_id)
-        if len(matched_ids) >= limit:
+        if len(matched_ids) > limit:
             break
+    truncated = len(matched_ids) > limit
+    matched_ids = matched_ids[:limit]
 
     by_id = await app.store.chunks_by_ids(matched_ids)
     # A chunk can vanish between the scan and this fetch if another request reindexed
@@ -757,7 +777,33 @@ async def _find_backlink_sources(
                 ),
             }
         )
-    return sources
+    return sources, truncated
+
+
+def _strip_host_paths(app: DatacronApp, text: str) -> str:
+    """Remove absolute host paths from a ripgrep diagnostic before it leaves the server.
+
+    ripgrep names the file it failed on, and a memory or extra root is searched by
+    absolute path, so the error carried the user's home directory and vault layout,
+    which nothing else on this surface discloses. A path under a served root keeps
+    its vault-relative tail; anything else absolute becomes a placeholder.
+    """
+    roots: list[Path] = [app.vault_root]
+    memory_root = effective_memory_root(app.vault_root, settings=app.settings)
+    if memory_root is not None:
+        roots.append(memory_root)
+    roots.extend(effective_extra_read_vaults(app.vault_root, settings=app.settings).values())
+    # The longest root first, so a root nested in another is not cut in half.
+    for root in sorted({str(root) for root in roots}, key=len, reverse=True):
+        if PurePath(root).parent == PurePath(root):
+            # A vault at a drive or filesystem root: the placeholder pass covers it.
+            continue
+        bare = root.rstrip(_PATH_SEPARATORS)
+        for spelling in {bare, bare.replace("\\", "/")}:
+            for separator in _PATH_SEPARATORS:
+                text = text.replace(spelling + separator, "")
+            text = text.replace(spelling, ".")
+    return _HOST_PATH_PATTERN.sub(_HOST_PATH_PLACEHOLDER, text)
 
 
 def _filter_admitted_results(

@@ -116,8 +116,11 @@ async def _build_vault_map(app: DatacronApp) -> str:
 
 async def _build_vault_info(app: DatacronApp) -> str:
     note_count, list_error = await _safe_note_count(app)
-    sidecar = sidecar_dir(app.vault_root)
-    index_db = sidecar_index_dir(app.vault_root) / INDEX_DB_FILENAME
+    # The server's own settings, not the process environment: a server built for
+    # another vault (tests, the Companion, an explicit --vault) reported the sidecar
+    # and index of whatever vault DATACRON_MEMORY_ROOT named.
+    sidecar = sidecar_dir(app.vault_root, settings=app.settings)
+    index_db = sidecar_index_dir(app.vault_root, settings=app.settings) / INDEX_DB_FILENAME
     vault_config = sidecar / VAULT_CONFIG_FILENAME
     indexed_notes, indexed_chunks, last_indexed_at, stats_error = await _safe_store_stats(app)
 

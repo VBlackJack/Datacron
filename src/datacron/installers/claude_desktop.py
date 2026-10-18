@@ -20,8 +20,8 @@ The Claude Desktop configuration lives at:
 - Linux:   ``~/.config/Claude/claude_desktop_config.json``
 
 :func:`install_claude_desktop_config` reads the file (creates an empty
-``{}`` if absent), adds or overwrites the ``mcpServers.datacron`` entry,
-preserves every other key, and writes back **atomically** (temp file
+``{}`` if absent), merges the ``mcpServers.datacron`` entry with what it
+already holds, preserves every other key, and writes back **atomically** (temp file
 then ``os.replace``) so a crash mid-write cannot leave the file in a
 partial state.
 """
@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from datacron.core.logger import get_logger
-from datacron.installers.env_merge import ENV_READ_PATHS, ENV_VAULT_ROOT, merge_server_env
+from datacron.installers.env_merge import ENV_READ_PATHS, ENV_VAULT_ROOT, merge_server_entry
 from datacron.installers.foreign_files import replace_foreign_file
 
 __all__ = [
@@ -221,29 +221,27 @@ def install_claude_desktop_config(
             "refusing to overwrite."
         )
 
-    # Carry forward the DATACRON_* settings already in the entry. Rewriting the
-    # env wholesale silently dropped DATACRON_WRITE_PATHS, DATACRON_READ_ONLY and
-    # DATACRON_DURABILITY from an existing install, so re-running `mcp install`
-    # after an upgrade turned a configured writable vault back into a read-only
-    # one, with the next write refused and nothing saying why. Anything this call
-    # supplies still wins; only the keys it does not mention are preserved, and
-    # removed_env is how an explicit "off" reaches the file.
+    # Merge with the entry already there, through the same writer every other
+    # client uses. Rewriting the env wholesale silently dropped
+    # DATACRON_WRITE_PATHS, DATACRON_READ_ONLY and DATACRON_DURABILITY from an
+    # existing install; keeping only the DATACRON_* variables still dropped a
+    # proxy variable, a ``disabled`` flag or any other key the user had added.
+    # Anything this call supplies still wins, and removed_env is how an explicit
+    # "off" reaches the file.
     supplied = {
         ENV_VAULT_ROOT: str(resolved_vault),
         ENV_READ_PATHS: str(resolved_vault),
         **(extra_env or {}),
     }
-    env = merge_server_env(
-        _preserved_datacron_env(servers.get(DATACRON_SERVER_KEY)),
-        supplied,
-        removed=removed_env,
+    servers[DATACRON_SERVER_KEY] = merge_server_entry(
+        servers.get(DATACRON_SERVER_KEY),
+        {
+            "command": invocation.command,
+            "args": list(invocation.args),
+            "env": supplied,
+        },
+        removed_env,
     )
-
-    servers[DATACRON_SERVER_KEY] = {
-        "command": invocation.command,
-        "args": list(invocation.args),
-        "env": env,
-    }
 
     _write_atomically(target, config)
     _LOGGER.info("Wrote %s entries to %s", len(servers), target)

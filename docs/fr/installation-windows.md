@@ -25,18 +25,24 @@ consulte les [questions fréquentes](faq.md).
 3. **Choisis ton vault (Single-Vault ou Dual-Vault)** :
    - **Vault de documentation principal** : le dossier de notes Markdown que tu ouvres déjà dans Obsidian.
    - **Vault Mémoire dédié (mode Dual-Vault optionnel)** : laisse ce second champ vide pour tout garder dans un seul dossier, ou choisis un second dossier dédié pour que Datacron y stocke `.datacron/` (index, config, audit) et `_memory/` séparément sans jamais toucher à ton dossier de documentation.
+     Lors d'une réinstallation, le champ affiche le Vault Mémoire enregistré par
+     l'installation précédente. Le vider est la façon de revenir à un vault unique ;
+     sinon le setup conserve le Vault Mémoire que tes entrées clientes nomment déjà.
 4. Laisse cochée la case **Indexer maintenant** pour construire l'index tout de
    suite (recommandé), ou décoche-la pour le faire plus tard.
 5. **Autoriser l'écriture de notes** (facultatif) : par défaut, tes assistants IA peuvent
-   lire tes notes mais jamais les modifier, et les deux cases sont décochées. Coche
+   lire tes notes mais jamais les modifier. À la première installation, les deux cases
+   sont décochées ; lors d'une réinstallation, la première case reprend le choix
+   enregistré par l'installation précédente. Coche
    **Autoriser mes assistants IA à écrire des notes (dans 3 sous-dossiers dédiés
    uniquement)** pour leur permettre de créer et mettre à jour des notes uniquement dans
    `_memory`, `_drafts` et `_journal` (en mode Dual-Vault, `_memory` est placé dans ton
    Vault Mémoire dédié) ; tout le reste reste intouchable. Coche **Retenir
    cette autorisation pour les assistants IA installés plus tard** pour réutiliser la même
-   autorisation avec les assistants ajoutés à l'avenir. Dans le doute, laisse les deux
-   cases décochées ; tu pourras activer l'écriture plus tard en relançant Datacron Setup.
-   Laisser la seconde case décochée ne modifie pas une autorisation déjà mémorisée.
+   autorisation avec les assistants ajoutés à l'avenir. Laisser la première case telle
+   que tu l'as trouvée conserve l'autorisation actuelle de tes clients ; décocher une case
+   cochée la retire. Laisser la seconde case décochée ne modifie pas une autorisation déjà
+   mémorisée.
 6. Termine. L'installeur ajoute `datacron.exe` à ton **PATH utilisateur**, crée les
    raccourcis du menu Démarrer, puis lance la configuration : il enregistre Datacron
    dans chaque client IA détecté, installe les instructions mémoire globales prises en charge
@@ -60,7 +66,8 @@ sont placés dans le Vault Mémoire dédié pour que ton dossier de notes princi
 Si une configuration Datacron existe déjà dans le vault choisi, l'installeur propose :
 
 - **Garder** (par défaut) : rien n'est écrasé, ta configuration et ton index sont
-  conservés.
+  conservés, ainsi que l'autorisation d'écriture et la disposition Dual-Vault de tes
+  entrées clientes, sauf si tu les modifies sur les autres pages.
 - **Réinitialiser** : efface la config (`VAULT.yaml`) et l'index, puis les
   reconstruit. Sont **préservés** : tes notes `.md`, l'identité stable des notes,
   l'historique et le journal d'audit.
@@ -89,13 +96,19 @@ Datacron-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /VAULT="C:\Users\moi\Notes"
 Options :
 
 - `/MEMORYVAULT="C:\Users\moi\Datacron-Memory"` : racine optionnelle du Vault Mémoire dédié pour le mode Dual-Vault.
+  Sans lui, le Vault Mémoire enregistré par l'installation précédente est conservé.
+- `/SINGLEVAULT` : ramène une installation Dual-Vault à un vault unique. Incompatible
+  avec `/MEMORYVAULT=`.
 - `/RESETCONFIG` : réinitialise la config et l'index (au lieu de garder).
 - `/INDEX` : indexe pendant l'installation. Sans ce commutateur, l'index n'est pas
   construit à ce moment-là.
 - `/ENABLEWRITE` : active les outils d'écriture confinés (`_memory`, `_drafts`,
-  `_journal`). Sans ce commutateur, l'installeur ne transmet aucune liste
-  d'autorisation au setup ; une variable utilisateur `DATACRON_WRITE_PATHS` existante
-  reste inchangée.
+  `_journal`).
+- `/DISABLEWRITE` : retire la liste d'autorisation d'écriture de chaque entrée cliente.
+  Incompatible avec `/ENABLEWRITE`.
+- Sans aucun de ces deux commutateurs, l'installeur ne transmet aucun choix d'écriture
+  au setup : chaque entrée cliente conserve l'autorisation d'écriture qu'elle a déjà, et
+  une variable utilisateur `DATACRON_WRITE_PATHS` existante reste inchangée.
 - `/MACHINEWIDEWRITE` : applique aussi la liste d'autorisation d'écriture à
   l'environnement utilisateur. Ignoré sans `/ENABLEWRITE`.
 
@@ -103,7 +116,10 @@ Options :
 
 Désinstalle depuis **Paramètres Windows > Applications**. L'opération, dans l'ordre :
 retire l'entrée MCP `datacron` de tes clients, retire les blocs d'instructions gérés par
-Datacron, retire `datacron.exe` de ton PATH utilisateur, puis supprime le programme.
+Datacron, retire `datacron.exe` de ton PATH utilisateur, retire la variable
+d'environnement utilisateur `DATACRON_WRITE_PATHS` quand cet installeur l'a créée
+(`/MACHINEWIDEWRITE` ou la seconde case d'écriture) et que personne ne l'a modifiée
+depuis, puis supprime le programme.
 **Ton vault et tes notes ne sont jamais touchés.**
 
 ## 7. Vérifier

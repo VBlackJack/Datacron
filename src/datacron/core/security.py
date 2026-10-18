@@ -22,6 +22,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from datacron.core.config import Settings
+from datacron.core.markdown_headings import split_markdown_lines
 
 __all__ = ["REDACTED", "SecretRedactor"]
 
@@ -131,7 +132,7 @@ class SecretRedactor:
         conceal that fragment rather than guessing an unsafe partial span. Source
         bytes and chunk hashes remain unchanged.
         """
-        lines = source.splitlines(keepends=True)
+        lines = split_markdown_lines(source)
         start = sum(map(len, lines[: line_start - 1]))
         end = start + sum(map(len, lines[line_start - 1 : line_end]))
         protected = value

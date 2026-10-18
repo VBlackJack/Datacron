@@ -65,8 +65,10 @@ from datacron.core.config import (
     OrganizationConfig,
     Settings,
     VaultConfig,
+    extra_mount_warnings,
     get_settings,
     load_vault_config,
+    validate_root_topology,
 )
 from datacron.core.durability import (
     DurabilityStatus,
@@ -78,6 +80,7 @@ from datacron.core.logger import configure_logging, get_logger, shutdown_logging
 from datacron.core.memory_protocol import PROTOCOL_BLOCK
 from datacron.core.paths import (
     assert_within_read_paths,
+    effective_extra_read_vaults,
     effective_memory_root,
     resolve_sidecar_root,
     sidecar_index_db,
@@ -330,6 +333,12 @@ def build_app(
     resolved_settings = settings or get_settings()
     resolved_root = vault_root.expanduser().resolve()
     resolved_memory_root = effective_memory_root(resolved_root, settings=resolved_settings)
+    # Settings validates its own roots, but the CLI, Companion and ``--vault`` bindings
+    # use ``model_copy``, which skips validators: check the roots actually served.
+    resolved_extras = effective_extra_read_vaults(resolved_root, settings=resolved_settings)
+    validate_root_topology(resolved_root, resolved_memory_root, resolved_extras)
+    for message in extra_mount_warnings(resolved_root, resolved_extras):
+        _LOGGER.warning(message)
     sidecar_root = resolve_sidecar_root(
         resolved_root,
         memory_root=resolved_memory_root,
