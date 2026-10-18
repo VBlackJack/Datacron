@@ -23,6 +23,15 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   `total` and `next_offset`.
 - **Top-level `archive_tags:` in `.datacron/VAULT.yaml`**: when present, it takes precedence
   over `organization.tags.archive_tags` and the defaults.
+- **Companion vault selection from the CLI**: `datacron companion --vault <path>` and
+  `--memory-vault <path>` record the vaults in the Companion profile before launch.
+- **`datacron config get/set --target companion`**: reads and writes the Companion profile under
+  the same Compare-And-Swap contract as `VAULT.yaml`; `--vault` is accepted as an option
+  alongside the positional path, and `--json/--text` selects the output (text by default).
+- **`--memory-vault` on `ops inspect`, `ops repair`, `ops inspect-id` and `ops repair-id`**:
+  the operation and identity tools inspect and repair a Dual-Vault memory sidecar.
+- **Companion notes listing (`/api/notes`)**: bounded `limit` / `offset` listing of the
+  configured vaults.
 
 ### Changed
 
@@ -32,6 +41,49 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - **Daily log files**: the file logger switches to the new local day's file at midnight
   without renaming open files on Windows, appends to the same day's file after a restart, and
   prunes dated logs older than 14 days at startup and on date changes.
+- **`compact-memory --apply` writes through the vault writer**: digests and compacted notes go
+  through advisory locks, the operation journal and the history store, so a later MCP write no
+  longer fails with a write conflict. Apply refuses read-only mode; when
+  `DATACRON_WRITE_PATHS` is empty, the command allows `_memory` for its own run only. Digest
+  source links read `[[<path>|<rel_path>]] (id: <ulid>)` and resolve; compacted notes also
+  carry `memory/archive`; BOM, line endings and comma-separated scalar tags are preserved.
+- **`datacron config set --target vault` merges partial values**: `--values-json` is applied
+  over the current configuration, and every VAULT.yaml write keeps the keys it does not set
+  (`vault_id`, `created`, `datacron_version`, `folders`, `organization`). A top-level
+  `archive_tags` is written only when the vault already declares one or the list changes.
+- **Graph health**: links into `_memory` count as cross-vault only when a dedicated memory vault
+  is configured; links into `extra_read_vaults` mounts are reported as `extra:<prefix>`; a note
+  whose only outgoing links are unresolved is no longer reported as an orphan.
+- **`migrate-memory`**: refuses the home directory as either root, refuses symlinks and reparse
+  points anywhere under `.datacron/` and `_memory/` before creating the destination, and, without
+  `--keep-source`, removes the source `.datacron/` before `_memory/`.
+- **Companion UI**: actions show a busy state and report errors; jump cards and search results
+  are reachable from the keyboard (Enter and Space); controls carry ARIA labels, the active view
+  is marked with `aria-current`, and the page language follows the selected locale.
+- **Windows installer and setup wizard**: the installer passes `--no-write` when write tools are
+  not requested; the wizard's first index honors the vault's archive tags and Dual-Vault
+  settings.
+
+### Fixed
+
+- **Dual-Vault organization manifests**: validation, planning and apply resolve `_memory/` and
+  `.datacron/` against the memory vault and other paths against the docs vault, and a
+  `_Memory/` spelling can no longer bypass Dual-Vault routing.
+- **Regex search shadowing**: residual `<docs vault>/_memory` files, or files under a mounted
+  prefix, no longer shadow the memory vault or the mount in `search_regex` results.
+- **Companion request validation**: non-integer or out-of-range `limit`, `offset` and
+  `older_than_days` return HTTP 400 instead of 500; a memory vault equal to the docs vault runs
+  in Single-Vault mode; invalid `extra_read_vaults` prefixes are refused when the profile is
+  saved and skipped at runtime; the migration updates the profile under its CAS hash.
+
+### Security
+
+- **Companion server**: an empty `Host` header is refused, HTML responses carry a
+  `Content-Security-Policy`, and HTTP 500 responses hide internal details, which go to the log.
+- **Companion data exposure**: `/api/history` lists only operations on admitted notes, and
+  secret-bearing paths and values are redacted in history, graph health and compaction reports.
+- **Linked configuration paths**: VAULT.yaml writes refuse a symlinked or reparse-point file or
+  parent chain.
 
 ## [2026.1016.00] - 2026-10-16
 
