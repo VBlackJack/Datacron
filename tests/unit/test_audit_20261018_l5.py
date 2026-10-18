@@ -302,6 +302,78 @@ async def test_a3_compaction_preserves_digest_frontmatter(tmp_path: Path) -> Non
     assert "archive/journal-digest" in metadata["tags"]
 
 
+_FLOW_NOTE_ID: Final[str] = "01J00000000000000000000203"
+_FLOW_NOTE: Final[bytes] = (
+    b"---\n{id: 01J00000000000000000000203, title: flow, tags: [journal]}\n---\n"
+    b"# 2026-01-20\n\nFlow entry.\n"
+)
+
+
+async def test_a3_unmarkable_note_is_skipped_and_compaction_continues(tmp_path: Path) -> None:
+    docs_vault, journal_dir, settings = _compaction_vault(tmp_path)
+    _write_journal(journal_dir, "2026-01-10", "01J00000000000000000000201")
+    flow_note = journal_dir / "2026-01-20.md"
+    flow_note.write_bytes(_FLOW_NOTE)
+    _write_journal(journal_dir, "2026-02-03", "01J00000000000000000000202")
+
+    preview = await compact_vault_memory(
+        docs_vault,
+        settings=settings,
+        older_than_days=_COMPACTION_DAYS,
+        dry_run=True,
+        reference_date=_REFERENCE_DATE,
+    )
+    assert [item.rel_path for item in preview.skipped_notes] == ["_memory/journal/2026-01-20.md"]
+
+    report = await compact_vault_memory(
+        docs_vault,
+        settings=settings,
+        older_than_days=_COMPACTION_DAYS,
+        dry_run=False,
+        reference_date=_REFERENCE_DATE,
+    )
+
+    assert [item.rel_path for item in report.skipped_notes] == ["_memory/journal/2026-01-20.md"]
+    assert report.skipped_notes[0].reason
+    assert report.compacted_count == 2
+    assert report.digests_written == 2
+    assert flow_note.read_bytes() == _FLOW_NOTE
+    january = (journal_dir.parent / "archive" / "journal-2026-01.md").read_text(encoding="utf-8")
+    january_meta, _ = parse(january)
+    assert january_meta["compacted_notes"] == ["_memory/journal/2026-01-10.md"]
+    assert _FLOW_NOTE_ID not in january
+    assert (journal_dir.parent / "archive" / "journal-2026-02.md").is_file()
+
+
+async def test_a3_unmarkable_digest_skips_only_its_month(tmp_path: Path) -> None:
+    docs_vault, journal_dir, settings = _compaction_vault(tmp_path)
+    archive_dir = journal_dir.parent / "archive"
+    archive_dir.mkdir()
+    january_digest = archive_dir / "journal-2026-01.md"
+    digest_bytes = b"---\n{id: 01J00000000000000000000299, title: digest}\n---\n# Digest\n"
+    january_digest.write_bytes(digest_bytes)
+    january_note = _write_journal(journal_dir, "2026-01-10", "01J00000000000000000000201")
+    january_before = january_note.read_bytes()
+    _write_journal(journal_dir, "2026-02-03", "01J00000000000000000000202")
+
+    report = await compact_vault_memory(
+        docs_vault,
+        settings=settings,
+        older_than_days=_COMPACTION_DAYS,
+        dry_run=False,
+        reference_date=_REFERENCE_DATE,
+    )
+
+    assert {item.rel_path for item in report.skipped_notes} == {
+        "_memory/archive/journal-2026-01.md",
+        "_memory/journal/2026-01-10.md",
+    }
+    assert january_digest.read_bytes() == digest_bytes
+    assert january_note.read_bytes() == january_before
+    assert report.compacted_count == 1
+    assert (archive_dir / "journal-2026-02.md").is_file()
+
+
 # C-8: compacted notes are archived whatever archive tag list the vault declares.
 
 
@@ -371,6 +443,26 @@ async def test_a6_strict_mode_probes_the_docs_root(
     with pytest.raises(DurabilityUnavailableError):
         await writer.write_note_atomic("a.md", "x\n", overwrite=False, operation=_operation())
     assert not (docs / "a.md").exists()
+
+
+async def test_a6_unwritable_docs_root_does_not_block_memory_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docs, memory, settings = _dual_vault(tmp_path)
+    strict = settings.model_copy(update={"durability": "strict", "write_paths": [memory]})
+    resolved_docs = docs.resolve()
+
+    def fake_probe(path: Path) -> DurabilityStatus:
+        supported = path.expanduser().resolve() != resolved_docs
+        return DurabilityStatus(backend="test", directory_flush_supported=supported)
+
+    monkeypatch.setattr("datacron.core.vault_writer.probe_directory_durability", fake_probe)
+    writer = FilesystemVaultWriter(docs, strict)
+
+    await writer.write_note_atomic(
+        "_memory/facts/a.md", "x\n", overwrite=False, operation=_operation()
+    )
+    assert (memory / "_memory" / "facts" / "a.md").read_bytes() == b"x\n"
 
 
 def test_a6_dual_vault_probe_runs_unpatched(tmp_path: Path) -> None:

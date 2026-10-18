@@ -220,10 +220,25 @@ class FilesystemVaultWriter:
         status = probe_directory_durability(self._sidecar_root)
         if self._memory_root is None or not status.directory_flush_supported:
             return status
-        if not self._vault_root.is_dir():
+        if not self._vault_root.is_dir() or not self._docs_root_writable():
+            # A docs root no write path reaches never receives a note, so its
+            # backend must not make strict mode refuse memory writes.
             return status
         docs_status = probe_directory_durability(self._vault_root)
         return status if docs_status.directory_flush_supported else docs_status
+
+    def _docs_root_writable(self) -> bool:
+        """Return whether a configured write path reaches docs notes in the vault root."""
+        memory_root = self._memory_root
+        for write_path in self._settings.write_paths:
+            resolved = write_path.expanduser().resolve()
+            if memory_root is not None and resolved.is_relative_to(memory_root):
+                continue
+            if resolved.is_relative_to(self._vault_root) or self._vault_root.is_relative_to(
+                resolved
+            ):
+                return True
+        return False
 
     @property
     def recovery_blocked(self) -> tuple[BlockedOperation, ...]:
