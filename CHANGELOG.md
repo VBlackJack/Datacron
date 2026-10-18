@@ -33,6 +33,23 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - **Companion notes listing (`/api/notes`)**: bounded `limit` / `offset` listing of the
   configured vaults.
 
+- **`datacron setup --single-vault`** (and `/SINGLEVAULT` in the Windows installer): returns a
+  Dual-Vault install to Single-Vault by dropping `DATACRON_MEMORY_ROOT` from the client entries.
+- **`datacron migrate-memory --cleanup-only`**: removes the source `.datacron/` and `_memory/` of
+  an earlier migration after verifying every source memory note against the memory vault or the
+  copy manifest, without copying anything; the Companion exposes it as "Remove the migrated
+  source".
+- **`datacron config set --reset-invalid`**: the only way to replace an invalid or unreadable
+  `VAULT.yaml` (or Companion profile) with defaults plus the given values.
+- **`--vault/-v` on `graph-health` and `compact-memory`** (positional path kept), and
+  `--memory-vault` on `eval`.
+- **Windows installer `/DISABLEWRITE`**: write access becomes a three-way choice
+  (`/ENABLEWRITE`, `/DISABLEWRITE`, neither = keep the current setting).
+- **`source_vault: "extra"` and `source_mount`**: notes read from a `DATACRON_EXTRA_READ_VAULTS`
+  mount now say so in `list_notes`, `get_note`, search results and `session_context`.
+- **`skipped_notes` in compaction reports**: notes whose frontmatter cannot be edited in place
+  are reported and left untouched instead of stopping the run.
+
 ### Changed
 
 - **Default archive tags**: `archive/compacted` and `archive/journal-digest` join
@@ -64,6 +81,40 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   not requested; the wizard's first index honors the vault's archive tags and Dual-Vault
   settings.
 
+- **Environment memory vault rule (CLI and Companion)**: `--memory-vault` (or the Companion
+  memory field) always wins; `DATACRON_MEMORY_ROOT` is ignored, with a warning, when
+  `DATACRON_VAULT_ROOT` names another vault; otherwise it applies, as in the MCP server. An
+  explicit `--vault` that holds its own `.datacron/VAULT.yaml` while only `DATACRON_MEMORY_ROOT`
+  is set is refused, so a command on another vault can no longer write into the configured
+  memory vault.
+- **`migrate-memory` defaults**: reconfigures the detected clients (`--client all --scope
+  user`), keeps the source unless `--cleanup-source` is given, and keeps each client's current
+  write setting unless `--enable-write/--no-write` is given. The migration holds the vault write
+  lock, removes the source through an all-or-nothing tombstone, and can resume from a copy
+  manifest. The Companion does the same, with confirmation before any cleanup.
+- **VAULT.yaml and Companion profile writes**: a present but invalid file is refused instead of
+  being reset to defaults; only the keys the caller changed are written over the existing
+  content (defaults are never frozen into the file, removed keys stay removed); unknown keys are
+  checked against the change only.
+- **Setup reruns and the Windows installer**: a rerun on the same vault keeps its memory vault
+  and read allowlist; a rerun on another vault never inherits the previous memory vault; a
+  silent upgrade without `/MEMORYVAULT` reuses the recorded one only for the same vault; the
+  write checkbox is pre-filled from the recorded choice.
+- **Roots**: overlapping vault, memory and extra-mount roots are refused at startup with a
+  one-line error; a mount prefix that masks a docs top-level folder, or a missing mount path,
+  logs a warning.
+- **Line model**: chunks, headings, sections, redaction windows and regex matches split lines on
+  CR, LF and CRLF only, so U+2028, NEL, VT or FF no longer create lines or phantom headings
+  (`CHUNKER_VERSION` 3: the index re-chunks once).
+- **`search_regex`** ignores `.gitignore`/`.ignore` and searches dot files but not dot folders,
+  like `search_text`.
+- **Ranking**: archive detection uses the normalized tags (`#`-prefixed and inline tags included)
+  and `status: superseded`/`historical`; BM25 ties are ordered by path; compacted notes also get
+  `archived: true`.
+- **Companion**: the language switch saves preferences only; index-changing actions are
+  serialized; error messages follow the profile language; most panels are structured instead of
+  raw JSON.
+
 ### Fixed
 
 - **Dual-Vault organization manifests**: validation, planning and apply resolve `_memory/` and
@@ -76,6 +127,26 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   in Single-Vault mode; invalid `extra_read_vaults` prefixes are refused when the profile is
   saved and skipped at runtime; the migration updates the profile under its CAS hash.
 
+- **Non-string frontmatter keys** (`2026: done`, a date, `true`) no longer make `search_text`
+  and `list_notes` fail for the whole vault; the note keeps its string keys and its id, and
+  writes to it are refused with a clear error.
+- **Recreating a note** at a path whose journalled version was deleted outside Datacron, or
+  moved by an organization manifest, is no longer refused forever.
+- **`_Memory/...` spellings** are written to the canonical `_memory` folder, so bytes, journal
+  and reader agree on case-sensitive filesystems.
+- **compact-memory** edits only the frontmatter keys it sets; times, versions, leading zeros,
+  comments and key order survive.
+- **Directory links inside the vault** are no longer listed twice or able to fail `list_notes`;
+  a note vanishing during a sweep no longer aborts it.
+- **Repair after a mass touch** (git checkout, sync) commits once per batch instead of once per
+  note (28.9 s to 4.2 s on 3000 notes); long reads no longer hold the index lock against
+  another Datacron process.
+- **Companion**: the VAULT.yaml save uses the hash the edit was based on (a concurrent edit is
+  a conflict, not an overwrite); the regex folder filter matches the folder.
+- **Minor**: `.MD` notes are writable; invalid `last_verified` refused on creation; a held lock
+  returns `vault_lock_busy` (retryable); `get_backlinks` truncation is exact; drive-root vault
+  paths in installer shortcuts; the Companion shortcut opens the configured vault.
+
 ### Security
 
 - **Companion server**: an empty `Host` header is refused, HTML responses carry a
@@ -84,6 +155,15 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   secret-bearing paths and values are redacted in history, graph health and compaction reports.
 - **Linked configuration paths**: VAULT.yaml writes refuse a symlinked or reparse-point file or
   parent chain.
+- **Search highlighting** no longer lets the matched word inside an injection phrase bypass
+  the escape, and `get_note` pages are checked across page boundaries.
+- **Journal parameters** returned by `audit_query` and `get_note_history` go through the
+  injection escape; ripgrep diagnostics no longer expose absolute host paths.
+- **Writer link checks** run on the path as written, before it is resolved or any folder is
+  created; a padded path spelling can no longer follow a junction.
+- **Companion server**: per-response CSP nonce and `form-action 'self'`, request socket timeout,
+  non-numeric `Content-Length` refused.
+- **Uninstall** removes the `DATACRON_WRITE_PATHS` user variable the installer created.
 
 ## [2026.1016.00] - 2026-10-16
 

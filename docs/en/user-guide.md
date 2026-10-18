@@ -305,8 +305,9 @@ separators: `*.md` matches filenames at any depth, `_memory/*.md` matches direct
 and `_memory/**/*.md` includes descendants (`**` can match zero folders). Ripgrep runs
 with the vault as its working directory and `.` as its search target.
 
-Ripgrep retains its default hidden-file and ignore rules; an explicit glob follows
-ripgrep's normal override precedence. The fallback scans admitted indexed chunks,
+Ripgrep reads no `.gitignore` or `.ignore` file and searches dot files but not dot
+folders, like the vault walk behind `search_text`; an explicit glob cannot re-include a
+dot folder. The fallback scans admitted indexed chunks,
 so file coverage can differ even though glob matching uses the same path rules.
 
 Use positive globs with `*`, `?`, character classes, and whole `**` path segments.

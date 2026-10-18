@@ -315,8 +315,9 @@ Les globs sont sensibles à la casse et relatifs au vault sur les deux moteurs. 
 et `_memory/**/*.md` inclut les descendants (`**` accepte zéro dossier). Ripgrep tourne
 avec le vault comme répertoire courant et `.` comme cible de recherche.
 
-Ripgrep conserve ses règles habituelles pour les fichiers cachés et ignorés ; un
-glob explicite suit les priorités normales de ripgrep. Le fallback parcourt les
+Ripgrep ne lit aucun fichier `.gitignore` ni `.ignore` et parcourt les fichiers
+commençant par un point mais pas les dossiers commençant par un point, comme le parcours
+du vault derrière `search_text` ; un glob explicite ne peut pas réintégrer un tel dossier. Le fallback parcourt les
 chunks indexés admis : les fichiers couverts peuvent donc différer malgré des
 règles de correspondance des chemins communes.
 
