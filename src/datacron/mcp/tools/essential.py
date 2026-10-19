@@ -59,7 +59,8 @@ from datacron.core.config import (
 from datacron.core.operation_log import OperationLogError, OperationRecord
 from datacron.core.paths import PathConfinementError
 from datacron.core.scope import NoteAdmissionError, admits_note_path
-from datacron.core.write_request import ReplayedWriteError
+from datacron.core.security import REDACTED
+from datacron.core.write_request import ACTIVE_WRITE_REQUEST, ReplayedWriteError
 from datacron.mcp.tools.ops import _admitted_records
 from datacron.mcp.tools.payloads import (
     _audit,
@@ -75,6 +76,7 @@ from datacron.mcp.tools.read import (
     _resolve_note,
     _serialized_chars,
 )
+from datacron.mcp.tools.retrieval import protect_note_title
 from datacron.mcp.tools.search import _repair_index_on_read, _search_text_impl
 from datacron.mcp.tools.subject_state import load_subject_notes
 from datacron.mcp.tools.write import _append_journal_impl, _create_note_ai_impl
@@ -111,6 +113,13 @@ _NON_SLUG: Final[re.Pattern[str]] = re.compile(r"[^a-z0-9]+")
 _DURATION_PATTERN: Final[re.Pattern[str]] = re.compile(r"(\d+)\s*([dh])")
 _DURATION_UNITS: Final[dict[str, str]] = {"d": "days", "h": "hours"}
 _CAS_CONFLICT_ERROR: Final[str] = "WriteConflictError"
+# The writer's message for a stale expected_hash; a request_id conflict never carries it.
+_CAS_CONFLICT_MARKER: Final[str] = "hash mismatch"
+_REQUEST_KEY_PARAMETER: Final[str] = "request_key_hash"
+_REQUEST_FINGERPRINT_PARAMETER: Final[str] = "request_fingerprint"
+_OP_CREATE: Final[str] = "create"
+_OP_APPEND: Final[str] = "append"
+_REFUSAL_REQUEST_REUSED: Final[str] = "request_id was already used with different arguments"
 _FILE_EXISTS_ERROR: Final[str] = "FileExistsError"
 _NANOSECONDS_PER_SECOND: Final[int] = 1_000_000_000
 
@@ -325,9 +334,8 @@ async def _plan_remember(app: DatacronApp, about: str | None, kind: str) -> _Pla
     organization = app.organization
     if organization is None or not organization.rules:
         raise EssentialRefusalError(_REFUSAL_NO_ORGANIZATION)
-    placement = _placement_tag(organization, kind)
     if not reference:
-        return _Plan(tags=[placement])
+        return _Plan(tags=[_placement_tag(organization, kind)])
     matches = matching_subject_tags(reference, organization)
     if len(matches) > 1:
         raise EssentialRefusalError(
@@ -355,7 +363,7 @@ async def _plan_remember(app: DatacronApp, about: str | None, kind: str) -> _Pla
         )
     if state_notes:
         return _Plan(append_to=state_notes[0])
-    return _Plan(tags=[placement, subject_tag])
+    return _Plan(tags=[_placement_tag(organization, kind), subject_tag])
 
 
 async def _latest_operation_id(app: DatacronApp, rel_path: str, content_hash: str) -> str | None:
@@ -391,7 +399,11 @@ async def _append_with_retry(
             actor=actor,
             request_id=None,
         )
-        conflicted = _failed(result) and result["error"].get("type") == _CAS_CONFLICT_ERROR
+        conflicted = (
+            _failed(result)
+            and result["error"].get("type") == _CAS_CONFLICT_ERROR
+            and _CAS_CONFLICT_MARKER in str(result["error"].get("message", ""))
+        )
         if not conflicted or attempt == ESSENTIAL_REMEMBER_CAS_RETRIES:
             return result
     return result
@@ -438,6 +450,39 @@ async def _create_for_remember(
     return result
 
 
+async def _journal_replay(app: DatacronApp) -> dict[str, Any] | None:
+    """Answer a retried request from its journal record, before anything is resolved.
+
+    The record is found the way ``get_note_history`` finds one: by the
+    ``request_key_hash`` parameter the writer stamps from the active request. An
+    identical request replays whatever the note looks like now, so a retry after an
+    intervening write, a UTC midnight or a changed resolution never writes twice.
+    """
+    request = ACTIVE_WRITE_REQUEST.get()
+    if request is None:
+        return None
+    matching = [
+        record
+        for record in await app.vault_writer.list_operations()
+        if record.parameters.get(_REQUEST_KEY_PARAMETER) == request.key_hash
+    ]
+    if not matching:
+        return None
+    record = matching[-1]
+    if record.parameters.get(_REQUEST_FINGERPRINT_PARAMETER) != request.fingerprint:
+        raise EssentialRefusalError(_REFUSAL_REQUEST_REUSED)
+    request.record = record
+    return {
+        "rel_path": record.rel_path,
+        "operation_id": record.operation_id,
+        "content_hash": record.after_hash,
+        "indexed": False,
+        "created": record.op == _OP_CREATE,
+        "appended": record.op == _OP_APPEND,
+        "replayed": True,
+    }
+
+
 @replayable_write
 async def _remember_impl(
     app: DatacronApp,
@@ -452,6 +497,9 @@ async def _remember_impl(
     started = time.perf_counter()
     try:
         cleaned, cleaned_source = _validate_remember(content, kind, source)
+        replayed = await _journal_replay(app)
+        if replayed is not None:
+            return replayed
         plan = await _plan_remember(app, about, kind)
         if plan.append_to is not None:
             entry = _format_entry(cleaned, kind, cleaned_source, _today())
@@ -534,9 +582,12 @@ async def _recall_item(app: DatacronApp, hit: dict[str, Any]) -> dict[str, Any] 
             heading_path=trail,
         )
     if not trail or "error" in payload:
-        chunk_id = str(hit["chunk_id"])
-        payload = await _get_note_impl(app, id_or_path=chunk_id, fmt="full")
-        read_more = {"tool": "get_note", "id_or_path": chunk_id, "heading_path": None}
+        # No usable section: read the opening page of the note, capped like a section.
+        payload = await _get_note_impl(
+            app, id_or_path=rel_path, fmt="full", limit=ESSENTIAL_RECALL_EXCERPT_MAX_CHARS
+        )
+        read_more = {"tool": "get_note", "id_or_path": rel_path, "heading_path": None}
+        trail = []
         if "error" in payload:
             return None
     frontmatter = payload.get("frontmatter")
@@ -730,6 +781,28 @@ async def _out_of_band(
     ]
 
 
+async def _protected_titles(app: DatacronApp, rel_paths: list[str]) -> dict[str, str]:
+    """Return the index titles, each routed through the title protection reads use.
+
+    With retrieval redaction off the index title is served as is. With it on, a title
+    can sit inside a context-sensitive secret that only the whole note reveals, so each
+    note is read and judged by ``protect_note_title``; a note that cannot be read is
+    concealed rather than guessed about.
+    """
+    titles = await app.store.note_titles(rel_paths)
+    if not app.secret_redactor.retrieval_enabled(app.settings):
+        return titles
+    protected: dict[str, str] = {}
+    for rel_path in titles:
+        try:
+            note = await _read_note_by_rel_path(app, rel_path)
+        except (NoteAdmissionError, PathConfinementError, FileNotFoundError, ValueError, OSError):
+            protected[rel_path] = REDACTED
+            continue
+        protected[rel_path] = protect_note_title(app, note)
+    return protected
+
+
 async def _what_changed_impl(
     app: DatacronApp,
     *,
@@ -756,8 +829,8 @@ async def _what_changed_impl(
         shown = window[:bounded]
         out_of_band = await _out_of_band(app, records, since_time, folder, subject_paths)
         shown_oob = out_of_band[:ESSENTIAL_WHAT_CHANGED_MAX_OUT_OF_BAND]
-        titles = await app.store.note_titles(
-            [record.rel_path for record in shown] + [item["_path"] for item in shown_oob]
+        titles = await _protected_titles(
+            app, [record.rel_path for record in shown] + [item["_path"] for item in shown_oob]
         )
     except OperationLogError as exc:
         return _error_response(_TOOL_WHAT_CHANGED, exc, started)
