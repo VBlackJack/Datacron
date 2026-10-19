@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from pathlib import Path
@@ -48,6 +48,7 @@ from datacron.core.config import (
     INBOX_DIFF_CONTEXT_LINES,
     INBOX_DIFF_FROM_LABEL,
     INBOX_DIFF_MAX_CHARS,
+    INBOX_DIFF_MAX_SOURCE_BYTES,
     INBOX_DIFF_TO_LABEL,
     INBOX_FILTER_MAX_CHARS,
     INBOX_MAX_LIMIT,
@@ -61,7 +62,11 @@ from datacron.core.config import (
 from datacron.core.durability import DurabilityUnavailableError, ReadOnlyModeError
 from datacron.core.hashing import sha256_bytes
 from datacron.core.markdown_headings import split_markdown_lines
-from datacron.core.operation_log import HistoryUnavailableError, OperationRecord
+from datacron.core.operation_log import (
+    HistoryUnavailableError,
+    OperationLogError,
+    OperationRecord,
+)
 from datacron.core.paths import PathConfinementError, sidecar_index_db
 from datacron.core.scope import NoteAdmissionError, admits_note_path
 from datacron.core.security import SecretRedactor
@@ -90,6 +95,8 @@ _REQUEST_ID_DIGEST_CHARS: Final[int] = 32
 _STATUS_DIFF: Final[str] = "diff"
 _STATUS_CREATED: Final[str] = "created"
 _STATUS_UNAVAILABLE: Final[str] = "unavailable"
+_STATUS_TOO_LARGE: Final[str] = "too_large"
+_STATUS_REVERTED: Final[str] = "reverted"
 _STATUS_CONFLICT: Final[str] = "conflict"
 _COMMITTED_INDEX_INCOMPLETE: Final[str] = "committed_index_incomplete"
 _WRITE_CONFLICT_ERROR_TYPE: Final[str] = WriteConflictError.__name__
@@ -99,6 +106,7 @@ _REVERT_FAILURES: Final[dict[str, tuple[str, HTTPStatus]]] = {
     DurabilityUnavailableError.__name__: ("inbox_writes_disabled", HTTPStatus.FORBIDDEN),
     _WRITE_CONFLICT_ERROR_TYPE: ("inbox_revert_conflict", HTTPStatus.CONFLICT),
     HistoryUnavailableError.__name__: ("inbox_history_unavailable", HTTPStatus.CONFLICT),
+    OperationLogError.__name__: ("inbox_history_unavailable", HTTPStatus.CONFLICT),
     FileNotFoundError.__name__: ("inbox_note_missing", HTTPStatus.NOT_FOUND),
     NoteAdmissionError.__name__: ("inbox_note_missing", HTTPStatus.NOT_FOUND),
     ValueError.__name__: ("inbox_revert_noop", HTTPStatus.CONFLICT),
@@ -127,7 +135,7 @@ def _refuse(locale: str, key: str, http_status: int, **extra: Any) -> InboxError
     return InboxError(
         t(f"companion.errors.{key}", locale=locale),
         http_status=http_status,
-        extra=extra,
+        extra={"code": key, **extra},
     )
 
 
@@ -298,7 +306,7 @@ async def list_companion_inbox(
 
     page = matching[offset : offset + limit]
     writes_enabled = app.write_policy.effective_writes_enabled
-    present = await app.vault_writer.present_history_hashes(rec.before_hash for rec in page)
+    present = await _present(app, (rec.before_hash for rec in page))
     rows: list[dict[str, Any]] = []
     for rec in page:
         title, content_hash = await _current_note(app, rec.rel_path)
@@ -339,9 +347,24 @@ def _decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+async def _history(app: DatacronApp, content_hash: str) -> bytes | None:
+    """Stored bytes for a hash; a corrupt or unreachable blob counts as absent."""
+    try:
+        return await app.vault_writer.read_history_bytes(content_hash)
+    except OperationLogError:
+        return None
+
+
+async def _present(app: DatacronApp, hashes: Iterable[str | None]) -> set[str]:
+    try:
+        return await app.vault_writer.present_history_hashes(hashes)
+    except OperationLogError:
+        return set()
+
+
 async def _after_bytes(app: DatacronApp, rec: OperationRecord) -> bytes | None:
     """Bytes a write produced: from history when kept, else the note if it is unchanged."""
-    stored = await app.vault_writer.read_history_bytes(rec.after_hash)
+    stored = await _history(app, rec.after_hash)
     if stored is not None:
         return stored
     try:
@@ -377,9 +400,11 @@ async def get_companion_inbox_diff(
     after = await _after_bytes(app, rec)
     before: bytes | None = None
     if rec.before_hash is not None:
-        before = await app.vault_writer.read_history_bytes(rec.before_hash)
+        before = await _history(app, rec.before_hash)
     if after is None or (rec.before_hash is not None and before is None):
         return {"status": _STATUS_UNAVAILABLE}
+    if before is not None and len(before) + len(after) > INBOX_DIFF_MAX_SOURCE_BYTES:
+        return {"status": _STATUS_TOO_LARGE}
 
     after_text = _decode(after)
     if redact:
@@ -392,10 +417,12 @@ async def get_companion_inbox_diff(
     before_text = _decode(before)
     if redact:
         before_text = app.secret_redactor.redact_text(before_text)
+    before_lines = _diff_lines(before_text)
+    after_lines = _diff_lines(after_text)
     lines = list(
         difflib.unified_diff(
-            _diff_lines(before_text),
-            _diff_lines(after_text),
+            before_lines,
+            after_lines,
             fromfile=INBOX_DIFF_FROM_LABEL,
             tofile=INBOX_DIFF_TO_LABEL,
             n=INBOX_DIFF_CONTEXT_LINES,
@@ -412,7 +439,11 @@ async def get_companion_inbox_diff(
         "added": added,
         "removed": removed,
         "truncated": truncated,
-        "redacted_change_only": (rec.before_hash != rec.after_hash and before_text == after_text),
+        "redacted_change_only": (
+            redact and rec.before_hash != rec.after_hash and before_text == after_text
+        ),
+        # Same lines, different line ends: nothing a line diff can show.
+        "line_endings_only": before_text != after_text and before_lines == after_lines,
     }
 
 
@@ -434,7 +465,13 @@ async def review_companion_inbox(
     expected = raw_hash if isinstance(raw_hash, str) and raw_hash else None
     app, vault_root, settings = _open_required(profile_path, locale)
     await _find_record(app, operation_id, locale)
-    journal_ids = [rec.operation_id for rec in await app.vault_writer.list_operations()]
+
+    def journal_ids() -> list[str]:
+        # Read inside the review lock, so an operation committed while this request
+        # waited for the lock is never mistaken for one the journal no longer holds.
+        records = asyncio.run(app.vault_writer.list_operations())
+        return [rec.operation_id for rec in records]
+
     try:
         state = await asyncio.to_thread(
             lambda: update_review_state(
@@ -464,9 +501,14 @@ async def review_companion_inbox(
     }
 
 
-def _revert_request_id(operation_id: str) -> str:
-    """Derive a valid, stable request id so a double submit replays instead of repeating."""
-    digest = sha256_bytes(operation_id.encode("utf-8"))
+def _revert_request_id(operation_id: str, expected_hash: str) -> str:
+    """Derive a valid, stable request id so a double submit replays instead of repeating.
+
+    The write-request fingerprint covers ``expected_hash``, so the id covers it too: the
+    same change reverted again against a different note state is a new request, while the
+    same pair submitted twice is still one.
+    """
+    digest = sha256_bytes(f"{operation_id}:{expected_hash}".encode())
     return f"{INBOX_REVERT_REQUEST_PREFIX}{digest[:_REQUEST_ID_DIGEST_CHARS]}"
 
 
@@ -506,7 +548,7 @@ async def revert_companion_inbox(
         raise _refuse(locale, "inbox_writes_disabled", HTTPStatus.FORBIDDEN)
     if rec.before_hash is None:
         raise _refuse(locale, "inbox_revert_creation", HTTPStatus.CONFLICT)
-    present = await app.vault_writer.present_history_hashes([rec.before_hash])
+    present = await _present(app, [rec.before_hash])
     if rec.before_hash not in present:
         raise _refuse(locale, "inbox_history_unavailable", HTTPStatus.CONFLICT)
 
@@ -522,7 +564,7 @@ async def revert_companion_inbox(
             to_hash=rec.before_hash,
             expected_hash=raw_expected,
             actor=COMPANION_REVERT_ACTOR,
-            request_id=_revert_request_id(operation_id),
+            request_id=_revert_request_id(operation_id, raw_expected),
         )
     finally:
         await app.store.close()
@@ -530,7 +572,7 @@ async def revert_companion_inbox(
     error = result.get("error")
     if isinstance(error, Mapping) and error.get("code") == _COMMITTED_INDEX_INCOMPLETE:
         return {
-            "status": "reverted",
+            "status": _STATUS_REVERTED,
             "rel_path": _redact_path(app, rec.rel_path),
             "content_hash": error.get("content_hash"),
             "indexed": False,
@@ -539,7 +581,7 @@ async def revert_companion_inbox(
     if error is not None:
         raise _revert_failure(result, locale)
     return {
-        "status": "reverted",
+        "status": _STATUS_REVERTED,
         "rel_path": _redact_path(app, rec.rel_path),
         "content_hash": result.get("content_hash"),
         "indexed": bool(result.get("indexed", False)),

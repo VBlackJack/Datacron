@@ -460,8 +460,8 @@ _HTML_BODY: Final[str] = """
           <div class="mono-box diff-box" id="inbox-diff" tabindex="0" role="region"
             aria-label="Change" data-i18n-aria="inbox.diff_title" hidden></div>
           <div class="row">
-            <button class="btn" id="btn-inbox-review" aria-label="Mark as reviewed"
-              hidden></button>
+            <button class="btn" id="btn-inbox-review"
+              data-i18n-aria="inbox.mark_reviewed_aria" hidden></button>
             <button class="btn btn-primary" id="btn-inbox-revert"
               aria-label="Revert this change" data-i18n-aria="inbox.revert_aria"
               data-i18n="inbox.revert_button" hidden></button>
@@ -757,7 +757,8 @@ function renderHistory(out) {
 // Memory inbox state: the rows loaded so far, the review-state hash the next mark must
 // present, and the row whose diff is open.
 const INBOX = {
-  rows: [], total: 0, stateHash: null, writesEnabled: false, selected: null, loaded: false
+  rows: [], total: 0, stateHash: null, writesEnabled: false, selected: null, loaded: false,
+  diff: null
 };
 
 function inboxFilterParams(offset) {
@@ -789,16 +790,13 @@ function renderInboxList() {
     item.className = "list-item" + (row.operation_id === INBOX.selected ? " selected" : "");
     item.setAttribute("role", "button");
     item.setAttribute("tabindex", "0");
-    item.setAttribute("aria-label", formatText(i18nText("inbox.row_open"), {
-      op: row.op, tool: row.tool, path: row.rel_path
-    }));
     if (row.operation_id === INBOX.selected) item.setAttribute("aria-current", "true");
     const title = document.createElement("div");
     title.textContent = row.title || row.rel_path;
     const meta = document.createElement("div");
     meta.className = "list-meta";
     meta.textContent = [
-      row.timestamp, row.tool, row.actor, row.rel_path,
+      row.timestamp, row.op, row.tool, row.actor, row.rel_path,
       i18nText(row.reviewed ? "inbox.row_reviewed" : "inbox.row_unreviewed")
     ].join("  |  ");
     item.appendChild(title);
@@ -829,6 +827,10 @@ function renderInboxDiff(result) {
     note.textContent = i18nText("inbox.diff_unavailable");
     return;
   }
+  if (result.status === "too_large") {
+    note.textContent = i18nText("inbox.diff_too_large");
+    return;
+  }
   box.hidden = false;
   if (result.status === "created") {
     note.textContent = i18nText("inbox.diff_created");
@@ -848,15 +850,44 @@ function renderInboxDiff(result) {
     });
     if (result.redacted_change_only) {
       note.textContent = i18nText("inbox.diff_redacted_change_only");
+    } else if (result.line_endings_only) {
+      note.textContent = i18nText("inbox.diff_line_endings_only");
     } else if (!lines.length) {
       note.textContent = i18nText("inbox.diff_empty");
     } else {
-      note.textContent = formatText(i18nText("inbox.diff_counts"), {
-        added: result.added, removed: result.removed
-      });
+      note.textContent = inboxPlural("inbox.diff_added", result.added) + ", " +
+        inboxPlural("inbox.diff_removed", result.removed);
     }
   }
   if (result.truncated) note.textContent += " " + i18nText("inbox.diff_truncated");
+}
+
+function inboxPlural(keyPrefix, count) {
+  const rule = new Intl.PluralRules(document.documentElement.lang || "en").select(count);
+  const suffix = rule === "one" ? "_one" : "_other";
+  return formatText(i18nText(keyPrefix + suffix), { count: count });
+}
+
+function clearInboxDetail() {
+  INBOX.selected = null;
+  INBOX.diff = null;
+  const box = document.getElementById("inbox-diff");
+  box.replaceChildren();
+  box.hidden = true;
+  document.getElementById("inbox-detail-note").textContent = i18nText("inbox.diff_hint");
+  renderInboxActions("");
+}
+
+// Redraws what the inbox shows from its held state, so a language switch retranslates it.
+function renderInboxAll() {
+  if (!INBOX.loaded) return;
+  renderInboxList();
+  if (INBOX.diff) {
+    renderInboxDiff(INBOX.diff);
+    renderInboxActions(INBOX.diff.status);
+  } else {
+    clearInboxDetail();
+  }
 }
 
 function renderInboxActions(diffStatus) {
@@ -891,6 +922,7 @@ async function openInboxRow(operationId) {
   renderInboxList();
   const result = await apiCall(
     "/api/inbox/diff?operation_id=" + encodeURIComponent(operationId));
+  INBOX.diff = result;
   renderInboxDiff(result);
   renderInboxActions(result.status);
 }
@@ -903,12 +935,7 @@ async function loadInbox(append) {
   INBOX.stateHash = res.state_hash;
   INBOX.writesEnabled = Boolean(res.writes_enabled);
   INBOX.loaded = true;
-  if (!inboxSelectedRow()) {
-    INBOX.selected = null;
-    renderInboxDiff({ status: "unavailable" });
-    document.getElementById("inbox-detail-note").textContent = i18nText("inbox.diff_hint");
-    renderInboxActions("");
-  }
+  if (!inboxSelectedRow()) clearInboxDetail();
   renderInboxList();
 }
 
@@ -941,12 +968,9 @@ async function toggleInboxReview() {
   if (res.reviewed && document.getElementById("chk-inbox-unreviewed").checked) {
     INBOX.rows = INBOX.rows.filter((item) => item.operation_id !== row.operation_id);
     INBOX.total = Math.max(0, INBOX.total - 1);
-    INBOX.selected = null;
-    renderInboxDiff({ status: "unavailable" });
-    document.getElementById("inbox-detail-note").textContent = i18nText("inbox.diff_hint");
-    renderInboxActions("");
+    clearInboxDetail();
   } else {
-    renderInboxActions("");
+    renderInboxActions(INBOX.diff ? INBOX.diff.status : "");
   }
   renderInboxList();
 }
@@ -968,7 +992,13 @@ async function revertInboxRow() {
   } catch (err) {
     await loadInbox(false);
     if (INBOX.selected) await openInboxRow(INBOX.selected);
-    setStatus(err.message);
+    if (err.status === 409 && err.payload && err.payload.status === "conflict") {
+      setStatus(i18nText("inbox.revert_conflict"));
+    } else if (err.status === 503) {
+      setStatus(i18nText("inbox.revert_busy"));
+    } else {
+      setStatus(err.message);
+    }
     return;
   }
   let key = "inbox.revert_done";
@@ -1102,6 +1132,7 @@ function renderState(state) {
   populateSelect("sel-timeout", state.choices.timeouts, prof.cli_timeout_seconds);
   document.getElementById("chk-mcp-write").checked = Boolean(prof.enable_write);
   renderMcpTargets(state.mcp_targets);
+  renderInboxAll();
 }
 
 async function refreshState() {

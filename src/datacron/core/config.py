@@ -215,6 +215,8 @@ INBOX_SINCE_WINDOWS_SECONDS: Final[dict[str, int]] = {
 INBOX_DEFAULT_SINCE: Final[str] = INBOX_SINCE_ALL
 # Largest unified diff the inbox returns, in characters; the rest is cut and flagged.
 INBOX_DIFF_MAX_CHARS: Final[int] = 200_000
+# Combined size of the two texts above which no diff is computed (difflib is quadratic).
+INBOX_DIFF_MAX_SOURCE_BYTES: Final[int] = 1024 * 1024
 INBOX_DIFF_CONTEXT_LINES: Final[int] = 3
 INBOX_DIFF_FROM_LABEL: Final[str] = "before"
 INBOX_DIFF_TO_LABEL: Final[str] = "after"

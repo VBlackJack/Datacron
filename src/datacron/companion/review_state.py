@@ -23,7 +23,7 @@ optional compare-and-swap on the SHA-256 of the file bytes.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -112,16 +112,21 @@ def _parse(raw: bytes) -> dict[str, str]:
     return marks
 
 
-def _read_bytes(path: Path) -> bytes:
+def _read_bytes(path: Path, anchor: Path) -> bytes:
+    """Read the state file, refusing a path that passes through a link."""
+    confined = assert_path_chain_without_links(path, anchor=anchor, allow_missing=True)
     try:
-        return path.read_bytes()
+        return confined.read_bytes()
     except FileNotFoundError:
         return b""
 
 
 def read_review_state(vault_root: Path, settings: Settings) -> ReviewState:
     """Read the review marks without taking the lock."""
-    raw = _read_bytes(review_state_path(vault_root, settings))
+    raw = _read_bytes(
+        review_state_path(vault_root, settings),
+        resolve_sidecar_root(vault_root, settings=settings),
+    )
     return ReviewState(reviewed=_parse(raw), state_hash=sha256_bytes(raw))
 
 
@@ -148,14 +153,16 @@ def update_review_state(
     settings: Settings,
     *,
     changes: Mapping[str, bool],
-    journal_ids: Iterable[str],
+    journal_ids: Callable[[], Iterable[str]],
     expected_state_hash: str | None = None,
     now: datetime | None = None,
 ) -> ReviewState:
     """Apply ``changes`` (operation id -> reviewed?) under the review lock.
 
-    ``expected_state_hash`` is the hash the caller read; when given and different from
-    the file on disk the write is refused with :class:`ReviewStateConflictError`.
+    ``journal_ids`` is called inside the lock and returns the operation ids the journal
+    holds at that moment. ``expected_state_hash`` is the hash the caller read; when given
+    and different from the file on disk the write is refused with
+    :class:`ReviewStateConflictError`.
     Omitting it merges the change into whatever is on disk, which is safe because a
     mark and an unmark of different operations commute. Marks for operations the
     journal no longer holds are pruned, and the count is capped.
@@ -163,14 +170,14 @@ def update_review_state(
     path = review_state_path(vault_root, settings)
     sidecar_root = resolve_sidecar_root(vault_root, settings=settings)
     stamp = (now or datetime.now(tz=UTC)).isoformat()
-    known = set(journal_ids)
     with hold_sidecar_lock(
         sidecar_dir(vault_root, settings=settings),
         anchor=sidecar_root,
         key=INBOX_REVIEW_LOCK_KEY,
         timeout_seconds=settings.vault_lock_timeout_seconds,
     ):
-        raw = _read_bytes(path)
+        known = set(journal_ids())
+        raw = _read_bytes(path, sidecar_root)
         current_hash = sha256_bytes(raw)
         if expected_state_hash is not None and expected_state_hash != current_hash:
             raise ReviewStateConflictError(current_hash)
