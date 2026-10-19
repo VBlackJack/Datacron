@@ -354,7 +354,7 @@ For the next steps, move on to the [user guide](user-guide.md).
 
 ## 12. Datacron Companion, Dual-Vault migration & maintenance CLI
 
-- **Graphical Control Panel (`datacron companion`)**: launches a local control panel on `127.0.0.1` (session-token CSRF and `Host`/`Origin` validation) with 7 tabs (Dashboard, Vaults & Topology, Search & Preview, Graph & Compaction, MCP Clients, History & Audit, Settings) and live FR/EN switching. `--vault` and `--memory-vault` are saved into the Companion profile before it starts; `--vault` without `--memory-vault` is a single-vault choice and clears the stored memory vault. An invalid profile is refused rather than replaced:
+- **Graphical Control Panel (`datacron companion`)**: launches a local control panel on `127.0.0.1` (session-token CSRF and `Host`/`Origin` validation) with 8 tabs (Dashboard, Vaults & Topology, Search & Preview, Graph & Compaction, MCP Clients, History & Audit, Memory Inbox, Settings) and live FR/EN switching. `--vault` and `--memory-vault` are saved into the Companion profile before it starts; `--vault` without `--memory-vault` is a single-vault choice and clears the stored memory vault. An invalid profile is refused rather than replaced:
   ```bash
   datacron companion --vault /path/to/vault
   ```

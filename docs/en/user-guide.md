@@ -114,6 +114,43 @@ gap between its actual state and the declared organization. It is read-only: it 
 applies nothing. `apply_organization_manifest` is what applies, and only after validation. See
 [Vault organization](organization.md).
 
+### Review what was written: the Companion memory inbox
+
+The **Memory Inbox** tab of the Companion lists the writes recorded in the operation journal,
+newest first, so you can read what your assistant stored and undo it when it is wrong.
+
+- **What it lists**: one row per journaled write (create, append, section patch, revert and so
+  on) with its time, tool, actor, note and review state. Only changes the vault's scope admits
+  appear: a note in an excluded folder is never listed, and its operation is reported as not
+  found. By default only changes you have not reviewed are shown. The filters are the note path,
+  the tool, the actor and a period (last 24 hours, 7 days, 30 days, or all time).
+- **Diff**: opening a row shows a unified diff between the exact text before and after the change,
+  with added and removed lines marked. When secret redaction is on, each whole text is redacted
+  before the comparison, so a multi-line private key shows only as a marker; if the only thing
+  that changed was redacted content, the view says so. A creation shows the content that was
+  created. When the exact text is no longer stored (history retention purged it, or the vault
+  keeps a redacted history), the row stays in the list with its review mark, shows no diff, and
+  cannot be reverted.
+- **Mark reviewed**: a toggle on each change. The mark is stored in
+  `.datacron/companion/review-state.json`, beside the operation journal: in the memory vault's
+  sidecar in Dual-Vault mode, in the vault's own sidecar in Single-Vault mode. It is not written
+  to the operation journal or to any note. Marks from two windows or two processes are merged
+  under a file lock, a stale view of the state is refused and reloaded, marks of operations the
+  journal no longer holds are dropped, and the file keeps at most 10,000 marks. Marking works
+  when writes are disabled, because it changes no note.
+- **Revert**: after a confirmation, restores the exact bytes the note had before the change,
+  through the same path as the `revert_note` tool. The revert is itself journaled (actor
+  `companion:local-operator`), appears in the inbox, can be reverted in turn, and refreshes the
+  search index. Sending the same request twice applies it once.
+
+The Revert button is hidden, and the request is refused, when writes are disabled (the Companion
+profile has writes off, `DATACRON_READ_ONLY` is set, or strict durability cannot be provided);
+when the change is a creation (there is no earlier text to restore); and when the earlier text
+is no longer stored. If the note changed after the list was loaded, nothing is written: the
+Companion reports a conflict and asks you to reload and look at the change again, and it never
+retries with a fresh hash on its own. If another Datacron writer holds the vault lock, nothing is
+changed and the message asks you to try again in a moment.
+
 ## How search works
 
 Heading trails contain only headings present in the Markdown body. A parent must have

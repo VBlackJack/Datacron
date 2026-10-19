@@ -9,6 +9,22 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- **Companion Memory Inbox**: a new Companion view lists the journaled writes the vault scope
+  admits, newest first, with filters (unreviewed only by default, note, tool, actor, period)
+  through `GET /api/inbox`. `GET /api/inbox/diff` returns a unified diff over the exact history
+  bytes, redacted as whole texts so a multi-line private key shows only as a marker, with
+  `redacted_change_only` when only redacted content differs, a `created` shape for a creation and
+  an `unavailable` shape when the stored text is gone. `POST /api/inbox/review` marks a change as
+  reviewed in `.datacron/companion/review-state.json` beside the operation journal, under a file
+  lock and a compare-and-swap on the file hash; marking works when writes are disabled.
+  `POST /api/inbox/revert` restores the previous bytes through the `revert_note` path, indexed
+  and journaled as `companion:local-operator`, refused when writes are disabled, after a stale
+  `expected_hash`, for a creation, or when the earlier text is no longer stored. The migration
+  cleanup-only check ignores the new `companion/` sidecar entry. `VaultWriter` gains
+  `read_history_bytes`.
+
 ## [2026.1018.00] - 2026-10-18
 
 ### Added
