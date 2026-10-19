@@ -312,6 +312,11 @@ vault synchronisé les emporte partout. Passer `--scope user` pour en garder le 
 
 ## MCP Tools
 
+Les tableaux ci-dessous décrivent le profil standard (23 outils). Pour les assistants qui
+choisissent mieux dans une liste courte, `DATACRON_TOOL_PROFILE=essential` enregistre 5 outils à
+la place : `remember`, `recall`, `what_changed`, `get_note` et `get_health`. Voir le
+[profil d'outils essentiel](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/essential-profile.md).
+
 ### Lecture
 
 | Tool | Description |
@@ -472,6 +477,7 @@ Pour démarrer :
 - [Guide utilisateur](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/user-guide.md)
 - [Bibliothèque hors ligne et consolidation des notes](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/human-library.md)
 - [Mémoire quotidienne, personnes et engagements](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/memory-discipline.md)
+- [Profil d'outils essentiel](https://github.com/VBlackJack/Datacron/blob/main/docs/fr/essential-profile.md)
 
 Références techniques :
 

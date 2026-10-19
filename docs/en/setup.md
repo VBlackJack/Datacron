@@ -44,6 +44,7 @@ Useful options:
 - `datacron setup --vault DOCS_PATH --single-vault` - return a Dual-Vault install to Single-Vault: the client entries drop `DATACRON_MEMORY_ROOT`. Without it, a rerun on the same vault keeps the memory vault its client entry already names, and a rerun on another vault starts in Single-Vault.
 - `datacron setup --enable-write --machine-wide-write` - also opt in to the user environment allowlist for future clients.
 - `datacron setup --durability strict --read-only` - strict durability and certified read-only mode.
+- `datacron setup --tool-profile essential` - register the 5-tool [essential profile](essential-profile.md) (`standard` returns to the 23 tools). A rerun that omits the option keeps what each client config already holds.
 - `datacron setup --no-write` / `datacron setup --no-read-only` - remove an existing write allowlist or read-only mode from the client configs. A rerun that names neither form keeps what each client config already holds, and the summary prints the settings actually written, preserved ones included. Pointing setup at another vault drops preserved write paths that lie outside it. Interactively, the write and read-only prompts default to the setting this vault's existing client entry holds: Enter keeps it, only an explicit answer changes it.
 - `datacron setup --no-index` - skip building the index.
 - `datacron setup --client claude-code` - print a ready-to-paste stdio config snippet for Claude Code.
@@ -266,6 +267,7 @@ datacron protocol uninstall --client all
 | `DATACRON_REGEX_FALLBACK_TIMEOUT_SECONDS` | `10.0` | Budget for one complete indexed fallback scan, used only when ripgrep is absent. |
 | `DATACRON_REGEX_FALLBACK_MAX_PATTERN_LENGTH` | `512` | Longest pattern the indexed fallback accepts. |
 | `DATACRON_TOOL_DESCRIPTION_PROFILE` | `standard` | Tool description profile: `standard` or opt-in `compact`. |
+| `DATACRON_TOOL_PROFILE` | `standard` | Tool profile: `standard` (23 tools) or opt-in `essential` (5 tools, see the [essential profile](essential-profile.md)). An unknown value refuses to start. |
 
 Path lists use the OS separator: `:` on Unix, `;` on Windows.
 
