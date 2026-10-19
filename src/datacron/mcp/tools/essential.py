@@ -106,6 +106,7 @@ _WINDOWS_SEPARATOR: Final[str] = "\\"
 _HEADING_TRAIL_SEPARATOR: Final[str] = " / "
 _ENTRY_CONTINUATION_INDENT: Final[str] = "    "
 _TITLE_LEADING_MARKERS: Final[re.Pattern[str]] = re.compile(r"^[#>*\-\s]+")
+_LINE_BREAK: Final[re.Pattern[str]] = re.compile(r"\r\n|\r|\n")
 _NON_SLUG: Final[re.Pattern[str]] = re.compile(r"[^a-z0-9]+")
 _DURATION_PATTERN: Final[re.Pattern[str]] = re.compile(r"(\d+)\s*([dh])")
 _DURATION_UNITS: Final[dict[str, str]] = {"d": "days", "h": "hours"}
@@ -188,7 +189,7 @@ def _slugify(text: str) -> str:
 
 
 def _derive_title(content: str, kind: str) -> str:
-    for line in content.splitlines():
+    for line in _LINE_BREAK.split(content):
         candidate = _TITLE_LEADING_MARKERS.sub("", line).strip()
         if candidate:
             return candidate[:ESSENTIAL_REMEMBER_TITLE_MAX_CHARS].rstrip()
@@ -196,7 +197,7 @@ def _derive_title(content: str, kind: str) -> str:
 
 
 def _format_entry(content: str, kind: str, source: str | None, today: str) -> str:
-    lines = [line.strip() for line in content.strip().splitlines() if line.strip()]
+    lines = [line.strip() for line in _LINE_BREAK.split(content.strip()) if line.strip()]
     entry = [f"- {today} ({kind}): {lines[0]}"]
     entry.extend(f"{_ENTRY_CONTINUATION_INDENT}{line}" for line in lines[1:])
     if source:
