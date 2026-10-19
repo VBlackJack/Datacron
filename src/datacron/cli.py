@@ -49,6 +49,7 @@ from datacron.core.config import (
     LOG_FILENAME_PATTERN,
     SIDECAR_DIR_NAME,
     VALID_DURABILITY_MODES,
+    VALID_TOOL_PROFILES,
     VAULT_CONFIG_FILENAME,
     RootTopologyError,
     Settings,
@@ -1888,6 +1889,14 @@ def setup(
         "--durability",
         help="Durability mode (best-effort or strict).",
     ),
+    tool_profile: str | None = typer.Option(
+        None,
+        "--tool-profile",
+        help=(
+            f"MCP tool profile ({', '.join(sorted(VALID_TOOL_PROFILES))}). "
+            "Omitted, a rerun keeps what the client config holds."
+        ),
+    ),
     read_only: bool | None = typer.Option(
         None,
         "--read-only/--no-read-only",
@@ -2010,6 +2019,7 @@ def setup(
         client=resolved_client,
         install_scope=resolved_scope,
         durability=resolved_durability,
+        tool_profile=None if tool_profile is None else tool_profile.strip().lower(),
         read_only=resolved_read_only,
         force=force,
         reset=reset,
@@ -2473,6 +2483,12 @@ def _unapplied_suffix(result: SetupResult) -> str:
     return "" if applied else "  (requested; no client config was written)"
 
 
+def _render_tool_profile(result: SetupResult, suffix: str) -> None:
+    """Report the tool profile this run wrote, if it wrote one."""
+    if result.tool_profile is not None:
+        _print(f"  tools:      {result.tool_profile}{suffix}")
+
+
 def _render_unapplied_action(result: SetupResult, suffix: str) -> None:
     """Say what to do when the run had nowhere to put the settings it chose."""
     if not suffix or not (result.write_paths or result.read_only):
@@ -2518,6 +2534,7 @@ def _render_setup_result(result: SetupResult, *, failed: bool = False) -> None:
         _print("  writing:    disabled")
     _render_machine_write_env(result)
     _print(f"  durability: {result.durability}{suffix}")
+    _render_tool_profile(result, suffix)
     _print(f"  read-only:  {'yes' if result.read_only else 'no'}{suffix}")
     _render_unapplied_action(result, suffix)
     if result.client_config_path is not None:
