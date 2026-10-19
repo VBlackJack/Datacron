@@ -129,7 +129,7 @@ ton assistant a stocké et l'annuler quand c'est faux.
   seuls les changements non relus sont affichés. Les filtres sont le chemin de la note, l'outil,
   l'acteur et une période (dernières 24 heures, 7 jours, 30 jours, ou depuis toujours).
 - **Diff** : ouvrir une ligne affiche un diff unifié entre le texte exact avant et après le
-  changement, avec les lignes ajoutées et supprimées marquées. Quand la rédaction des secrets est
+  changement, avec les lignes ajoutées et supprimées marquées. Quand l'expurgation des secrets est
   active, chaque texte entier est expurgé avant la comparaison : une clé privée sur plusieurs
   lignes n'apparaît donc que sous forme de marqueur, et si seul un contenu expurgé a changé, la
   vue le dit. Une création affiche le contenu créé. Quand le texte exact n'est plus conservé (la
