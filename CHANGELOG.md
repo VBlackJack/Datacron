@@ -27,7 +27,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   excerpt of the best section per hit and the exact `get_note` arguments (`read_more`) to read it
   in full, bounded by `DATACRON_MAX_READ_RESPONSE_CHARS`.
 - **`what_changed`** (essential profile): lists committed writes since an ISO-8601 date,
-  timestamp or duration (`7d`, `12h`), grouped per note with content-free summaries, and flags
+  timestamp or duration (`7d`, `12h`), grouped per note with summaries that hold no note body
+  (the name of the heading touched may appear), and flags
   notes edited outside Datacron by comparing the index content hash with the last journaled
   write.
 

@@ -77,7 +77,7 @@ Ce qui est refusé, et pourquoi :
 | Un type dont le tag de placement n'a pas de règle d'organisation, ou se trouve dans l'espace de noms des notes d'état | Une note doit aller là où le vault dit qu'elle va, et une note d'état n'est jamais créée par effet de bord. |
 | Un vault sans règles `organization`, quand il faudrait créer une note | Aucun emplacement n'est déclaré ; vise une note existante avec `about` ou déclare les règles (voir [organisation du vault](organization.md)). |
 | Un chemin hors de `DATACRON_WRITE_PATHS` | Même confinement et même erreur que `append_journal`. |
-| Un titre qui a déjà une note le même jour | Passe `about` avec ce chemin pour la compléter. |
+| Une note existe déjà au chemin dérivé | Passe `about` avec ce chemin pour la compléter. |
 
 ## `recall`
 
@@ -111,7 +111,7 @@ La réponse a deux parties.
 - `notes` : les écritures validées lues dans le journal d'opérations, groupées par note, la plus
   récente d'abord. Chaque opération porte son reçu (`operation_id`, `timestamp`, `op`, `tool`,
   `actor`, `before_hash`, `after_hash`) et un `summary` déduit des paramètres de l'opération. Un
-  résumé ne contient jamais le contenu d'une note.
+  résumé ne contient pas le corps d'une note ; le nom du titre touché peut y figurer.
 - `out_of_band` : les notes modifiées hors de Datacron. Elles sont trouvées dans l'index, qui
   garde le hash de contenu et la date de modification de chaque note : une note modifiée depuis
   `since` dont les octets diffèrent de la dernière écriture journalisée, ou qui n'a jamais été

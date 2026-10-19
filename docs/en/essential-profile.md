@@ -74,7 +74,7 @@ What is refused, and why:
 | A kind whose placement tag has no organization rule, or sits in the state-note namespace | A note must land where the vault says it belongs, and a state note is never created as a side effect. |
 | A vault with no `organization` rules, when a note would have to be created | There is no declared place to put it; point `about` at an existing note or declare the rules (see [vault organization](organization.md)). |
 | A path outside `DATACRON_WRITE_PATHS` | Same confinement and same error as `append_journal`. |
-| A title that already has a note the same day | Pass `about` with that path to add to it. |
+| A note already exists at the derived path | Pass `about` with that path to add to it. |
 
 ## `recall`
 
@@ -107,7 +107,7 @@ The response has two parts.
 - `notes`: committed writes read from the operation journal, grouped per note, newest first.
   Each operation carries its receipt (`operation_id`, `timestamp`, `op`, `tool`, `actor`,
   `before_hash`, `after_hash`) and a `summary` derived from the operation's parameters. A
-  summary never contains note content.
+  summary contains no note body; the name of the heading touched may appear.
 - `out_of_band`: notes edited outside Datacron. They are found from the index, which holds each
   note's content hash and modification time: a note modified since `since` whose bytes differ
   from the last journaled write, or that was never journaled. A write made by a Datacron tool
