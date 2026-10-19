@@ -440,7 +440,7 @@ def test_review_state_prunes_unknown_operations_and_holds_its_cap(
             vault,
             settings,
             changes={operation_id: True},
-            journal_ids=known,
+            journal_ids=lambda: known,
             now=start + timedelta(minutes=index),
         )
     state = read_review_state(vault, settings)
@@ -450,7 +450,7 @@ def test_review_state_prunes_unknown_operations_and_holds_its_cap(
         vault,
         settings,
         changes={},
-        journal_ids={"op-4"},
+        journal_ids=lambda: {"op-4"},
         now=start + timedelta(hours=1),
     )
     assert set(pruned.reviewed) == {"op-4"}
@@ -592,6 +592,9 @@ def test_diff_replaces_a_multiline_private_key_with_the_marker(tmp_path: Path) -
 
     result = asyncio.run(get_companion_inbox_diff({"operation_id": patch_id}, profile_path=profile))
 
+    # The newest write has no stored copy of its result: the text comes from the live note.
+    live_hash = sha256_bytes((vault / NOTE_REL).read_bytes())
+    assert not (vault / SIDECAR_DIR_NAME / "history" / live_hash).exists()
     assert result["status"] == "diff"
     assert "MIIEvQIBADANBg" not in result["diff"]
     assert "KgwggSmAgEAAo" not in result["diff"]
@@ -634,6 +637,104 @@ def test_a_secret_only_change_sets_redacted_change_only(tmp_path: Path) -> None:
     assert result["removed"] == 0
     assert first not in json.dumps(result)
     assert second not in json.dumps(result)
+
+
+def test_diff_of_a_creation_holding_a_private_key_shows_only_the_marker(tmp_path: Path) -> None:
+    vault = _vault(tmp_path)
+    rel_path = "_memory/facts/keyed.md"
+
+    async def create() -> None:
+        settings = _settings(vault)
+        app = build_app(settings=settings, vault_root=vault)
+        await app.store.open(sidecar_index_db(vault, settings=settings))
+        try:
+            result = await _create_note_ai_impl(
+                app,
+                rel_path=rel_path,
+                title="Keyed",
+                body=f"# Keyed\n\n{PEM_BLOCK}\n",
+                origin="ai",
+                confidence="high",
+                tags=["memory"],
+                actor="agent-a",
+            )
+            assert "error" not in result, result
+        finally:
+            await app.store.close()
+
+    asyncio.run(create())
+    profile = _profile(tmp_path, vault)
+    create_id = _list(profile)["operations"][0]["operation_id"]
+
+    result = asyncio.run(
+        get_companion_inbox_diff({"operation_id": create_id}, profile_path=profile)
+    )
+
+    assert result["status"] == "created"
+    assert REDACTED in result["content"]
+    assert "MIIEvQIBADANBg" not in result["content"]
+    assert "BEGIN PRIVATE KEY" not in result["content"]
+
+
+def test_a_trailing_newline_only_change_is_flagged_as_line_endings_only(tmp_path: Path) -> None:
+    vault = _vault(tmp_path)
+    asyncio.run(_seed_four(vault))
+    app = build_app(settings=_settings(vault), vault_root=vault)
+    current = (vault / NOTE_REL).read_bytes()
+    asyncio.run(
+        app.vault_writer.mutate_note_atomic(
+            NOTE_REL,
+            lambda raw: raw.rstrip("\n"),
+            expected_hash=sha256_bytes(current),
+            operation=OperationContext(op="edit", tool="manual_edit", actor="x", parameters={}),
+        )
+    )
+    profile = _profile(tmp_path, vault)
+    latest = _list(profile)["operations"][0]["operation_id"]
+
+    result = asyncio.run(get_companion_inbox_diff({"operation_id": latest}, profile_path=profile))
+
+    assert result["status"] == "diff"
+    assert result["line_endings_only"] is True
+    assert result["redacted_change_only"] is False
+
+
+def test_a_diff_above_the_size_cap_is_not_computed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = _vault(tmp_path)
+    asyncio.run(_seed_four(vault))
+    profile = _profile(tmp_path, vault)
+    append_id = _ids_by_tool(profile)["append_journal"]
+    monkeypatch.setattr("datacron.companion.inbox.INBOX_DIFF_MAX_SOURCE_BYTES", 10)
+
+    result = asyncio.run(
+        get_companion_inbox_diff({"operation_id": append_id}, profile_path=profile)
+    )
+
+    assert result == {"status": "too_large"}
+
+
+def test_a_corrupt_history_blob_is_unavailable_for_diff_and_revert(tmp_path: Path) -> None:
+    vault = _vault(tmp_path)
+    seeded = asyncio.run(_seed_four(vault))
+    profile = _profile(tmp_path, vault)
+    (vault / SIDECAR_DIR_NAME / "history" / seeded.created_hash).write_bytes(b"not the note")
+
+    with _serve(profile) as (base_url, token):
+        _, listing = _http(base_url, "/api/inbox", token=token, query={"unreviewed": "false"})
+        body = _revert_body(listing, "append_journal")
+        diff_status, diff = _http(
+            base_url, "/api/inbox/diff", token=token, query={"operation_id": body["operation_id"]}
+        )
+        revert_status, revert = _http(
+            base_url, "/api/inbox/revert", token=token, method="POST", body=body
+        )
+
+    assert diff_status == HTTPStatus.OK
+    assert diff == {"status": "unavailable"}
+    assert revert_status == HTTPStatus.CONFLICT
+    assert revert["code"] == "inbox_history_unavailable"
 
 
 # --- revert ------------------------------------------------------------------------
@@ -793,8 +894,50 @@ def test_revert_of_a_creation_or_of_purged_history_is_refused(tmp_path: Path) ->
         )
 
     assert creation[0] == HTTPStatus.CONFLICT
+    assert creation[1]["code"] == "inbox_revert_creation"
     assert purged[0] == HTTPStatus.CONFLICT
+    assert purged[1]["code"] == "inbox_history_unavailable"
     assert (vault / NOTE_REL).read_bytes() == before_bytes
+
+
+def test_a_change_can_be_reverted_again_after_the_note_moved_on(tmp_path: Path) -> None:
+    vault = _vault(tmp_path)
+    seeded = asyncio.run(_seed_four(vault))
+    profile = _profile(tmp_path, vault)
+
+    def post_revert(base_url: str, token: str, tool: str) -> tuple[int, dict[str, Any]]:
+        _, listing = _http(base_url, "/api/inbox", token=token, query={"unreviewed": "false"})
+        return _http(
+            base_url,
+            "/api/inbox/revert",
+            token=token,
+            method="POST",
+            body=_revert_body(listing, tool),
+        )
+
+    with _serve(profile) as (base_url, token):
+        _, listing = _http(base_url, "/api/inbox", token=token, query={"unreviewed": "false"})
+        first_body = _revert_body(listing, "append_journal")
+        assert _http(base_url, "/api/inbox/revert", token=token, method="POST", body=first_body)[
+            0
+        ] == (HTTPStatus.OK)
+        # Revert the revert (the newest change), then let the note move on.
+        assert post_revert(base_url, token, "revert_note")[0] == HTTPStatus.OK
+        asyncio.run(_patch_section(vault, "moved on\n"))
+        _, after = _http(base_url, "/api/inbox", token=token, query={"unreviewed": "false"})
+        second_body = {
+            "operation_id": first_body["operation_id"],
+            "expected_hash": after["operations"][0]["content_hash"],
+        }
+        assert second_body["expected_hash"] != first_body["expected_hash"]
+        again = _http(base_url, "/api/inbox/revert", token=token, method="POST", body=second_body)
+        repeat = _http(base_url, "/api/inbox/revert", token=token, method="POST", body=second_body)
+
+    assert again[0] == HTTPStatus.OK
+    assert again[1]["replayed"] is False
+    assert repeat[0] == HTTPStatus.OK
+    assert repeat[1]["replayed"] is True
+    assert sha256_bytes((vault / NOTE_REL).read_bytes()) == seeded.created_hash
 
 
 def test_an_operation_on_an_unadmitted_path_is_not_found(tmp_path: Path) -> None:
@@ -886,7 +1029,8 @@ def test_inbox_view_is_rendered_with_labelled_focusable_controls() -> None:
     controls = re.findall(r"<(?:button|input|select)\b[^>]*>", section)
     assert len(controls) >= 8
     for control in controls:
-        assert "aria-label=" in control, control
+        assert "aria-label=" in control or "data-i18n-aria=" in control, control
+        assert "aria-label=" not in control or "data-i18n-aria=" in control, control
     # Native controls are keyboard reachable; the scrollable diff region is focusable.
     assert re.search(r'id="inbox-diff"[^>]*tabindex="0"', section)
     # Rows are built by the page script with button semantics and a tab stop.
@@ -902,6 +1046,10 @@ def test_every_inbox_label_exists_in_both_languages() -> None:
     used = set(re.findall(r'data-i18n(?:-aria|-placeholder)?="(inbox\.[a-z_0-9]+)"', html))
     used |= set(re.findall(r'i18nText\("(inbox\.[a-z_0-9]+)"\)', html))
     used |= {f"inbox.{key}_aria" for key in ("mark_reviewed", "mark_unreviewed")}
+    used |= {
+        f"inbox.diff_{kind}_{form}" for kind in ("added", "removed") for form in ("one", "other")
+    }
+    assert "inbox.row_open" not in used
     assert "inbox.revert_confirm" in used
     for dotted in used:
         section, key = dotted.split(".", 1)
