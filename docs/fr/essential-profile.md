@@ -66,7 +66,9 @@ d'état, la note porte le tag de placement et le tag du sujet, et son dossier es
 première règle applicable renvoie. Le nom de fichier respecte le modèle `naming` de la règle.
 
 Le reçu contient `rel_path`, `operation_id`, `content_hash`, `indexed`, `created` et `appended`.
-Considère le souvenir comme enregistré seulement quand `indexed` vaut `true`.
+Considère le souvenir comme enregistré seulement quand `indexed` vaut `true`. Un rejeu
+(`replayed: true`) renvoie le reçu historique de la première écriture, même si la note a changé
+ou a été restaurée depuis, et indique `indexed: false` car il ne dit rien de l'index d'aujourd'hui.
 
 Ce qui est refusé, et pourquoi :
 

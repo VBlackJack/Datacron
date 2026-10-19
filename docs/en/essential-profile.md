@@ -63,7 +63,9 @@ no state note, the note carries the placement tag and the subject tag, and its f
 one the first matching rule returns. The file name satisfies the rule's `naming` template.
 
 The receipt is `rel_path`, `operation_id`, `content_hash`, `indexed`, `created` and
-`appended`. Treat the memory as saved only when `indexed` is `true`.
+`appended`. Treat the memory as saved only when `indexed` is `true`. A replay (`replayed: true`)
+returns the historical receipt of the first write, even if the note has changed or been reverted
+since, and reports `indexed: false` because it makes no claim about today's index.
 
 What is refused, and why:
 
