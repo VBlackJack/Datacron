@@ -377,8 +377,25 @@ async def test_remember_reusing_a_request_id_with_other_arguments_is_refused(
         app, content="Two.", about="heimdall", request_id="remember-reuse-1"
     )
 
-    assert "error" in other
+    assert other["error"]["type"] == "WriteConflictError"
+    assert other["error"]["message"] == "request_id was already used with different arguments"
     assert "Two." not in _read(app, _STATE_NOTE)
+
+
+async def test_remember_receipt_operation_id_is_the_committed_record(app: DatacronApp) -> None:
+    await _state_note(app)
+
+    appended = await _remember_impl(app, content="Receipt check.", about="heimdall")
+    tail = (await app.vault_writer.list_operations())[-1]
+
+    assert appended["operation_id"] == tail.operation_id
+    assert tail.after_hash == appended["content_hash"]
+
+    created = await _remember_impl(app, content="Receipt check on a creation.")
+    tail = (await app.vault_writer.list_operations())[-1]
+
+    assert created["operation_id"] == tail.operation_id
+    assert tail.rel_path == created["rel_path"]
 
 
 async def test_remember_retries_exactly_once_on_a_compare_and_swap_conflict(

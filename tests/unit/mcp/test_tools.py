@@ -531,6 +531,12 @@ class _CountingVaultWriter:
     async def list_operations(self) -> list[OperationRecord]:
         return await self._delegate.list_operations()
 
+    async def latest_record_for_request(self, key_hash: str) -> OperationRecord | None:
+        return await self._delegate.latest_record_for_request(key_hash)
+
+    async def latest_record_for_path(self, rel_path: str) -> OperationRecord | None:
+        return await self._delegate.latest_record_for_path(rel_path)
+
     async def present_history_hashes(self, hashes: Iterable[str | None]) -> set[str]:
         return await self._delegate.present_history_hashes(hashes)
 
