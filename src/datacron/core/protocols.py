@@ -476,6 +476,14 @@ class VaultWriter(Protocol):
         """Return committed operation records without mutating journal state."""
         ...
 
+    async def latest_record_for_request(self, key_hash: str) -> OperationRecord | None:
+        """Return the latest committed record for one write-request key, or None."""
+        ...
+
+    async def latest_record_for_path(self, rel_path: str) -> OperationRecord | None:
+        """Return the latest committed record for one exact path, or None."""
+        ...
+
     async def present_history_hashes(self, hashes: Iterable[str | None]) -> set[str]:
         """Return which of these restore points still have their bytes on disk."""
         ...

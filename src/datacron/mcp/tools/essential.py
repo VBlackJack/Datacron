@@ -60,6 +60,7 @@ from datacron.core.operation_log import OperationLogError, OperationRecord
 from datacron.core.paths import PathConfinementError
 from datacron.core.scope import NoteAdmissionError, admits_note_path
 from datacron.core.security import REDACTED
+from datacron.core.vault_writer import WriteConflictError
 from datacron.core.write_request import ACTIVE_WRITE_REQUEST, ReplayedWriteError
 from datacron.mcp.tools.ops import _admitted_records
 from datacron.mcp.tools.payloads import (
@@ -115,7 +116,6 @@ _DURATION_UNITS: Final[dict[str, str]] = {"d": "days", "h": "hours"}
 _CAS_CONFLICT_ERROR: Final[str] = "WriteConflictError"
 # The writer's message for a stale expected_hash; a request_id conflict never carries it.
 _CAS_CONFLICT_MARKER: Final[str] = "hash mismatch"
-_REQUEST_KEY_PARAMETER: Final[str] = "request_key_hash"
 _REQUEST_FINGERPRINT_PARAMETER: Final[str] = "request_fingerprint"
 _OP_CREATE: Final[str] = "create"
 _OP_APPEND: Final[str] = "append"
@@ -367,13 +367,13 @@ async def _plan_remember(app: DatacronApp, about: str | None, kind: str) -> _Pla
 
 
 async def _latest_operation_id(app: DatacronApp, rel_path: str, content_hash: str) -> str | None:
+    """Return the id of the record just committed for the note: the journal tail for its path."""
     try:
-        records = await app.vault_writer.list_operations()
+        record = await app.vault_writer.latest_record_for_path(rel_path)
     except Exception:
         return None
-    for record in reversed(records):
-        if record.rel_path == rel_path and record.after_hash == content_hash:
-            return record.operation_id
+    if record is not None and record.after_hash == content_hash:
+        return record.operation_id
     return None
 
 
@@ -453,24 +453,20 @@ async def _create_for_remember(
 async def _journal_replay(app: DatacronApp) -> dict[str, Any] | None:
     """Answer a retried request from its journal record, before anything is resolved.
 
-    The record is found the way ``get_note_history`` finds one: by the
-    ``request_key_hash`` parameter the writer stamps from the active request. An
-    identical request replays whatever the note looks like now, so a retry after an
-    intervening write, a UTC midnight or a changed resolution never writes twice.
+    The record comes from the writer's own request-key lookup, the one its replay check
+    uses, which reads the journal from its tail. An identical request replays the
+    historical receipt whatever the note looks like now, so a retry after an
+    intervening write, a UTC midnight or a changed resolution never writes twice. A
+    request id reused with other arguments fails as the writer fails it.
     """
     request = ACTIVE_WRITE_REQUEST.get()
     if request is None:
         return None
-    matching = [
-        record
-        for record in await app.vault_writer.list_operations()
-        if record.parameters.get(_REQUEST_KEY_PARAMETER) == request.key_hash
-    ]
-    if not matching:
+    record = await app.vault_writer.latest_record_for_request(request.key_hash)
+    if record is None:
         return None
-    record = matching[-1]
     if record.parameters.get(_REQUEST_FINGERPRINT_PARAMETER) != request.fingerprint:
-        raise EssentialRefusalError(_REFUSAL_REQUEST_REUSED)
+        raise WriteConflictError(_REFUSAL_REQUEST_REUSED)
     request.record = record
     return {
         "rel_path": record.rel_path,
@@ -538,7 +534,7 @@ async def _remember_impl(
         return receipt
     except ReplayedWriteError:
         raise
-    except EssentialRefusalError as exc:
+    except (EssentialRefusalError, WriteConflictError) as exc:
         return _error_response(_TOOL_REMEMBER, exc, started)
     except Exception:
         return _internal_error_response(_TOOL_REMEMBER, started)

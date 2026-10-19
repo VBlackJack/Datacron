@@ -967,6 +967,18 @@ class ScopedVaultWriter:
         records = await self._delegate.list_operations()
         return self._readable_by_rel_path(records)
 
+    async def latest_record_for_request(self, key_hash: str) -> OperationRecord | None:
+        record = await self._delegate.latest_record_for_request(key_hash)
+        if record is None or not self._readable_by_rel_path([record]):
+            return None
+        return record
+
+    async def latest_record_for_path(self, rel_path: str) -> OperationRecord | None:
+        record = await self._delegate.latest_record_for_path(rel_path)
+        if record is None or not self._readable_by_rel_path([record]):
+            return None
+        return record
+
     async def present_history_hashes(self, hashes: Iterable[str | None]) -> set[str]:
         # Presence of a history blob is keyed by content hash, not by path, and the
         # caller only learns about a hash from a record this scope already returned.
