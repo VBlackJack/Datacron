@@ -28,6 +28,7 @@ from uuid import uuid4
 
 from datacron.bootstrap import initialize_vault
 from datacron.core.config import (
+    COMPANION_STATE_DIR_NAME,
     HISTORY_DIR_NAME,
     INDEX_DIR_NAME,
     MEMORY_SUBFOLDER_NAME,
@@ -90,6 +91,7 @@ _DIVERGING_SIDECAR_ENTRIES: Final[frozenset[str]] = frozenset(
     {
         OPLOG_DIR_NAME,
         HISTORY_DIR_NAME,
+        COMPANION_STATE_DIR_NAME,
         INDEX_DIR_NAME,
         _LOCKS_DIR_NAME,
         _LOGS_DIR_NAME,
