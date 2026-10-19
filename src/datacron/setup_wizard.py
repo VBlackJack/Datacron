@@ -836,7 +836,7 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
         write_paths=effective_write_paths,
         read_only=effective_read_only,
         durability=plan.durability,
-        tool_profile=plan.tool_profile,
+        tool_profile=_effective_tool_profile(written_envs, plan.tool_profile),
         memory_vault_path=memory_root,
         machine_write_env=machine_write_env,
         stdio_config=stdio_config,
@@ -876,6 +876,20 @@ def _client_env(vault_root: Path, extra_env: Mapping[str, str]) -> dict[str, str
         _ENV_READ_PATHS: str(vault_root),
         **extra_env,
     }
+
+
+def _effective_tool_profile(
+    written_envs: list[tuple[str, Mapping[str, object]]],
+    requested: str | None,
+) -> str | None:
+    """Return the tool profile the written configs hold, preserved values included.
+
+    With no config written the requested profile is all there is to report.
+    """
+    if not written_envs:
+        return requested
+    held = written_envs[0][1].get(_ENV_TOOL_PROFILE)
+    return held if isinstance(held, str) else None
 
 
 def _env_settings(env: Mapping[str, object]) -> tuple[list[Path], bool]:

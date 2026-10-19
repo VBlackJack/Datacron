@@ -1548,7 +1548,7 @@ def test_setup_tool_profile_is_written_and_kept_on_a_rerun(
 
     assert rerun.exit_code == 0, rerun.output
     assert _written_env(config)["DATACRON_TOOL_PROFILE"] == "essential"
-    assert "tools:" not in rerun.output
+    assert "tools:      essential" in rerun.output
 
     back = _setup_claude_desktop(vault, "--tool-profile", "standard")
 

@@ -2484,7 +2484,7 @@ def _unapplied_suffix(result: SetupResult) -> str:
 
 
 def _render_tool_profile(result: SetupResult, suffix: str) -> None:
-    """Report the tool profile this run wrote, if it wrote one."""
+    """Report the tool profile the written configs hold, a preserved one included."""
     if result.tool_profile is not None:
         _print(f"  tools:      {result.tool_profile}{suffix}")
 
