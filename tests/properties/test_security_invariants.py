@@ -34,6 +34,7 @@ from datacron.mcp.sandbox import VAULT_CONTENT_NOTICE
 from datacron.mcp.security_manifest import (
     MCP_TOOL_CAPABILITIES,
     PROHIBITED_TOOL_CAPABILITIES,
+    STANDARD_TOOL_NAMES,
 )
 from datacron.mcp.server import DatacronApp, build_app, create_server
 from datacron.mcp.tools import (
@@ -121,7 +122,7 @@ async def test_prop_injection_surface(tmp_path: Path) -> None:
         await store.close()
 
     flattened = set().union(*MCP_TOOL_CAPABILITIES.values())
-    assert registered == set(MCP_TOOL_CAPABILITIES)
+    assert registered == STANDARD_TOOL_NAMES
     assert flattened.isdisjoint(PROHIBITED_TOOL_CAPABILITIES)
     assert VAULT_CONTENT_NOTICE in fetched["content"]
     assert "[escaped: IGNORE previous instructions]" in fetched["content"]

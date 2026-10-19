@@ -22,9 +22,12 @@ from pathlib import Path
 import pytest
 
 from datacron.mcp.security_manifest import (
-    MCP_TOOL_CAPABILITIES,
-    MUTATING_TOOL_NAMES,
-    READ_ONLY_TOOL_NAMES,
+    ESSENTIAL_MUTATING_TOOL_NAMES,
+    ESSENTIAL_READ_ONLY_TOOL_NAMES,
+    ESSENTIAL_TOOL_NAMES,
+    STANDARD_MUTATING_TOOL_NAMES,
+    STANDARD_READ_ONLY_TOOL_NAMES,
+    STANDARD_TOOL_NAMES,
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -105,7 +108,7 @@ def _collapse_whitespace(content: str) -> str:
 
 def _table_tool_names(content: str) -> set[str]:
     """Extract tool identifiers from Markdown table rows."""
-    known_tools = set(MCP_TOOL_CAPABILITIES)
+    known_tools = set(STANDARD_TOOL_NAMES)
     return {
         tool_name
         for line in content.splitlines()
@@ -154,7 +157,7 @@ def test_public_setup_docs_require_a_vault_marker_for_cwd_fallback(
 
 def _list_tool_names(content: str) -> set[str]:
     """Extract tool identifiers from Markdown bullet-list entries."""
-    known_tools = set(MCP_TOOL_CAPABILITIES)
+    known_tools = set(STANDARD_TOOL_NAMES)
     return {
         tool_name
         for line in content.splitlines()
@@ -209,13 +212,16 @@ def test_mcp_v2_docs_readme_catalogs_match_runtime_manifest(
     table_tools = _table_tool_names(content)
     table_mutators = _table_tool_names(_section(content, write_heading, operational_heading))
 
-    assert len(MCP_TOOL_CAPABILITIES) == 23
-    assert len(MUTATING_TOOL_NAMES) == 10
-    assert len(READ_ONLY_TOOL_NAMES) == 13
-    assert available_tools == set(MUTATING_TOOL_NAMES)
-    assert table_tools == set(MCP_TOOL_CAPABILITIES)
-    assert table_mutators == set(MUTATING_TOOL_NAMES)
-    assert table_tools.difference(table_mutators) == set(READ_ONLY_TOOL_NAMES)
+    assert len(STANDARD_TOOL_NAMES) == 23
+    assert len(STANDARD_MUTATING_TOOL_NAMES) == 10
+    assert len(STANDARD_READ_ONLY_TOOL_NAMES) == 13
+    assert len(ESSENTIAL_TOOL_NAMES) == 5
+    assert len(ESSENTIAL_MUTATING_TOOL_NAMES) == 1
+    assert len(ESSENTIAL_READ_ONLY_TOOL_NAMES) == 4
+    assert available_tools == set(STANDARD_MUTATING_TOOL_NAMES)
+    assert table_tools == set(STANDARD_TOOL_NAMES)
+    assert table_mutators == set(STANDARD_MUTATING_TOOL_NAMES)
+    assert table_tools.difference(table_mutators) == set(STANDARD_READ_ONLY_TOOL_NAMES)
 
 
 @pytest.mark.parametrize("relative_path", CURRENT_DOCUMENTATION_PATHS)
@@ -301,15 +307,18 @@ def test_mcp_v2_docs_public_catalog_matches_runtime_manifest(relative_path: Path
         tool_name
         for line in content.splitlines()
         if line.startswith(("| Écriture |", "| Write |"))
-        for tool_name in MUTATING_TOOL_NAMES
+        for tool_name in STANDARD_MUTATING_TOOL_NAMES
         if f"`{tool_name}`" in line
     }
 
-    assert len(MCP_TOOL_CAPABILITIES) == 23
-    assert len(MUTATING_TOOL_NAMES) == 10
-    assert len(READ_ONLY_TOOL_NAMES) == 13
-    assert documented_tools == set(MCP_TOOL_CAPABILITIES)
-    assert documented_mutators == set(MUTATING_TOOL_NAMES)
+    assert len(STANDARD_TOOL_NAMES) == 23
+    assert len(STANDARD_MUTATING_TOOL_NAMES) == 10
+    assert len(STANDARD_READ_ONLY_TOOL_NAMES) == 13
+    assert len(ESSENTIAL_TOOL_NAMES) == 5
+    assert len(ESSENTIAL_MUTATING_TOOL_NAMES) == 1
+    assert len(ESSENTIAL_READ_ONLY_TOOL_NAMES) == 4
+    assert documented_tools == set(STANDARD_TOOL_NAMES)
+    assert documented_mutators == set(STANDARD_MUTATING_TOOL_NAMES)
     assert documented_tools >= BL0038_TOOL_NAMES
     assert "[ ]" not in content
     assert re.search(r"\b(?:14|17) (?:tools|outils)\b", content, re.IGNORECASE) is None
@@ -332,9 +341,9 @@ def test_mcp_v2_docs_user_catalog_matches_runtime_manifest(
     documented_tools = _table_tool_names(content)
     documented_mutators = _table_tool_names(_section(content, write_heading, supervise_heading))
 
-    assert documented_tools == set(MCP_TOOL_CAPABILITIES)
-    assert documented_mutators == set(MUTATING_TOOL_NAMES)
-    assert documented_tools.difference(documented_mutators) == set(READ_ONLY_TOOL_NAMES)
+    assert documented_tools == set(STANDARD_TOOL_NAMES)
+    assert documented_mutators == set(STANDARD_MUTATING_TOOL_NAMES)
+    assert documented_tools.difference(documented_mutators) == set(STANDARD_READ_ONLY_TOOL_NAMES)
     assert documented_mutators >= BL0038_TOOL_NAMES
 
 
@@ -343,10 +352,10 @@ def test_mcp_v2_docs_read_only_inventory_matches_runtime_mutators(relative_path:
     """List every tool omitted by certified read-only mode."""
     content = _read(relative_path)
     documented_mutators = {
-        tool_name for tool_name in MUTATING_TOOL_NAMES if f"`{tool_name}`" in content
+        tool_name for tool_name in STANDARD_MUTATING_TOOL_NAMES if f"`{tool_name}`" in content
     }
 
-    assert documented_mutators == set(MUTATING_TOOL_NAMES)
+    assert documented_mutators == set(STANDARD_MUTATING_TOOL_NAMES)
 
 
 @pytest.mark.parametrize(

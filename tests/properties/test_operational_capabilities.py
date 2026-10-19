@@ -32,7 +32,7 @@ from datacron.core.frontmatter import serialize
 from datacron.core.logger import configure_logging, shutdown_logging
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.reconcile import reconcile
-from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES, READ_ONLY_TOOL_NAMES
+from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES, STANDARD_READ_ONLY_TOOL_NAMES
 from datacron.mcp.server import DatacronApp, build_app, create_server
 from datacron.mcp.tools import (
     _append_journal_impl,
@@ -216,7 +216,7 @@ async def test_prop_read_only_blocks_writes(tmp_path: Path) -> None:
         health = await _get_health_impl(app)
     after = _snapshot(vault)
 
-    assert live_tools == set(READ_ONLY_TOOL_NAMES)
+    assert live_tools == set(STANDARD_READ_ONLY_TOOL_NAMES)
     assert live_tools.isdisjoint(MUTATING_TOOL_NAMES)
     assert all(result["error"]["type"] == "ReadOnlyModeError" for result in results)
     assert search["results"]
