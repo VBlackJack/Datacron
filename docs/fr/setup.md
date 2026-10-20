@@ -44,6 +44,7 @@ d'indexation est différé et n'annule jamais l'enregistrement des clients. Opti
 - `datacron setup --vault CHEMIN_DOCS --single-vault` - ramène une installation Dual-Vault en vault unique : les entrées clientes perdent `DATACRON_MEMORY_ROOT`. Sans cette option, une nouvelle exécution sur le même vault conserve le vault mémoire déjà nommé par son entrée cliente, et une exécution sur un autre vault démarre en vault unique.
 - `datacron setup --enable-write --machine-wide-write` - active aussi explicitement l'allowlist dans l'environnement utilisateur pour les futurs clients.
 - `datacron setup --durability strict --read-only` - mode durabilité strict et lecture seule certifiée.
+- `datacron setup --tool-profile essential` - enregistre le [profil essentiel](essential-profile.md) de 5 outils (`standard` revient aux 23 outils). Une nouvelle exécution sans l'option conserve ce que chaque configuration de client contient déjà.
 - `datacron setup --no-write` / `datacron setup --no-read-only` - retire une allowlist d'écriture ou un mode lecture seule existant des configs client. Une relance qui ne nomme aucune des deux formes garde ce que chaque config client contient déjà, et le récapitulatif affiche les réglages réellement écrits, conservés compris. Pointer le setup vers un autre vault retire les chemins d'écriture conservés qui sont en dehors. En interactif, les questions écriture et lecture seule proposent par défaut le réglage que contient déjà l'entrée client de ce vault : Entrée le garde, seule une réponse explicite le change.
 - `datacron setup --no-index` - saute la construction de l'index.
 - `datacron setup --client claude-code` - affiche un snippet de config stdio prêt à coller dans Claude Code.
@@ -273,6 +274,7 @@ datacron protocol uninstall --client all
 | `DATACRON_REGEX_FALLBACK_TIMEOUT_SECONDS` | `10.0` | Budget d'un balayage complet du repli indexe, utilise seulement quand ripgrep est absent. |
 | `DATACRON_REGEX_FALLBACK_MAX_PATTERN_LENGTH` | `512` | Longueur maximale de motif acceptee par le repli indexe. |
 | `DATACRON_TOOL_DESCRIPTION_PROFILE` | `standard` | Profil de description : `standard` ou `compact` en opt-in. |
+| `DATACRON_TOOL_PROFILE` | `standard` | Profil d'outils : `standard` (23 outils) ou `essential` en opt-in (5 outils, voir le [profil essentiel](essential-profile.md)). Une valeur inconnue empêche le démarrage. |
 
 Les listes de chemins utilisent le séparateur de l'OS : `:` sous Unix, `;` sous Windows.
 

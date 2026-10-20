@@ -22,9 +22,17 @@ from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 from pydantic import StrictBool, StrictInt
 
-from datacron.core.config import DEFAULT_HISTORY_LIMIT, DEFAULT_MAX_RESULT_COUNT
+from datacron.core.config import (
+    DEFAULT_HISTORY_LIMIT,
+    DEFAULT_MAX_RESULT_COUNT,
+    TOOL_PROFILE_ESSENTIAL,
+)
 from datacron.core.scope import SingleTenantVaultScope
-from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
+from datacron.mcp.security_manifest import (
+    ESSENTIAL_TOOL_NAMES,
+    MUTATING_TOOL_NAMES,
+    STANDARD_TOOL_NAMES,
+)
 from datacron.mcp.tool_contract import (
     AppendJournalOutput,
     ApplyOrganizationManifestOutput,
@@ -53,6 +61,7 @@ from datacron.mcp.tool_contract import (
     SetFrontmatterOutput,
 )
 from datacron.mcp.tools.advisory import _contradiction_scan_impl
+from datacron.mcp.tools.essential import register_essential_tools
 from datacron.mcp.tools.follow_up import (
     FOLLOW_UP_CONSTRAINTS_DESCRIPTION,
     FOLLOW_UP_EXCERPT_MIN_LENGTH,
@@ -898,10 +907,25 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
             limit=limit,
         )
 
-    if app.settings.read_only:
-        for tool_name in MUTATING_TOOL_NAMES:
+    # Every standard tool is registered above; the essential profile narrows the
+    # surface to its own set. The names left are tracked so that the read-only and
+    # write-policy removals below only ever name a tool that is registered, since
+    # removing an unknown name raises.
+    registered = set(STANDARD_TOOL_NAMES)
+    if app.settings.tool_profile == TOOL_PROFILE_ESSENTIAL:
+        register_essential_tools(
+            server,
+            app,
+            read_annotations=_READ_ANNOTATIONS,
+            write_annotations=_ADDITIVE_WRITE_ANNOTATIONS,
+        )
+        for tool_name in sorted(registered - ESSENTIAL_TOOL_NAMES):
             server.remove_tool(tool_name)
-    elif (
+        registered = set(ESSENTIAL_TOOL_NAMES)
+    if app.settings.read_only:
+        for tool_name in sorted(MUTATING_TOOL_NAMES & registered):
+            server.remove_tool(tool_name)
+    elif "apply_organization_manifest" in registered and (
         not app.write_policy.effective_writes_enabled
         or type(app.scope) is not SingleTenantVaultScope
     ):

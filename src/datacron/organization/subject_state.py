@@ -47,6 +47,7 @@ __all__ = [
     "frontmatter_title",
     "has_state_note_tag",
     "is_history_stem",
+    "matching_subject_tags",
     "note_subject_tags",
     "resolve_subject_tag",
     "summarize_subject",
@@ -137,11 +138,37 @@ def _normalize_subject_key(value: str) -> str:
     return value.strip().lstrip(_TAG_PREFIX).strip().casefold()
 
 
-def resolve_subject_tag(subject: str, organization: OrganizationConfig | None) -> str | None:
-    """Map a free-text subject to exactly one registered subject tag.
+def matching_subject_tags(subject: str, organization: OrganizationConfig | None) -> tuple[str, ...]:
+    """Return every registered subject tag a free-text subject names.
 
     The subject matches a registered tag, the tag's last segment (``heimdall``
     for ``project/heimdall``) or one of its declared aliases, case-insensitively.
+
+    Args:
+        subject: The subject a caller asked about.
+        organization: The vault's organization block, if any.
+
+    Returns:
+        The canonical tags that match, sorted; empty when nothing matches.
+    """
+    if organization is None or organization.tags is None:
+        return ()
+    key = _normalize_subject_key(subject)
+    if not key:
+        return ()
+    matches: set[str] = set()
+    for registered in organization.tags.subjects:
+        tag = registered.tag.casefold()
+        leaf = tag.rsplit(_NAMESPACE_SEPARATOR, 1)[-1]
+        aliases = {alias.casefold() for alias in registered.aliases}
+        if key in {tag, leaf} or key in aliases:
+            matches.add(registered.tag)
+    return tuple(sorted(matches))
+
+
+def resolve_subject_tag(subject: str, organization: OrganizationConfig | None) -> str | None:
+    """Map a free-text subject to exactly one registered subject tag.
+
     A subject that matches several registered subjects resolves to none: picking
     one would pin the wrong state note with the authority of an exact match.
 
@@ -152,19 +179,8 @@ def resolve_subject_tag(subject: str, organization: OrganizationConfig | None) -
     Returns:
         The canonical subject tag, or ``None`` when nothing or several match.
     """
-    if organization is None or organization.tags is None:
-        return None
-    key = _normalize_subject_key(subject)
-    if not key:
-        return None
-    matches: set[str] = set()
-    for registered in organization.tags.subjects:
-        tag = registered.tag.casefold()
-        leaf = tag.rsplit(_NAMESPACE_SEPARATOR, 1)[-1]
-        aliases = {alias.casefold() for alias in registered.aliases}
-        if key in {tag, leaf} or key in aliases:
-            matches.add(registered.tag)
-    return next(iter(matches)) if len(matches) == 1 else None
+    matches = matching_subject_tags(subject, organization)
+    return matches[0] if len(matches) == 1 else None
 
 
 def note_subject_tags(

@@ -447,6 +447,18 @@ class FilesystemVaultWriter:
         """Return an immutable snapshot of committed operation records."""
         return await asyncio.to_thread(self._list_operations_sync)
 
+    async def latest_record_for_request(self, key_hash: str) -> OperationRecord | None:
+        """Return the latest committed record carrying one write-request key, or None.
+
+        The lookup the mutation path itself performs, answered from the journal's
+        tail rather than from a parse of its whole history.
+        """
+        return await asyncio.to_thread(self._latest_record_for_request_sync, key_hash)
+
+    async def latest_record_for_path(self, rel_path: str) -> OperationRecord | None:
+        """Return the latest committed record for one exact vault-relative path, or None."""
+        return await asyncio.to_thread(self._latest_record_for_path_sync, rel_path)
+
     async def present_history_hashes(self, hashes: Iterable[str | None]) -> set[str]:
         """Return which of these restore points still have their bytes on disk."""
         return await asyncio.to_thread(self._present_history_hashes_sync, list(hashes))
@@ -1386,6 +1398,14 @@ class FilesystemVaultWriter:
         self._operation_journal.append_record(repair)
         self._operation_journal.remove_pending(repair.operation_id)
         self._operation_journal.remove_pending(original_operation_id)
+
+    def _latest_record_for_request_sync(self, key_hash: str) -> OperationRecord | None:
+        with self._advisory_lock("oplog"):
+            return self._operation_journal.latest_record_for_request_key(key_hash)
+
+    def _latest_record_for_path_sync(self, rel_path: str) -> OperationRecord | None:
+        with self._advisory_lock("oplog"):
+            return self._operation_journal.latest_record_for_path(rel_path)
 
     def _list_operations_sync(self) -> list[OperationRecord]:
         with self._advisory_lock("oplog"):

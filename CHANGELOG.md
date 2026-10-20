@@ -11,6 +11,26 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Added
 
+- **Essential tool profile (`DATACRON_TOOL_PROFILE=essential`)**: registers 5 tools instead
+  of 23 (`remember`, `recall`, `what_changed`, `get_note`, `get_health`) with a short
+  server-instructions block that names only those tools. `standard` stays the default and
+  registers exactly the existing 23 tools. An unknown value refuses to start. In read-only
+  mode `remember` is not exposed. `datacron setup --tool-profile essential|standard` writes
+  the variable into the client entry; a rerun that omits the option keeps it.
+- **`remember`** (essential profile): saves a fact, decision or preference. `about` resolves to
+  an exact note path or id, or to a registered subject (tag, last segment or alias) whose state
+  note receives a dated entry under a single `Remembered` heading; an ambiguous, unknown or
+  multi-state-note target is refused with the candidates. Without `about` it creates a note in
+  the folder the organization rules declare for the kind. Built on `append_journal` and
+  `create_note_ai`, with one compare-and-swap retry and `request_id` replay.
+- **`recall`** (essential profile): full-text search grouped by note, returning a sandbox-wrapped
+  excerpt of the best section per hit and the exact `get_note` arguments (`read_more`) to read it
+  in full, bounded by `DATACRON_MAX_READ_RESPONSE_CHARS`.
+- **`what_changed`** (essential profile): lists committed writes since an ISO-8601 date,
+  timestamp or duration (`7d`, `12h`), grouped per note with summaries that hold no note body
+  (the name of the heading touched may appear), and flags
+  notes edited outside Datacron by comparing the index content hash with the last journaled
+  write.
 - **Companion Memory Inbox**: a new Companion view lists the journaled writes the vault scope
   admits, newest first, with filters (unreviewed only by default, note, tool, actor, period)
   through `GET /api/inbox`. `GET /api/inbox/diff` returns a unified diff over the exact history

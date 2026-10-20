@@ -855,6 +855,9 @@ FROM notes
 ORDER BY indexed_at ASC;
 """
 
+# Paths per ``IN (...)`` clause, well under SQLite's default bound-parameter limit.
+_TITLE_LOOKUP_BATCH: Final[int] = 500
+
 _LIST_TEMPORAL_METADATA_SQL: Final[str] = """
 SELECT note_id, frontmatter_json, tags_json
 FROM notes
@@ -1573,6 +1576,25 @@ class SQLiteFTS5Store:
             )
             for row in rows
         }
+
+    async def note_titles(self, rel_paths: Sequence[str]) -> dict[str, str]:
+        """Return ``rel_path -> title`` for the given indexed notes.
+
+        One bounded query per batch of paths and no note read, so a response that
+        names a few notes can label them without opening each file. A path the
+        index does not hold is simply absent from the result.
+        """
+        connection = self._require_connection()
+        titles: dict[str, str] = {}
+        unique = list(dict.fromkeys(rel_paths))
+        for start in range(0, len(unique), _TITLE_LOOKUP_BATCH):
+            batch = unique[start : start + _TITLE_LOOKUP_BATCH]
+            placeholders = ",".join("?" for _ in batch)
+            query = f"SELECT rel_path, title FROM notes WHERE rel_path IN ({placeholders});"  # noqa: S608
+            async with connection.execute(query, batch) as cursor:
+                rows = cast("list[sqlite3.Row]", await cursor.fetchall())
+            titles.update({str(row["rel_path"]): str(row["title"]) for row in rows})
+        return titles
 
     async def list_temporal_metadata(self) -> dict[str, TemporalMeta]:
         """Return explicit retrieval lifecycle metadata keyed by note_id."""

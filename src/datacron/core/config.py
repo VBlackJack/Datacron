@@ -161,6 +161,8 @@ DEFAULT_LINE_ENDINGS: Final[str] = "lf"
 DEFAULT_REDACT_SECRETS: Final[str] = "all"
 DEFAULT_DURABILITY_MODE: Final[str] = "best-effort"
 DEFAULT_TOOL_DESCRIPTION_PROFILE: Final[str] = "standard"
+DEFAULT_TOOL_PROFILE: Final[str] = "standard"
+TOOL_PROFILE_ESSENTIAL: Final[str] = "essential"
 DEFAULT_SCRUB_NOTES_PER_SECOND: Final[float] = 50.0
 DEFAULT_SCRUB_MEBIBYTES_PER_SECOND: Final[float] = 16.0
 DEFAULT_SCRUB_MAX_DURATION_SECONDS: Final[float] = 30.0
@@ -245,6 +247,32 @@ VALID_SECRET_REDACTION_POLICIES: Final[frozenset[str]] = frozenset(
 )
 VALID_DURABILITY_MODES: Final[frozenset[str]] = frozenset({"strict", "best-effort"})
 VALID_TOOL_DESCRIPTION_PROFILES: Final[frozenset[str]] = frozenset({"standard", "compact"})
+VALID_TOOL_PROFILES: Final[frozenset[str]] = frozenset(
+    {DEFAULT_TOOL_PROFILE, TOOL_PROFILE_ESSENTIAL}
+)
+
+# Essential profile verbs: bounds and conventions, named once so the tools, the
+# tests and the documentation cannot drift apart.
+ESSENTIAL_REMEMBER_HEADING: Final[str] = "Remembered"
+ESSENTIAL_REMEMBER_KINDS: Final[tuple[str, ...]] = ("fact", "decision", "preference")
+ESSENTIAL_REMEMBER_DEFAULT_KIND: Final[str] = "fact"
+ESSENTIAL_REMEMBER_MAX_CONTENT_CHARS: Final[int] = 8000
+ESSENTIAL_REMEMBER_MAX_SOURCE_CHARS: Final[int] = 512
+ESSENTIAL_REMEMBER_TITLE_MAX_CHARS: Final[int] = 80
+ESSENTIAL_REMEMBER_ENTRY_DATE_FORMAT: Final[str] = "%Y-%m-%d"
+ESSENTIAL_REMEMBER_CAS_RETRIES: Final[int] = 1
+ESSENTIAL_REMEMBER_SOURCE_LABEL: Final[str] = "Source"
+ESSENTIAL_REMEMBER_ORIGIN: Final[str] = "ai"
+ESSENTIAL_REMEMBER_CONFIDENCE: Final[str] = "medium"
+ESSENTIAL_REMEMBER_MAX_CANDIDATES: Final[int] = 10
+ESSENTIAL_RECALL_DEFAULT_LIMIT: Final[int] = 5
+ESSENTIAL_RECALL_MAX_LIMIT: Final[int] = 10
+ESSENTIAL_RECALL_EXCERPT_MAX_CHARS: Final[int] = 1500
+ESSENTIAL_WHAT_CHANGED_DEFAULT_LIMIT: Final[int] = 50
+ESSENTIAL_WHAT_CHANGED_MAX_LIMIT: Final[int] = 200
+ESSENTIAL_WHAT_CHANGED_MAX_OUT_OF_BAND: Final[int] = 50
+ESSENTIAL_WHAT_CHANGED_SUMMARY_MAX_CHARS: Final[int] = 160
+ESSENTIAL_INSTRUCTIONS_MAX_CHARS: Final[int] = 900
 
 
 DEFAULT_ORGANIZATION_NAMING: Final[str] = "{slug}"
@@ -1206,6 +1234,7 @@ class Settings(BaseSettings):
     read_only: bool = False
     durability: str = DEFAULT_DURABILITY_MODE
     tool_description_profile: str = DEFAULT_TOOL_DESCRIPTION_PROFILE
+    tool_profile: str = DEFAULT_TOOL_PROFILE
     scrub_notes_per_second: float = Field(default=DEFAULT_SCRUB_NOTES_PER_SECOND, gt=0)
     scrub_mebibytes_per_second: float = Field(
         default=DEFAULT_SCRUB_MEBIBYTES_PER_SECOND,
@@ -1346,6 +1375,14 @@ class Settings(BaseSettings):
                 "DATACRON_TOOL_DESCRIPTION_PROFILE must be one of "
                 f"{sorted(VALID_TOOL_DESCRIPTION_PROFILES)}"
             )
+        return normalized
+
+    @field_validator("tool_profile", mode="before")
+    @classmethod
+    def _normalize_tool_profile(cls, value: object) -> str:
+        normalized = str(value).strip().lower()
+        if normalized not in VALID_TOOL_PROFILES:
+            raise ValueError(f"DATACRON_TOOL_PROFILE must be one of {sorted(VALID_TOOL_PROFILES)}")
         return normalized
 
     @field_validator("scrub_checkpoint_path", "scrub_canary_dir", mode="before")

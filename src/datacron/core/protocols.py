@@ -249,6 +249,10 @@ class FTS5Store(Protocol):
         """
         ...
 
+    async def note_titles(self, rel_paths: Sequence[str]) -> dict[str, str]:
+        """Return ``rel_path -> title`` for the given indexed notes; absent paths are omitted."""
+        ...
+
     async def list_temporal_metadata(self) -> dict[str, TemporalMeta]:
         """Return explicit retrieval lifecycle metadata keyed by note_id."""
         ...
@@ -470,6 +474,14 @@ class VaultWriter(Protocol):
 
     async def list_operations(self) -> list[OperationRecord]:
         """Return committed operation records without mutating journal state."""
+        ...
+
+    async def latest_record_for_request(self, key_hash: str) -> OperationRecord | None:
+        """Return the latest committed record for one write-request key, or None."""
+        ...
+
+    async def latest_record_for_path(self, rel_path: str) -> OperationRecord | None:
+        """Return the latest committed record for one exact path, or None."""
         ...
 
     async def present_history_hashes(self, hashes: Iterable[str | None]) -> set[str]:

@@ -48,7 +48,7 @@ from datacron.core.scope import SingleTenantVaultScope
 from datacron.core.vault import FilesystemVaultReader, JsonIdStore
 from datacron.core.vault_writer import FilesystemVaultWriter, VaultLockBusyError
 from datacron.indexing.reconcile import ReconcileStats, reconcile
-from datacron.mcp.security_manifest import MUTATING_TOOL_NAMES
+from datacron.mcp.security_manifest import STANDARD_MUTATING_TOOL_NAMES
 from datacron.mcp.server import (
     SERVER_INSTRUCTIONS,
     DatacronMCPServer,
@@ -1240,10 +1240,10 @@ async def test_rename_note_section_write_descriptions_lead_with_usage_trigger(
     descriptions = {
         tool.name: tool.description
         for tool in await create_server(app).list_tools()
-        if tool.name in MUTATING_TOOL_NAMES
+        if tool.name in STANDARD_MUTATING_TOOL_NAMES
     }
 
-    assert descriptions.keys() == MUTATING_TOOL_NAMES
+    assert descriptions.keys() == STANDARD_MUTATING_TOOL_NAMES
     for description in descriptions.values():
         assert description is not None
         assert description.startswith(("Call this", "Use this"))

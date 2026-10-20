@@ -1495,3 +1495,96 @@ def test_cli_setup_interactive_defaults_stay_no_for_another_vault(
     assert result.exit_code == 0, result.output
     assert "Current setting for this vault" not in result.output
     assert "DATACRON_WRITE_PATHS" not in _written_env(config)
+
+
+# ---------------------------------------------------------------------------
+# --tool-profile: written when given, kept when omitted
+# ---------------------------------------------------------------------------
+
+
+def _claude_desktop_env(monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Route a Claude Desktop setup to the isolated profile and return its config."""
+    monkeypatch.setattr(
+        "datacron.installers.claude_desktop.resolve_mcp_invocation",
+        lambda: MCPServerInvocation(command="datacron-mcp", args=()),
+    )
+    from datacron.installers.claude_desktop import config_path_for_platform
+
+    config = config_path_for_platform()
+    assert str(config).startswith(str(Path.home())) or "user-profile" in str(config)
+    return config
+
+
+def _setup_claude_desktop(vault: Path, *extra: str) -> Any:
+    return _runner.invoke(
+        app,
+        [
+            "setup",
+            "--vault",
+            str(vault),
+            "--client",
+            "claude-desktop",
+            "--yes",
+            "--no-index",
+            *extra,
+        ],
+    )
+
+
+def test_setup_tool_profile_is_written_and_kept_on_a_rerun(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    config = _claude_desktop_env(monkeypatch)
+
+    first = _setup_claude_desktop(vault, "--tool-profile", "essential")
+
+    assert first.exit_code == 0, first.output
+    assert _written_env(config)["DATACRON_TOOL_PROFILE"] == "essential"
+    assert "tools:      essential" in first.output
+
+    rerun = _setup_claude_desktop(vault)
+
+    assert rerun.exit_code == 0, rerun.output
+    assert _written_env(config)["DATACRON_TOOL_PROFILE"] == "essential"
+    assert "tools:      essential" in rerun.output
+
+    back = _setup_claude_desktop(vault, "--tool-profile", "standard")
+
+    assert back.exit_code == 0, back.output
+    assert _written_env(config)["DATACRON_TOOL_PROFILE"] == "standard"
+
+
+def test_setup_without_tool_profile_writes_none_on_a_first_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    config = _claude_desktop_env(monkeypatch)
+
+    result = _setup_claude_desktop(vault)
+
+    assert result.exit_code == 0, result.output
+    assert "DATACRON_TOOL_PROFILE" not in _written_env(config)
+
+
+def test_setup_rejects_an_unknown_tool_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    config = _claude_desktop_env(monkeypatch)
+
+    result = _setup_claude_desktop(vault, "--tool-profile", "minimal")
+
+    assert result.exit_code != 0
+    assert "Unknown tool profile" in result.output
+    assert not config.exists()
+
+
+def test_setup_plan_rejects_an_unknown_tool_profile(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="tool profile"):
+        asyncio.run(
+            run_setup(SetupPlan(vault_path=tmp_path, client=CLIENT_NONE, tool_profile="minimal"))
+        )
