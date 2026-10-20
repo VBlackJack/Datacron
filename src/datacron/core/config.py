@@ -193,6 +193,38 @@ INDEX_DB_FILENAME: Final[str] = "datacron.db"
 HISTORY_DIR_NAME: Final[str] = "history"
 OPLOG_DIR_NAME: Final[str] = "oplog"
 OPLOG_PENDING_DIR_NAME: Final[str] = "pending"
+# Companion memory inbox. The review marks live in a sidecar file keyed by operation id,
+# never in the operation journal or in a note.
+COMPANION_STATE_DIR_NAME: Final[str] = "companion"
+INBOX_REVIEW_STATE_FILENAME: Final[str] = "review-state.json"
+INBOX_REVIEW_STATE_VERSION: Final[int] = 1
+INBOX_REVIEW_LOCK_KEY: Final[str] = "companion-review"
+# Reviewed operations kept in the state file; the oldest marks are dropped past this.
+INBOX_REVIEW_MAX_ENTRIES: Final[int] = 10_000
+INBOX_REVIEW_MAX_STATE_BYTES: Final[int] = 4 * 1024 * 1024
+INBOX_DEFAULT_LIMIT: Final[int] = 50
+INBOX_MAX_LIMIT: Final[int] = 200
+INBOX_MAX_OFFSET: Final[int] = 100_000
+INBOX_FILTER_MAX_CHARS: Final[int] = 256
+INBOX_OPERATION_ID_MAX_CHARS: Final[int] = 128
+INBOX_SINCE_ALL: Final[str] = "all"
+# Selector value -> window in seconds; "all" has no entry and means no lower bound.
+INBOX_SINCE_WINDOWS_SECONDS: Final[dict[str, int]] = {
+    "24h": 24 * 60 * 60,
+    "7d": 7 * 24 * 60 * 60,
+    "30d": 30 * 24 * 60 * 60,
+}
+INBOX_DEFAULT_SINCE: Final[str] = INBOX_SINCE_ALL
+# Largest unified diff the inbox returns, in characters; the rest is cut and flagged.
+INBOX_DIFF_MAX_CHARS: Final[int] = 200_000
+# Combined size of the two texts above which no diff is computed (difflib is quadratic).
+INBOX_DIFF_MAX_SOURCE_BYTES: Final[int] = 1024 * 1024
+INBOX_DIFF_CONTEXT_LINES: Final[int] = 3
+INBOX_DIFF_FROM_LABEL: Final[str] = "before"
+INBOX_DIFF_TO_LABEL: Final[str] = "after"
+# Actor recorded on a revert made from the Companion (model: the CLI operator actor).
+COMPANION_REVERT_ACTOR: Final[str] = "companion:local-operator"
+INBOX_REVERT_REQUEST_PREFIX: Final[str] = "companion-revert-"
 # Files an operating system shell writes into any folder it displays, casefolded.
 # Recovery directories ignore them instead of reading them as unexplained evidence.
 OS_METADATA_FILENAMES: Final[frozenset[str]] = frozenset({"desktop.ini", ".ds_store", "thumbs.db"})

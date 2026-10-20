@@ -540,6 +540,9 @@ class _CountingVaultWriter:
     async def present_history_hashes(self, hashes: Iterable[str | None]) -> set[str]:
         return await self._delegate.present_history_hashes(hashes)
 
+    async def read_history_bytes(self, content_hash: str) -> bytes | None:
+        return await self._delegate.read_history_bytes(content_hash)
+
     async def purge_history(self) -> list[str]:
         return await self._delegate.purge_history()
 

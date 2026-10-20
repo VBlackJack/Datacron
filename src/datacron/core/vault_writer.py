@@ -103,6 +103,7 @@ __all__ = [
     "WriteConflictError",
     "atomic_durable_write",
     "durable_flush_directory",
+    "hold_sidecar_lock",
 ]
 
 _LOGGER = get_logger(__name__)
@@ -469,6 +470,19 @@ class FilesystemVaultWriter:
             for content_hash in dict.fromkeys(hashes)
             if content_hash is not None and journal.has_history(content_hash)
         }
+
+    async def read_history_bytes(self, content_hash: str) -> bytes | None:
+        """Return the verified bytes stored under ``content_hash``, or ``None`` if absent.
+
+        Absent covers a purged blob and a vault whose history mode keeps no content.
+        """
+        return await asyncio.to_thread(self._read_history_bytes_sync, content_hash)
+
+    def _read_history_bytes_sync(self, content_hash: str) -> bytes | None:
+        try:
+            return self._operation_journal.read_history(content_hash)
+        except (HistoryUnavailableError, ValueError):
+            return None
 
     async def purge_history(self) -> list[str]:
         """Apply the configured content-history retention policy now."""
@@ -1670,38 +1684,17 @@ class FilesystemVaultWriter:
 
     @contextmanager
     def _advisory_lock(self, key: str) -> Iterator[None]:
-        lock_dir = assert_path_chain_without_links(
+        with hold_sidecar_lock(
             sidecar_dir(
                 self._vault_root,
                 memory_root=self._memory_root,
                 settings=self._settings,
-            )
-            / "locks",
+            ),
             anchor=self._sidecar_root,
-            allow_missing=True,
-        )
-        lock_dir.mkdir(parents=True, exist_ok=True)
-        lock_dir = assert_path_chain_without_links(
-            lock_dir,
-            anchor=self._sidecar_root,
-            allow_missing=False,
-        )
-        lock_name = f"{sha256_bytes(key.encode('utf-8'))}.lock"
-        lock_path = assert_path_chain_without_links(
-            lock_dir / lock_name,
-            anchor=self._sidecar_root,
-            allow_missing=True,
-        )
-        with lock_path.open("a+b") as lock_file:
-            lock_file.seek(0, os.SEEK_END)
-            if lock_file.tell() == 0:
-                lock_file.write(b"\x00")
-                lock_file.flush()
-            _lock_file(lock_file, key, self._settings.vault_lock_timeout_seconds)
-            try:
-                yield
-            finally:
-                _unlock_file(lock_file)
+            key=key,
+            timeout_seconds=self._settings.vault_lock_timeout_seconds,
+        ):
+            yield
 
     @staticmethod
     def _lock_key(target: Path) -> str:
@@ -1866,6 +1859,50 @@ def _frontmatter_block(raw: str) -> str | None:
         if line.strip() == "---":
             return "\n".join(lines[1:index])
     return None
+
+
+@contextmanager
+def hold_sidecar_lock(
+    sidecar: Path,
+    *,
+    anchor: Path,
+    key: str,
+    timeout_seconds: float,
+) -> Iterator[None]:
+    """Hold the cross-process advisory lock named ``key`` under ``<sidecar>/locks``.
+
+    The writer's own locks and every other sidecar writer that must exclude another
+    process (the Companion review state) use this one mechanism, so a lock file is
+    created, confined and released the same way everywhere. A lock that stays held
+    past ``timeout_seconds`` raises :class:`VaultLockBusyError`.
+    """
+    lock_dir = assert_path_chain_without_links(
+        sidecar / "locks",
+        anchor=anchor,
+        allow_missing=True,
+    )
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_dir = assert_path_chain_without_links(
+        lock_dir,
+        anchor=anchor,
+        allow_missing=False,
+    )
+    lock_name = f"{sha256_bytes(key.encode('utf-8'))}.lock"
+    lock_path = assert_path_chain_without_links(
+        lock_dir / lock_name,
+        anchor=anchor,
+        allow_missing=True,
+    )
+    with lock_path.open("a+b") as lock_file:
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"\x00")
+            lock_file.flush()
+        _lock_file(lock_file, key, timeout_seconds)
+        try:
+            yield
+        finally:
+            _unlock_file(lock_file)
 
 
 def _inject(fault_injector: FaultInjector | None, point: str) -> None:

@@ -116,6 +116,48 @@ mesure l'écart entre son état réel et l'organisation déclarée. Elle est en 
 elle mesure, et n'applique rien. C'est `apply_organization_manifest` qui applique, et
 seulement après validation. Voir [Organisation du vault](organization.md).
 
+### Relire ce qui a été écrit : la boîte de réception mémoire du Companion
+
+L'onglet **Boîte de réception mémoire** du Companion liste les écritures enregistrées dans le
+journal d'opérations, de la plus récente à la plus ancienne, pour que tu puisses relire ce que
+ton assistant a stocké et l'annuler quand c'est faux.
+
+- **Ce qu'elle liste** : une ligne par écriture journalisée (création, ajout, remplacement de
+  section, annulation, etc.) avec son heure, son outil, son acteur, sa note et son état de
+  relecture. Seuls les changements que la portée du vault admet apparaissent : une note d'un
+  dossier exclu n'est jamais listée, et son opération est signalée comme introuvable. Par défaut,
+  seuls les changements non relus sont affichés. Les filtres sont le chemin de la note, l'outil,
+  l'acteur et une période (dernières 24 heures, 7 jours, 30 jours, ou depuis toujours).
+- **Diff** : ouvrir une ligne affiche un diff unifié entre le texte exact avant et après le
+  changement, avec les lignes ajoutées et supprimées marquées. Quand l'expurgation des secrets est
+  active, chaque texte entier est expurgé avant la comparaison : une clé privée sur plusieurs
+  lignes n'apparaît donc que sous forme de marqueur, et si seul un contenu expurgé a changé, la
+  vue le dit. Une création affiche le contenu créé. Quand le texte exact n'est plus conservé (la
+  rétention de l'historique l'a purgé, ou le vault garde un historique expurgé), la ligne reste
+  dans la liste avec sa marque de relecture, n'affiche aucun diff et ne peut pas être annulée.
+- **Marquer comme relu** : une bascule sur chaque changement. La marque est stockée dans
+  `.datacron/companion/review-state.json`, à côté du journal d'opérations : dans le sidecar du
+  vault mémoire en mode Dual-Vault, dans le sidecar du vault lui-même en mode Single-Vault. Elle
+  n'est écrite ni dans le journal d'opérations ni dans une note. Les marques venant de deux
+  fenêtres ou de deux processus sont fusionnées sous un verrou de fichier, une vue périmée de
+  l'état est refusée puis rechargée, les marques d'opérations que le journal ne contient plus sont
+  supprimées, et le fichier garde au plus 10 000 marques. Le marquage fonctionne quand les
+  écritures sont désactivées, car il ne modifie aucune note.
+- **Annuler** : après une confirmation, restaure les octets exacts que la note avait avant le
+  changement, par le même chemin que l'outil `revert_note`. L'annulation est elle-même
+  journalisée (acteur `companion:local-operator`), apparaît dans la boîte de réception, peut être
+  annulée à son tour et rafraîchit l'index de recherche. Envoyer deux fois la même demande ne
+  l'applique qu'une fois.
+
+Le bouton Annuler est masqué, et la demande refusée, quand les écritures sont désactivées (le
+profil Companion les coupe, `DATACRON_READ_ONLY` est défini, ou la durabilité stricte ne peut pas
+être assurée) ; quand le changement est une création (il n'y a pas de texte antérieur à
+restaurer) ; et quand le texte antérieur n'est plus conservé. Si la note a changé après le
+chargement de la liste, rien n'est écrit : le Companion signale un conflit et te demande de
+recharger et de relire le changement, sans jamais réessayer de lui-même avec un nouveau hash. Si
+un autre écrivain Datacron tient le verrou du vault, rien n'est modifié et le message te demande
+de réessayer dans un instant.
+
 ## Comment fonctionne la recherche
 
 Le fil contient uniquement les titres présents dans le corps Markdown. Un parent doit

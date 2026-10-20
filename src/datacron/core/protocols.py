@@ -488,6 +488,10 @@ class VaultWriter(Protocol):
         """Return which of these restore points still have their bytes on disk."""
         ...
 
+    async def read_history_bytes(self, content_hash: str) -> bytes | None:
+        """Return the verified bytes stored under ``content_hash``, or ``None`` if absent."""
+        ...
+
     async def purge_history(self) -> list[str]:
         """Apply configured exact-content retention and return removed hashes."""
         ...

@@ -1297,3 +1297,7 @@ async def _revert_note_impl(
             ValueError,
         ),
     )
+
+
+# Public name for callers outside the MCP package (the Companion memory inbox).
+revert_note_impl = _revert_note_impl

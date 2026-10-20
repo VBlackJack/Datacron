@@ -367,7 +367,7 @@ Pour la suite, passe au [guide utilisateur](user-guide.md).
 
 ## 12. Datacron Companion, migration Dual-Vault et maintenance CLI
 
-- **Panneau de contrôle graphique (`datacron companion`)** : lance un panneau de contrôle local sur `127.0.0.1` (protection CSRF par jeton de session et validation `Host`/`Origin`) avec 7 vues (Tableau de bord, Vaults & Topologie, Recherche & Aperçu, Graphe & Compaction, Clients MCP, Historique & Audit, Réglages) et bascule FR/EN à chaud. `--vault` et `--memory-vault` sont enregistrés dans le profil Companion avant le démarrage ; `--vault` sans `--memory-vault` est un choix Single-Vault et efface le vault mémoire enregistré. Un profil invalide est refusé plutôt que remplacé :
+- **Panneau de contrôle graphique (`datacron companion`)** : lance un panneau de contrôle local sur `127.0.0.1` (protection CSRF par jeton de session et validation `Host`/`Origin`) avec 8 vues (Tableau de bord, Vaults & Topologie, Recherche & Aperçu, Graphe & Compaction, Clients MCP, Historique & Audit, Boîte de réception mémoire, Réglages) et bascule FR/EN à chaud. `--vault` et `--memory-vault` sont enregistrés dans le profil Companion avant le démarrage ; `--vault` sans `--memory-vault` est un choix Single-Vault et efface le vault mémoire enregistré. Un profil invalide est refusé plutôt que remplacé :
   ```bash
   datacron companion --vault /chemin/vers/vault
   ```

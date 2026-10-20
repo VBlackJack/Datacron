@@ -26,7 +26,7 @@ import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any, Final
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 from datacron.companion.api import (
     companion_i18n_bundle,
@@ -43,6 +43,13 @@ from datacron.companion.api import (
     save_companion_preferences,
     save_companion_topology,
     save_vault_config,
+)
+from datacron.companion.inbox import (
+    InboxError,
+    get_companion_inbox_diff,
+    list_companion_inbox,
+    revert_companion_inbox,
+    review_companion_inbox,
 )
 from datacron.companion.ui import render_companion_html
 from datacron.config_contract import ConfigCasConflictError, ConfigValidationError
@@ -94,6 +101,13 @@ _POST_ROUTES: Final[dict[str, PostHandler]] = {
     "/api/compact-memory": run_companion_compaction,
     "/api/mcp-setup": run_companion_mcp_setup,
     "/api/history": get_companion_history,
+    "/api/inbox/review": review_companion_inbox,
+    "/api/inbox/revert": revert_companion_inbox,
+}
+# Read-only routes served over GET: the handler receives the query string as a mapping.
+_GET_ROUTES: Final[dict[str, PostHandler]] = {
+    "/api/inbox": list_companion_inbox,
+    "/api/inbox/diff": get_companion_inbox_diff,
 }
 # Routes that initialize a vault, write its configuration or change its index. They run
 # one at a time: two rebuilds, or a sync during a migration, would race on the sidecar.
@@ -105,6 +119,7 @@ _EXCLUSIVE_ROUTES: Final[frozenset[str]] = frozenset(
         "/api/migrate",
         "/api/compact-memory",
         "/api/mcp-setup",
+        "/api/inbox/revert",
     }
 )
 
@@ -264,6 +279,14 @@ class _CompanionRequestHandler(BaseHTTPRequestHandler):
                 _LOGGER.exception("Companion internal error on %s", parsed.path)
                 self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, self._error("internal"))
             return
+        query_handler = _GET_ROUTES.get(parsed.path)
+        if query_handler is not None:
+            if not self._check_token():
+                self._send_json(HTTPStatus.FORBIDDEN, self._error("invalid_token"))
+                return
+            query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+            self._run_handler(parsed.path, query_handler, query)
+            return
         self._send_json(HTTPStatus.NOT_FOUND, self._error("not_found"))
 
     def do_POST(self) -> None:
@@ -293,8 +316,19 @@ class _CompanionRequestHandler(BaseHTTPRequestHandler):
     def _dispatch(self, path: str, handler: PostHandler) -> None:
         try:
             body = self._read_json_body()
-            result = asyncio.run(handler(body, profile_path=self._companion_server.profile_path))
+        except _RequestBodyError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+        self._run_handler(path, handler, body)
+
+    def _run_handler(self, path: str, handler: PostHandler, arguments: Mapping[str, Any]) -> None:
+        try:
+            result = asyncio.run(
+                handler(arguments, profile_path=self._companion_server.profile_path)
+            )
             self._send_json(HTTPStatus.OK, result)
+        except InboxError as exc:
+            self._send_json(HTTPStatus(exc.http_status), exc.payload())
         except ConfigCasConflictError as exc:
             self._send_json(HTTPStatus.CONFLICT, {"error": str(exc)})
         except (ConfigValidationError, MigrationError, ValueError, FileNotFoundError) as exc:

@@ -984,6 +984,11 @@ class ScopedVaultWriter:
         # caller only learns about a hash from a record this scope already returned.
         return await self._delegate.present_history_hashes(hashes)
 
+    async def read_history_bytes(self, content_hash: str) -> bytes | None:
+        # Keyed by content hash like presence: the caller learns the hash from a
+        # record this scope already returned.
+        return await self._delegate.read_history_bytes(content_hash)
+
     async def purge_history(self) -> list[str]:
         self._write_policy.ensure_writable()
         await self._ensure_organization_recovery_scope()

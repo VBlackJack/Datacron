@@ -212,6 +212,14 @@ textarea { font-family: var(--font-mono); min-height: 90px; resize: vertical; }
 .panel ul { list-style: none; display: flex; flex-direction: column; gap: 4px; }
 .panel li { overflow-wrap: anywhere; }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.list-item.selected { border-color: var(--accent); }
+.list-meta { font-size: 11px; color: var(--text-secondary); }
+.diff-box { max-height: 480px; white-space: pre; overflow: auto; }
+.diff-line { display: block; }
+.diff-add { color: var(--success); border-left: 3px solid var(--success); padding-left: 6px; }
+.diff-del { color: var(--error); border-left: 3px solid var(--error); padding-left: 6px; }
+.diff-hunk { color: var(--info); }
+.diff-meta { color: var(--text-secondary); }
 [hidden] { display: none !important; }
 """
 
@@ -227,6 +235,7 @@ _HTML_BODY: Final[str] = """
     <button class="nav-btn" data-tab="graph" data-i18n="nav.graph"></button>
     <button class="nav-btn" data-tab="mcp" data-i18n="nav.mcp"></button>
     <button class="nav-btn" data-tab="history" data-i18n="nav.history"></button>
+    <button class="nav-btn" data-tab="inbox" data-i18n="nav.inbox"></button>
     <button class="nav-btn" data-tab="settings" data-i18n="nav.settings"></button>
     <div class="rail-footer">
       <label for="lang-select" data-i18n="app.language_label"></label>
@@ -407,6 +416,61 @@ _HTML_BODY: Final[str] = """
       </div>
     </section>
 
+    <section id="tab-inbox" class="page">
+      <h1 class="headline" tabindex="-1" data-i18n="inbox.headline"></h1>
+      <div class="card" role="group" aria-label="Inbox filters"
+        data-i18n-aria="inbox.filters_label">
+        <label class="row">
+          <input type="checkbox" id="chk-inbox-unreviewed" aria-label="Unreviewed only"
+            data-i18n-aria="inbox.filter_unreviewed" checked />
+          <span data-i18n="inbox.filter_unreviewed"></span>
+        </label>
+        <div class="grid-2">
+          <input type="text" id="inp-inbox-note" aria-label="Note path filter"
+            data-i18n-aria="inbox.filter_note" data-i18n-placeholder="inbox.filter_note" />
+          <input type="text" id="inp-inbox-tool" aria-label="Tool filter"
+            data-i18n-aria="inbox.filter_tool" data-i18n-placeholder="inbox.filter_tool" />
+          <input type="text" id="inp-inbox-actor" aria-label="Actor filter"
+            data-i18n-aria="inbox.filter_actor" data-i18n-placeholder="inbox.filter_actor" />
+          <select id="sel-inbox-since" aria-label="Period" data-i18n-aria="inbox.filter_since">
+            <option value="all" data-i18n="inbox.since_all"></option>
+            <option value="24h" data-i18n="inbox.since_24h"></option>
+            <option value="7d" data-i18n="inbox.since_7d"></option>
+            <option value="30d" data-i18n="inbox.since_30d"></option>
+          </select>
+        </div>
+        <div class="row">
+          <button class="btn btn-primary" id="btn-inbox-reload" aria-label="Reload the inbox"
+            data-i18n-aria="inbox.reload_button" data-i18n="inbox.reload_button"></button>
+          <span class="hint" id="inbox-summary" role="status"></span>
+        </div>
+        <p class="hint" id="inbox-writes-hint" data-i18n="inbox.writes_disabled_hint"
+          hidden></p>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <div id="inbox-list" role="group" aria-label="Journaled changes"
+            data-i18n-aria="inbox.list_label"></div>
+          <button class="btn" id="btn-inbox-more" aria-label="Load more"
+            data-i18n-aria="inbox.load_more" data-i18n="inbox.load_more" hidden></button>
+        </div>
+        <div class="card" id="inbox-detail">
+          <h2 data-i18n="inbox.diff_title"></h2>
+          <p class="hint" id="inbox-detail-note" role="status" data-i18n="inbox.diff_hint"></p>
+          <div class="mono-box diff-box" id="inbox-diff" tabindex="0" role="region"
+            aria-label="Change" data-i18n-aria="inbox.diff_title" hidden></div>
+          <div class="row">
+            <button class="btn" id="btn-inbox-review"
+              data-i18n-aria="inbox.mark_reviewed_aria" hidden></button>
+            <button class="btn btn-primary" id="btn-inbox-revert"
+              aria-label="Revert this change" data-i18n-aria="inbox.revert_aria"
+              data-i18n="inbox.revert_button" hidden></button>
+          </div>
+          <p class="hint" id="inbox-revert-hint" hidden></p>
+        </div>
+      </div>
+    </section>
+
     <section id="tab-settings" class="page">
       <h1 class="headline" tabindex="-1" data-i18n="settings.headline"></h1>
       <div class="card">
@@ -484,7 +548,12 @@ async function apiCall(path, method = "GET", body = null) {
     body: body !== null ? JSON.stringify(body) : null
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+  if (!res.ok) {
+    const failure = new Error(data.error || ("HTTP " + res.status));
+    failure.status = res.status;
+    failure.payload = data;
+    throw failure;
+  }
   return data;
 }
 
@@ -685,6 +754,261 @@ function renderHistory(out) {
     ops.map((op) => op.timestamp + "  " + op.tool + "  " + op.rel_path));
 }
 
+// Memory inbox state: the rows loaded so far, the review-state hash the next mark must
+// present, and the row whose diff is open.
+const INBOX = {
+  rows: [], total: 0, stateHash: null, writesEnabled: false, selected: null, loaded: false,
+  diff: null
+};
+
+function inboxFilterParams(offset) {
+  const params = new URLSearchParams();
+  params.set("unreviewed", document.getElementById("chk-inbox-unreviewed").checked
+    ? "true" : "false");
+  params.set("since", document.getElementById("sel-inbox-since").value);
+  [["note", "inp-inbox-note"], ["tool", "inp-inbox-tool"], ["actor", "inp-inbox-actor"]]
+    .forEach(([name, id]) => {
+      const value = document.getElementById(id).value.trim();
+      if (value) params.set(name, value);
+    });
+  if (offset) params.set("offset", String(offset));
+  return params;
+}
+
+function inboxSelectedRow() {
+  return INBOX.rows.find((row) => row.operation_id === INBOX.selected) || null;
+}
+
+function renderInboxList() {
+  const list = document.getElementById("inbox-list");
+  list.replaceChildren();
+  if (!INBOX.rows.length) {
+    list.textContent = i18nText("inbox.empty");
+  }
+  INBOX.rows.forEach((row) => {
+    const item = document.createElement("div");
+    item.className = "list-item" + (row.operation_id === INBOX.selected ? " selected" : "");
+    item.setAttribute("role", "button");
+    item.setAttribute("tabindex", "0");
+    if (row.operation_id === INBOX.selected) item.setAttribute("aria-current", "true");
+    const title = document.createElement("div");
+    title.textContent = row.title || row.rel_path;
+    const meta = document.createElement("div");
+    meta.className = "list-meta";
+    meta.textContent = [
+      row.timestamp, row.op, row.tool, row.actor, row.rel_path,
+      i18nText(row.reviewed ? "inbox.row_reviewed" : "inbox.row_unreviewed")
+    ].join("  |  ");
+    item.appendChild(title);
+    item.appendChild(meta);
+    const open = () => runAction(null, () => openInboxRow(row.operation_id));
+    item.addEventListener("click", open);
+    item.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        open();
+      }
+    });
+    list.appendChild(item);
+  });
+  document.getElementById("inbox-summary").textContent = formatText(
+    i18nText("inbox.summary"), { returned: INBOX.rows.length, total: INBOX.total });
+  document.getElementById("btn-inbox-more").hidden = INBOX.rows.length >= INBOX.total;
+  document.getElementById("inbox-writes-hint").hidden = INBOX.writesEnabled;
+}
+
+function renderInboxDiff(result) {
+  const box = document.getElementById("inbox-diff");
+  const note = document.getElementById("inbox-detail-note");
+  box.replaceChildren();
+  box.hidden = true;
+  note.textContent = "";
+  if (result.status === "unavailable") {
+    note.textContent = i18nText("inbox.diff_unavailable");
+    return;
+  }
+  if (result.status === "too_large") {
+    note.textContent = i18nText("inbox.diff_too_large");
+    return;
+  }
+  box.hidden = false;
+  if (result.status === "created") {
+    note.textContent = i18nText("inbox.diff_created");
+    box.textContent = result.content;
+  } else {
+    const lines = result.diff ? result.diff.split("\\n") : [];
+    lines.forEach((line, index) => {
+      const span = document.createElement("span");
+      let kind = "diff-line";
+      if (index < 2) kind += " diff-meta";
+      else if (line.startsWith("+")) kind += " diff-add";
+      else if (line.startsWith("-")) kind += " diff-del";
+      else if (line.startsWith("@")) kind += " diff-hunk";
+      span.className = kind;
+      span.textContent = line === "" ? " " : line;
+      box.appendChild(span);
+    });
+    if (result.redacted_change_only) {
+      note.textContent = i18nText("inbox.diff_redacted_change_only");
+    } else if (result.line_endings_only) {
+      note.textContent = i18nText("inbox.diff_line_endings_only");
+    } else if (!lines.length) {
+      note.textContent = i18nText("inbox.diff_empty");
+    } else {
+      note.textContent = inboxPlural("inbox.diff_added", result.added) + ", " +
+        inboxPlural("inbox.diff_removed", result.removed);
+    }
+  }
+  if (result.truncated) note.textContent += " " + i18nText("inbox.diff_truncated");
+}
+
+function inboxPlural(keyPrefix, count) {
+  const rule = new Intl.PluralRules(document.documentElement.lang || "en").select(count);
+  const suffix = rule === "one" ? "_one" : "_other";
+  return formatText(i18nText(keyPrefix + suffix), { count: count });
+}
+
+function clearInboxDetail() {
+  INBOX.selected = null;
+  INBOX.diff = null;
+  const box = document.getElementById("inbox-diff");
+  box.replaceChildren();
+  box.hidden = true;
+  document.getElementById("inbox-detail-note").textContent = i18nText("inbox.diff_hint");
+  renderInboxActions("");
+}
+
+// Redraws what the inbox shows from its held state, so a language switch retranslates it.
+function renderInboxAll() {
+  if (!INBOX.loaded) return;
+  renderInboxList();
+  if (INBOX.diff) {
+    renderInboxDiff(INBOX.diff);
+    renderInboxActions(INBOX.diff.status);
+  } else {
+    clearInboxDetail();
+  }
+}
+
+function renderInboxActions(diffStatus) {
+  const row = inboxSelectedRow();
+  const reviewBtn = document.getElementById("btn-inbox-review");
+  const revertBtn = document.getElementById("btn-inbox-revert");
+  const hint = document.getElementById("inbox-revert-hint");
+  hint.hidden = true;
+  hint.textContent = "";
+  if (!row) {
+    reviewBtn.hidden = true;
+    revertBtn.hidden = true;
+    return;
+  }
+  const reviewKey = row.reviewed ? "inbox.mark_unreviewed" : "inbox.mark_reviewed";
+  reviewBtn.textContent = i18nText(reviewKey);
+  reviewBtn.setAttribute("aria-label", i18nText(reviewKey + "_aria"));
+  reviewBtn.hidden = false;
+  revertBtn.hidden = !row.can_revert;
+  if (!row.can_revert && INBOX.writesEnabled) {
+    const key = diffStatus === "created" ? "inbox.revert_unavailable_creation"
+      : (diffStatus === "unavailable" ? "inbox.revert_unavailable_history" : "");
+    if (key) {
+      hint.textContent = i18nText(key);
+      hint.hidden = false;
+    }
+  }
+}
+
+async function openInboxRow(operationId) {
+  INBOX.selected = operationId;
+  renderInboxList();
+  const result = await apiCall(
+    "/api/inbox/diff?operation_id=" + encodeURIComponent(operationId));
+  INBOX.diff = result;
+  renderInboxDiff(result);
+  renderInboxActions(result.status);
+}
+
+async function loadInbox(append) {
+  const offset = append ? INBOX.rows.length : 0;
+  const res = await apiCall("/api/inbox?" + inboxFilterParams(offset).toString());
+  INBOX.rows = append ? INBOX.rows.concat(res.operations) : res.operations;
+  INBOX.total = res.total;
+  INBOX.stateHash = res.state_hash;
+  INBOX.writesEnabled = Boolean(res.writes_enabled);
+  INBOX.loaded = true;
+  if (!inboxSelectedRow()) clearInboxDetail();
+  renderInboxList();
+}
+
+async function postInboxReview(row) {
+  const body = {
+    operation_id: row.operation_id,
+    reviewed: !row.reviewed,
+    expected_state_hash: INBOX.stateHash
+  };
+  try {
+    return await apiCall("/api/inbox/review", "POST", body);
+  } catch (err) {
+    // Marks of different changes commute, so one retry on the state the server reports
+    // is safe; a revert never retries this way.
+    if (err.status === 409 && err.payload && err.payload.state_hash) {
+      body.expected_state_hash = err.payload.state_hash;
+      return await apiCall("/api/inbox/review", "POST", body);
+    }
+    throw err;
+  }
+}
+
+async function toggleInboxReview() {
+  const row = inboxSelectedRow();
+  if (!row) return;
+  const res = await postInboxReview(row);
+  INBOX.stateHash = res.state_hash;
+  row.reviewed = res.reviewed;
+  setStatus(i18nText(res.reviewed ? "inbox.marked_reviewed" : "inbox.marked_unreviewed"));
+  if (res.reviewed && document.getElementById("chk-inbox-unreviewed").checked) {
+    INBOX.rows = INBOX.rows.filter((item) => item.operation_id !== row.operation_id);
+    INBOX.total = Math.max(0, INBOX.total - 1);
+    clearInboxDetail();
+  } else {
+    renderInboxActions(INBOX.diff ? INBOX.diff.status : "");
+  }
+  renderInboxList();
+}
+
+async function revertInboxRow() {
+  const row = inboxSelectedRow();
+  if (!row || !row.can_revert) return;
+  if (!window.confirm(formatText(i18nText("inbox.revert_confirm"), { path: row.rel_path }))) {
+    return;
+  }
+  // The hash the person saw is sent as it is. A conflict ends the attempt: the list is
+  // reloaded for the person to look again, never retried with a fresh hash.
+  let res = null;
+  try {
+    res = await apiCall("/api/inbox/revert", "POST", {
+      operation_id: row.operation_id,
+      expected_hash: row.content_hash
+    });
+  } catch (err) {
+    await loadInbox(false);
+    if (INBOX.selected) await openInboxRow(INBOX.selected);
+    if (err.status === 409 && err.payload && err.payload.status === "conflict") {
+      setStatus(i18nText("inbox.revert_conflict"));
+    } else if (err.status === 503) {
+      setStatus(i18nText("inbox.revert_busy"));
+    } else {
+      setStatus(err.message);
+    }
+    return;
+  }
+  let key = "inbox.revert_done";
+  if (res.replayed) key = "inbox.revert_replayed";
+  else if (!res.indexed) key = "inbox.revert_index_incomplete";
+  await loadInbox(false);
+  if (INBOX.selected) await openInboxRow(INBOX.selected);
+  setStatus(i18nText(key));
+}
+
 function vaultCfgFieldValues() {
   const excluded = document.getElementById("txt-excluded").value
     .split("\\n").map((s) => s.trim()).filter(Boolean);
@@ -808,6 +1132,7 @@ function renderState(state) {
   populateSelect("sel-timeout", state.choices.timeouts, prof.cli_timeout_seconds);
   document.getElementById("chk-mcp-write").checked = Boolean(prof.enable_write);
   renderMcpTargets(state.mcp_targets);
+  renderInboxAll();
 }
 
 async function refreshState() {
@@ -967,7 +1292,11 @@ async function runCleanupOnly() {
 window.addEventListener("DOMContentLoaded", () => {
   applyTranslations(FALLBACK_I18N, document.documentElement.lang);
   document.querySelectorAll(".nav-btn").forEach((btn) => {
-    btn.addEventListener("click", () => activateTab(btn.getAttribute("data-tab"), true));
+    btn.addEventListener("click", () => {
+      const tabName = btn.getAttribute("data-tab");
+      activateTab(tabName, true);
+      if (tabName === "inbox" && !INBOX.loaded) runAction(null, () => loadInbox(false));
+    });
   });
   document.querySelectorAll("[data-jump]").forEach((el) => {
     const target = el.getAttribute("data-jump");
@@ -1061,6 +1390,26 @@ window.addEventListener("DOMContentLoaded", () => {
   historyBtn.addEventListener("click", () => runAction(historyBtn, async () => {
     renderHistory(await apiCall("/api/history", "POST", {}));
   }));
+  const inboxReloadBtn = document.getElementById("btn-inbox-reload");
+  const reloadInbox = () => runAction(inboxReloadBtn, () => loadInbox(false));
+  inboxReloadBtn.addEventListener("click", reloadInbox);
+  ["chk-inbox-unreviewed", "sel-inbox-since"].forEach((controlId) => {
+    document.getElementById(controlId).addEventListener("change", reloadInbox);
+  });
+  ["inp-inbox-note", "inp-inbox-tool", "inp-inbox-actor"].forEach((inputId) => {
+    document.getElementById(inputId).addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        reloadInbox();
+      }
+    });
+  });
+  const inboxMoreBtn = document.getElementById("btn-inbox-more");
+  inboxMoreBtn.addEventListener("click", () => runAction(inboxMoreBtn, () => loadInbox(true)));
+  const inboxReviewBtn = document.getElementById("btn-inbox-review");
+  inboxReviewBtn.addEventListener("click", () => runAction(inboxReviewBtn, toggleInboxReview));
+  const inboxRevertBtn = document.getElementById("btn-inbox-revert");
+  inboxRevertBtn.addEventListener("click", () => runAction(inboxRevertBtn, revertInboxRow));
   const saveVaultCfgBtn = document.getElementById("btn-save-vault-cfg");
   saveVaultCfgBtn.addEventListener("click", () => runAction(saveVaultCfgBtn, saveVaultConfig));
   document.getElementById("chk-vault-cfg-reset").addEventListener("change",
