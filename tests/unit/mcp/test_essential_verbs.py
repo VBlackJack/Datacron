@@ -827,7 +827,8 @@ async def test_remember_retry_after_utc_midnight_replays_an_append(
     assert retry["replayed"] is True
     text = _read(app, _STATE_NOTE)
     assert text.count("Dated entry.") == 1
-    assert "2026-10-20" not in text
+    assert "- 2026-10-19 (fact): Dated entry." in text
+    assert "- 2026-10-20 (" not in text
 
 
 async def test_remember_retry_replays_when_the_resolution_has_drifted(
