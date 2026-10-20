@@ -16,6 +16,7 @@ et maintient un vault Markdown depuis Claude, sans envoyer le vault complet dans
 | [Questions fréquentes](faq.md) | Correctifs par symptôme pour le choix du vault, l'écriture, les clients, la fraîcheur de l'index, reset, la désinstallation et les logs. |
 | [Guide utilisateur](user-guide.md) | Usage quotidien depuis ton assistant : recherche, lecture, écriture, supervision, métadonnées de provenance (`source_vault`, `writable`) et exemples de demandes. |
 | [Discipline mémoire](memory-discipline.md) | Initialisation commune, fiches personnes, suivi sourcé et diagnostic des clients. |
+| [Profil d'outils essentiel](essential-profile.md) | La surface de 5 outils (`remember`, `recall`, `what_changed`, `get_note`, `get_health`), choisie avec `DATACRON_TOOL_PROFILE` ou `datacron setup --tool-profile`. |
 
 ## Comprendre le fonctionnement
 

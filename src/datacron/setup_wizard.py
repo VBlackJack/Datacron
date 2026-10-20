@@ -44,6 +44,7 @@ from datacron.core.config import (
     MEMORY_SUBFOLDER_NAME,
     SIDECAR_DIR_NAME,
     VALID_DURABILITY_MODES,
+    VALID_TOOL_PROFILES,
     VAULT_CONFIG_FILENAME,
     Settings,
     VaultConfig,
@@ -149,6 +150,7 @@ _ENV_MEMORY_ROOT: Final[str] = ENV_MEMORY_ROOT
 _ENV_READ_PATHS: Final[str] = ENV_READ_PATHS
 _ENV_WRITE_PATHS: Final[str] = ENV_WRITE_PATHS
 _ENV_DURABILITY: Final[str] = "DATACRON_DURABILITY"
+_ENV_TOOL_PROFILE: Final[str] = "DATACRON_TOOL_PROFILE"
 _ENV_READ_ONLY: Final[str] = ENV_READ_ONLY
 _ENV_TRUE: Final[str] = "true"
 
@@ -242,6 +244,9 @@ class SetupPlan:
         install_scope: Which config scopes to write for detected clients
             (:data:`INSTALL_SCOPE_CHOICES`).
         durability: Durability mode (:data:`VALID_DURABILITY_MODES`).
+        tool_profile: Tool profile written to the client entry
+            (:data:`VALID_TOOL_PROFILES`), or ``None`` to leave whatever the
+            client config already holds.
         read_only: ``True`` selects certified read-only mode, ``False``
             removes it from the client config, and ``None`` leaves whatever
             the config already holds.
@@ -260,6 +265,7 @@ class SetupPlan:
     client: str = CLIENT_ALL
     install_scope: str = INSTALL_SCOPE_BOTH
     durability: str = "best-effort"
+    tool_profile: str | None = None
     read_only: bool | None = None
     force: bool = False
     reset: bool = False
@@ -284,6 +290,8 @@ class SetupResult:
         read_only: Whether the written client config selects certified
             read-only mode, or whether it was requested when none was written.
         durability: The selected durability mode.
+        tool_profile: The tool profile this run wrote, or ``None`` when it left
+            the client config's profile as it was.
         memory_vault_path: Resolved dedicated memory vault root, when configured.
         client_installs: Per-client registration outcomes for ``client=all``.
         reset_result: Surgical reset outcome, when reset was requested.
@@ -300,6 +308,7 @@ class SetupResult:
     read_only: bool
     durability: str
     memory_vault_path: Path | None = None
+    tool_profile: str | None = None
     machine_write_env: MachineWriteEnvResult | None = None
     stdio_config: str | None = None
     client_installs: list[InstallOutcome] = field(default_factory=list)
@@ -321,6 +330,11 @@ def _validate_plan(plan: SetupPlan) -> None:
         raise ValueError(
             f"Unknown durability {plan.durability!r}. "
             f"Expected one of {sorted(VALID_DURABILITY_MODES)}."
+        )
+    if plan.tool_profile is not None and plan.tool_profile not in VALID_TOOL_PROFILES:
+        raise ValueError(
+            f"Unknown tool profile {plan.tool_profile!r}. "
+            f"Expected one of {sorted(VALID_TOOL_PROFILES)}."
         )
     if plan.machine_wide_write and not plan.enable_write:
         raise ValueError("Machine-wide write configuration requires enable_write.")
@@ -822,6 +836,7 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
         write_paths=effective_write_paths,
         read_only=effective_read_only,
         durability=plan.durability,
+        tool_profile=_effective_tool_profile(written_envs, plan.tool_profile),
         memory_vault_path=memory_root,
         machine_write_env=machine_write_env,
         stdio_config=stdio_config,
@@ -861,6 +876,20 @@ def _client_env(vault_root: Path, extra_env: Mapping[str, str]) -> dict[str, str
         _ENV_READ_PATHS: str(vault_root),
         **extra_env,
     }
+
+
+def _effective_tool_profile(
+    written_envs: list[tuple[str, Mapping[str, object]]],
+    requested: str | None,
+) -> str | None:
+    """Return the tool profile the written configs hold, preserved values included.
+
+    With no config written the requested profile is all there is to report.
+    """
+    if not written_envs:
+        return requested
+    held = written_envs[0][1].get(_ENV_TOOL_PROFILE)
+    return held if isinstance(held, str) else None
 
 
 def _env_settings(env: Mapping[str, object]) -> tuple[list[Path], bool]:
@@ -1094,6 +1123,8 @@ def _build_extra_env(
 ) -> dict[str, str]:
     """Build the extra client-config environment from the plan's options."""
     env: dict[str, str] = {_ENV_DURABILITY: plan.durability}
+    if plan.tool_profile is not None:
+        env[_ENV_TOOL_PROFILE] = plan.tool_profile
     if memory_root is not None:
         env[_ENV_MEMORY_ROOT] = str(memory_root)
         if vault_root is not None and memory_root != vault_root:

@@ -313,6 +313,11 @@ machine-local absolute paths, so a synced vault carries them to every machine. P
 
 ## MCP Tools
 
+The tables below list the standard profile (23 tools). For assistants that choose better from a
+short list, `DATACRON_TOOL_PROFILE=essential` registers 5 tools instead: `remember`, `recall`,
+`what_changed`, `get_note` and `get_health`. See the
+[essential tool profile](https://github.com/VBlackJack/Datacron/blob/main/docs/en/essential-profile.md).
+
 ### Reading
 
 | Tool | Description |
@@ -473,6 +478,7 @@ To get started:
 - [User guide](https://github.com/VBlackJack/Datacron/blob/main/docs/en/user-guide.md)
 - [Offline library and note consolidation](https://github.com/VBlackJack/Datacron/blob/main/docs/en/human-library.md)
 - [Daily memory, people, and commitments](https://github.com/VBlackJack/Datacron/blob/main/docs/en/memory-discipline.md)
+- [Essential tool profile](https://github.com/VBlackJack/Datacron/blob/main/docs/en/essential-profile.md)
 
 Technical references:
 

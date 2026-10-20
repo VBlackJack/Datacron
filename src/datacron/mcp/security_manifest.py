@@ -18,6 +18,8 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Final
 
+from datacron.core.config import DEFAULT_TOOL_PROFILE, TOOL_PROFILE_ESSENTIAL
+
 ToolCapabilities = frozenset[str]
 
 MCP_TOOL_CAPABILITIES: Final[MappingProxyType[str, ToolCapabilities]] = MappingProxyType(
@@ -49,6 +51,26 @@ MCP_TOOL_CAPABILITIES: Final[MappingProxyType[str, ToolCapabilities]] = MappingP
             {"vault_read", "indexed_vault_read", "audit_metadata_read"}
         ),
         "audit_query": frozenset({"audit_metadata_read"}),
+        # Essential-profile verbs: composed from the writers and readers above and
+        # registered only under DATACRON_TOOL_PROFILE=essential.
+        "remember": frozenset({"confined_vault_write", "indexed_vault_read", "vault_read"}),
+        "recall": frozenset({"indexed_vault_read", "vault_read"}),
+        "what_changed": frozenset({"audit_metadata_read", "indexed_vault_read"}),
+    }
+)
+
+ESSENTIAL_TOOL_NAMES: Final[frozenset[str]] = frozenset(
+    {"remember", "recall", "what_changed", "get_note", "get_health"}
+)
+
+STANDARD_TOOL_NAMES: Final[frozenset[str]] = frozenset(MCP_TOOL_CAPABILITIES).difference(
+    {"remember", "recall", "what_changed"}
+)
+
+TOOL_NAMES_BY_PROFILE: Final[MappingProxyType[str, frozenset[str]]] = MappingProxyType(
+    {
+        DEFAULT_TOOL_PROFILE: STANDARD_TOOL_NAMES,
+        TOOL_PROFILE_ESSENTIAL: ESSENTIAL_TOOL_NAMES,
     }
 )
 
@@ -64,6 +86,7 @@ MUTATING_TOOL_NAMES: Final[frozenset[str]] = frozenset(
         "move_note_section",
         "revert_note",
         "apply_organization_manifest",
+        "remember",
     }
 )
 
@@ -71,13 +94,26 @@ READ_ONLY_TOOL_NAMES: Final[frozenset[str]] = frozenset(MCP_TOOL_CAPABILITIES).d
     MUTATING_TOOL_NAMES
 )
 
+# Per-profile views of the two sets above: the names a given profile registers.
+STANDARD_MUTATING_TOOL_NAMES: Final[frozenset[str]] = MUTATING_TOOL_NAMES & STANDARD_TOOL_NAMES
+STANDARD_READ_ONLY_TOOL_NAMES: Final[frozenset[str]] = READ_ONLY_TOOL_NAMES & STANDARD_TOOL_NAMES
+ESSENTIAL_MUTATING_TOOL_NAMES: Final[frozenset[str]] = MUTATING_TOOL_NAMES & ESSENTIAL_TOOL_NAMES
+ESSENTIAL_READ_ONLY_TOOL_NAMES: Final[frozenset[str]] = READ_ONLY_TOOL_NAMES & ESSENTIAL_TOOL_NAMES
+
 PROHIBITED_TOOL_CAPABILITIES: Final[frozenset[str]] = frozenset(
     {"network", "arbitrary_process", "eval", "dynamic_dispatch"}
 )
 
 __all__ = [
+    "ESSENTIAL_MUTATING_TOOL_NAMES",
+    "ESSENTIAL_READ_ONLY_TOOL_NAMES",
+    "ESSENTIAL_TOOL_NAMES",
     "MCP_TOOL_CAPABILITIES",
     "MUTATING_TOOL_NAMES",
     "PROHIBITED_TOOL_CAPABILITIES",
     "READ_ONLY_TOOL_NAMES",
+    "STANDARD_MUTATING_TOOL_NAMES",
+    "STANDARD_READ_ONLY_TOOL_NAMES",
+    "STANDARD_TOOL_NAMES",
+    "TOOL_NAMES_BY_PROFILE",
 ]

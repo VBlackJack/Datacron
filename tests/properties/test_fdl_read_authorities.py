@@ -33,7 +33,7 @@ from datacron.core.vault import JsonIdStore, build_configured_reader
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.indexing.reconcile import reconcile
-from datacron.mcp.security_manifest import READ_ONLY_TOOL_NAMES
+from datacron.mcp.security_manifest import STANDARD_READ_ONLY_TOOL_NAMES
 from datacron.mcp.server import DatacronApp, build_app, create_server
 
 pytestmark = pytest.mark.invariants
@@ -281,10 +281,10 @@ async def _call_public_tool(
 
 def test_read_only_call_manifest_is_complete() -> None:
     """Keep the executable call inventory equal to the security manifest."""
-    assert set(READ_ONLY_CALLS) == set(READ_ONLY_TOOL_NAMES)
+    assert set(READ_ONLY_CALLS) == set(STANDARD_READ_ONLY_TOOL_NAMES)
     mixed_tools = {tool_name for sequence in _MIXED_READ_SEQUENCES for tool_name in sequence}
     assert len(_MIXED_READ_SEQUENCES) == 2
-    assert mixed_tools == set(READ_ONLY_TOOL_NAMES)
+    assert mixed_tools == set(STANDARD_READ_ONLY_TOOL_NAMES)
     assert sum(map(len, _MIXED_READ_SEQUENCES)) == len(mixed_tools)
     assert set(_REPAIR_CALLS) == {
         "search_text",
