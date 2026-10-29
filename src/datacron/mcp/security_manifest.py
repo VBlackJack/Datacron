@@ -57,7 +57,7 @@ MCP_TOOL_CAPABILITIES: Final[MappingProxyType[str, ToolCapabilities]] = MappingP
         "recall": frozenset({"indexed_vault_read", "vault_read"}),
         "what_changed": frozenset({"audit_metadata_read", "indexed_vault_read"}),
         # Registered only by the standard profile, and only when VAULT.yaml declares
-        # runbooks and DATACRON_RUNBOOK_WRITE_PATHS is set; it writes nowhere else.
+        # runbooks and DATACRON_RUNBOOK_VAULT is set; it writes nowhere else.
         "runbook_capture": frozenset({"confined_vault_write", "vault_read"}),
     }
 )

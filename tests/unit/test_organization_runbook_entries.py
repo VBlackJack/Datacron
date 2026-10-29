@@ -246,7 +246,9 @@ def test_an_update_keeps_the_entry_and_dates_the_addition() -> None:
 
 
 def test_keys_ignore_case_spacing_and_trailing_punctuation() -> None:
-    assert entry_key("A client  stops receiving mail.") == entry_key("a client stops receiving mail")
+    assert entry_key("A client  stops receiving mail.") == entry_key(
+        "a client stops receiving mail"
+    )
     assert entry_key("m", "hostname") != entry_key("m", "hostname -f")
 
 

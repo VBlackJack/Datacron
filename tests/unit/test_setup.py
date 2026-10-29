@@ -1588,3 +1588,50 @@ def test_setup_plan_rejects_an_unknown_tool_profile(tmp_path: Path) -> None:
         asyncio.run(
             run_setup(SetupPlan(vault_path=tmp_path, client=CLIENT_NONE, tool_profile="minimal"))
         )
+
+
+def test_setup_runbook_vault_is_written_and_kept_on_a_rerun(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = tmp_path / "vault"
+    (vault / "Ops").mkdir(parents=True)
+    config = _claude_desktop_env(monkeypatch)
+
+    first = _setup_claude_desktop(vault, "--runbook-vault", str(vault / "Ops"))
+
+    assert first.exit_code == 0, first.output
+    assert _written_env(config)["DATACRON_RUNBOOK_VAULT"] == str((vault / "Ops").resolve())
+    assert "runbooks:" in first.output
+
+    rerun = _setup_claude_desktop(vault)
+
+    assert rerun.exit_code == 0, rerun.output
+    assert _written_env(config)["DATACRON_RUNBOOK_VAULT"] == str((vault / "Ops").resolve())
+
+
+def test_setup_without_runbook_vault_writes_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    config = _claude_desktop_env(monkeypatch)
+
+    result = _setup_claude_desktop(vault)
+
+    assert result.exit_code == 0, result.output
+    assert "DATACRON_RUNBOOK_VAULT" not in _written_env(config)
+    assert "runbooks:" not in result.output
+
+
+def test_setup_refuses_a_runbook_vault_outside_the_vault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    config = _claude_desktop_env(monkeypatch)
+
+    result = _setup_claude_desktop(vault, "--runbook-vault", str(tmp_path / "elsewhere"))
+
+    assert result.exit_code != 0
+    assert "must be a folder inside the vault" in result.output
+    assert not config.exists()

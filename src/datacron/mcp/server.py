@@ -95,6 +95,7 @@ from datacron.core.protocols import (
     VaultReader,
     VaultWriter,
 )
+from datacron.core.runbook_scope import RunbookScopeError, runbook_vault_folder
 from datacron.core.scope import (
     ConjunctiveVaultScope,
     NoteAdmissionPolicy,
@@ -206,7 +207,7 @@ class DatacronApp:
     # create_note_ai enforces comes from here, not from a read per call.
     organization: OrganizationConfig | None = None
     # The runbooks block of VAULT.yaml and the writer confined to
-    # DATACRON_RUNBOOK_WRITE_PATHS. Both are set, or neither: the runbook capture is
+    # DATACRON_RUNBOOK_VAULT. Both are set, or neither: the runbook capture is
     # registered only then, and no other tool ever receives this writer.
     runbooks: RunbooksConfig | None = None
     runbook_writer: VaultWriter | None = None
@@ -486,21 +487,27 @@ def _build_runbook_writer(
     scope: VaultScope | None,
     write_policy: WritePolicy,
 ) -> VaultWriter | None:
-    """Return a writer whose write roots are DATACRON_RUNBOOK_WRITE_PATHS, or ``None``.
+    """Return a writer whose only write root is DATACRON_RUNBOOK_VAULT, or ``None``.
 
     It is the ordinary writer and scope, built over a copy of the settings whose
-    write paths are the runbook ones: the same lock files, operation journal,
-    link refusal and note admission, and a write boundary that never includes
-    ``DATACRON_WRITE_PATHS``. No runbooks block, no runbook write path, or a
-    read-only server means no writer at all.
+    write paths are the runbook vault alone: the same lock files, operation
+    journal, link refusal and note admission, and a write boundary that never
+    includes ``DATACRON_WRITE_PATHS``. No runbooks block, no runbook vault, a
+    runbook vault outside the served vault, or a read-only server means no writer.
     """
-    if vault_config.runbooks is None or not settings.runbook_write_paths or settings.read_only:
+    runbook_vault = settings.runbook_vault
+    if vault_config.runbooks is None or runbook_vault is None or settings.read_only:
+        return None
+    try:
+        runbook_vault_folder(vault_root, runbook_vault)
+    except RunbookScopeError as exc:
+        # A misconfigured runbook vault must not stop the server: the capture is
+        # simply not offered, and the reason is logged where an operator looks.
+        _LOGGER.warning("runbook capture disabled: %s", exc)
         return None
     from datacron.core.vault_writer import FilesystemVaultWriter  # noqa: PLC0415
 
-    runbook_settings = settings.model_copy(
-        update={"write_paths": list(settings.runbook_write_paths)}
-    )
+    runbook_settings = settings.model_copy(update={"write_paths": [runbook_vault]})
     canonical = SingleTenantVaultScope(vault_root, runbook_settings, admission_policy)
     runbook_scope: VaultScope = (
         canonical if scope is None else ConjunctiveVaultScope(canonical, scope)

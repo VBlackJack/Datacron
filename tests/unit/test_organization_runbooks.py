@@ -41,15 +41,7 @@ _TEMPLATE: dict[str, Any] = {
     "quickref": {"folder": "quickref", "language": "fr"},
     "routing": {"error_fix": "troubleshooting", "contact": "escalation"},
 }
-
-
-def _runbooks(*folders: str) -> RunbooksConfig:
-    return RunbooksConfig.model_validate(
-        {
-            "roots": [{"folder": folder, "template": "infra"} for folder in folders or ("Ops",)],
-            "templates": {"infra": _TEMPLATE},
-        }
-    )
+_RUNBOOKS = RunbooksConfig.model_validate({"templates": {"infra": _TEMPLATE}})
 
 
 def _organization(*subjects: dict[str, Any]) -> OrganizationConfig:
@@ -69,16 +61,18 @@ def _organization(*subjects: dict[str, Any]) -> OrganizationConfig:
 _ORGANIZATION = _organization(
     {"tag": "project/mail"}, {"tag": "project/dns", "aliases": ["domain-name-system"]}
 )
-_CHILDREN = {"Ops": ["mail-runbook", "dns-runbook", "notes", "-runbook"]}
+_CHILDREN = ["mail-runbook", "dns-runbook", "notes", "-runbook"]
 
 
 def _resolve(subject: str, **overrides: Any) -> Any:
     return resolve_runbook(
         subject,
-        overrides.get("runbooks", _runbooks()),
+        overrides.get("runbooks", _RUNBOOKS),
         overrides.get("organization", _ORGANIZATION),
-        overrides.get("children", _CHILDREN),
+        vault_folder=overrides.get("vault_folder", "Ops"),
+        children=overrides.get("children", _CHILDREN),
         fold_case=overrides.get("fold_case", True),
+        create=overrides.get("create", False),
     )
 
 
@@ -95,45 +89,64 @@ def test_a_subject_resolves_to_its_existing_runbook(subject: str) -> None:
 
 
 def test_an_alias_finds_the_runbook_named_after_it() -> None:
-    children = {"Ops": ["domain-name-system-runbook"]}
-
-    location = _resolve("project/dns", children=children)
+    location = _resolve("project/dns", children=["domain-name-system-runbook"])
 
     assert location.directory == "Ops/domain-name-system-runbook"
 
 
-def test_a_registered_subject_without_runbook_is_created_under_the_only_root() -> None:
-    location = _resolve("project/dns", children={"Ops": []})
+def test_a_project_named_in_conversation_gets_a_runbook_only_on_request() -> None:
+    """The name comes from the conversation; asking for creation keeps a typo from starting one."""
+    with pytest.raises(RunbookRoutingError, match="create_runbook=true"):
+        _resolve("billing")
+
+    location = _resolve("Billing", create=True)
+
+    assert (location.directory, location.slug, location.exists) == (
+        "Ops/billing-runbook",
+        "billing",
+        False,
+    )
+
+
+def test_a_registered_subject_starts_its_runbook_under_its_own_name() -> None:
+    location = _resolve("project/dns", children=[], create=True)
 
     assert (location.directory, location.slug, location.exists) == ("Ops/dns-runbook", "dns", False)
 
 
-def test_a_folder_path_creates_a_runbook_without_a_registered_subject() -> None:
-    location = _resolve("Ops/proxy-runbook", organization=None)
+def test_a_folder_path_names_a_new_runbook() -> None:
+    with pytest.raises(RunbookRoutingError, match="does not exist yet"):
+        _resolve("Ops/proxy-runbook", organization=None)
+
+    location = _resolve("Ops/proxy-runbook", organization=None, create=True)
 
     assert (location.directory, location.exists) == ("Ops/proxy-runbook", False)
-
-
-def test_an_unknown_word_never_creates_a_runbook() -> None:
-    with pytest.raises(RunbookRoutingError, match="names no runbook and no registered subject"):
-        _resolve("wsu")
-
-
-def test_the_refusal_lists_the_known_runbooks() -> None:
-    with pytest.raises(RunbookRoutingError, match="Ops/mail-runbook"):
-        _resolve("wsu")
 
 
 @pytest.mark.parametrize(
     ("subject", "fragment"),
     [
-        ("Other/mail-runbook", "not a runbook folder of a declared root"),
-        ("Ops/notes", "not a runbook folder of a declared root"),
+        ("Other/mail-runbook", "not a runbook folder of the runbook vault"),
+        ("Ops/a/b-runbook", "not a runbook folder of the runbook vault"),
+        ("Ops/notes", "not named like a runbook"),
     ],
 )
-def test_a_folder_path_must_be_a_runbook_of_a_root(subject: str, fragment: str) -> None:
+def test_a_folder_path_must_be_a_runbook_folder_of_the_runbook_vault(
+    subject: str, fragment: str
+) -> None:
     with pytest.raises(RunbookRoutingError, match=fragment):
-        _resolve(subject)
+        _resolve(subject, create=True)
+
+
+@pytest.mark.parametrize("subject", ["new project", "bad_name!", "-lead"])
+def test_a_new_runbook_needs_a_usable_name(subject: str) -> None:
+    with pytest.raises(RunbookRoutingError):
+        _resolve(subject, create=True)
+
+
+def test_the_refusal_lists_the_known_runbooks() -> None:
+    with pytest.raises(RunbookRoutingError, match="Ops/mail-runbook"):
+        _resolve("mai")
 
 
 def test_an_ambiguous_subject_is_refused_with_its_candidates() -> None:
@@ -143,22 +156,15 @@ def test_an_ambiguous_subject_is_refused_with_its_candidates() -> None:
         _resolve("mail", organization=organization)
 
 
-def test_one_slug_in_two_roots_is_refused() -> None:
-    children = {"Ops": ["mail-runbook"], "Lab": ["mail-runbook"]}
-
-    with pytest.raises(RunbookRoutingError, match="several runbooks"):
-        _resolve("mail", runbooks=_runbooks("Ops", "Lab"), children=children)
-
-
-def test_a_new_runbook_needs_a_path_when_several_roots_could_hold_it() -> None:
-    with pytest.raises(RunbookRoutingError, match="several roots"):
-        _resolve("project/dns", runbooks=_runbooks("Ops", "Lab"), children={})
-
-
 def test_the_case_rule_follows_the_filesystem() -> None:
     with pytest.raises(RunbookRoutingError):
         _resolve("ops/MAIL-RUNBOOK", fold_case=False, organization=None)
     assert _resolve("ops/MAIL-RUNBOOK", organization=None).directory == "Ops/mail-runbook"
+
+
+def test_a_runbook_vault_at_the_vault_root_joins_without_a_folder() -> None:
+    assert _resolve("mail", vault_folder="").directory == "mail-runbook"
+    assert _resolve("billing", vault_folder="", create=True).directory == "billing-runbook"
 
 
 def test_an_empty_subject_is_refused() -> None:
@@ -167,7 +173,7 @@ def test_an_empty_subject_is_refused() -> None:
 
 
 def test_candidate_lists_are_bounded() -> None:
-    children = {"Ops": [f"r{index:02d}-runbook" for index in range(RUNBOOK_MAX_CANDIDATES + 3)]}
+    children = [f"r{index:02d}-runbook" for index in range(RUNBOOK_MAX_CANDIDATES + 3)]
 
     with pytest.raises(RunbookRoutingError, match=r"\(and 3 more\)"):
         _resolve("nothing", children=children)
@@ -177,7 +183,7 @@ def test_candidate_lists_are_bounded() -> None:
 
 
 def test_routing_and_an_explicit_role() -> None:
-    template = _runbooks().templates["infra"]
+    template = _RUNBOOKS.template_for("mail")
 
     assert resolve_role("error_fix", None, template) == "troubleshooting"
     assert resolve_role("error_fix", "architecture", template) == "architecture"
@@ -188,10 +194,8 @@ def test_routing_and_an_explicit_role() -> None:
 
 
 def test_a_role_file_is_found_whatever_its_number() -> None:
-    location = _resolve("mail")
-
     found = resolve_role_file(
-        location, "troubleshooting", ["00-architecture", "70-troubleshooting"]
+        _resolve("mail"), "troubleshooting", ["00-architecture", "70-troubleshooting"]
     )
 
     assert (found.rel_path, found.exists) == ("Ops/mail-runbook/70-troubleshooting.md", True)

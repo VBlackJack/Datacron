@@ -51,7 +51,6 @@ _ARCHITECTURE_TEXT = (
     "---\ntitle: Architecture\nupdated: 2026-09-01T00:00:00+00:00\n---\n# Architecture\n"
 )
 _RUNBOOKS: dict[str, Any] = {
-    "roots": [{"folder": "Ops", "template": "infra"}],
     "templates": {
         "infra": {
             "language": "en",
@@ -80,6 +79,9 @@ _RUNBOOKS: dict[str, Any] = {
                 "placeholder": "Placeholder",
                 "meaning": "Meaning",
                 "value": "On site",
+                "skeleton": "Not captured yet.",
+                "readme_title": "{slug} runbook",
+                "documents": "Documents",
             },
             "routing": {
                 "error_fix": "troubleshooting",
@@ -113,6 +115,7 @@ async def _open(
     *,
     runbook_write: bool = True,
     runbooks: dict[str, Any] | None = None,
+    runbook_vault: Path | None = None,
     **overrides: Any,
 ) -> AsyncIterator[DatacronApp]:
     config_path = vault / ".datacron" / "VAULT.yaml"
@@ -131,7 +134,7 @@ async def _open(
     settings = Settings(
         read_paths=[vault],
         write_paths=[vault / "_memory"],
-        runbook_write_paths=[vault / "Ops"] if runbook_write else [],
+        runbook_vault=(runbook_vault or vault / "Ops") if runbook_write else None,
         vault_root=vault,
         **overrides,
     )
@@ -298,20 +301,83 @@ async def test_a_new_file_is_created_with_its_title_and_no_frontmatter(app: Data
     )
 
 
-async def test_a_registered_subject_without_runbook_starts_one(app: DatacronApp) -> None:
+async def test_a_project_without_runbook_is_refused_unless_creation_is_asked(
+    app: DatacronApp,
+) -> None:
+    receipt = await _capture(
+        app, "error_fix", subject="billing", fields={"symptom": "s", "fix": "f"}
+    )
+
+    assert "create_runbook=true" in receipt["error"]["message"], receipt
+    assert not (app.vault_root / "Ops/billing-runbook").exists()
+
+
+async def test_creating_a_runbook_scaffolds_it_from_the_template(app: DatacronApp) -> None:
+    """The project named in the conversation gets its folder, files and README."""
     receipt = await _capture(
         app,
         "error_fix",
         "unverified",
-        subject="project/dns",
-        fields={"symptom": "Replication stalls", "fix": "Check the site link"},
+        subject="Billing",
+        create_runbook=True,
+        fields={"symptom": "Invoices are late", "fix": "Restart the batch"},
     )
 
-    assert receipt["rel_path"] == "Ops/dns-runbook/50-troubleshooting.md", receipt
-    assert receipt["runbook_created"] is True
-    assert _read(app, receipt["rel_path"]).startswith(
-        "# Troubleshooting\n\n## Symptom: Replication stalls\n"
+    runbook = "Ops/billing-runbook"
+    assert receipt["rel_path"] == f"{runbook}/50-troubleshooting.md", receipt
+    assert (receipt["action"], receipt["runbook_created"]) == ("created", True)
+    assert sorted(receipt["scaffold"]) == [f"{runbook}/60-escalation.md", f"{runbook}/README.md"]
+    assert _read(app, receipt["rel_path"]) == (
+        "# Troubleshooting\n\n## Symptom: Invoices are late\n\n**Cause.** Not captured\n\n"
+        "**Fix.** Restart the batch\n\nunverified 2026-10-20\n"
     )
+    assert _read(app, f"{runbook}/60-escalation.md") == "# Escalation\n\nNot captured yet.\n"
+    assert _read(app, f"{runbook}/README.md") == (
+        "# billing runbook\n\n## Documents\n\n"
+        "- [50-troubleshooting.md](50-troubleshooting.md): Troubleshooting\n"
+        "- [60-escalation.md](60-escalation.md): Escalation\n"
+    )
+    for name in ("README.md", "50-troubleshooting.md", "60-escalation.md"):
+        text = _read(app, f"{runbook}/{name}")
+        assert not text.startswith("---")
+        assert not _TRACE.search(text)
+
+
+async def test_a_dry_run_of_a_creation_lists_the_scaffold_and_writes_nothing(
+    app: DatacronApp,
+) -> None:
+    plan = await _capture(
+        app,
+        "error_fix",
+        subject="billing",
+        create_runbook=True,
+        dry_run=True,
+        fields={"symptom": "s", "fix": "f"},
+    )
+
+    assert (plan["action"], plan["written"], plan["runbook_created"]) == ("created", False, True)
+    assert "Ops/billing-runbook/README.md" in plan["scaffold"]
+    assert not (app.vault_root / "Ops/billing-runbook").exists()
+
+
+async def test_a_new_runbook_needs_its_scaffold_labels(tmp_vault: Path) -> None:
+    template = dict(_RUNBOOKS["templates"]["infra"])
+    template["labels"] = {
+        key: value
+        for key, value in template["labels"].items()
+        if key not in {"skeleton", "readme_title", "documents"}
+    }
+    async for opened in _open(tmp_vault, runbooks={"templates": {"infra": template}}):
+        receipt = await _capture(
+            opened,
+            "error_fix",
+            subject="billing",
+            create_runbook=True,
+            fields={"symptom": "s", "fix": "f"},
+        )
+
+        assert "declares no label 'skeleton'" in receipt["error"]["message"], receipt
+        assert not (tmp_vault / "Ops/billing-runbook").exists()
 
 
 async def test_a_role_without_title_cannot_create_its_file(app: DatacronApp) -> None:
@@ -390,24 +456,32 @@ async def test_the_generic_writers_still_cannot_write_a_runbook(app: DatacronApp
     assert "Notes" not in _read(app, _TROUBLESHOOTING)
 
 
-async def test_a_runbook_outside_the_runbook_write_paths_is_refused(
+async def test_a_runbook_vault_outside_the_served_vault_disables_the_capture(
+    tmp_vault: Path, tmp_path: Path
+) -> None:
+    async for opened in _open(tmp_vault, runbook_vault=tmp_path / "elsewhere"):
+        assert opened.runbook_writer is None
+        names = {tool.name for tool in await create_server(opened).list_tools()}
+        assert "runbook_capture" not in names
+
+
+async def test_a_protected_path_inside_the_runbook_vault_is_refused_by_the_writer(
     tmp_vault: Path,
 ) -> None:
-    async for opened in _open(tmp_vault):
-        object.__setattr__(
-            opened,
-            "settings",
-            opened.settings.model_copy(update={"runbook_write_paths": [tmp_vault / "Other"]}),
-        )
+    protected = {**_RUNBOOKS, "protected_paths": ["mail-runbook/50-troubleshooting.md"]}
+    async for opened in _open(tmp_vault, runbooks=protected):
+        before = _read(opened, _TROUBLESHOOTING)
+
         receipt = await _capture(opened, "error_fix", fields={"symptom": "s", "fix": "f"})
-        assert "outside DATACRON_RUNBOOK_WRITE_PATHS" in receipt["error"]["message"]
-        assert str(tmp_vault) not in receipt["error"]["message"]
+
+        assert "in a protected path" in receipt["error"]["message"], receipt
+        assert _read(opened, _TROUBLESHOOTING) == before
 
 
 @pytest.mark.parametrize(
     ("kwargs", "fragment"),
     [
-        ({"subject": "wsu"}, "names no runbook"),
+        ({"subject": "mai"}, "names no existing runbook"),
         ({"target_role": "build"}, "not declared"),
         ({"observed_on": "2999-01-01"}, "must not be in the future"),
         ({"source": "  "}, "source must not be empty"),
@@ -455,58 +529,3 @@ async def test_a_budget_that_only_holds_the_sources_drops_the_pointer(app: Datac
     assert "error" not in tight
     assert tight["sources"]
     assert "runbook" not in tight
-
-
-# --- one root per runbook repository, protected paths ----------------------------
-
-
-def _per_repository(**extra: Any) -> dict[str, Any]:
-    return {
-        **_RUNBOOKS,
-        "roots": [
-            {"folder": "Ops/mail-runbook", "template": "infra", "layout": "runbook"},
-            {"folder": "Ops/dns-runbook", "template": "infra", "layout": "runbook"},
-        ],
-        **extra,
-    }
-
-
-async def test_runbooks_declared_one_per_repository_are_found_by_slug(tmp_vault: Path) -> None:
-    async for opened in _open(tmp_vault, runbooks=_per_repository()):
-        plan = await _capture(
-            opened, "error_fix", fields={"symptom": "New one", "fix": "x"}, dry_run=True
-        )
-        created = await _capture(
-            opened,
-            "error_fix",
-            "unverified",
-            subject="dns",
-            fields={"symptom": "Replication stalls", "fix": "Check the site link"},
-        )
-
-        assert (plan["runbook"], plan["action"]) == (_RUNBOOK, "appended"), plan
-        assert created["rel_path"] == "Ops/dns-runbook/50-troubleshooting.md", created
-        assert created["runbook_created"] is True
-
-
-async def test_an_undeclared_sibling_is_neither_found_nor_created(tmp_vault: Path) -> None:
-    async for opened in _open(tmp_vault, runbooks=_per_repository()):
-        receipt = await _capture(
-            opened, "error_fix", subject="Ops/proxy-runbook", fields={"symptom": "s", "fix": "f"}
-        )
-
-        assert "not a runbook folder of a declared root" in receipt["error"]["message"]
-        assert not (tmp_vault / "Ops/proxy-runbook").exists()
-
-
-async def test_a_protected_path_under_an_allowed_root_is_refused_by_the_writer(
-    tmp_vault: Path,
-) -> None:
-    protected = _per_repository(protected_paths=[f"{_RUNBOOK}/50-troubleshooting.md"])
-    async for opened in _open(tmp_vault, runbooks=protected):
-        before = _read(opened, _TROUBLESHOOTING)
-
-        receipt = await _capture(opened, "error_fix", fields={"symptom": "s", "fix": "f"})
-
-        assert "in a protected path" in receipt["error"]["message"], receipt
-        assert _read(opened, _TROUBLESHOOTING) == before

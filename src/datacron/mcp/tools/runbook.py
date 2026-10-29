@@ -16,7 +16,7 @@
 The capture is composed from parts that already exist or are pure: routing
 (``organization.runbooks``), rendering (``organization.runbook_entries``), the
 write boundary (``core.runbook_scope``) and a writer confined to
-``DATACRON_RUNBOOK_WRITE_PATHS`` that shares the ordinary writer's locks,
+``DATACRON_RUNBOOK_VAULT`` that shares the ordinary writer's locks,
 operation journal and recovery. It never adds a frontmatter block to a file
 that has none, never writes ``origin`` or ``confidence``, and never runs git.
 """
@@ -40,8 +40,8 @@ from datacron.core.case_folding import filesystem_folds_case
 from datacron.core.config import (
     RUNBOOK_EXCLUDED_DIRECTORIES,
     RUNBOOK_MARKDOWN_SUFFIX,
+    RUNBOOK_NAMING_SLUG,
     TOOL_PROFILE_ESSENTIAL,
-    RunbooksConfig,
     RunbookTemplate,
 )
 from datacron.core.durability import DurabilityUnavailableError, ReadOnlyModeError
@@ -55,7 +55,11 @@ from datacron.core.markdown_sections import append_entry_to_heading
 from datacron.core.markdown_tables import section_own_text, upsert_table_row
 from datacron.core.operation_log import OperationContext
 from datacron.core.paths import PathConfinementError, assert_within_paths
-from datacron.core.runbook_scope import RunbookScopeError, admit_runbook_write
+from datacron.core.runbook_scope import (
+    RunbookScopeError,
+    admit_runbook_write,
+    runbook_vault_folder,
+)
 from datacron.core.vault_writer import WriteConflictError
 from datacron.core.write_request import ACTIVE_WRITE_REQUEST, ReplayedWriteError
 from datacron.mcp.tools.payloads import _audit, _error_response, _internal_error_response
@@ -98,6 +102,12 @@ ACTION_CREATED: Final[str] = "created"
 ACTION_APPENDED: Final[str] = "appended"
 ACTION_UPDATED: Final[str] = "updated"
 ACTION_SKIPPED: Final[str] = "duplicate_skipped"
+ACTION_SCAFFOLDED: Final[str] = "scaffolded"
+
+# Labels a new runbook needs, in the template language.
+_LABEL_SKELETON: Final[str] = "skeleton"
+_LABEL_README_TITLE: Final[str] = "readme_title"
+_LABEL_DOCUMENTS: Final[str] = "documents"
 
 _OP_CREATE: Final[str] = "create"
 _OP_APPEND: Final[str] = "append"
@@ -110,7 +120,7 @@ _REQUEST_FINGERPRINT_PARAMETER: Final[str] = "request_fingerprint"
 _REFUSAL_REQUEST_REUSED: Final[str] = "request_id was already used with different arguments"
 _REFUSAL_NOT_CONFIGURED: Final[str] = (
     "runbook capture is not configured: declare 'runbooks' in .datacron/VAULT.yaml and "
-    "set DATACRON_RUNBOOK_WRITE_PATHS"
+    "set DATACRON_RUNBOOK_VAULT to a folder inside the served vault"
 )
 _PROVENANCE: Final[re.Pattern[str]] = re.compile(
     r"\(?\b(?:" + "|".join(RUNBOOK_EVIDENCE) + r") \d{4}-\d{2}-\d{2}\b\)?"
@@ -127,12 +137,14 @@ RUNBOOK_CAPTURE_DESCRIPTION: Final[str] = (
     "command that ran, an error and its fix, a server name, an escalation contact, a "
     "decision. Say how it is known: measured (a command actually run and its real "
     "output), said (a dated meeting or a named person) or unverified; never capture a "
-    "guess, a plausible step or a value you did not see. 'subject' is a registered "
-    "subject, an existing runbook or a runbook folder path; the kind routes the entry to "
-    "its file and section, and a refusal lists the candidates instead of guessing. A known "
-    "entry is updated or skipped, never added twice. A field that looks like a secret is "
-    "refused. Writes are confined to DATACRON_RUNBOOK_WRITE_PATHS, journaled and never "
-    "committed to git. dry_run returns the plan without writing."
+    "guess, a plausible step or a value you did not see. 'subject' is the project the "
+    "conversation is about (its name, a registered subject or a runbook folder path). A "
+    "project without a runbook gets one only with create_runbook=true: it is created in "
+    "the runbook vault from the vault's template, named after the project. The kind "
+    "routes the entry to its file and section, and a refusal lists the candidates instead "
+    "of guessing. A known entry is updated or skipped, never added twice. A field that "
+    "looks like a secret is refused. Writes are confined to DATACRON_RUNBOOK_VAULT, "
+    "journaled and never committed to git. dry_run returns the plan without writing."
 )
 
 
@@ -141,14 +153,15 @@ RUNBOOK_CAPTURE_DESCRIPTION: Final[str] = (
 # install into their rule files, and Windsurf's 6000-character budget leaves it
 # no room. Server instructions are delivered by the server and cost no rule file.
 RUNBOOK_SERVER_INSTRUCTIONS: Final[str] = (
-    "Runbooks: this vault keeps one runbook per subject. As soon as work establishes a "
+    "Runbooks: this vault keeps one runbook per project. As soon as work establishes a "
     "durable fact (a command that ran, an error and its fix, a server name, an escalation "
-    "contact, a decision), call runbook_capture in the same turn: do not wait for the end "
-    "of the session or for a request. Say how it is known: measured (a command actually "
-    "run and its real output), said (a dated meeting or a named person), or unverified. "
-    "Never capture a guess, a plausible step, a secret or a value you did not see. A known "
-    "entry is updated, not added again. A refusal lists the candidates: pick one, never "
-    "guess a section."
+    "contact, a decision), call runbook_capture in the same turn with the project the "
+    "conversation is about: do not wait for the end of the session or for a request. A "
+    "project that has no runbook yet gets one with create_runbook=true. Say how it is "
+    "known: measured (a command actually run and its real output), said (a dated meeting "
+    "or a named person), or unverified. Never capture a guess, a plausible step, a secret "
+    "or a value you did not see. A known entry is updated, not added again. A refusal "
+    "lists the candidates: pick one, never guess a section."
 )
 
 
@@ -205,25 +218,42 @@ def _readable_directory(app: DatacronApp, path: Path) -> bool:
     return True
 
 
-def _child_folders(app: DatacronApp, runbooks: RunbooksConfig) -> dict[str, list[str]]:
-    children: dict[str, list[str]] = {}
-    for root in runbooks.roots:
-        folder = app.vault_root / root.folder
-        if not _readable_directory(app, folder):
-            children[root.folder] = []
-            continue
-        if root.is_runbook:
-            # A runbook root is one folder: report its own name, as resolve_runbook
-            # expects, rather than listing the runbook's content.
-            children[root.folder] = [folder.name]
-            continue
-        children[root.folder] = sorted(
-            entry.name
-            for entry in os.scandir(folder)
-            if entry.is_dir(follow_symlinks=False)
-            and entry.name.casefold() not in RUNBOOK_EXCLUDED_DIRECTORIES
-        )
-    return children
+def _runbook_vault(app: DatacronApp) -> tuple[Path, str]:
+    """Return the runbook vault and its vault-relative folder, or refuse."""
+    vault = app.settings.runbook_vault
+    if vault is None:
+        raise RunbookRoutingError(_REFUSAL_NOT_CONFIGURED)
+    return vault, runbook_vault_folder(app.vault_root, vault)
+
+
+def _child_folders(app: DatacronApp) -> list[str]:
+    """Return the folder names directly inside the runbook vault."""
+    vault, _folder = _runbook_vault(app)
+    if not _readable_directory(app, vault):
+        return []
+    return sorted(
+        entry.name
+        for entry in os.scandir(vault)
+        if entry.is_dir(follow_symlinks=False)
+        and entry.name.casefold() not in RUNBOOK_EXCLUDED_DIRECTORIES
+    )
+
+
+def locate_runbook(app: DatacronApp, subject: str, *, create: bool = False) -> RunbookLocation:
+    """Resolve ``subject`` to a runbook of the runbook vault, or refuse."""
+    runbooks = app.runbooks
+    if runbooks is None:
+        raise RunbookRoutingError(_REFUSAL_NOT_CONFIGURED)
+    vault, folder = _runbook_vault(app)
+    return resolve_runbook(
+        subject,
+        runbooks,
+        app.organization,
+        vault_folder=folder,
+        children=_child_folders(app),
+        fold_case=filesystem_folds_case(vault),
+        create=create,
+    )
 
 
 def _file_stems(app: DatacronApp, location: RunbookLocation) -> list[str]:
@@ -341,6 +371,42 @@ def _new_file(template: RunbookTemplate, role: str) -> str:
     return f"# {title}\n"
 
 
+def _scaffold_label(template: RunbookTemplate, name: str) -> str:
+    try:
+        return template.labels[name]
+    except KeyError:
+        raise RunbookEntryError(
+            f"the template declares no label {name!r}, which a new runbook needs"
+        ) from None
+
+
+def _scaffold(location: RunbookLocation, target_role: str) -> list[tuple[str, str]]:
+    """Return the files a new runbook starts with, other than the captured one.
+
+    Every role with a title gets its file, holding only its title and the
+    template's skeleton line; the README lists them. Nothing else is written: the
+    files are empty and say so until work produces their content.
+    """
+    template = location.template
+    skeleton = _scaffold_label(template, _LABEL_SKELETON)
+    title = _scaffold_label(template, _LABEL_README_TITLE).replace(
+        f"{{{RUNBOOK_NAMING_SLUG}}}", location.slug
+    )
+    documents = _scaffold_label(template, _LABEL_DOCUMENTS)
+    files: list[tuple[str, str]] = []
+    listing: list[str] = []
+    for name, role in sorted(template.roles.items(), key=lambda item: item[1].stem):
+        if role.title is None:
+            continue
+        file_name = f"{role.stem}{RUNBOOK_MARKDOWN_SUFFIX}"
+        listing.append(f"- [{file_name}]({file_name}): {role.title}")
+        if name != target_role:
+            files.append((f"{location.directory}/{file_name}", f"# {role.title}\n\n{skeleton}\n"))
+    readme = f"# {title}\n\n## {documents}\n\n" + "\n".join(listing) + "\n"
+    files.append((f"{location.directory}/{template.readme}{RUNBOOK_MARKDOWN_SUFFIX}", readme))
+    return files
+
+
 async def _journal_replay(app: DatacronApp) -> dict[str, Any] | None:
     """Answer a retried request from its journal record before anything is resolved."""
     request = ACTIVE_WRITE_REQUEST.get()
@@ -374,17 +440,14 @@ async def _latest_operation_id(app: DatacronApp, rel_path: str, content_hash: st
 
 def _plan(
     app: DatacronApp,
-    runbooks: RunbooksConfig,
     *,
     subject: str,
     kind: str,
     target_role: str | None,
     fields: Mapping[str, object],
+    create: bool,
 ) -> tuple[RunbookLocation, RunbookFile]:
-    fold_case = filesystem_folds_case(app.vault_root)
-    location = resolve_runbook(
-        subject, runbooks, app.organization, _child_folders(app, runbooks), fold_case=fold_case
-    )
+    location = locate_runbook(app, subject, create=create)
     explicit = target_role
     if explicit is None and kind == _COMMAND_KIND and isinstance(fields.get(_PHASE_FIELD), str):
         explicit = str(fields[_PHASE_FIELD])
@@ -403,6 +466,7 @@ async def _runbook_capture_impl(
     fields: dict[str, str],
     observed_on: str | None = None,
     target_role: str | None = None,
+    create_runbook: bool = False,
     dry_run: bool = False,
     actor: str = "direct-call",
     request_id: str | None = None,
@@ -421,8 +485,21 @@ async def _runbook_capture_impl(
             if replayed is not None:
                 return replayed
         location, target_file = _plan(
-            app, runbooks, subject=subject, kind=kind, target_role=target_role, fields=fields
+            app,
+            subject=subject,
+            kind=kind,
+            target_role=target_role,
+            fields=fields,
+            create=create_runbook,
         )
+        scaffold = [] if location.exists else _scaffold(location, target_file.role)
+        for rel_path, _content in [(target_file.rel_path, ""), *scaffold]:
+            admit_runbook_write(
+                rel_path,
+                vault_root=app.vault_root,
+                runbook_vault=app.settings.runbook_vault,
+                runbooks=runbooks,
+            )
         entry = render_entry(
             kind,
             fields,
@@ -430,12 +507,6 @@ async def _runbook_capture_impl(
             observed_on=observed,
             template=location.template,
             redactor=app.secret_redactor,
-        )
-        admit_runbook_write(
-            target_file.rel_path,
-            vault_root=app.vault_root,
-            runbooks=runbooks,
-            write_paths=app.settings.runbook_write_paths,
         )
         current = (
             _read_exact(app.vault_root / target_file.rel_path)
@@ -460,6 +531,7 @@ async def _runbook_capture_impl(
             "action": action,
             "language": location.template.language,
             "runbook_created": not location.exists and action != ACTION_SKIPPED,
+            "scaffold": [rel_path for rel_path, _content in scaffold],
         }
         if dry_run or action == ACTION_SKIPPED:
             plan.update(dry_run=dry_run, written=False)
@@ -477,6 +549,7 @@ async def _runbook_capture_impl(
         plan=plan,
         entry=entry,
         target_file=target_file,
+        scaffold=scaffold,
         template=location.template,
         evidence=evidence,
         observed=observed,
@@ -494,6 +567,7 @@ async def _write(
     plan: dict[str, Any],
     entry: RunbookEntry,
     target_file: RunbookFile,
+    scaffold: list[tuple[str, str]],
     template: RunbookTemplate,
     evidence: str,
     observed: date,
@@ -555,8 +629,7 @@ async def _write(
             return plan
         except PathConfinementError as exc:
             raise RunbookScopeError(
-                f"runbook write refused: {rel_path!r} crosses a link or leaves the runbook "
-                "write paths"
+                f"runbook write refused: {rel_path!r} crosses a link or leaves the runbook vault"
             ) from exc
         await _reconcile_committed_write(app, content_hash, rel_path)
         plan.update(
@@ -566,6 +639,28 @@ async def _write(
             operation_id=await _latest_operation_id(app, rel_path, content_hash),
             indexed=True,
         )
+        # The captured fact is committed first, so a failure below loses no fact. A
+        # scaffold file left unwritten is reported; the next capture on its role
+        # creates it from its title like any missing file.
+        scaffolded: list[str] = []
+        for scaffold_path, scaffold_content in scaffold:
+            try:
+                written = await writer.write_note_atomic(
+                    scaffold_path,
+                    scaffold_content,
+                    overwrite=False,
+                    operation=OperationContext(
+                        op=_OP_CREATE,
+                        tool=RUNBOOK_TOOL_NAME,
+                        actor=actor,
+                        parameters={"action": ACTION_SCAFFOLDED, "role": target_file.role},
+                    ),
+                )
+                await _reconcile_committed_write(app, written, scaffold_path)
+            except (FileExistsError, PathConfinementError):
+                continue
+            scaffolded.append(scaffold_path)
+        plan["scaffold"] = scaffolded
         _audit(RUNBOOK_TOOL_NAME, started, rel_path=rel_path, action=plan["action"])
         return plan
 
@@ -608,6 +703,7 @@ def register_runbook_tools(
         ctx: Context[Any, Any],
         observed_on: str | None = None,
         target_role: str | None = None,
+        create_runbook: bool = False,
         dry_run: bool = False,
         request_id: str | None = None,
     ) -> dict[str, Any]:
@@ -620,6 +716,7 @@ def register_runbook_tools(
             fields=fields,
             observed_on=observed_on,
             target_role=target_role,
+            create_runbook=create_runbook,
             dry_run=dry_run,
             actor=app.identity_provider.identify(ctx).actor,
             request_id=request_id,

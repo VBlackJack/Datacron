@@ -19,7 +19,6 @@ import json
 import time
 from typing import TYPE_CHECKING, Any, Final, Literal
 
-from datacron.core.case_folding import filesystem_folds_case
 from datacron.core.config import TOKEN_ESTIMATE_CHARS_PER_TOKEN
 from datacron.core.memory_protocol import (
     CONTRACT_HASH,
@@ -43,14 +42,13 @@ from datacron.mcp.tools.payloads import (
     _internal_error_response,
 )
 from datacron.mcp.tools.read import _build_full_payload, _build_section_payload
-from datacron.mcp.tools.runbook import _child_folders, runbook_capture_offered
+from datacron.mcp.tools.runbook import locate_runbook, runbook_capture_offered
 from datacron.mcp.tools.subject_state import load_subject_notes, subject_state_payload
 from datacron.organization.freshness import (
     assess_freshness,
     declares_review_windows,
     utc_today,
 )
-from datacron.organization.runbooks import resolve_runbook
 from datacron.organization.subject_state import resolve_subject_tag, summarize_subject
 
 if TYPE_CHECKING:
@@ -229,17 +227,10 @@ def _attach_runbook(app: DatacronApp, subject: str, result: dict[str, Any], maxi
     runbook_capture is, and a subject that names no single existing runbook adds
     nothing.
     """
-    runbooks = app.runbooks
-    if runbooks is None or not runbook_capture_offered(app):
+    if not runbook_capture_offered(app):
         return
     try:
-        location = resolve_runbook(
-            subject,
-            runbooks,
-            app.organization,
-            _child_folders(app, runbooks),
-            fold_case=filesystem_folds_case(app.vault_root),
-        )
+        location = locate_runbook(app, subject)
     except Exception:
         _LOGGER.debug("No runbook pointer for session_context", exc_info=True)
         return
