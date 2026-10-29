@@ -155,6 +155,24 @@ The receipt gives `runbook`, `rel_path`, `role`, `heading`, `action` (`created`,
 `appended`, `updated`, `duplicate_skipped`), `language`, `runbook_created`,
 `written`, and for a write `content_hash`, `operation_id` and `indexed`.
 
+### How the habit reaches the model
+
+The capture is meant to happen as work goes, not on request. Three server-side
+signals carry that, and none of them costs a client rule file:
+
+- **Server instructions.** When the server offers `runbook_capture`, its instructions
+  are the memory protocol block followed by one runbook paragraph and nothing else.
+  Without the tool they are exactly the protocol block. The paragraph is not part of
+  the memory contract: its version and hash do not change, and `datacron protocol
+  install` never writes it into a client's rules, whose budget (6000 characters for
+  Windsurf) the block nearly fills already.
+- **Tool description.** The description of `runbook_capture` repeats when to call it,
+  the three provenance values and the refusal of guesses and secrets, for clients that
+  ignore server instructions.
+- **`session_context`.** With a `subject` that names one existing runbook, the result
+  carries `runbook: {path, language}`. It is attached after the sources are fitted and
+  dropped when it does not fit, so it never costs a source.
+
 ### Undoing a capture
 
 Every write is journaled: `get_note_history` and `audit_query` list it. `revert_note`

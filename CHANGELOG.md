@@ -29,6 +29,12 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   journals every write through a writer confined to the runbook write paths, and never runs git.
   `dry_run` returns the plan; `request_id` makes a retry safe. A runbook role gains `title`, the
   H1 of a file it creates.
+- **Runbook capture habit**: when `runbook_capture` is offered, the server instructions are the
+  memory protocol block followed by one runbook paragraph and nothing else; otherwise they stay
+  exactly the protocol block. The memory contract, its version and its hash are unchanged, and
+  no client rule file receives the paragraph. `session_context` with a `subject` naming one
+  existing runbook adds `runbook: {path, language}`, attached after the sources are fitted and
+  dropped when it does not fit.
 
 ## [2026.1020.00] - 2026-10-20
 
