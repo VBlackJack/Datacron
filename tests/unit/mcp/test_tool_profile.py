@@ -232,17 +232,17 @@ def _runbook_app(tmp_path: Path, **overrides: object) -> DatacronApp:
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(
         "runbooks:\n"
-        "  roots: [{folder: CPDC, template: infra}]\n"
+        "  roots: [{folder: Ops, template: infra}]\n"
         "  templates:\n"
         "    infra:\n"
         "      language: en\n"
         "      readme: README\n"
-        "      observation_label: On Mets\n"
+        "      observation_label: On site\n"
         "      roles:\n"
         "        troubleshooting: {stem: 50-troubleshooting, match: '^50-troubleshooting$'}\n",
         encoding="utf-8",
     )
-    return _app(tmp_path, runbook_write_paths=[vault / "CPDC"], **overrides)
+    return _app(tmp_path, runbook_write_paths=[vault / "Ops"], **overrides)
 
 
 async def test_with_runbooks_the_instructions_are_the_block_then_the_annex_and_nothing_else(

@@ -181,7 +181,7 @@ def resolve_runbook(
 ) -> RunbookLocation:
     """Return the runbook ``subject`` names, or refuse with the candidates.
 
-    ``subject`` is a runbook folder path (``CPDC/wsus-runbook``), a registered
+    ``subject`` is a runbook folder path (``Ops/mail-runbook``), a registered
     subject (tag, last segment or alias) or the slug of a known runbook.
     ``children`` maps each declared root folder to the names of its child folders,
     and each ``runbook`` root to its own name when it exists.

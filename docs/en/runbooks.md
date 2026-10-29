@@ -17,18 +17,18 @@ are refused at startup, so a misspelled key fails loudly instead of being droppe
 ```yaml
 runbooks:
   roots:
-    - folder: CPDC                       # vault-relative; its *-runbook children are runbooks
+    - folder: Ops                       # vault-relative; its *-runbook children are runbooks
       directory_naming: "{slug}-runbook" # default
       template: infra
-    - folder: Lab/zabbix-runbook         # or: this folder is one runbook
+    - folder: Lab/backup-runbook         # or: this folder is one runbook
       layout: runbook
       template: infra
-  protected_paths: [knowledge]           # always refused; empty by default
+  protected_paths: [reference]           # always refused; empty by default
   templates:
     infra:
       language: en
       readme: README
-      observation_label: On Mets
+      observation_label: On site
       roles:
         architecture:    {stem: 00-architecture,    match: '^\d{2}-architecture$', title: Architecture}
         troubleshooting: {stem: 50-troubleshooting, match: '^\d{2}-troubleshooting$', title: Troubleshooting}
@@ -45,7 +45,7 @@ runbooks:
         output: Output
         placeholder: Placeholder
         meaning: Meaning
-        value: On Mets
+        value: On site
         decisions: Decisions
         reason: Reason
         discarded: Discarded options
@@ -82,14 +82,14 @@ read-only material (a knowledge base, say) declares it here.
 | `readme` | Stem of the index file, without `.md`. No role may use it; the capture never writes it. |
 | `roles` | One entry per file role (lowercase identifier). |
 | `quickref` | Optional: `folder`, its own `language`, and `naming` with `{service}` exactly once (default `{service}`). The folder is reserved; the capture does not write survival sheets yet. |
-| `observation_label` | Label of the dated observation boxes, for example `On Mets`. |
+| `observation_label` | Label of the dated observation boxes, for example `On site`. |
 | `labels` | Every word Datacron renders, in the template language. A capture whose kind needs a label the template does not declare is refused, naming it. Datacron ships no runbook text. |
 | `routing` | Capture kind to role: `error_fix`, `command`, `server`, `variable`, `contact`, `decision`, `fact`, `open_question`. A kind left out has no default role and a capture of it must name one. |
 
 ### Roles
 
-A role is found by the pattern its file stem matches, not by its number: the WSUS
-runbook files troubleshooting under `50-troubleshooting`, the AD runbook under
+A role is found by the pattern its file stem matches, not by its number: one
+runbook files troubleshooting under `50-troubleshooting`, another under
 `70-troubleshooting`, and both match `^\d{2}-troubleshooting$`.
 
 | Key | Meaning |
@@ -106,7 +106,7 @@ profile is `standard`. Otherwise the tool list is unchanged.
 
 | Argument | Meaning |
 |---|---|
-| `subject` | A registered subject (tag, last segment or alias), the slug of an existing runbook, or a runbook folder path such as `CPDC/wsus-runbook`. |
+| `subject` | A registered subject (tag, last segment or alias), the slug of an existing runbook, or a runbook folder path such as `Ops/mail-runbook`. |
 | `kind` | One of the eight kinds below. |
 | `evidence` | `measured` (a command actually run, its real output), `said` (a dated meeting or a named person) or `unverified`. |
 | `source` | One line saying where the fact comes from. It is kept in the operation journal, not in the runbook. |
@@ -123,7 +123,7 @@ profile is `standard`. Otherwise the tool list is unchanged.
 | `server`, `variable` | `placeholder` (`<UPPER_SNAKE>`), `meaning`, `value`, `heading` | | A row of the table under `heading`, keyed by its placeholder. |
 | `contact` | `name`, `role`, `channel`, `heading` | | A list item under `heading`. |
 | `decision` | `decision`, `reason` | `discarded` | A dated list item under the `decisions` label. |
-| `fact` | `heading`, `fact` | | A dated observation box (`> **On Mets, <date>.**`) under `heading`. |
+| `fact` | `heading`, `fact` | | A dated observation box (`> **On site, <date>.**`) under `heading`. |
 | `open_question` | `question`, `owner` | | A list item with its owner under the `open_questions` label. |
 
 ### Routing

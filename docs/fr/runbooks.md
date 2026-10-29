@@ -17,18 +17,18 @@ bruyamment au lieu d'être ignorée.
 ```yaml
 runbooks:
   roots:
-    - folder: CPDC                       # relatif au vault ; ses enfants *-runbook sont des runbooks
+    - folder: Ops                       # relatif au vault ; ses enfants *-runbook sont des runbooks
       directory_naming: "{slug}-runbook" # valeur par défaut
       template: infra
-    - folder: Lab/zabbix-runbook         # ou : ce dossier est lui-même un runbook
+    - folder: Lab/backup-runbook         # ou : ce dossier est lui-même un runbook
       layout: runbook
       template: infra
-  protected_paths: [knowledge]           # toujours refusés ; vide par défaut
+  protected_paths: [reference]           # toujours refusés ; vide par défaut
   templates:
     infra:
       language: en
       readme: README
-      observation_label: On Mets
+      observation_label: On site
       roles:
         architecture:    {stem: 00-architecture,    match: '^\d{2}-architecture$', title: Architecture}
         troubleshooting: {stem: 50-troubleshooting, match: '^\d{2}-troubleshooting$', title: Troubleshooting}
@@ -45,7 +45,7 @@ runbooks:
         output: Output
         placeholder: Placeholder
         meaning: Meaning
-        value: On Mets
+        value: On site
         decisions: Decisions
         reason: Reason
         discarded: Discarded options
@@ -83,15 +83,15 @@ par exemple) les déclare ici.
 | `readme` | Nom du fichier d'index, sans `.md`. Aucun rôle ne peut l'utiliser ; la capture ne l'écrit jamais. |
 | `roles` | Une entrée par rôle de fichier (identifiant en minuscules). |
 | `quickref` | Facultatif : `folder`, sa propre `language`, et `naming` avec `{service}` une seule fois (par défaut `{service}`). Le dossier est réservé ; la capture n'écrit pas encore de fiche de survie. |
-| `observation_label` | Libellé des encadrés d'observation datés, par exemple `On Mets`. |
+| `observation_label` | Libellé des encadrés d'observation datés, par exemple `On site`. |
 | `labels` | Chaque mot que Datacron écrit, dans la langue du gabarit. Une capture dont le type demande un libellé que le gabarit ne déclare pas est refusée, en le nommant. Datacron n'embarque aucun texte de runbook. |
 | `routing` | Type de capture vers rôle : `error_fix`, `command`, `server`, `variable`, `contact`, `decision`, `fact`, `open_question`. Un type absent n'a pas de rôle par défaut, et une capture de ce type doit en nommer un. |
 
 ### Rôles
 
 Un rôle se trouve par le motif auquel répond le nom de son fichier, pas par son
-numéro : le runbook WSUS range le troubleshooting dans `50-troubleshooting`, le
-runbook AD dans `70-troubleshooting`, et les deux répondent à
+numéro : un runbook range le troubleshooting dans `50-troubleshooting`, un
+autre dans `70-troubleshooting`, et les deux répondent à
 `^\d{2}-troubleshooting$`.
 
 | Clé | Sens |
@@ -108,7 +108,7 @@ et que le profil d'outils est `standard`. Sinon, la liste des outils ne change p
 
 | Argument | Sens |
 |---|---|
-| `subject` | Un sujet enregistré (tag, dernier segment ou alias), le slug d'un runbook existant, ou le chemin d'un dossier de runbook comme `CPDC/wsus-runbook`. |
+| `subject` | Un sujet enregistré (tag, dernier segment ou alias), le slug d'un runbook existant, ou le chemin d'un dossier de runbook comme `Ops/mail-runbook`. |
 | `kind` | L'un des huit types ci-dessous. |
 | `evidence` | `measured` (une commande réellement passée, sa sortie réelle), `said` (une réunion datée ou une personne nommée) ou `unverified`. |
 | `source` | Une ligne qui dit d'où vient le fait. Elle est gardée dans le journal d'opérations, pas dans le runbook. |
@@ -125,7 +125,7 @@ et que le profil d'outils est `standard`. Sinon, la liste des outils ne change p
 | `server`, `variable` | `placeholder` (`<UPPER_SNAKE>`), `meaning`, `value`, `heading` | | Une ligne du tableau sous `heading`, identifiée par son placeholder. |
 | `contact` | `name`, `role`, `channel`, `heading` | | Un élément de liste sous `heading`. |
 | `decision` | `decision`, `reason` | `discarded` | Un élément de liste daté sous le libellé `decisions`. |
-| `fact` | `heading`, `fact` | | Un encadré d'observation daté (`> **On Mets, <date>.**`) sous `heading`. |
+| `fact` | `heading`, `fact` | | Un encadré d'observation daté (`> **On site, <date>.**`) sous `heading`. |
 | `open_question` | `question`, `owner` | | Un élément de liste avec son responsable sous le libellé `open_questions`. |
 
 ### Routage
