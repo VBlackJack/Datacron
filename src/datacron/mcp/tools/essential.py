@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 import time
 import unicodedata
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final
 
 from mcp.server import MCPServer
@@ -82,6 +82,11 @@ from datacron.mcp.tools.search import _repair_index_on_read, _search_text_impl
 from datacron.mcp.tools.subject_state import load_subject_notes
 from datacron.mcp.tools.write import _append_journal_impl, _create_note_ai_impl
 from datacron.mcp.tools.write_requests import replayable_write
+from datacron.organization.freshness import (
+    assess_freshness,
+    declares_review_windows,
+    utc_today,
+)
 from datacron.organization.rules import matches_naming, resolve_rule
 from datacron.organization.subject_state import (
     has_state_note_tag,
@@ -560,7 +565,37 @@ def _recall_scope_filters(
     return scope.strip(), None
 
 
-async def _recall_item(app: DatacronApp, hit: dict[str, Any]) -> dict[str, Any] | None:
+async def _recall_freshness(
+    app: DatacronApp, rel_path: str, payload: dict[str, Any], today: date
+) -> dict[str, Any]:
+    """Judge the returned note's verification against the window of its type.
+
+    The read payload already carries tags and frontmatter. When its metadata was
+    dropped for size, the note is read again so a large frontmatter never turns
+    a governed note into an ungoverned one.
+    """
+    tags = payload.get("tags")
+    frontmatter = payload.get("frontmatter")
+    if payload.get("metadata_truncated") or not isinstance(frontmatter, dict):
+        try:
+            note = await _read_note_by_rel_path(app, rel_path)
+        except (ValueError, FileNotFoundError, NoteAdmissionError, PathConfinementError):
+            # The excerpt was read a moment ago; a note gone since is judged on
+            # no metadata rather than failing the whole recall.
+            tags, frontmatter = None, None
+        else:
+            tags, frontmatter = note.tags, note.frontmatter
+    return assess_freshness(
+        tags if isinstance(tags, list) else [],
+        frontmatter if isinstance(frontmatter, dict) else {},
+        app.organization,
+        today=today,
+    ).as_payload()
+
+
+async def _recall_item(
+    app: DatacronApp, hit: dict[str, Any], *, today: date
+) -> dict[str, Any] | None:
     rel_path = str(hit["note_rel_path"])
     trail = _heading_trail(str(hit.get("header_path") or ""))
     payload: dict[str, Any] = {}
@@ -590,7 +625,7 @@ async def _recall_item(app: DatacronApp, hit: dict[str, Any]) -> dict[str, Any] 
     last_verified = frontmatter.get("last_verified") if isinstance(frontmatter, dict) else None
     section = payload.get("section")
     shown_trail = section["heading_path"] if isinstance(section, dict) else trail
-    return {
+    item: dict[str, Any] = {
         "rel_path": payload["rel_path"],
         "title": payload.get("title", ""),
         "heading_path": shown_trail,
@@ -600,6 +635,11 @@ async def _recall_item(app: DatacronApp, hit: dict[str, Any]) -> dict[str, Any] 
         "last_verified": None if last_verified is None else str(last_verified),
         "read_more": read_more,
     }
+    # Results are trimmed to a fixed response budget; a vault that declares no
+    # review window keeps exactly the results it had before this field existed.
+    if declares_review_windows(app.organization):
+        item["freshness"] = await _recall_freshness(app, rel_path, payload, today)
+    return item
 
 
 async def _recall_impl(
@@ -627,8 +667,9 @@ async def _recall_impl(
         if "error" in found:
             return found
         items: list[dict[str, Any]] = []
+        today = utc_today()
         for hit in found["results"][:bounded]:
-            item = await _recall_item(app, hit)
+            item = await _recall_item(app, hit, today=today)
             if item is not None:
                 items.append(item)
     except Exception:

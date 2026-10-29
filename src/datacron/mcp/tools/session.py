@@ -43,6 +43,11 @@ from datacron.mcp.tools.payloads import (
 )
 from datacron.mcp.tools.read import _build_full_payload, _build_section_payload
 from datacron.mcp.tools.subject_state import load_subject_notes, subject_state_payload
+from datacron.organization.freshness import (
+    assess_freshness,
+    declares_review_windows,
+    utc_today,
+)
 from datacron.organization.subject_state import resolve_subject_tag, summarize_subject
 
 if TYPE_CHECKING:
@@ -311,6 +316,15 @@ def _full_source(app: DatacronApp, note: Note, limit: int | None = None) -> dict
         "offset": full["next_offset"] or 0,
         "format": "full",
     }
+    return _with_freshness(app, note, item)
+
+
+def _with_freshness(app: DatacronApp, note: Note, item: dict[str, Any]) -> dict[str, Any]:
+    """Every source shape carries the verdict, so budget refitting never drops it."""
+    if declares_review_windows(app.organization):
+        item["freshness"] = assess_freshness(
+            note.tags, note.frontmatter, app.organization, today=utc_today()
+        ).as_payload()
     return item
 
 
@@ -400,7 +414,7 @@ def _orientation_source(app: DatacronApp, note: Note) -> dict[str, Any]:
         }
         return item
     summary = _build_full_payload(app, note, offset=0, limit=1)
-    return {
+    sectioned = {
         **{
             key: summary[key]
             for key in (
@@ -422,3 +436,4 @@ def _orientation_source(app: DatacronApp, note: Note) -> dict[str, Any]:
         },
         "truncated": bool(omitted or any(excerpt["truncated"] for excerpt in excerpts)),
     }
+    return _with_freshness(app, note, sectioned)
