@@ -86,6 +86,7 @@ class SessionContextOutput(TypedDict, total=False):
     identity: str
     truncated: bool
     subject_state: dict[str, Any] | None
+    runbook: dict[str, str] | None
 
 
 class PreparedFollowUpOutput(TypedDict, total=False):

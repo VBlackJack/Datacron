@@ -72,7 +72,7 @@ from datacron.mcp.tools.follow_up_read import get_follow_up as read_follow_up
 from datacron.mcp.tools.ops import _audit_query_impl, _get_health_impl, _get_note_history_impl
 from datacron.mcp.tools.organization import _apply_organization_manifest_impl
 from datacron.mcp.tools.read import _get_note_impl, _list_notes_impl
-from datacron.mcp.tools.runbook import register_runbook_tools
+from datacron.mcp.tools.runbook import register_runbook_tools, runbook_capture_offered
 from datacron.mcp.tools.search import _get_backlinks_impl, _search_regex_impl, _search_text_impl
 from datacron.mcp.tools.section_move import _move_note_section_impl
 from datacron.mcp.tools.session import SessionDomain
@@ -923,12 +923,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
         for tool_name in sorted(registered - ESSENTIAL_TOOL_NAMES):
             server.remove_tool(tool_name)
         registered = set(ESSENTIAL_TOOL_NAMES)
-    if (
-        app.settings.tool_profile != TOOL_PROFILE_ESSENTIAL
-        and not app.settings.read_only
-        and app.runbooks is not None
-        and app.runbook_writer is not None
-    ):
+    if runbook_capture_offered(app):
         # Added after the profile narrowing on purpose: the essential profile and a
         # read-only server never offer it, and a vault without runbooks or without
         # DATACRON_RUNBOOK_WRITE_PATHS keeps exactly the standard surface.

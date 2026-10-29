@@ -27,12 +27,21 @@ from datacron.core.memory_protocol import CONTRACT_HASH, CONTRACT_TEXT, PROTOCOL
 from datacron.installers.protocol import install_memory_protocol
 from datacron.installers.protocol_status import protocol_status
 from datacron.mcp.server import SERVER_INSTRUCTIONS
+from datacron.mcp.tools.runbook import RUNBOOK_SERVER_INSTRUCTIONS
 
 
 def test_shared_kernel_hash_and_client_ceiling() -> None:
+    """Without runbooks the server sends exactly the block a client installs."""
     assert SERVER_INSTRUCTIONS == PROTOCOL_BLOCK
     assert sha256(CONTRACT_TEXT.encode()).hexdigest() == CONTRACT_HASH
     assert len(PROTOCOL_BLOCK) < 6000
+
+
+def test_the_runbook_annex_stays_out_of_the_installed_contract() -> None:
+    """The annex is server instructions only: the contract, its hash and rule files never see it."""
+    assert RUNBOOK_SERVER_INSTRUCTIONS not in PROTOCOL_BLOCK
+    assert "runbook_capture" not in CONTRACT_TEXT
+    assert "runbook_capture" in RUNBOOK_SERVER_INSTRUCTIONS
 
 
 def test_status_missing_current_outdated_and_preserves_other_text(

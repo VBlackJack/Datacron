@@ -51,6 +51,7 @@ from datacron.mcp.server import (
     build_app,
     create_server,
 )
+from datacron.mcp.tools.runbook import RUNBOOK_SERVER_INSTRUCTIONS
 
 _VERBS = frozenset({"remember", "recall", "what_changed"})
 _BACKTICKED = re.compile(r"`([^`]+)`")
@@ -223,3 +224,43 @@ async def test_the_instructions_follow_the_profile(tmp_path: Path) -> None:
 
     assert standard.instructions == SERVER_INSTRUCTIONS == PROTOCOL_BLOCK
     assert essential.instructions == ESSENTIAL_SERVER_INSTRUCTIONS
+
+
+def _runbook_app(tmp_path: Path, **overrides: object) -> DatacronApp:
+    vault = tmp_path / "vault"
+    sidecar = vault / ".datacron" / "VAULT.yaml"
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(
+        "runbooks:\n"
+        "  roots: [{folder: CPDC, template: infra}]\n"
+        "  templates:\n"
+        "    infra:\n"
+        "      language: en\n"
+        "      readme: README\n"
+        "      observation_label: On Mets\n"
+        "      roles:\n"
+        "        troubleshooting: {stem: 50-troubleshooting, match: '^50-troubleshooting$'}\n",
+        encoding="utf-8",
+    )
+    return _app(tmp_path, runbook_write_paths=[vault / "CPDC"], **overrides)
+
+
+async def test_with_runbooks_the_instructions_are_the_block_then_the_annex_and_nothing_else(
+    tmp_path: Path,
+) -> None:
+    server = create_server(_runbook_app(tmp_path))
+
+    assert server.instructions == f"{PROTOCOL_BLOCK}\n{RUNBOOK_SERVER_INSTRUCTIONS}"
+    assert "runbook_capture" in await _names(_runbook_app(tmp_path))
+
+
+@pytest.mark.parametrize("overrides", [{"tool_profile": "essential"}, {"read_only": True}])
+async def test_the_annex_follows_the_tool_not_the_vault_declaration(
+    tmp_path: Path, overrides: dict[str, object]
+) -> None:
+    """A server that does not offer runbook_capture must not tell the model to call it."""
+    app = _runbook_app(tmp_path, **overrides)
+    server = create_server(app)
+
+    assert RUNBOOK_SERVER_INSTRUCTIONS not in (server.instructions or "")
+    assert "runbook_capture" not in await _names(app)

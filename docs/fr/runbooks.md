@@ -157,6 +157,24 @@ Le reçu donne `runbook`, `rel_path`, `role`, `heading`, `action` (`created`,
 `appended`, `updated`, `duplicate_skipped`), `language`, `runbook_created`, `written`,
 et pour une écriture `content_hash`, `operation_id` et `indexed`.
 
+### Comment le réflexe atteint le modèle
+
+La capture doit se faire au fil du travail, pas sur demande. Trois signaux côté
+serveur portent ce réflexe, et aucun ne coûte un fichier de règles client :
+
+- **Instructions serveur.** Quand le serveur propose `runbook_capture`, ses
+  instructions sont le bloc du protocole mémoire suivi d'un paragraphe sur les runbooks,
+  et rien d'autre. Sans l'outil, elles sont exactement le bloc du protocole. Le
+  paragraphe ne fait pas partie du contrat mémoire : sa version et son hash ne changent
+  pas, et `datacron protocol install` ne l'écrit jamais dans les règles d'un client,
+  dont le budget (6000 caractères pour Windsurf) est déjà presque rempli par le bloc.
+- **Description de l'outil.** La description de `runbook_capture` rappelle quand
+  l'appeler, les trois valeurs de provenance et le refus des suppositions et des
+  secrets, pour les clients qui ignorent les instructions serveur.
+- **`session_context`.** Avec un `subject` qui désigne un seul runbook existant, le
+  résultat porte `runbook: {path, language}`. Il est ajouté après le placement des
+  sources et retiré s'il ne tient pas : il ne coûte jamais une source.
+
 ### Défaire une capture
 
 Chaque écriture est journalisée : `get_note_history` et `audit_query` la listent.

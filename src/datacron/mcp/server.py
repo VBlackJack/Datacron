@@ -561,6 +561,26 @@ async def _startup_recover_operations(app: DatacronApp) -> None:
         )
 
 
+def server_instructions(app: DatacronApp) -> str:
+    """Return the instructions this server sends at initialization.
+
+    Without the runbook capture they are exactly the protocol block (or the
+    essential profile's text). With it they are the protocol block followed by the
+    runbook annex and nothing else, so the contract and its hash never change and
+    no client rule file pays for the annex.
+    """
+    from datacron.mcp.tools.runbook import (  # noqa: PLC0415
+        RUNBOOK_SERVER_INSTRUCTIONS,
+        runbook_capture_offered,
+    )
+
+    if app.settings.tool_profile == TOOL_PROFILE_ESSENTIAL:
+        return ESSENTIAL_SERVER_INSTRUCTIONS
+    if runbook_capture_offered(app):
+        return f"{SERVER_INSTRUCTIONS}\n{RUNBOOK_SERVER_INSTRUCTIONS}"
+    return SERVER_INSTRUCTIONS
+
+
 def create_server(app: DatacronApp) -> MCPServer[DatacronApp]:
     """Return a fully-wired :class:`MCPServer` bound to ``app``."""
     from datacron.mcp.resources import register_resources  # noqa: PLC0415
@@ -611,11 +631,7 @@ def create_server(app: DatacronApp) -> MCPServer[DatacronApp]:
     server = DatacronMCPServer(
         name=SERVER_NAME,
         version=__version__,
-        instructions=(
-            ESSENTIAL_SERVER_INSTRUCTIONS
-            if app.settings.tool_profile == TOOL_PROFILE_ESSENTIAL
-            else SERVER_INSTRUCTIONS
-        ),
+        instructions=server_instructions(app),
         lifespan=_lifespan,
     )
     if app.secret_redactor.retrieval_enabled(app.settings):

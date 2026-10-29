@@ -40,6 +40,7 @@ from datacron.core.case_folding import filesystem_folds_case
 from datacron.core.config import (
     RUNBOOK_EXCLUDED_DIRECTORIES,
     RUNBOOK_MARKDOWN_SUFFIX,
+    TOOL_PROFILE_ESSENTIAL,
     RunbooksConfig,
     RunbookTemplate,
 )
@@ -83,7 +84,13 @@ from datacron.organization.runbooks import (
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
-__all__ = ["RUNBOOK_TOOL_NAME", "_runbook_capture_impl", "register_runbook_tools"]
+__all__ = [
+    "RUNBOOK_SERVER_INSTRUCTIONS",
+    "RUNBOOK_TOOL_NAME",
+    "_runbook_capture_impl",
+    "register_runbook_tools",
+    "runbook_capture_offered",
+]
 
 RUNBOOK_TOOL_NAME: Final[str] = "runbook_capture"
 
@@ -127,6 +134,32 @@ RUNBOOK_CAPTURE_DESCRIPTION: Final[str] = (
     "refused. Writes are confined to DATACRON_RUNBOOK_WRITE_PATHS, journaled and never "
     "committed to git. dry_run returns the plan without writing."
 )
+
+
+# Appended to the standard server instructions only when the capture is offered.
+# It lives here and not in the memory contract: the contract is what clients
+# install into their rule files, and Windsurf's 6000-character budget leaves it
+# no room. Server instructions are delivered by the server and cost no rule file.
+RUNBOOK_SERVER_INSTRUCTIONS: Final[str] = (
+    "Runbooks: this vault keeps one runbook per subject. As soon as work establishes a "
+    "durable fact (a command that ran, an error and its fix, a server name, an escalation "
+    "contact, a decision), call runbook_capture in the same turn: do not wait for the end "
+    "of the session or for a request. Say how it is known: measured (a command actually "
+    "run and its real output), said (a dated meeting or a named person), or unverified. "
+    "Never capture a guess, a plausible step, a secret or a value you did not see. A known "
+    "entry is updated, not added again. A refusal lists the candidates: pick one, never "
+    "guess a section."
+)
+
+
+def runbook_capture_offered(app: DatacronApp) -> bool:
+    """Return whether this server registers ``runbook_capture``."""
+    return (
+        app.settings.tool_profile != TOOL_PROFILE_ESSENTIAL
+        and not app.settings.read_only
+        and app.runbooks is not None
+        and app.runbook_writer is not None
+    )
 
 
 class _NothingToWriteError(Exception):
