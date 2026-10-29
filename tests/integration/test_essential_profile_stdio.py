@@ -30,6 +30,7 @@ from mcp.types import Implementation
 from datacron.core.config import ESSENTIAL_INSTRUCTIONS_MAX_CHARS
 from datacron.core.memory_protocol import PROTOCOL_BLOCK
 from datacron.mcp.security_manifest import ESSENTIAL_TOOL_NAMES, STANDARD_TOOL_NAMES
+from datacron.mcp.tools.runbook import RUNBOOK_SERVER_INSTRUCTIONS
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -54,6 +55,7 @@ def _environment(vault: Path, log_dir: Path, profile: str | None) -> dict[str, s
     env["DATACRON_LOG_LEVEL"] = "WARNING"
     env["PYTHONUNBUFFERED"] = "1"
     env.pop("DATACRON_TOOL_PROFILE", None)
+    env.pop("DATACRON_RUNBOOK_WRITE_PATHS", None)
     if profile is not None:
         env["DATACRON_TOOL_PROFILE"] = profile
     return env
@@ -99,7 +101,47 @@ async def test_standard_lists_exactly_the_twenty_three_tools(
 
     assert {tool.name for tool in tools.tools} == STANDARD_TOOL_NAMES
     assert len(tools.tools) == 23
+    # Without runbooks the instructions are strictly the installed protocol block.
     assert instructions == PROTOCOL_BLOCK
+
+
+async def test_with_runbooks_the_instructions_are_the_block_then_the_annex(
+    vault: Path, tmp_path: Path
+) -> None:
+    sidecar = vault / ".datacron" / "VAULT.yaml"
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    existing = sidecar.read_text(encoding="utf-8") if sidecar.exists() else ""
+    sidecar.write_text(
+        existing + "\nrunbooks:\n"
+        "  roots: [{folder: CPDC, template: infra}]\n"
+        "  templates:\n"
+        "    infra:\n"
+        "      language: en\n"
+        "      readme: README\n"
+        "      observation_label: On Mets\n"
+        "      roles:\n"
+        "        troubleshooting: {stem: 50-troubleshooting, match: '^50-troubleshooting$'}\n",
+        encoding="utf-8",
+    )
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", _ENTRY_COMMAND],
+        env={
+            **_environment(vault, tmp_path / "logs", None),
+            "DATACRON_RUNBOOK_WRITE_PATHS": str(vault / "CPDC"),
+        },
+    )
+    client = Client(
+        stdio_client(params),
+        mode="auto",
+        client_info=Implementation(name="runbook-annex-test", version="1.0"),
+    )
+    async with client:
+        tools = await client.list_tools()
+        instructions = client.instructions
+
+    assert instructions == f"{PROTOCOL_BLOCK}\n{RUNBOOK_SERVER_INSTRUCTIONS}"
+    assert {tool.name for tool in tools.tools} == STANDARD_TOOL_NAMES | {"runbook_capture"}
 
 
 async def test_the_verbs_work_end_to_end_over_stdio(vault: Path, tmp_path: Path) -> None:

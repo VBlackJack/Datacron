@@ -29,12 +29,16 @@ from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.mcp.server import DatacronApp, build_app, create_server
 from datacron.mcp.tools import _append_journal_impl
 from datacron.mcp.tools.runbook import _runbook_capture_impl
+from datacron.mcp.tools.session import session_context
 
 _DAY = "2026-10-20"
 _RUNBOOK = "CPDC/wsus-runbook"
 _TROUBLESHOOTING = f"{_RUNBOOK}/50-troubleshooting.md"
 _VARIABLES = f"{_RUNBOOK}/90-variables.md"
 _ARCHITECTURE = f"{_RUNBOOK}/00-architecture.md"
+# Pinned so session_context has sources to fit; measured: 1800 tokens hold one
+# truncated source and no room for the pointer, 3000 hold both sources and it.
+_PINNED = [_TROUBLESHOOTING, _VARIABLES]
 _TROUBLESHOOTING_TEXT = (
     "# Troubleshooting\n\nState: written.\n\n## Symptom: A client stops updating\n\n"
     "**Cause.** Proxy bypass list.\n\n**Fix.** Add the name.\n\nmeasured 2026-09-01\n"
@@ -411,3 +415,39 @@ async def test_refusals_say_what_to_send_instead(
     receipt = await _capture(app, "error_fix", fields={"symptom": "s", "fix": "f"}, **kwargs)
 
     assert fragment in receipt["error"]["message"], receipt
+
+
+# --- session_context ------------------------------------------------------------
+
+
+async def test_session_context_points_at_an_existing_runbook(app: DatacronApp) -> None:
+    result = await session_context(app, subject="wsus")
+
+    assert result["runbook"] == {"path": _RUNBOOK, "language": "en"}
+
+
+async def test_session_context_adds_no_pointer_for_a_subject_without_runbook(
+    app: DatacronApp,
+) -> None:
+    assert "runbook" not in await session_context(app, subject="project/ad")
+    assert "runbook" not in await session_context(app, subject="nothing-like-it")
+
+
+@pytest.mark.parametrize("budget", [1650, 1800, 2000, 3000, 8000])
+async def test_the_pointer_never_costs_a_source(app: DatacronApp, budget: int) -> None:
+    """Sources are fitted first; the pointer only takes room that is left."""
+    with_pointer = await session_context(app, subject="wsus", max_tokens=budget, note_paths=_PINNED)
+    object.__setattr__(app, "runbooks", None)
+    without = await session_context(app, subject="wsus", max_tokens=budget, note_paths=_PINNED)
+
+    assert "error" not in with_pointer
+    assert with_pointer["sources"] == without["sources"]
+    assert with_pointer["omitted"] == without["omitted"]
+
+
+async def test_a_budget_that_only_holds_the_sources_drops_the_pointer(app: DatacronApp) -> None:
+    tight = await session_context(app, subject="wsus", max_tokens=1800, note_paths=_PINNED)
+
+    assert "error" not in tight
+    assert tight["sources"]
+    assert "runbook" not in tight
