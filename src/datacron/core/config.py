@@ -303,6 +303,22 @@ class OrganizationRule(BaseModel):
     folder: str
     naming: str = DEFAULT_ORGANIZATION_NAMING
     max_kb: int | None = Field(default=None, gt=0)
+    # Days after ``last_verified`` before a note of this type reads as stale in
+    # retrieval. Absent means the type carries no freshness expectation.
+    review_after_days: int | None = None
+
+    @field_validator("review_after_days", mode="before")
+    @classmethod
+    def _strict_review_after_days(cls, value: object) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(
+                f"organization rule review_after_days must be an integer; got {value!r}"
+            )
+        if value < 1:
+            raise ValueError(f"organization rule review_after_days must be at least 1; got {value}")
+        return value
 
     @field_validator("tag", mode="before")
     @classmethod
