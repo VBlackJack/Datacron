@@ -42,24 +42,20 @@ _TEMPLATE: dict[str, Any] = {
         "troubleshooting": {
             "stem": "50-troubleshooting",
             "match": r"^\d{2}-troubleshooting$",
-            "entry": "symptom",
         },
         "escalation": {
             "stem": "60-escalation",
             "match": r"^\d{2}-.*escalation$",
-            "entry": "contact",
         },
         "variables": {
             "stem": "90-variables",
             "match": r"^\d{2}-variables$",
-            "entry": "table_row",
         },
-        "measured": {"stem": "MEASURED", "match": "^MEASURED$", "optional": True},
+        "measured": {"stem": "MEASURED", "match": "^MEASURED$", "title": "Measured state"},
     },
     "quickref": {"folder": "quickref", "language": "fr"},
     "observation_label": "On Mets",
     "labels": {"symptom": "Symptom", "fix": "Fix"},
-    "skeleton_line": "State: skeleton. Nothing in this file is measured yet.",
     "routing": {"error_fix": "troubleshooting", "contact": "escalation", "server": "variables"},
 }
 
@@ -100,12 +96,11 @@ def test_a_reference_shaped_block_loads_from_vault_yaml(tmp_path: Path) -> None:
         "      language: en\n"
         "      readme: README\n"
         "      observation_label: On Mets\n"
-        "      skeleton_line: 'State: skeleton.'\n"
         "      roles:\n"
         "        troubleshooting:\n"
         "          stem: 50-troubleshooting\n"
         "          match: '^\\d{2}-troubleshooting$'\n"
-        "          entry: symptom\n"
+        "          title: Troubleshooting\n"
         "      routing:\n"
         "        error_fix: troubleshooting\n",
         encoding="utf-8",
@@ -123,7 +118,7 @@ def test_a_reference_shaped_block_loads_from_vault_yaml(tmp_path: Path) -> None:
     )
     template = config.runbooks.templates["infra"]
     assert template.routing == {"error_fix": "troubleshooting"}
-    assert template.roles["troubleshooting"].entry == "symptom"
+    assert template.roles["troubleshooting"].title == "Troubleshooting"
 
 
 @pytest.mark.parametrize("value", [None, {}])
@@ -210,8 +205,8 @@ def test_roots_and_templates_must_not_be_empty() -> None:
         ({"stem": "a/b", "match": ".*"}, "single folder or file name"),
         ({"stem": "50-x", "match": "(a+)+$"}, "catastrophic"),
         ({"stem": "50-x", "match": "("}, "not a valid regex"),
-        ({"stem": "50-x", "match": ".*", "entry": "prose"}, "entry must be one of"),
-        ({"stem": "50-x", "match": ".*", "optional": "yes"}, "true or false"),
+        ({"stem": "50-x", "match": ".*", "entry": "symptom"}, "entry"),
+        ({"stem": "50-x", "match": ".*", "title": "a\nb"}, "single line"),
     ],
 )
 def test_a_role_is_validated_before_it_can_route_a_write(
@@ -249,7 +244,7 @@ def test_routing_names_known_kinds_and_declared_roles() -> None:
     [
         ({"language": "English"}, "language tag"),
         ({"observation_label": "On\nMets"}, "single line"),
-        ({"skeleton_line": "  "}, "must not be empty"),
+        ({"observation_label": "  "}, "must not be empty"),
         ({"labels": {"Fix": "Fix"}}, "lowercase identifier"),
         ({"quickref": {"folder": "quickref", "language": "fr", "naming": "sheet"}}, "exactly once"),
         ({"quickref": {"folder": "README", "language": "fr"}}, "collides with a file stem"),
@@ -349,9 +344,9 @@ def test_only_markdown_inside_a_runbook_directory_is_admitted(
 
 
 def test_the_runbook_write_paths_bound_every_write(vault: Path, tmp_path: Path) -> None:
-    with pytest.raises(RunbookScopeError, match="No write paths are configured"):
+    with pytest.raises(RunbookScopeError, match="DATACRON_RUNBOOK_WRITE_PATHS is empty"):
         _admit(vault, "CPDC/wsus-runbook/50-troubleshooting.md", write_paths=[])
-    with pytest.raises(RunbookScopeError, match="outside the allowed write roots"):
+    with pytest.raises(RunbookScopeError, match="outside DATACRON_RUNBOOK_WRITE_PATHS"):
         _admit(
             vault,
             "CPDC/wsus-runbook/50-troubleshooting.md",
@@ -366,5 +361,5 @@ def test_a_write_path_narrower_than_the_root_admits_only_its_runbook(vault: Path
     only_wsus = [vault / _ROOT / "wsus-runbook"]
 
     assert _admit(vault, "CPDC/wsus-runbook/00-architecture.md", write_paths=only_wsus)
-    with pytest.raises(RunbookScopeError, match="outside the allowed write roots"):
+    with pytest.raises(RunbookScopeError, match="outside DATACRON_RUNBOOK_WRITE_PATHS"):
         _admit(vault, "CPDC/ad-runbook/00-architecture.md", write_paths=only_wsus)

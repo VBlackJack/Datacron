@@ -38,6 +38,7 @@ from datacron.mcp.security_manifest import (
     MCP_TOOL_CAPABILITIES,
     MUTATING_TOOL_NAMES,
     PROHIBITED_TOOL_CAPABILITIES,
+    RUNBOOK_TOOL_NAMES,
     STANDARD_MUTATING_TOOL_NAMES,
     STANDARD_READ_ONLY_TOOL_NAMES,
     STANDARD_TOOL_NAMES,
@@ -109,7 +110,9 @@ def test_the_environment_variable_selects_the_profile(monkeypatch: pytest.Monkey
 
 def test_the_manifest_covers_every_registered_tool_of_each_profile() -> None:
     assert set(TOOL_NAMES_BY_PROFILE) == set(VALID_TOOL_PROFILES)
-    assert set(MCP_TOOL_CAPABILITIES) == STANDARD_TOOL_NAMES | _VERBS
+    assert set(MCP_TOOL_CAPABILITIES) == STANDARD_TOOL_NAMES | _VERBS | RUNBOOK_TOOL_NAMES
+    assert RUNBOOK_TOOL_NAMES.isdisjoint(STANDARD_TOOL_NAMES | ESSENTIAL_TOOL_NAMES)
+    assert RUNBOOK_TOOL_NAMES <= MUTATING_TOOL_NAMES
     assert _VERBS | {"get_note", "get_health"} == ESSENTIAL_TOOL_NAMES
     assert set(MCP_TOOL_CAPABILITIES) >= ESSENTIAL_TOOL_NAMES
     assert _VERBS.isdisjoint(STANDARD_TOOL_NAMES)

@@ -71,6 +71,10 @@ sont confinées, atomiques par fichier, historisées et auditées.
 | `revert_note` | Restaure les octets exacts d'une version conservée dans l'historique. |
 | `apply_organization_manifest` | Valide puis applique un bundle local adressé par contenu contenant au moins une opération exacte sur une note et/ou un remplacement exact de la configuration `organization`. |
 
+Quand le vault déclare `runbooks` et que `DATACRON_RUNBOOK_WRITE_PATHS` est défini, le profil
+standard propose aussi `runbook_capture`, qui range un fait durable dans le runbook du sujet et
+n'écrit nulle part ailleurs. Voir [Runbooks](runbooks.md).
+
 `apply_organization_manifest` suit obligatoirement deux appels. `mode="validate"` authentifie le
 manifeste et ses payloads, vérifie les CAS, projette le rapport d'organisation et retourne un
 `confirmation_token` sans écrire. `mode="apply"` exige ce token exact et revalide le même pré-état

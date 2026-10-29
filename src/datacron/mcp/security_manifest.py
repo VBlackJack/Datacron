@@ -56,6 +56,9 @@ MCP_TOOL_CAPABILITIES: Final[MappingProxyType[str, ToolCapabilities]] = MappingP
         "remember": frozenset({"confined_vault_write", "indexed_vault_read", "vault_read"}),
         "recall": frozenset({"indexed_vault_read", "vault_read"}),
         "what_changed": frozenset({"audit_metadata_read", "indexed_vault_read"}),
+        # Registered only by the standard profile, and only when VAULT.yaml declares
+        # runbooks and DATACRON_RUNBOOK_WRITE_PATHS is set; it writes nowhere else.
+        "runbook_capture": frozenset({"confined_vault_write", "vault_read"}),
     }
 )
 
@@ -63,8 +66,11 @@ ESSENTIAL_TOOL_NAMES: Final[frozenset[str]] = frozenset(
     {"remember", "recall", "what_changed", "get_note", "get_health"}
 )
 
+# Tools a configuration adds to the standard profile; never registered by default.
+RUNBOOK_TOOL_NAMES: Final[frozenset[str]] = frozenset({"runbook_capture"})
+
 STANDARD_TOOL_NAMES: Final[frozenset[str]] = frozenset(MCP_TOOL_CAPABILITIES).difference(
-    {"remember", "recall", "what_changed"}
+    {"remember", "recall", "what_changed"} | RUNBOOK_TOOL_NAMES
 )
 
 TOOL_NAMES_BY_PROFILE: Final[MappingProxyType[str, frozenset[str]]] = MappingProxyType(
@@ -87,6 +93,7 @@ MUTATING_TOOL_NAMES: Final[frozenset[str]] = frozenset(
         "revert_note",
         "apply_organization_manifest",
         "remember",
+        "runbook_capture",
     }
 )
 
@@ -112,6 +119,7 @@ __all__ = [
     "MUTATING_TOOL_NAMES",
     "PROHIBITED_TOOL_CAPABILITIES",
     "READ_ONLY_TOOL_NAMES",
+    "RUNBOOK_TOOL_NAMES",
     "STANDARD_MUTATING_TOOL_NAMES",
     "STANDARD_READ_ONLY_TOOL_NAMES",
     "STANDARD_TOOL_NAMES",

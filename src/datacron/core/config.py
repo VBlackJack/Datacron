@@ -294,7 +294,6 @@ RUNBOOK_CAPTURE_KINDS: Final[tuple[str, ...]] = (
     "fact",
     "open_question",
 )
-RUNBOOK_ENTRY_FORMS: Final[frozenset[str]] = frozenset({"symptom", "contact", "table_row"})
 RUNBOOK_MARKDOWN_SUFFIX: Final[str] = ".md"
 RUNBOOK_NAMING_SLUG: Final[str] = "slug"
 RUNBOOK_NAMING_SERVICE: Final[str] = "service"
@@ -871,8 +870,8 @@ class RunbookRole(BaseModel):
 
     stem: str
     match: str
-    entry: str | None = None
-    optional: bool = False
+    # The H1 of a file this role creates; without it the capture refuses to create one.
+    title: str | None = None
 
     @field_validator("stem", mode="before")
     @classmethod
@@ -899,23 +898,12 @@ class RunbookRole(BaseModel):
             raise ValueError(f"runbook role match is not a valid regex: {pattern!r}") from exc
         return pattern
 
-    @field_validator("entry", mode="before")
+    @field_validator("title", mode="before")
     @classmethod
-    def _known_entry_form(cls, value: object) -> str | None:
+    def _normalize_title(cls, value: object) -> str | None:
         if value is None:
             return None
-        if not isinstance(value, str) or value.strip() not in RUNBOOK_ENTRY_FORMS:
-            raise ValueError(
-                f"runbook role entry must be one of {sorted(RUNBOOK_ENTRY_FORMS)}; got {value!r}"
-            )
-        return value.strip()
-
-    @field_validator("optional", mode="before")
-    @classmethod
-    def _strict_optional(cls, value: object) -> bool:
-        if not isinstance(value, bool):
-            raise ValueError(f"runbook role optional must be true or false; got {value!r}")
-        return value
+        return _normalize_runbook_text(value, what="runbook role title")
 
     @model_validator(mode="after")
     def _stem_satisfies_match(self) -> RunbookRole:
@@ -979,7 +967,6 @@ class RunbookTemplate(BaseModel):
     quickref: RunbookQuickref | None = None
     observation_label: str
     labels: dict[str, str] = Field(default_factory=dict)
-    skeleton_line: str
     routing: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("language", mode="before")
@@ -992,7 +979,7 @@ class RunbookTemplate(BaseModel):
     def _normalize_readme(cls, value: object) -> str:
         return _normalize_runbook_component(value, what="runbook template readme")
 
-    @field_validator("observation_label", "skeleton_line", mode="before")
+    @field_validator("observation_label", mode="before")
     @classmethod
     def _normalize_texts(cls, value: object) -> str:
         return _normalize_runbook_text(value, what="runbook template text")

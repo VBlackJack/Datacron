@@ -42,6 +42,7 @@ __all__ = [
     "find_section_span",
     "heading_ancestry",
     "move_note_section",
+    "own_section_bounds",
     "parse_heading_line",
     "patch_note_preamble",
     "reject_section_with_subsections",
@@ -550,6 +551,21 @@ def _find_heading_section(lines: list[str], heading: str) -> tuple[int, int, int
     selected = matches[0]
     own_end = next((item.start for item in headings if item.start >= start), len(lines))
     return selected.start, selected.level, _trim_trailing_blank_lines(lines, start, own_end)
+
+
+def own_section_bounds(lines: list[str], heading: str) -> tuple[int, int] | None:
+    """Return where the own content of ``heading`` starts and ends, trailing blanks excluded.
+
+    The heading is matched the way :func:`append_entry_to_heading` matches it, so a
+    caller that reads a section first and appends to it after sees the same section.
+    Own content stops at the next heading of any level. ``None`` means no such heading.
+    """
+    section = _find_heading_section(lines, heading)
+    if section is None:
+        return None
+    target = selector_heading_text(markdown_headings(lines), heading)
+    content_start, _subtree_end = find_section_span(lines, target, None)
+    return content_start, section[2]
 
 
 def _trim_trailing_blank_lines(lines: list[str], start: int, end: int) -> int:

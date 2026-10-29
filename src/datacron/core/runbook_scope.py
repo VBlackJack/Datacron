@@ -45,8 +45,12 @@ __all__ = ["RunbookScopeError", "RunbookTarget", "admit_runbook_write"]
 _MIN_PARTS_UNDER_ROOT: Final[int] = 2
 
 
-class RunbookScopeError(PathConfinementError):
-    """A runbook write outside the runbook boundary."""
+class RunbookScopeError(ValueError):
+    """A runbook write outside the runbook boundary.
+
+    Deliberately not a ``PathConfinementError``: the write tools map that one to a
+    message about ``DATACRON_WRITE_PATHS``, which the runbook capture never reads.
+    """
 
 
 @final
@@ -77,18 +81,27 @@ def admit_runbook_write(
     ``path`` is vault-relative or absolute. ``write_paths`` is
     ``Settings.runbook_write_paths``; an empty list refuses every write.
     """
+    # Refusals name the path as the caller sent it: the resolved host path is
+    # never returned, as for every other write refusal.
+    given = str(path)
     candidate = Path(path)
     if not candidate.is_absolute():
         candidate = vault_root / candidate
+    if not write_paths:
+        raise RunbookScopeError(
+            f"runbook write refused: {given!r}; DATACRON_RUNBOOK_WRITE_PATHS is empty"
+        )
     try:
         resolved = assert_within_paths(candidate, write_paths, kind="write")
     except PathConfinementError as exc:
-        raise RunbookScopeError(f"runbook write refused: {exc}") from exc
+        raise RunbookScopeError(
+            f"runbook write refused: {given!r} is outside DATACRON_RUNBOOK_WRITE_PATHS"
+        ) from exc
     root = vault_root.expanduser().resolve()
     try:
         parts = resolved.relative_to(root).parts
     except ValueError as exc:
-        raise RunbookScopeError(f"runbook write refused: {resolved} is outside the vault") from exc
+        raise RunbookScopeError(f"runbook write refused: {given!r} is outside the vault") from exc
     relative = PurePosixPath(*parts).as_posix() if parts else ""
     if not parts or not parts[-1].casefold().endswith(RUNBOOK_MARKDOWN_SUFFIX):
         raise RunbookScopeError(f"runbook write refused: {relative!r} is not a Markdown file")

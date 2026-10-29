@@ -18,7 +18,17 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 - **`DATACRON_RUNBOOK_WRITE_PATHS`**: a runbook write allowlist separate from
   `DATACRON_WRITE_PATHS`, empty by default. A runbook file is writable only inside it, inside a
   declared runbook folder, as Markdown, never under `knowledge/` and never under `.git`,
-  `confluence-source` or `confluence-updates`. No tool writes to a runbook yet.
+  `confluence-source` or `confluence-updates`.
+- **`runbook_capture`** (standard profile, registered only when `runbooks` is declared and
+  `DATACRON_RUNBOOK_WRITE_PATHS` is set): files one durable fact (`error_fix`, `command`,
+  `server`, `variable`, `contact`, `decision`, `fact`, `open_question`) in the subject's runbook,
+  routed by role pattern to its file and section, with the neutral provenance mark
+  `<measured|said|unverified> YYYY-MM-DD`. A present entry is skipped, a known symptom gets a
+  dated update, a table row is replaced by its placeholder. It never adds frontmatter to a file
+  without one, never writes `origin` or `confidence`, refuses a field that looks like a secret,
+  journals every write through a writer confined to the runbook write paths, and never runs git.
+  `dry_run` returns the plan; `request_id` makes a retry safe. A runbook role gains `title`, the
+  H1 of a file it creates.
 
 ## [2026.1020.00] - 2026-10-20
 
