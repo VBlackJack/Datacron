@@ -141,10 +141,47 @@ def test_a_misspelled_key_is_refused_not_dropped() -> None:
 
 
 @pytest.mark.parametrize("folder", ["knowledge", "Knowledge/pki", "knowledge/x/y"])
-def test_a_root_in_the_read_only_folder_is_refused(folder: str) -> None:
+def test_a_root_in_a_protected_path_is_refused(folder: str) -> None:
     _refused(
-        _block(roots=[{"folder": folder, "template": "infra"}]), "lies in a read-only vault folder"
+        _block(roots=[{"folder": folder, "template": "infra"}], protected_paths=["knowledge"]),
+        "lies in a protected path",
     )
+
+
+def test_no_folder_name_is_protected_unless_the_vault_declares_it() -> None:
+    """The package ships no vault-specific name; only the generic exclusions are fixed."""
+    config = RunbooksConfig.model_validate(
+        _block(roots=[{"folder": "knowledge", "template": "infra"}])
+    )
+
+    assert config.protected_paths == ()
+    assert not config.protects(("knowledge", "pki", "x.md"))
+
+
+def test_protected_paths_are_vault_relative_folders() -> None:
+    config = RunbooksConfig.model_validate(_block(protected_paths=["knowledge/", "CPDC\\vault"]))
+
+    assert config.protected_paths == ("knowledge", "CPDC/vault")
+    for bad in (["/abs"], ["a/../b"], [""], 3):
+        _refused(_block(protected_paths=bad), "protected")
+
+
+def test_a_runbook_root_is_one_declared_folder_named_like_a_runbook() -> None:
+    config = RunbooksConfig.model_validate(
+        _block(
+            roots=[
+                {"folder": "CPDC/wsus-runbook", "template": "infra", "layout": "runbook"},
+                {"folder": "CPDC/ad-runbook", "template": "infra", "layout": "runbook"},
+            ]
+        )
+    )
+
+    assert [root.own_slug() for root in config.roots] == ["wsus", "ad"]
+    _refused(
+        _block(roots=[{"folder": "CPDC/notes", "template": "infra", "layout": "runbook"}]),
+        "does not follow",
+    )
+    _refused(_block(roots=[{"folder": _ROOT, "template": "infra", "layout": "flat"}]), "layout")
 
 
 @pytest.mark.parametrize("excluded", sorted(RUNBOOK_EXCLUDED_DIRECTORIES))
@@ -316,14 +353,47 @@ def test_excluded_directories_are_refused_in_any_case(
         _admit(vault, f"CPDC/wsus-runbook/{spelling(excluded)}/page.md")
 
 
-def test_the_read_only_folder_is_refused_even_inside_the_write_paths(vault: Path) -> None:
-    with pytest.raises(RunbookScopeError, match="read-only folder"):
-        _admit(vault, "knowledge/pki/14-depannage.md")
+def _admit_protected(vault: Path, rel_path: str, *protected: str) -> Any:
+    return admit_runbook_write(
+        rel_path,
+        vault_root=vault,
+        runbooks=RunbooksConfig.model_validate(_block(protected_paths=list(protected))),
+        write_paths=[vault],
+    )
 
 
-def test_a_traversal_is_judged_after_resolution(vault: Path) -> None:
-    with pytest.raises(RunbookScopeError, match="read-only folder"):
-        _admit(vault, "CPDC/wsus-runbook/../../knowledge/x.md")
+def test_a_protected_path_is_refused_even_under_an_allowed_runbook_root(vault: Path) -> None:
+    """The write paths cover the whole vault and the file is a valid runbook file."""
+    assert _admit(vault, "CPDC/wsus-runbook/secrets/notes.md")
+    with pytest.raises(RunbookScopeError, match="in a protected path"):
+        _admit_protected(vault, "CPDC/wsus-runbook/secrets/notes.md", "CPDC/wsus-runbook/secrets")
+    with pytest.raises(RunbookScopeError, match="in a protected path"):
+        _admit_protected(vault, "cpdc/WSUS-runbook/Secrets/notes.md", "CPDC/wsus-runbook/secrets")
+
+
+def test_a_traversal_into_a_protected_path_is_judged_after_resolution(vault: Path) -> None:
+    with pytest.raises(RunbookScopeError, match="in a protected path"):
+        _admit_protected(vault, "CPDC/wsus-runbook/../../knowledge/x.md", "knowledge")
+
+
+def test_a_runbook_root_admits_its_own_files_and_nothing_beside_it(vault: Path) -> None:
+    runbooks = RunbooksConfig.model_validate(
+        _block(roots=[{"folder": "CPDC/wsus-runbook", "template": "infra", "layout": "runbook"}])
+    )
+
+    def admit(rel_path: str) -> Any:
+        return admit_runbook_write(
+            rel_path, vault_root=vault, runbooks=runbooks, write_paths=[vault]
+        )
+
+    target = admit("CPDC/wsus-runbook/50-troubleshooting.md")
+    assert (target.directory, target.slug, target.relative) == (
+        "CPDC/wsus-runbook",
+        "wsus",
+        "50-troubleshooting.md",
+    )
+    with pytest.raises(RunbookScopeError, match="not inside a declared runbook root"):
+        admit("CPDC/ad-runbook/50-troubleshooting.md")
 
 
 @pytest.mark.parametrize(

@@ -109,7 +109,11 @@ def _write(vault: Path, rel_path: str, text: str) -> None:
 
 
 async def _open(
-    vault: Path, *, runbook_write: bool = True, **overrides: Any
+    vault: Path,
+    *,
+    runbook_write: bool = True,
+    runbooks: dict[str, Any] | None = None,
+    **overrides: Any,
 ) -> AsyncIterator[DatacronApp]:
     config_path = vault / ".datacron" / "VAULT.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -118,7 +122,7 @@ async def _open(
         if config_path.exists()
         else {}
     )
-    document.update(runbooks=_RUNBOOKS, organization=_ORGANIZATION)
+    document.update(runbooks=runbooks or _RUNBOOKS, organization=_ORGANIZATION)
     config_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     _write(vault, _TROUBLESHOOTING, _TROUBLESHOOTING_TEXT)
     _write(vault, _VARIABLES, _VARIABLES_TEXT)
@@ -451,3 +455,58 @@ async def test_a_budget_that_only_holds_the_sources_drops_the_pointer(app: Datac
     assert "error" not in tight
     assert tight["sources"]
     assert "runbook" not in tight
+
+
+# --- one root per runbook repository, protected paths ----------------------------
+
+
+def _per_repository(**extra: Any) -> dict[str, Any]:
+    return {
+        **_RUNBOOKS,
+        "roots": [
+            {"folder": "CPDC/wsus-runbook", "template": "infra", "layout": "runbook"},
+            {"folder": "CPDC/ad-runbook", "template": "infra", "layout": "runbook"},
+        ],
+        **extra,
+    }
+
+
+async def test_runbooks_declared_one_per_repository_are_found_by_slug(tmp_vault: Path) -> None:
+    async for opened in _open(tmp_vault, runbooks=_per_repository()):
+        plan = await _capture(
+            opened, "error_fix", fields={"symptom": "New one", "fix": "x"}, dry_run=True
+        )
+        created = await _capture(
+            opened,
+            "error_fix",
+            "unverified",
+            subject="ad",
+            fields={"symptom": "Replication stalls", "fix": "Check the site link"},
+        )
+
+        assert (plan["runbook"], plan["action"]) == (_RUNBOOK, "appended"), plan
+        assert created["rel_path"] == "CPDC/ad-runbook/50-troubleshooting.md", created
+        assert created["runbook_created"] is True
+
+
+async def test_an_undeclared_sibling_is_neither_found_nor_created(tmp_vault: Path) -> None:
+    async for opened in _open(tmp_vault, runbooks=_per_repository()):
+        receipt = await _capture(
+            opened, "error_fix", subject="CPDC/snc-runbook", fields={"symptom": "s", "fix": "f"}
+        )
+
+        assert "not a runbook folder of a declared root" in receipt["error"]["message"]
+        assert not (tmp_vault / "CPDC/snc-runbook").exists()
+
+
+async def test_a_protected_path_under_an_allowed_root_is_refused_by_the_writer(
+    tmp_vault: Path,
+) -> None:
+    protected = _per_repository(protected_paths=[f"{_RUNBOOK}/50-troubleshooting.md"])
+    async for opened in _open(tmp_vault, runbooks=protected):
+        before = _read(opened, _TROUBLESHOOTING)
+
+        receipt = await _capture(opened, "error_fix", fields={"symptom": "s", "fix": "f"})
+
+        assert "in a protected path" in receipt["error"]["message"], receipt
+        assert _read(opened, _TROUBLESHOOTING) == before

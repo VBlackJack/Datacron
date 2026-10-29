@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -275,15 +275,19 @@ ESSENTIAL_WHAT_CHANGED_MAX_OUT_OF_BAND: Final[int] = 50
 ESSENTIAL_WHAT_CHANGED_SUMMARY_MAX_CHARS: Final[int] = 160
 ESSENTIAL_INSTRUCTIONS_MAX_CHARS: Final[int] = 900
 
-# Runbook capture. The excluded directories and the read-only folders are hard
-# limits arbitrated on 2026-10-29: a vault cannot declare them away. Excluded
-# directories are matched as a path component anywhere under a runbook; read-only
-# folders as the first component of a vault-relative path. Both compare casefolded,
-# whatever the filesystem, because refusing too much here is the safe side.
+# Runbook capture. The excluded directories are a hard limit arbitrated on
+# 2026-10-29: a vault cannot declare them away. They are generic names, matched as
+# a path component anywhere under a runbook and compared casefolded whatever the
+# filesystem, because refusing too much here is the safe side. Folders specific
+# to one vault are declared by that vault in runbooks.protected_paths.
 RUNBOOK_EXCLUDED_DIRECTORIES: Final[frozenset[str]] = frozenset(
     {".git", "confluence-source", "confluence-updates"}
 )
-RUNBOOK_READ_ONLY_FOLDERS: Final[frozenset[str]] = frozenset({"knowledge"})
+# A root either holds runbooks as children named by directory_naming ("parent"),
+# or is itself one runbook folder ("runbook"), declared one per repository.
+RUNBOOK_LAYOUT_PARENT: Final[str] = "parent"
+RUNBOOK_LAYOUT_RUNBOOK: Final[str] = "runbook"
+RUNBOOK_LAYOUTS: Final[frozenset[str]] = frozenset({RUNBOOK_LAYOUT_PARENT, RUNBOOK_LAYOUT_RUNBOOK})
 RUNBOOK_CAPTURE_KINDS: Final[tuple[str, ...]] = (
     "error_fix",
     "command",
@@ -1056,21 +1060,51 @@ class RunbookTemplate(BaseModel):
 
 @final
 class RunbookRoot(BaseModel):
-    """A vault folder whose ``directory_naming`` children are runbooks of one template."""
+    """Where runbooks of one template live.
+
+    With ``layout: parent`` (the default) the folder's children named by
+    ``directory_naming`` are runbooks. With ``layout: runbook`` the folder is one
+    runbook, and its own name must follow ``directory_naming``: a vault then
+    declares each runbook repository explicitly and nothing beside them.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     folder: str
     directory_naming: str = DEFAULT_RUNBOOK_DIRECTORY_NAMING
     template: str
+    layout: str = RUNBOOK_LAYOUT_PARENT
+
+    @field_validator("layout", mode="before")
+    @classmethod
+    def _known_layout(cls, value: object) -> str:
+        if not isinstance(value, str) or value.strip() not in RUNBOOK_LAYOUTS:
+            raise ValueError(f"runbook root layout must be one of {sorted(RUNBOOK_LAYOUTS)}")
+        return value.strip()
+
+    @model_validator(mode="after")
+    def _runbook_folder_is_named_like_one(self) -> RunbookRoot:
+        if self.is_runbook and self.own_slug() is None:
+            raise ValueError(
+                f"runbook root {self.folder!r} has layout 'runbook' but its name does not "
+                f"follow {self.directory_naming!r}"
+            )
+        return self
+
+    @property
+    def is_runbook(self) -> bool:
+        """Return whether the folder is itself one runbook."""
+        return self.layout == RUNBOOK_LAYOUT_RUNBOOK
+
+    def own_slug(self) -> str | None:
+        """Return the slug of the folder's own name, as ``directory_naming`` reads it."""
+        return self.directory_slug(self.folder.rsplit("/", 1)[-1])
 
     @field_validator("folder", mode="before")
     @classmethod
     def _normalize_folder(cls, value: object) -> str:
         folder = _normalize_vault_folder(value, what="runbook root folder")
         segments = [segment.casefold() for segment in folder.split("/")]
-        if segments[0] in RUNBOOK_READ_ONLY_FOLDERS:
-            raise ValueError(f"runbook root folder {folder!r} lies in a read-only vault folder")
         if any(segment in RUNBOOK_EXCLUDED_DIRECTORIES for segment in segments):
             raise ValueError(
                 f"runbook root folder {folder!r} lies in a directory runbooks never write into"
@@ -1131,6 +1165,31 @@ class RunbooksConfig(BaseModel):
 
     roots: tuple[RunbookRoot, ...]
     templates: dict[str, RunbookTemplate]
+    # Vault-relative folders the runbook writer always refuses, whatever
+    # DATACRON_RUNBOOK_WRITE_PATHS says. Empty by default: the names are the vault's.
+    protected_paths: tuple[str, ...] = ()
+
+    @field_validator("protected_paths", mode="before")
+    @classmethod
+    def _normalize_protected_paths(cls, value: object) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("runbooks protected_paths must be a list of vault-relative folders")
+        return tuple(
+            _normalize_vault_folder(item, what="runbooks protected path") for item in value
+        )
+
+    def protects(self, parts: Sequence[str]) -> bool:
+        """Return whether vault-relative path ``parts`` lie in a protected path (casefolded)."""
+        folded = [part.casefold() for part in parts]
+        for protected in self.protected_paths:
+            prefix = [segment.casefold() for segment in protected.split("/")]
+            if folded[: len(prefix)] == prefix:
+                return True
+        return False
 
     @field_validator("roots", mode="before")
     @classmethod
@@ -1158,6 +1217,8 @@ class RunbooksConfig(BaseModel):
                     f"runbook root {root.folder!r} names the undeclared template {root.template!r}"
                 )
             parts = tuple(segment.casefold() for segment in root.folder.split("/"))
+            if self.protects(parts):
+                raise ValueError(f"runbook root {root.folder!r} lies in a protected path")
             for other in seen:
                 shorter = min(len(parts), len(other))
                 if parts[:shorter] == other[:shorter]:
