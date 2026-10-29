@@ -256,6 +256,7 @@ datacron protocol uninstall --client all
 | `DATACRON_EXTRA_READ_VAULTS` | empty | Optional read-only secondary vault mounts (`prefix=path` separated by the OS path separator or a JSON object). Each prefix becomes a top-level folder of the vault and wins over a docs folder of the same name, compared without case: that docs folder drops out of the walk, the index and search while the mount is configured (its files stay on disk), even when the mount path does not exist. The server logs a warning at startup for such a masked folder and for a mount path that is not an existing folder. A mount that contains, or sits inside, the vault root, the memory root or another mount is refused. |
 | `DATACRON_READ_PATHS` | empty | Read allowlist; the installer sets it to the vault (and memory vault when configured). |
 | `DATACRON_WRITE_PATHS` | empty | Write allowlist; **empty = writing disabled**. |
+| `DATACRON_RUNBOOK_WRITE_PATHS` | empty | Runbook write allowlist, read by the runbook capture only; **empty = no runbook is writable**. See [Runbooks](runbooks.md#write-boundary). |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | Maximum number of results returned. |
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | Token budget for search results. |
 | `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | Minimum interval between repair-on-read sweeps; `0` = every read. |

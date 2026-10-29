@@ -9,6 +9,17 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Added
+
+- **Runbook declaration (`runbooks` in `VAULT.yaml`)**: a vault can declare runbook roots
+  (folders whose `{slug}-runbook` children are runbooks) and templates that name each file by
+  role, find it by the pattern its stem matches, and carry every rendered word in their own
+  language. Unknown keys are refused at startup; a vault without the block is unchanged.
+- **`DATACRON_RUNBOOK_WRITE_PATHS`**: a runbook write allowlist separate from
+  `DATACRON_WRITE_PATHS`, empty by default. A runbook file is writable only inside it, inside a
+  declared runbook folder, as Markdown, never under `knowledge/` and never under `.git`,
+  `confluence-source` or `confluence-updates`. No tool writes to a runbook yet.
+
 ## [2026.1020.00] - 2026-10-20
 
 ### Added

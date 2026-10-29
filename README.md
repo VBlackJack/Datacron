@@ -484,6 +484,7 @@ Technical references:
 
 - [Vault conventions (SPEC)](https://github.com/VBlackJack/Datacron/blob/main/docs/en/spec.md)
 - [Vault organization](https://github.com/VBlackJack/Datacron/blob/main/docs/en/organization.md)
+- [Runbooks](https://github.com/VBlackJack/Datacron/blob/main/docs/en/runbooks.md)
 - [Read and reorganize note sections](https://github.com/VBlackJack/Datacron/blob/main/docs/en/note-sections.md)
 - [Architecture and public surface](https://github.com/VBlackJack/Datacron/blob/main/docs/en/architecture.md)
 - [Security boundary](https://github.com/VBlackJack/Datacron/blob/main/docs/en/security-boundary.md)
