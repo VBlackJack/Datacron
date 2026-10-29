@@ -212,6 +212,11 @@ def _child_folders(app: DatacronApp, runbooks: RunbooksConfig) -> dict[str, list
         if not _readable_directory(app, folder):
             children[root.folder] = []
             continue
+        if root.is_runbook:
+            # A runbook root is one folder: report its own name, as resolve_runbook
+            # expects, rather than listing the runbook's content.
+            children[root.folder] = [folder.name]
+            continue
         children[root.folder] = sorted(
             entry.name
             for entry in os.scandir(folder)

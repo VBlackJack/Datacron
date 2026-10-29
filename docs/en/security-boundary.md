@@ -70,8 +70,8 @@ resolved host path is only logged locally.
 Runbook files have a second, separate allowlist, `DATACRON_RUNBOOK_WRITE_PATHS`, empty by
 default. Only the runbook capture reads it, and it never reads `DATACRON_WRITE_PATHS`; the
 generic write tools never read the runbook allowlist. A runbook write must also fall inside a
-declared runbook folder, and is always refused under `knowledge/` and under `.git`,
-`confluence-source` or `confluence-updates`. See [Runbooks](runbooks.md#write-boundary).
+declared runbook folder, and is always refused under the vault's `runbooks.protected_paths`
+and under `.git`, `confluence-source` or `confluence-updates`. See [Runbooks](runbooks.md#write-boundary).
 
 Scoped reader and writer adapters mediate filesystem operations, while index results,
 chunk resolution, backlinks, resources, audit metadata, and the fixed ripgrep search root

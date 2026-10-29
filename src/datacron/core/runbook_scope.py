@@ -14,12 +14,12 @@
 """Write boundary of the runbook capture.
 
 A runbook file is writable only when every one of these holds: it lies inside
-``DATACRON_RUNBOOK_WRITE_PATHS`` once resolved, inside the vault, in a child
-folder of a declared runbook root that is named like a runbook, outside the
-read-only vault folders and outside every excluded directory, and it is a
-Markdown file. The generic write tools never consult this module, and the
-runbook capture never consults ``DATACRON_WRITE_PATHS``: each boundary is
-audited on its own.
+``DATACRON_RUNBOOK_WRITE_PATHS`` once resolved, inside the vault, in a declared
+runbook (a root of layout ``runbook``, or a child folder of a ``parent`` root named
+like a runbook), outside the protected paths the vault declares and outside every
+excluded directory, and it is a Markdown file. The generic write tools never
+consult this module, and the runbook capture never consults
+``DATACRON_WRITE_PATHS``: each boundary is audited on its own.
 """
 
 from __future__ import annotations
@@ -33,7 +33,6 @@ from datacron.core.case_folding import filesystem_folds_case
 from datacron.core.config import (
     RUNBOOK_EXCLUDED_DIRECTORIES,
     RUNBOOK_MARKDOWN_SUFFIX,
-    RUNBOOK_READ_ONLY_FOLDERS,
     RunbookRoot,
     RunbooksConfig,
 )
@@ -106,35 +105,55 @@ def admit_runbook_write(
     if not parts or not parts[-1].casefold().endswith(RUNBOOK_MARKDOWN_SUFFIX):
         raise RunbookScopeError(f"runbook write refused: {relative!r} is not a Markdown file")
     folded = [part.casefold() for part in parts]
-    if folded[0] in RUNBOOK_READ_ONLY_FOLDERS:
-        raise RunbookScopeError(f"runbook write refused: {relative!r} is in a read-only folder")
+    if runbooks.protects(parts):
+        raise RunbookScopeError(f"runbook write refused: {relative!r} is in a protected path")
     if any(part in RUNBOOK_EXCLUDED_DIRECTORIES for part in folded[:-1]):
         raise RunbookScopeError(
             f"runbook write refused: {relative!r} is in a directory runbooks never write into"
         )
     fold_case = filesystem_folds_case(root)
     for declared in runbooks.roots:
-        root_parts = declared.folder.split("/")
-        depth = len(root_parts)
-        if len(parts) < depth + _MIN_PARTS_UNDER_ROOT:
-            continue
-        if [_key(part, fold_case=fold_case) for part in parts[:depth]] != [
-            _key(part, fold_case=fold_case) for part in root_parts
-        ]:
-            continue
-        slug = declared.directory_slug(parts[depth], fold_case=fold_case)
-        if slug is None:
-            raise RunbookScopeError(
-                f"runbook write refused: {parts[depth]!r} is not named like a runbook "
-                f"({declared.directory_naming!r})"
-            )
-        return RunbookTarget(
-            root=declared,
-            directory=PurePosixPath(*parts[: depth + 1]).as_posix(),
-            slug=slug,
-            relative=PurePosixPath(*parts[depth + 1 :]).as_posix(),
-            resolved=resolved,
-        )
+        target = _target_in_root(declared, parts, resolved, fold_case=fold_case)
+        if target is not None:
+            return target
     raise RunbookScopeError(
         f"runbook write refused: {relative!r} is not inside a declared runbook root"
+    )
+
+
+def _target_in_root(
+    declared: RunbookRoot, parts: tuple[str, ...], resolved: Path, *, fold_case: bool
+) -> RunbookTarget | None:
+    """Return the target of ``parts`` under ``declared``, ``None`` when it is not under it."""
+    root_parts = declared.folder.split("/")
+    depth = len(root_parts)
+    if [_key(part, fold_case=fold_case) for part in parts[:depth]] != [
+        _key(part, fold_case=fold_case) for part in root_parts
+    ]:
+        return None
+    if declared.is_runbook:
+        own_slug = declared.own_slug()
+        if len(parts) <= depth or own_slug is None:
+            return None
+        return RunbookTarget(
+            root=declared,
+            directory=declared.folder,
+            slug=own_slug,
+            relative=PurePosixPath(*parts[depth:]).as_posix(),
+            resolved=resolved,
+        )
+    if len(parts) < depth + _MIN_PARTS_UNDER_ROOT:
+        return None
+    slug = declared.directory_slug(parts[depth], fold_case=fold_case)
+    if slug is None:
+        raise RunbookScopeError(
+            f"runbook write refused: {parts[depth]!r} is not named like a runbook "
+            f"({declared.directory_naming!r})"
+        )
+    return RunbookTarget(
+        root=declared,
+        directory=PurePosixPath(*parts[: depth + 1]).as_posix(),
+        slug=slug,
+        relative=PurePosixPath(*parts[depth + 1 :]).as_posix(),
+        resolved=resolved,
     )

@@ -17,8 +17,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   language. Unknown keys are refused at startup; a vault without the block is unchanged.
 - **`DATACRON_RUNBOOK_WRITE_PATHS`**: a runbook write allowlist separate from
   `DATACRON_WRITE_PATHS`, empty by default. A runbook file is writable only inside it, inside a
-  declared runbook folder, as Markdown, never under `knowledge/` and never under `.git`,
-  `confluence-source` or `confluence-updates`.
+  declared runbook folder, as Markdown, never under the vault's `runbooks.protected_paths`
+  (empty by default) and never under `.git`, `confluence-source` or `confluence-updates`. A
+  root with `layout: runbook` is itself one runbook, so a vault can declare each runbook
+  repository and nothing beside them.
 - **`runbook_capture`** (standard profile, registered only when `runbooks` is declared and
   `DATACRON_RUNBOOK_WRITE_PATHS` is set): files one durable fact (`error_fix`, `command`,
   `server`, `variable`, `contact`, `decision`, `fact`, `open_question`) in the subject's runbook,
