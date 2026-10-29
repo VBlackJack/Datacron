@@ -62,7 +62,7 @@ def _organization(*subjects: dict[str, Any]) -> OrganizationConfig:
                 "placement_namespace": "type",
                 "subject_namespace": "project",
                 "subjects": list(subjects),
-            }
+            },
         }
     )
 

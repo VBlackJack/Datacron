@@ -230,13 +230,13 @@ def resolve_role(kind: str, target_role: str | None, template: RunbookTemplate) 
                 f"role {role!r} is not declared by the template; roles: {_candidates(declared)}"
             )
         return role
-    role = template.routing.get(kind)
-    if role is None:
+    routed = template.routing.get(kind)
+    if routed is None:
         raise RunbookRoutingError(
             f"the template routes no role for kind {kind!r}; repeat with target_role, one of "
             f"{_candidates(declared)}"
         )
-    return role
+    return routed
 
 
 def resolve_role_file(location: RunbookLocation, role: str, stems: Sequence[str]) -> RunbookFile:
