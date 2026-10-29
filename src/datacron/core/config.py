@@ -35,6 +35,7 @@ from pydantic import (
     ConfigDict,
     Field,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -274,6 +275,35 @@ ESSENTIAL_WHAT_CHANGED_MAX_OUT_OF_BAND: Final[int] = 50
 ESSENTIAL_WHAT_CHANGED_SUMMARY_MAX_CHARS: Final[int] = 160
 ESSENTIAL_INSTRUCTIONS_MAX_CHARS: Final[int] = 900
 
+# Runbook capture. The excluded directories and the read-only folders are hard
+# limits arbitrated on 2026-10-29: a vault cannot declare them away. Excluded
+# directories are matched as a path component anywhere under a runbook; read-only
+# folders as the first component of a vault-relative path. Both compare casefolded,
+# whatever the filesystem, because refusing too much here is the safe side.
+RUNBOOK_EXCLUDED_DIRECTORIES: Final[frozenset[str]] = frozenset(
+    {".git", "confluence-source", "confluence-updates"}
+)
+RUNBOOK_READ_ONLY_FOLDERS: Final[frozenset[str]] = frozenset({"knowledge"})
+RUNBOOK_CAPTURE_KINDS: Final[tuple[str, ...]] = (
+    "error_fix",
+    "command",
+    "server",
+    "variable",
+    "contact",
+    "decision",
+    "fact",
+    "open_question",
+)
+RUNBOOK_ENTRY_FORMS: Final[frozenset[str]] = frozenset({"symptom", "contact", "table_row"})
+RUNBOOK_MARKDOWN_SUFFIX: Final[str] = ".md"
+RUNBOOK_NAMING_SLUG: Final[str] = "slug"
+RUNBOOK_NAMING_SERVICE: Final[str] = "service"
+DEFAULT_RUNBOOK_DIRECTORY_NAMING: Final[str] = "{slug}-runbook"
+_RUNBOOK_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z][a-z0-9_]*$")
+_RUNBOOK_LANGUAGE_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$"
+)
+
 
 DEFAULT_ORGANIZATION_NAMING: Final[str] = "{slug}"
 VALID_NAMING_TOKENS: Final[frozenset[str]] = frozenset({"date", "iso_date", "slug"})
@@ -333,19 +363,7 @@ class OrganizationRule(BaseModel):
     @field_validator("folder", mode="before")
     @classmethod
     def _normalize_folder(cls, value: object) -> str:
-        # Absoluteness must be judged before the separators are trimmed, or a
-        # leading slash would be silently normalized into a relative path.
-        if not isinstance(value, str):
-            raise ValueError("organization rule folder must be a string")
-        folder = value.strip().replace("\\", "/")
-        if not folder.strip("/"):
-            raise ValueError("organization rule folder must not be empty")
-        if folder.startswith("/") or ":" in folder:
-            raise ValueError(f"organization rule folder must be vault-relative; got {folder!r}")
-        trimmed = folder.strip("/")
-        if any(segment in {"..", "."} for segment in trimmed.split("/")):
-            raise ValueError(f"organization rule folder must not traverse directories: {folder!r}")
-        return trimmed
+        return _normalize_vault_folder(value, what="organization rule folder")
 
     @field_validator("naming", mode="before")
     @classmethod
@@ -371,6 +389,22 @@ class OrganizationRule(BaseModel):
                 "organization rule naming token '{iso_date}' must appear exactly once at the start"
             )
         return naming
+
+
+def _normalize_vault_folder(value: object, *, what: str) -> str:
+    # Absoluteness must be judged before the separators are trimmed, or a
+    # leading slash would be silently normalized into a relative path.
+    if not isinstance(value, str):
+        raise ValueError(f"{what} must be a string")
+    folder = value.strip().replace("\\", "/")
+    if not folder.strip("/"):
+        raise ValueError(f"{what} must not be empty")
+    if folder.startswith("/") or ":" in folder:
+        raise ValueError(f"{what} must be vault-relative; got {folder!r}")
+    trimmed = folder.strip("/")
+    if any(segment in {"..", "."} for segment in trimmed.split("/")):
+        raise ValueError(f"{what} must not traverse directories: {folder!r}")
+    return trimmed
 
 
 def _normalize_tag_value(value: object, *, what: str) -> str:
@@ -766,6 +800,385 @@ def _exclusion_names(value: list[object], *, field: str) -> list[str]:
     return names
 
 
+def _normalize_runbook_component(value: object, *, what: str) -> str:
+    """Return one path component a runbook may write, or refuse it.
+
+    A component is a single folder or file stem: no separator, no drive, no
+    traversal, and never one of :data:`RUNBOOK_EXCLUDED_DIRECTORIES`, so no
+    declared name can route a write into a tree the runbook rules keep out.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{what} must be a string")
+    name = value.strip()
+    if not name:
+        raise ValueError(f"{what} must not be empty")
+    if any(separator in name for separator in ("/", "\\", ":")) or name in {".", ".."}:
+        raise ValueError(f"{what} must be a single folder or file name; got {name!r}")
+    if name.casefold() in RUNBOOK_EXCLUDED_DIRECTORIES:
+        raise ValueError(f"{what} {name!r} is a directory runbooks never write into")
+    return name
+
+
+def _normalize_runbook_name(value: object, *, what: str) -> str:
+    if not isinstance(value, str) or not _RUNBOOK_NAME_PATTERN.match(value.strip()):
+        raise ValueError(
+            f"{what} must be a lowercase identifier ({_RUNBOOK_NAME_PATTERN.pattern}); "
+            f"got {value!r}"
+        )
+    return value.strip()
+
+
+def _normalize_runbook_text(value: object, *, what: str) -> str:
+    """Return a non-empty single-line text the vault declares for rendering."""
+    if not isinstance(value, str):
+        raise ValueError(f"{what} must be a string")
+    text = value.strip()
+    if not text:
+        raise ValueError(f"{what} must not be empty")
+    if "\n" in text or "\r" in text:
+        raise ValueError(f"{what} must be a single line")
+    return text
+
+
+def _normalize_runbook_language(value: object, *, what: str) -> str:
+    if not isinstance(value, str) or not _RUNBOOK_LANGUAGE_PATTERN.match(value.strip()):
+        raise ValueError(f"{what} must be a language tag such as 'en' or 'fr'; got {value!r}")
+    return value.strip()
+
+
+def _validate_single_token_naming(naming: str, token: str, *, what: str) -> str:
+    """Refuse a naming that is not one ``{token}`` plus a literal, non-empty affix."""
+    tokens = _NAMING_TOKEN_PATTERN.findall(naming)
+    if tokens != [token]:
+        raise ValueError(f"{what} must contain '{{{token}}}' exactly once and no other token")
+    literal = naming.replace(f"{{{token}}}", "")
+    _normalize_runbook_component(naming.replace(f"{{{token}}}", token), what=what)
+    return literal
+
+
+@final
+class RunbookRole(BaseModel):
+    """One file of a runbook template, found by the pattern its stem matches.
+
+    The stem is what a creation uses; ``match`` is how an existing runbook's file
+    for the role is found, because numbering differs between runbooks
+    (``50-troubleshooting`` in one, ``70-troubleshooting`` in another). The stem
+    must satisfy its own pattern, or a file the template creates would not be
+    found again by the next capture.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    stem: str
+    match: str
+    entry: str | None = None
+    optional: bool = False
+
+    @field_validator("stem", mode="before")
+    @classmethod
+    def _normalize_stem(cls, value: object) -> str:
+        stem = _normalize_runbook_component(value, what="runbook role stem")
+        if stem.casefold().endswith(RUNBOOK_MARKDOWN_SUFFIX):
+            raise ValueError(
+                f"runbook role stem must not carry the {RUNBOOK_MARKDOWN_SUFFIX} suffix; "
+                f"got {stem!r}"
+            )
+        return stem
+
+    @field_validator("match", mode="before")
+    @classmethod
+    def _compile_match(cls, value: object) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("runbook role match must be a non-empty regular expression")
+        pattern = value.strip()
+        if has_catastrophic_regex_shape(pattern):
+            raise ValueError(f"runbook role match has a catastrophic regex shape: {pattern!r}")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ValueError(f"runbook role match is not a valid regex: {pattern!r}") from exc
+        return pattern
+
+    @field_validator("entry", mode="before")
+    @classmethod
+    def _known_entry_form(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or value.strip() not in RUNBOOK_ENTRY_FORMS:
+            raise ValueError(
+                f"runbook role entry must be one of {sorted(RUNBOOK_ENTRY_FORMS)}; got {value!r}"
+            )
+        return value.strip()
+
+    @field_validator("optional", mode="before")
+    @classmethod
+    def _strict_optional(cls, value: object) -> bool:
+        if not isinstance(value, bool):
+            raise ValueError(f"runbook role optional must be true or false; got {value!r}")
+        return value
+
+    @model_validator(mode="after")
+    def _stem_satisfies_match(self) -> RunbookRole:
+        if re.fullmatch(self.match, self.stem) is None:
+            raise ValueError(
+                f"runbook role stem {self.stem!r} does not match its own pattern {self.match!r}"
+            )
+        return self
+
+    def matches(self, stem: str) -> bool:
+        """Return whether an existing file stem plays this role."""
+        return re.fullmatch(self.match, stem) is not None
+
+
+@final
+class RunbookQuickref(BaseModel):
+    """The folder of per-service survival sheets, with its own language."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    folder: str
+    language: str
+    naming: str = f"{{{RUNBOOK_NAMING_SERVICE}}}"
+
+    @field_validator("folder", mode="before")
+    @classmethod
+    def _normalize_folder(cls, value: object) -> str:
+        return _normalize_runbook_component(value, what="runbook quickref folder")
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def _normalize_language(cls, value: object) -> str:
+        return _normalize_runbook_language(value, what="runbook quickref language")
+
+    @field_validator("naming", mode="before")
+    @classmethod
+    def _normalize_naming(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("runbook quickref naming must be a string")
+        naming = value.strip()
+        _validate_single_token_naming(
+            naming, RUNBOOK_NAMING_SERVICE, what="runbook quickref naming"
+        )
+        return naming
+
+
+@final
+class RunbookTemplate(BaseModel):
+    """The shape of one kind of runbook: its files, its words and its routing.
+
+    Every rendered word comes from here, in the template's language, so Datacron
+    ships no runbook text. ``routing`` maps a capture kind to a declared role;
+    a kind left out has no default and a capture of it must name its role.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    language: str
+    readme: str
+    roles: dict[str, RunbookRole]
+    quickref: RunbookQuickref | None = None
+    observation_label: str
+    labels: dict[str, str] = Field(default_factory=dict)
+    skeleton_line: str
+    routing: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def _normalize_language(cls, value: object) -> str:
+        return _normalize_runbook_language(value, what="runbook template language")
+
+    @field_validator("readme", mode="before")
+    @classmethod
+    def _normalize_readme(cls, value: object) -> str:
+        return _normalize_runbook_component(value, what="runbook template readme")
+
+    @field_validator("observation_label", "skeleton_line", mode="before")
+    @classmethod
+    def _normalize_texts(cls, value: object) -> str:
+        return _normalize_runbook_text(value, what="runbook template text")
+
+    @field_validator("roles", mode="before")
+    @classmethod
+    def _normalize_role_names(cls, value: object) -> object:
+        if not isinstance(value, dict) or not value:
+            raise ValueError("runbook template roles must be a non-empty mapping")
+        return {
+            _normalize_runbook_name(key, what="runbook role name"): item
+            for key, item in value.items()
+        }
+
+    @field_validator("labels", mode="before")
+    @classmethod
+    def _normalize_labels(cls, value: object) -> dict[str, str]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("runbook template labels must be a mapping")
+        return {
+            _normalize_runbook_name(key, what="runbook label name"): _normalize_runbook_text(
+                item, what=f"runbook label {key!r}"
+            )
+            for key, item in value.items()
+        }
+
+    @field_validator("routing", mode="before")
+    @classmethod
+    def _normalize_routing(cls, value: object) -> dict[str, str]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("runbook template routing must be a mapping")
+        routing: dict[str, str] = {}
+        for kind, role in value.items():
+            if kind not in RUNBOOK_CAPTURE_KINDS:
+                raise ValueError(
+                    f"runbook routing kind must be one of {list(RUNBOOK_CAPTURE_KINDS)}; "
+                    f"got {kind!r}"
+                )
+            routing[kind] = _normalize_runbook_name(role, what=f"runbook routing role of {kind!r}")
+        return routing
+
+    @model_validator(mode="after")
+    def _check_files(self) -> RunbookTemplate:
+        stems: dict[str, str] = {self.readme.casefold(): "readme"}
+        for name, role in self.roles.items():
+            previous = stems.get(role.stem.casefold())
+            if previous is not None:
+                raise ValueError(
+                    f"runbook role {name!r} reuses the file stem {role.stem!r} of {previous!r}"
+                )
+            stems[role.stem.casefold()] = name
+            # A creation must be found again by its own role only: a stem that a
+            # second role also claims would make the next capture ambiguous.
+            claimants = [other for other, item in self.roles.items() if item.matches(role.stem)]
+            if claimants != [name]:
+                raise ValueError(
+                    f"runbook role stem {role.stem!r} is matched by several roles: {claimants}"
+                )
+        if self.quickref is not None and self.quickref.folder.casefold() in stems:
+            raise ValueError(
+                f"runbook quickref folder {self.quickref.folder!r} collides with a file stem"
+            )
+        for kind, role_name in self.routing.items():
+            if role_name not in self.roles:
+                raise ValueError(
+                    f"runbook routing sends {kind!r} to the undeclared role {role_name!r}"
+                )
+        return self
+
+
+@final
+class RunbookRoot(BaseModel):
+    """A vault folder whose ``directory_naming`` children are runbooks of one template."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    folder: str
+    directory_naming: str = DEFAULT_RUNBOOK_DIRECTORY_NAMING
+    template: str
+
+    @field_validator("folder", mode="before")
+    @classmethod
+    def _normalize_folder(cls, value: object) -> str:
+        folder = _normalize_vault_folder(value, what="runbook root folder")
+        segments = [segment.casefold() for segment in folder.split("/")]
+        if segments[0] in RUNBOOK_READ_ONLY_FOLDERS:
+            raise ValueError(f"runbook root folder {folder!r} lies in a read-only vault folder")
+        if any(segment in RUNBOOK_EXCLUDED_DIRECTORIES for segment in segments):
+            raise ValueError(
+                f"runbook root folder {folder!r} lies in a directory runbooks never write into"
+            )
+        return folder
+
+    @field_validator("directory_naming", mode="before")
+    @classmethod
+    def _normalize_directory_naming(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("runbook directory_naming must be a string")
+        naming = value.strip()
+        literal = _validate_single_token_naming(
+            naming, RUNBOOK_NAMING_SLUG, what="runbook directory_naming"
+        )
+        # Without a literal part every child folder of the root would be a
+        # runbook, and the write scope would be the whole root.
+        if not literal:
+            raise ValueError(
+                "runbook directory_naming needs a literal part besides '{slug}', "
+                f"such as {DEFAULT_RUNBOOK_DIRECTORY_NAMING!r}"
+            )
+        return naming
+
+    @field_validator("template", mode="before")
+    @classmethod
+    def _normalize_template(cls, value: object) -> str:
+        return _normalize_runbook_name(value, what="runbook root template")
+
+    def directory_slug(self, name: str, *, fold_case: bool = False) -> str | None:
+        """Return the slug of a child folder named like a runbook, or ``None``."""
+        prefix, _, suffix = self.directory_naming.partition(f"{{{RUNBOOK_NAMING_SLUG}}}")
+        start, end = len(prefix), len(name) - len(suffix)
+        if end <= start:
+            return None
+        head, tail = name[:start], name[end:]
+        if fold_case:
+            head, tail, prefix, suffix = (
+                head.casefold(),
+                tail.casefold(),
+                prefix.casefold(),
+                suffix.casefold(),
+            )
+        if head != prefix or tail != suffix:
+            return None
+        return name[start:end]
+
+
+@final
+class RunbooksConfig(BaseModel):
+    """Declared runbook roots and templates of a vault.
+
+    Declaring them does not make a runbook writable: writes stay confined to
+    ``DATACRON_RUNBOOK_WRITE_PATHS``, which only the runbook capture honours.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    roots: tuple[RunbookRoot, ...]
+    templates: dict[str, RunbookTemplate]
+
+    @field_validator("roots", mode="before")
+    @classmethod
+    def _require_roots(cls, value: object) -> object:
+        if not isinstance(value, (list, tuple)) or not value:
+            raise ValueError("runbooks roots must be a non-empty list")
+        return value
+
+    @field_validator("templates", mode="before")
+    @classmethod
+    def _normalize_template_names(cls, value: object) -> object:
+        if not isinstance(value, dict) or not value:
+            raise ValueError("runbooks templates must be a non-empty mapping")
+        return {
+            _normalize_runbook_name(key, what="runbook template name"): item
+            for key, item in value.items()
+        }
+
+    @model_validator(mode="after")
+    def _check_roots(self) -> RunbooksConfig:
+        seen: list[tuple[str, ...]] = []
+        for root in self.roots:
+            if root.template not in self.templates:
+                raise ValueError(
+                    f"runbook root {root.folder!r} names the undeclared template {root.template!r}"
+                )
+            parts = tuple(segment.casefold() for segment in root.folder.split("/"))
+            for other in seen:
+                shorter = min(len(parts), len(other))
+                if parts[:shorter] == other[:shorter]:
+                    raise ValueError(f"runbook root {root.folder!r} overlaps another declared root")
+            seen.append(parts)
+        return self
+
+
 class VaultConfig(BaseModel):
     """Typed model for ``.datacron/VAULT.yaml``."""
 
@@ -795,6 +1208,8 @@ class VaultConfig(BaseModel):
     # exact current behaviour, which is the non-regression guarantee for vaults
     # already published against earlier releases.
     organization: OrganizationConfig | None = None
+    # Same non-regression guarantee: no block, no runbook behaviour anywhere.
+    runbooks: RunbooksConfig | None = None
 
     @field_validator("top_level_archive_tags", mode="before")
     @classmethod
@@ -807,7 +1222,7 @@ class VaultConfig(BaseModel):
             raise ValueError("archive_tags must be a list of strings")
         return tuple(_normalize_tag_value(item, what="archive_tags entry") for item in value)
 
-    @field_validator("organization", mode="before")
+    @field_validator("organization", "runbooks", mode="before")
     @classmethod
     def _normalize_organization(cls, value: object) -> object:
         # An absent or empty mapping means no policy. Other false-like YAML
@@ -1152,6 +1567,8 @@ class Settings(BaseSettings):
     log_dir: Path = Field(default=DEFAULT_LOG_DIR)
     read_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
     write_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
+    # Honoured by the runbook capture alone; the generic write tools never read it.
+    runbook_write_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
     vault_root: Path | None = Field(default=None)
     memory_root: Path | None = Field(default=None)
     extra_read_vaults: Annotated[dict[str, Path], NoDecode] = Field(default_factory=dict)
@@ -1299,14 +1716,14 @@ class Settings(BaseSettings):
             return _split_path_list(value)
         raise TypeError(f"Unsupported type for read_paths: {type(value).__name__}")
 
-    @field_validator("write_paths", mode="before")
+    @field_validator("write_paths", "runbook_write_paths", mode="before")
     @classmethod
-    def _parse_write_paths(cls, value: object) -> list[Path]:
+    def _parse_write_paths(cls, value: object, info: ValidationInfo) -> list[Path]:
         if value is None or isinstance(value, str):
             return _split_path_list(value)
         if isinstance(value, list):
             return _split_path_list(value)
-        raise TypeError(f"Unsupported type for write_paths: {type(value).__name__}")
+        raise TypeError(f"Unsupported type for {info.field_name}: {type(value).__name__}")
 
     @field_validator("vault_root", "memory_root", mode="before")
     @classmethod
