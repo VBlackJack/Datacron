@@ -27,7 +27,7 @@ from datacron.core.config import Settings
 from datacron.core.memory_protocol import CONTRACT_HASH
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
-from datacron.mcp.server import DatacronApp, build_app
+from datacron.mcp.server import DatacronApp, build_app, create_server
 from datacron.mcp.tools import _create_note_ai_impl
 from datacron.mcp.tools import essential as essential_module
 from datacron.mcp.tools import read as read_module
@@ -223,3 +223,14 @@ async def test_a_vault_without_review_windows_gets_no_freshness_field(
     assert result["sources"]
     assert all("freshness" not in item for item in found["results"])
     assert all("freshness" not in item for item in result["sources"])
+
+
+async def test_both_tools_tell_the_agent_to_reverify_a_source_that_is_not_fresh(
+    app: DatacronApp,
+) -> None:
+    """The guidance lives in the tool descriptions: the contract has no room left."""
+    tools = {tool.name: tool for tool in await create_server(app).list_tools()}
+    guidance = "stale, unverified or invalid must be re-verified"
+
+    assert guidance in (tools["session_context"].description or "")
+    assert guidance in essential_module._RECALL_DESCRIPTION

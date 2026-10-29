@@ -1350,6 +1350,10 @@ _REORGANIZE_FRESHNESS_HELP: Final[str] = (
     "Also list the state notes whose last_verified is missing or older than N days. "
     "Informative: the exit code is unchanged."
 )
+_REORGANIZE_FRESHNESS_BY_TYPE_HELP: Final[str] = (
+    "Also list the governed notes that are stale, unverified or invalid under the "
+    "review_after_days of their own rule. Informative: the exit code is unchanged."
+)
 _REORGANIZE_REQUIRES_DRY_RUN: Final[str] = (
     "datacron reorganize currently supports --dry-run only. Pass --dry-run explicitly: "
     "no other mode exists yet, and the flag must never become implicit."
@@ -1377,6 +1381,11 @@ def reorganize(
         "--freshness-days",
         min=1,
         help=_REORGANIZE_FRESHNESS_HELP,
+    ),
+    freshness_by_type: bool = typer.Option(
+        False,
+        "--freshness-by-type",
+        help=_REORGANIZE_FRESHNESS_BY_TYPE_HELP,
     ),
 ) -> None:
     """Measure how far the vault has drifted from the organization it declares.
@@ -1445,6 +1454,7 @@ def reorganize(
             config,
             settings=settings,
             freshness_days=freshness_days,
+            freshness_by_type=freshness_by_type,
         )
     except (OrganizationConfigurationError, OSError) as exc:
         _error(

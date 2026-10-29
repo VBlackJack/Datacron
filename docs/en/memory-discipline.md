@@ -61,6 +61,11 @@ state notes and `-history-` splits. `newer_notes` is `null` when the state note 
 verified. A growing count means the state note is behind; fold the newer notes, then set
 `last_verified`. At most eight state notes are listed; `state_notes_omitted` counts the rest.
 
+When the vault declares [review windows](organization.md#review-windows) per note type, every
+`session_context` source and every `recall` result carries a `freshness` object. A source that
+is `stale`, `unverified` or `invalid` is re-verified before it is relied on; once re-verified,
+set its `last_verified` with `set_frontmatter`.
+
 ## Enrich people and preserve commitments
 
 Read the existing person record before attributing an interaction. Match professional context,

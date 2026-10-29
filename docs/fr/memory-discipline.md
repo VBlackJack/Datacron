@@ -63,6 +63,11 @@ notes d'état et scissions `-history-`. `newer_notes` vaut `null` quand la note 
 plus récentes, puis poser `last_verified`. Huit notes d'état au plus sont listées ;
 `state_notes_omitted` compte les autres.
 
+Quand le vault déclare des [délais de revérification](organization.md#délais-de-revérification)
+par type de note, chaque source de `session_context` et chaque résultat de `recall` porte un
+objet `freshness`. Une source `stale`, `unverified` ou `invalid` se revérifie avant qu'on s'y
+fie ; une fois revérifiée, poser son `last_verified` avec `set_frontmatter`.
+
 ## Compléter les personnes et les engagements
 
 Lire la fiche existante, rapprocher nom et contexte professionnel, clarifier les homonymes.

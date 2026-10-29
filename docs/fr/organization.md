@@ -64,8 +64,33 @@ ne mesure rien.
 | `folder` | oui | - | Le dossier attendu, relatif au vault. |
 | `naming` | non | `{slug}` | Gabarit du nom de fichier. |
 | `max_kb` | non | aucun plafond | Taille maximale, entier strictement positif. |
+| `review_after_days` | non | pas de délai | Nombre de jours pendant lesquels une date `last_verified` reste fraîche pour les notes de ce type, entier strictement positif. |
 
 **`max_kb` compte en kibioctets de 1024 octets.** `max_kb: 80` autorise donc 81920 octets.
+
+### Délais de revérification
+
+`review_after_days` donne un délai de revérification à un type de note. Le type d'une note est
+la règle qui la gouverne, résolue exactement comme pour le rangement : la première règle
+déclarée dont la note porte le tag. Dès qu'au moins une règle déclare un délai, les résultats
+de `recall` et les sources de `session_context` portent un objet `freshness` :
+
+| Statut | Sens |
+|---|---|
+| `fresh` | `last_verified` date d'au plus `review_after_days` jours. |
+| `stale` | `last_verified` est plus ancien que le délai. |
+| `unverified` | Le type a un délai mais la note n'a pas de `last_verified`. `updated` n'est jamais utilisé à la place : une modification n'est pas une vérification. |
+| `invalid` | `last_verified` n'est pas une date utilisable, ou tombe à plus d'un jour dans le futur. Seule une date reconnue est renvoyée. |
+| `not_governed` | Aucune règle ne gouverne la note, ou sa règle ne déclare pas de délai. Rendu par le statut seul. |
+
+Hors `not_governed`, l'objet porte aussi `rule_tag`, `review_after_days`, `last_verified` et
+`age_days`, mesuré par rapport à la date calendaire UTC. Un vault qui ne déclare aucun délai
+ne reçoit aucun champ `freshness` : chaque source renvoyée le paie sur un budget de réponse
+fixe, et un `session_context` serré perdrait sinon une source.
+
+Le signal n'écrit jamais. Seule une session qui a revérifié une note déplace son
+`last_verified`, par `set_frontmatter`. À noter : `create_note_ai` renseigne `last_verified`
+avec la date de création quand l'appel n'en passe pas.
 
 `folder` est **relatif au vault**, pas à la portée, mais il doit néanmoins résoudre à
 l'intérieur de la portée. Avec `scope: knowledge`, un `folder: knowledge/meetings` est
@@ -338,6 +363,7 @@ datacron reorganize --vault G:\mon-vault --dry-run
 datacron reorganize --vault G:\mon-vault --dry-run --json
 datacron reorganize --vault G:\mon-vault --dry-run --kind NAMING
 datacron reorganize --vault G:\mon-vault --dry-run --freshness-days 60
+datacron reorganize --vault G:\mon-vault --dry-run --freshness-by-type
 ```
 
 | Option | Rôle |
@@ -347,6 +373,7 @@ datacron reorganize --vault G:\mon-vault --dry-run --freshness-days 60
 | `--json` | Rapport machine stable au lieu du texte. |
 | `--kind` | Restreint le rapport à une nature : `WRONG_FOLDER`, `NAMING`, `OVER_SIZE`, `UNGOVERNED`, `UNKNOWN_TAG`, `TAG_CARDINALITY`, `NO_STATE_NOTE`, `UNLINKED` ou `UNBALANCED_FENCE`. |
 | `--freshness-days N` | Liste en plus les notes d'état dont `last_verified` manque ou date de plus de `N` jours (entier positif). Informatif : le code de sortie ne change pas. |
+| `--freshness-by-type` | Liste en plus les notes gouvernées `stale`, `unverified` ou `invalid` au regard du `review_after_days` de leur propre règle. Informatif : le code de sortie ne change pas. |
 
 `--dry-run` est exigé explicitement. Omis, la commande refuse de s'exécuter. Une valeur de
 `--kind` inconnue liste les valeurs attendues.
@@ -359,6 +386,15 @@ dont `last_verified` manque, ou date de plus de `N` jours par rapport à la date
 d'exécution (date calendaire UTC). Une note vérifiée il y a exactement `N` jours n'est pas
 listée. La liste est triée par chemin et ne change jamais le code de sortie : c'est une
 aide à la lecture, pas un écart.
+
+### Fraîcheur par type
+
+`--freshness-by-type` applique les [délais de revérification](#délais-de-revérification) à
+chaque note gouvernée, avec le même verdict que celui de `recall` et `session_context`. Il
+liste les notes `stale`, `unverified` ou `invalid`, triées par chemin ; les notes fraîches et
+les types sans délai sont omis. Comme `--freshness-days`, il ne change jamais le code de
+sortie, et il est absent du plan quand l'option n'est pas passée : déclarer un délai ne
+déplace donc jamais le hash du plan qui lie un manifeste. Les deux options se combinent.
 
 Sans règle déclarée, la commande ne rapporte pas une erreur : elle indique qu'il n'y a rien
 à mesurer.
@@ -401,13 +437,21 @@ Freshness (older than 60 days): 2
   knowledge/subjects/beta/beta.md (project/beta, never verified)
 ```
 
+Avec `--freshness-by-type`, un bloc liste chaque note à revérifier :
+
+```text
+Freshness by type (review_after_days): 2
+  knowledge/facts/cache-policy.md (memory/fact, stale, 43 of 30 days)
+  knowledge/facts/retry-budget.md (memory/fact, unverified, window 30 days)
+```
+
 ## Le contrat JSON
 
 `--json` rend un document dont le schéma est identifié par `organization-plan-v2`. La
 sérialisation est déterministe : indentation de deux espaces, clés triées, caractères
 non-ASCII conservés tels quels. La version 2 ajoute les trois compteurs de dossier et de
-bloc de code et le champ optionnel `freshness` ; chaque champ de la version 1 garde son
-sens.
+bloc de code et les champs optionnels `freshness` et `type_freshness` ; chaque champ de la
+version 1 garde son sens.
 
 | Champ | Contenu |
 |---|---|
@@ -421,6 +465,7 @@ sens.
 | `deviations` | Liste d'écarts : `rel_path`, `kind`, `tag`, `detail`, `expected` |
 | `skipped` | Notes illisibles : `rel_path`, `reason` |
 | `freshness` | Présent seulement avec `--freshness-days` : `rel_path`, `tag`, `last_verified`, `age_days` (`null` quand la date manque) |
+| `type_freshness` | Présent seulement avec `--freshness-by-type` : `rel_path`, `tag`, `status`, `review_after_days`, `last_verified`, `age_days` (`null` sauf pour `stale`) |
 
 L'identité `scanned = governed + unmatched + skipped` est toujours vraie : une note que le
 planner ne peut pas lire est balayée, puis ignorée, et n'est ni gouvernée ni hors règle.
