@@ -30,6 +30,7 @@ from datetime import date
 from typing import Any, Final, final
 
 from datacron.core.config import RUNBOOK_CAPTURE_KINDS, RunbookTemplate
+from datacron.core.markdown_headings import split_markdown_lines
 from datacron.core.security import SecretRedactor
 
 __all__ = [
@@ -195,7 +196,7 @@ def _refuse_secrets(fields: Mapping[str, str], redactor: SecretRedactor) -> None
 
 
 def _prose(name: str, text: str) -> str:
-    for line in text.splitlines():
+    for line in split_markdown_lines(text):
         if _HEADING_LINE.match(line):
             raise RunbookEntryError(
                 f"field {name!r} holds a line Markdown reads as a heading: {line.strip()!r}"
