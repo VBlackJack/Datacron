@@ -17,9 +17,13 @@ are refused at startup, so a misspelled key fails loudly instead of being droppe
 ```yaml
 runbooks:
   roots:
-    - folder: CPDC                       # vault-relative
+    - folder: CPDC                       # vault-relative; its *-runbook children are runbooks
       directory_naming: "{slug}-runbook" # default
       template: infra
+    - folder: Lab/zabbix-runbook         # or: this folder is one runbook
+      layout: runbook
+      template: infra
+  protected_paths: [knowledge]           # always refused; empty by default
   templates:
     infra:
       language: en
@@ -60,9 +64,15 @@ runbooks:
 
 | Key | Meaning |
 |---|---|
-| `folder` | Vault-relative folder that holds runbooks. It must not lie in `knowledge/`, and no segment may be an excluded directory (see below). Two roots must not overlap. |
-| `directory_naming` | Name of a runbook folder under the root. It holds `{slug}` exactly once plus a literal part, so not every child folder of the root is a runbook. Default `{slug}-runbook`. |
+| `folder` | Vault-relative folder. It must not lie in a protected path, and no segment may be an excluded directory (see below). Two roots must not overlap. |
+| `layout` | `parent` (default): the folder's children named by `directory_naming` are runbooks. `runbook`: the folder is itself one runbook, and its own name must follow `directory_naming`. Declaring each repository as a `runbook` root keeps everything beside them out of reach. |
+| `directory_naming` | Name of a runbook folder. It holds `{slug}` exactly once plus a literal part, so not every child folder of a root is a runbook. Default `{slug}-runbook`. |
 | `template` | Name of a declared template. |
+
+`protected_paths` (beside `roots`) lists vault-relative paths the runbook writer always
+refuses, whatever `DATACRON_RUNBOOK_WRITE_PATHS` allows, compared without case. It is empty
+by default: Datacron knows no folder of your vault in advance, so a vault that keeps
+read-only material (a knowledge base, say) declares it here.
 
 ### Templates
 
@@ -120,9 +130,10 @@ profile is `standard`. Otherwise the tool list is unchanged.
 
 Each step refuses rather than guesses, and the refusal lists the candidates:
 
-1. **Runbook.** The subject names one runbook folder. An unknown word never creates
-   a runbook; a registered subject or a folder path may, under the only root, or
-   under the root its path names.
+1. **Runbook.** The subject names one runbook folder. A `runbook` root is created on
+   its first capture if its folder does not exist yet. Otherwise an unknown word never
+   creates a runbook; a registered subject or a folder path may, under the only `parent`
+   root, or under the `parent` root its path names.
 2. **Role.** `target_role`, else `phase` for a command, else the template routing.
 3. **File.** The one file whose stem matches the role's pattern. None: the role's
    `stem` is created, if the role has a `title`. Several: refused.
@@ -191,14 +202,15 @@ A runbook file is writable only when all of these hold, judged after the path is
 resolved (a `..` segment is followed first):
 
 1. it lies inside `DATACRON_RUNBOOK_WRITE_PATHS` and inside the vault;
-2. it lies inside a folder of a declared root that is named by `directory_naming`;
+2. it lies inside a declared runbook: a `runbook` root, or a child of a `parent` root
+   named by `directory_naming`;
 3. it is a Markdown file;
-4. it is not under `knowledge/` at the top of the vault;
+4. it is not under one of the vault's `protected_paths`;
 5. no folder on its path is `.git`, `confluence-source` or `confluence-updates`.
 
-Rules 4 and 5 are fixed: a vault cannot declare them away, and they are compared
-without case on every filesystem. They are the only folder names Datacron knows in
-advance; every other name comes from the vault. The write itself then goes through the
+Rule 5 is fixed: a vault cannot declare it away. Those three generic names are the only
+folder names Datacron knows in advance; every other name, protected ones included, comes
+from the vault. Rules 4 and 5 compare without case on every filesystem. The write itself then goes through the
 ordinary writer, with its lock, its journal, its note admission and its refusal of a
 path that crosses a symbolic link or a junction.
 

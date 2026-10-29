@@ -17,9 +17,13 @@ bruyamment au lieu d'être ignorée.
 ```yaml
 runbooks:
   roots:
-    - folder: CPDC                       # relatif au vault
+    - folder: CPDC                       # relatif au vault ; ses enfants *-runbook sont des runbooks
       directory_naming: "{slug}-runbook" # valeur par défaut
       template: infra
+    - folder: Lab/zabbix-runbook         # ou : ce dossier est lui-même un runbook
+      layout: runbook
+      template: infra
+  protected_paths: [knowledge]           # toujours refusés ; vide par défaut
   templates:
     infra:
       language: en
@@ -60,9 +64,16 @@ runbooks:
 
 | Clé | Sens |
 |---|---|
-| `folder` | Dossier relatif au vault qui contient des runbooks. Il ne doit pas se trouver dans `knowledge/`, et aucun de ses segments ne peut être un répertoire exclu (voir plus bas). Deux racines ne doivent pas se chevaucher. |
-| `directory_naming` | Nom d'un dossier de runbook sous la racine. Il contient `{slug}` une seule fois plus une partie fixe, pour que tout sous-dossier de la racine ne soit pas un runbook. Par défaut `{slug}-runbook`. |
+| `folder` | Dossier relatif au vault. Il ne doit pas se trouver dans un chemin protégé, et aucun de ses segments ne peut être un répertoire exclu (voir plus bas). Deux racines ne doivent pas se chevaucher. |
+| `layout` | `parent` (par défaut) : les sous-dossiers nommés selon `directory_naming` sont des runbooks. `runbook` : le dossier est lui-même un runbook, et son propre nom doit suivre `directory_naming`. Déclarer chaque dépôt comme racine `runbook` laisse hors d'atteinte tout ce qui les entoure. |
+| `directory_naming` | Nom d'un dossier de runbook. Il contient `{slug}` une seule fois plus une partie fixe, pour que tout sous-dossier d'une racine ne soit pas un runbook. Par défaut `{slug}-runbook`. |
 | `template` | Nom d'un gabarit déclaré. |
+
+`protected_paths` (à côté de `roots`) liste des chemins relatifs au vault que l'écrivain de
+runbooks refuse toujours, quoi qu'autorise `DATACRON_RUNBOOK_WRITE_PATHS`, comparés sans tenir
+compte de la casse. La liste est vide par défaut : Datacron ne connaît d'avance aucun dossier
+de votre vault, et un vault qui garde des contenus en lecture seule (une base de connaissances,
+par exemple) les déclare ici.
 
 ### Gabarits
 
@@ -121,9 +132,10 @@ et que le profil d'outils est `standard`. Sinon, la liste des outils ne change p
 
 Chaque étape refuse plutôt que de deviner, et le refus liste les candidats :
 
-1. **Runbook.** Le sujet désigne un seul dossier de runbook. Un mot inconnu ne crée
-   jamais de runbook ; un sujet enregistré ou un chemin de dossier le peut, sous
-   l'unique racine, ou sous la racine que son chemin désigne.
+1. **Runbook.** Le sujet désigne un seul dossier de runbook. Une racine `runbook` est
+   créée à sa première capture si son dossier n'existe pas encore. Sinon, un mot inconnu
+   ne crée jamais de runbook ; un sujet enregistré ou un chemin de dossier le peut, sous
+   l'unique racine `parent`, ou sous la racine `parent` que son chemin désigne.
 2. **Rôle.** `target_role`, sinon `phase` pour une commande, sinon le routage du
    gabarit.
 3. **Fichier.** Le seul fichier dont le nom répond au motif du rôle. Aucun : le
@@ -195,15 +207,17 @@ Un fichier de runbook n'est inscriptible que si toutes ces conditions tiennent,
 jugées après résolution du chemin (un segment `..` est suivi d'abord) :
 
 1. il est dans `DATACRON_RUNBOOK_WRITE_PATHS` et dans le vault ;
-2. il est dans un dossier d'une racine déclarée, nommé selon `directory_naming` ;
+2. il est dans un runbook déclaré : une racine `runbook`, ou un sous-dossier d'une
+   racine `parent` nommé selon `directory_naming` ;
 3. c'est un fichier Markdown ;
-4. il n'est pas sous `knowledge/` à la racine du vault ;
+4. il n'est sous aucun des `protected_paths` du vault ;
 5. aucun dossier de son chemin n'est `.git`, `confluence-source` ou
    `confluence-updates`.
 
-Les règles 4 et 5 sont fixes : un vault ne peut pas les lever, et elles se comparent
-sans tenir compte de la casse sur tout système de fichiers. Ce sont les seuls noms de
-dossier que Datacron connaît d'avance ; tous les autres viennent du vault. L'écriture
+La règle 5 est fixe : un vault ne peut pas la lever. Ces trois noms génériques sont les
+seuls noms de dossier que Datacron connaît d'avance ; tous les autres, chemins protégés
+compris, viennent du vault. Les règles 4 et 5 se comparent sans tenir compte de la casse
+sur tout système de fichiers. L'écriture
 passe ensuite par l'écrivain ordinaire, avec son verrou, son journal, son admission des
 notes et son refus d'un chemin qui traverse un lien symbolique ou une jonction.
 

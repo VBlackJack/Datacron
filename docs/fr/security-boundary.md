@@ -72,8 +72,8 @@ Les fichiers de runbook ont une seconde allowlist, distincte, `DATACRON_RUNBOOK_
 vide par défaut. Seule la capture de runbook la lit, et elle ne lit jamais
 `DATACRON_WRITE_PATHS` ; les outils d'écriture génériques ne lisent jamais l'allowlist des
 runbooks. Une écriture de runbook doit aussi tomber dans un dossier de runbook déclaré, et elle
-est toujours refusée sous `knowledge/` et sous `.git`, `confluence-source` ou
-`confluence-updates`. Voir [Runbooks](runbooks.md#frontière-décriture).
+est toujours refusée sous les `runbooks.protected_paths` du vault et sous `.git`,
+`confluence-source` ou `confluence-updates`. Voir [Runbooks](runbooks.md#frontière-décriture).
 
 Des adaptateurs de lecture et d'écriture à périmètre médient les opérations filesystem, tandis
 que les résultats d'index, la résolution de chunk, les backlinks, les ressources, les
