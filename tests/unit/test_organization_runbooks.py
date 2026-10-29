@@ -33,7 +33,6 @@ _TEMPLATE: dict[str, Any] = {
     "language": "en",
     "readme": "README",
     "observation_label": "On Mets",
-    "skeleton_line": "State: skeleton.",
     "roles": {
         "architecture": {"stem": "00-architecture", "match": r"^\d{2}-architecture$"},
         "troubleshooting": {"stem": "50-troubleshooting", "match": r"^\d{2}-troubleshooting$"},

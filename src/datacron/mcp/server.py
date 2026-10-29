@@ -64,6 +64,7 @@ from datacron.core.config import (
     MEMORY_SUBFOLDER_NAME,
     TOOL_PROFILE_ESSENTIAL,
     OrganizationConfig,
+    RunbooksConfig,
     Settings,
     VaultConfig,
     extra_mount_warnings,
@@ -204,6 +205,11 @@ class DatacronApp:
     # The organization block of VAULT.yaml as read at startup; the tag policy that
     # create_note_ai enforces comes from here, not from a read per call.
     organization: OrganizationConfig | None = None
+    # The runbooks block of VAULT.yaml and the writer confined to
+    # DATACRON_RUNBOOK_WRITE_PATHS. Both are set, or neither: the runbook capture is
+    # registered only then, and no other tool ever receives this writer.
+    runbooks: RunbooksConfig | None = None
+    runbook_writer: VaultWriter | None = None
 
 
 @final
@@ -426,6 +432,14 @@ def build_app(
             write_policy=write_policy,
         )
     resolved_writer = ScopedVaultWriter(vault_writer, resolved_scope, write_policy)
+    runbook_writer = _build_runbook_writer(
+        resolved_root,
+        resolved_settings,
+        vault_config,
+        admission_policy=admission_policy,
+        scope=scope,
+        write_policy=write_policy,
+    )
     if ripgrep is None:
         from datacron.indexing.ripgrep import (  # noqa: PLC0415
             RipgrepWrapper as _RipgrepWrapper,
@@ -446,6 +460,8 @@ def build_app(
         settings=resolved_settings,
         vault_root=resolved_root,
         organization=vault_config.organization,
+        runbooks=vault_config.runbooks if runbook_writer is not None else None,
+        runbook_writer=runbook_writer,
         vault_reader=resolved_reader,
         chunker=chunker,
         store=store,
@@ -459,6 +475,40 @@ def build_app(
         reconcile_lock=asyncio.Lock(),
         repair_state=RepairState(),
     )
+
+
+def _build_runbook_writer(
+    vault_root: Path,
+    settings: Settings,
+    vault_config: VaultConfig,
+    *,
+    admission_policy: NoteAdmissionPolicy,
+    scope: VaultScope | None,
+    write_policy: WritePolicy,
+) -> VaultWriter | None:
+    """Return a writer whose write roots are DATACRON_RUNBOOK_WRITE_PATHS, or ``None``.
+
+    It is the ordinary writer and scope, built over a copy of the settings whose
+    write paths are the runbook ones: the same lock files, operation journal,
+    link refusal and note admission, and a write boundary that never includes
+    ``DATACRON_WRITE_PATHS``. No runbooks block, no runbook write path, or a
+    read-only server means no writer at all.
+    """
+    if vault_config.runbooks is None or not settings.runbook_write_paths or settings.read_only:
+        return None
+    from datacron.core.vault_writer import FilesystemVaultWriter  # noqa: PLC0415
+
+    runbook_settings = settings.model_copy(
+        update={"write_paths": list(settings.runbook_write_paths)}
+    )
+    canonical = SingleTenantVaultScope(vault_root, runbook_settings, admission_policy)
+    runbook_scope: VaultScope = (
+        canonical if scope is None else ConjunctiveVaultScope(canonical, scope)
+    )
+    delegate = FilesystemVaultWriter(
+        vault_root, runbook_settings, vault_config, write_policy=write_policy
+    )
+    return ScopedVaultWriter(delegate, runbook_scope, write_policy)
 
 
 async def _startup_recover_operations(app: DatacronApp) -> None:

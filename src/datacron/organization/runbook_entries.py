@@ -91,8 +91,8 @@ _FIELDS: Final[dict[str, tuple[frozenset[str], frozenset[str], frozenset[str], f
 _LABELS: Final[dict[str, tuple[str, ...]]] = {
     "error_fix": ("symptom", "cause", "fix", "not_captured"),
     "command": ("machine", "output", "not_captured"),
-    "server": (),
-    "variable": (),
+    "server": ("placeholder", "meaning", "value"),
+    "variable": ("placeholder", "meaning", "value"),
     "contact": (),
     "decision": ("decisions", "reason", "discarded"),
     "fact": (),
@@ -132,6 +132,7 @@ class RunbookEntry:
     body: str
     key: str
     row: tuple[str, ...] | None = None
+    header: tuple[str, ...] | None = None
     owns_heading: bool = False
 
 
@@ -289,7 +290,9 @@ def _table_row(capture: _Capture) -> RunbookEntry:
         f"`{_cell(values['value'])}` ({capture.line})",
     )
     body = "| " + " | ".join(row) + " |"
-    return capture.entry(values["heading"], body, entry_key(placeholder), row=row)
+    labels = capture.labels
+    header = (labels["placeholder"], labels["meaning"], labels["value"])
+    return capture.entry(values["heading"], body, entry_key(placeholder), row=row, header=header)
 
 
 def _contact(capture: _Capture) -> RunbookEntry:

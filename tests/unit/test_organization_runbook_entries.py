@@ -45,13 +45,15 @@ _LABELS = {
     "open_questions": "Open questions",
     "owner": "Owner",
     "update": "Update",
+    "placeholder": "Placeholder",
+    "meaning": "Meaning",
+    "value": "On Mets",
 }
 _TEMPLATE = RunbookTemplate.model_validate(
     {
         "language": "en",
         "readme": "README",
         "observation_label": "On Mets",
-        "skeleton_line": "State: skeleton.",
         "roles": {"architecture": {"stem": "00-architecture", "match": "^00-architecture$"}},
         "labels": _LABELS,
     }
