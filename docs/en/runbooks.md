@@ -2,28 +2,48 @@
 
 **English** | [Français](../fr/runbooks.md)
 
-A runbook is one folder per subject, one Markdown file per numbered theme
+A runbook is one folder per project, one Markdown file per numbered theme
 (`00-architecture`, `50-troubleshooting`, `90-variables`, and so on) and a
-`quickref/` folder of per-service survival sheets. A vault can declare where its
-runbooks live and what they look like, and `runbook_capture` then files each
-durable fact in the right runbook and the right section, as soon as work
-establishes it.
+`quickref/` folder of per-service survival sheets. Datacron keeps runbooks in one
+folder of your vault, the runbook vault. When a conversation is about a project,
+`runbook_capture` files each durable fact in that project's runbook and the right
+section, as soon as work establishes it, and creates the runbook from your template
+when the project has none yet.
+
+## Setting up the runbook vault
+
+Choose the runbook vault when you configure Datacron:
+
+```powershell
+datacron setup --vault C:\Notes --runbook-vault C:\Notes\Runbooks
+```
+
+`setup` writes `DATACRON_RUNBOOK_VAULT` into the client entry; a rerun without the
+option keeps it. You can also set the variable yourself:
+
+| Variable | Default | Role |
+|---|---|---|
+| `DATACRON_RUNBOOK_VAULT` | unset | The folder of the vault that holds runbooks, one sub-folder per project. **Unset = no runbook is writable** and `runbook_capture` is not offered. |
+
+The runbook vault must lie inside the served vault: its files share the vault's
+paths, locks and operation journal, so a recovery after a crash finds them where
+they were written. A runbook vault outside the vault is refused by `setup`, and the
+server then logs a warning and does not offer the capture. The name of the folder is
+yours; Datacron knows none in advance.
 
 ## The `runbooks` block
 
-The block is optional. A vault without it behaves exactly as before. Unknown keys
-are refused at startup, so a misspelled key fails loudly instead of being dropped.
+The block in `.datacron/VAULT.yaml` says what a runbook looks like. It is optional:
+a vault without it behaves exactly as before, and the capture is not offered.
+Unknown keys are refused at startup, so a misspelled key fails loudly instead of
+being dropped.
 
 ```yaml
 runbooks:
-  roots:
-    - folder: Ops                       # vault-relative; its *-runbook children are runbooks
-      directory_naming: "{slug}-runbook" # default
-      template: infra
-    - folder: Lab/backup-runbook         # or: this folder is one runbook
-      layout: runbook
-      template: infra
-  protected_paths: [reference]           # always refused; empty by default
+  directory_naming: "{slug}-runbook"   # default
+  default_template: infra              # required with several templates
+  assignments: {bench: lab}            # optional: runbook slug -> template
+  protected_paths: [shared/archive]    # relative to the runbook vault; empty by default
   templates:
     infra:
       language: en
@@ -36,6 +56,9 @@ runbooks:
         variables:       {stem: 90-variables,       match: '^\d{2}-variables$', title: Variables}
       quickref: {folder: quickref, language: fr}
       labels:
+        readme_title: "{slug} runbook"
+        documents: Documents
+        skeleton: "Not captured yet."
         symptom: Symptom
         cause: Cause
         fix: Fix
@@ -45,7 +68,7 @@ runbooks:
         output: Output
         placeholder: Placeholder
         meaning: Meaning
-        value: On site
+        value: Value
         decisions: Decisions
         reason: Reason
         discarded: Discarded options
@@ -60,30 +83,24 @@ runbooks:
         fact: architecture
 ```
 
-### Roots
-
 | Key | Meaning |
 |---|---|
-| `folder` | Vault-relative folder. It must not lie in a protected path, and no segment may be an excluded directory (see below). Two roots must not overlap. |
-| `layout` | `parent` (default): the folder's children named by `directory_naming` are runbooks. `runbook`: the folder is itself one runbook, and its own name must follow `directory_naming`. Declaring each repository as a `runbook` root keeps everything beside them out of reach. |
-| `directory_naming` | Name of a runbook folder. It holds `{slug}` exactly once plus a literal part, so not every child folder of a root is a runbook. Default `{slug}-runbook`. |
-| `template` | Name of a declared template. |
-
-`protected_paths` (beside `roots`) lists vault-relative paths the runbook writer always
-refuses, whatever `DATACRON_RUNBOOK_WRITE_PATHS` allows, compared without case. It is empty
-by default: Datacron knows no folder of your vault in advance, so a vault that keeps
-read-only material (a knowledge base, say) declares it here.
+| `directory_naming` | Name of a runbook folder in the runbook vault. It holds `{slug}` exactly once plus a literal part, so not every folder there is a runbook. Default `{slug}-runbook`. |
+| `templates` | One or more templates (below). |
+| `default_template` | The template of a runbook with no assignment. Required when several templates are declared. |
+| `assignments` | Optional map from a runbook slug to the template it uses, for runbooks that do not follow the default. |
+| `protected_paths` | Paths, relative to the runbook vault, the runbook writer always refuses, compared without case. Empty by default. |
 
 ### Templates
 
 | Key | Meaning |
 |---|---|
 | `language` | Language tag of the numbered files (`en`, `fr`). Every receipt repeats it, so the caller writes the entry in that language. |
-| `readme` | Stem of the index file, without `.md`. No role may use it; the capture never writes it. |
+| `readme` | Stem of the index file, without `.md`. No role may use it. |
 | `roles` | One entry per file role (lowercase identifier). |
 | `quickref` | Optional: `folder`, its own `language`, and `naming` with `{service}` exactly once (default `{service}`). The folder is reserved; the capture does not write survival sheets yet. |
 | `observation_label` | Label of the dated observation boxes, for example `On site`. |
-| `labels` | Every word Datacron renders, in the template language. A capture whose kind needs a label the template does not declare is refused, naming it. Datacron ships no runbook text. |
+| `labels` | Every word Datacron renders, in the template language. A capture whose kind needs a label the template does not declare is refused, naming it. Creating a runbook needs `readme_title` (where `{slug}` is replaced), `documents` and `skeleton`. Datacron ships no runbook text. |
 | `routing` | Capture kind to role: `error_fix`, `command`, `server`, `variable`, `contact`, `decision`, `fact`, `open_question`. A kind left out has no default role and a capture of it must name one. |
 
 ### Roles
@@ -96,23 +113,24 @@ runbook files troubleshooting under `50-troubleshooting`, another under
 |---|---|
 | `stem` | File stem a creation uses, without `.md`. It must match its own `match`, and no other role's pattern, or the next capture could not find the file again. |
 | `match` | Regular expression matched against the whole stem. A pattern with nested repetition is refused. |
-| `title` | The `# ` title of a file this role creates. Without it, the capture refuses to create the file and only writes into an existing one. |
+| `title` | The `# ` title of a file this role creates. A role without one is never created, only written into when its file exists. |
 
 ## Capturing a fact: `runbook_capture`
 
 The tool is registered only when the vault declares `runbooks`,
-`DATACRON_RUNBOOK_WRITE_PATHS` is set, the server is not read-only, and the tool
-profile is `standard`. Otherwise the tool list is unchanged.
+`DATACRON_RUNBOOK_VAULT` names a folder inside the vault, the server is not
+read-only, and the tool profile is `standard`. Otherwise the tool list is unchanged.
 
 | Argument | Meaning |
 |---|---|
-| `subject` | A registered subject (tag, last segment or alias), the slug of an existing runbook, or a runbook folder path such as `Ops/mail-runbook`. |
+| `subject` | The project the conversation is about: its name, a registered subject (tag, last segment or alias), or a runbook folder path such as `Runbooks/mail-runbook`. |
 | `kind` | One of the eight kinds below. |
 | `evidence` | `measured` (a command actually run, its real output), `said` (a dated meeting or a named person) or `unverified`. |
 | `source` | One line saying where the fact comes from. It is kept in the operation journal, not in the runbook. |
 | `fields` | The fields of the kind, below. An unknown field is refused. |
 | `observed_on` | Date of the event, `YYYY-MM-DD`, not in the future. Default: today (UTC). |
 | `target_role` | A role that overrides the routing. |
+| `create_runbook` | `true` creates the runbook when the project has none yet (below). Default `false`. |
 | `dry_run` | `true` returns the plan and writes nothing. |
 | `request_id` | Makes a retry safe: an identical retry replays the first receipt. |
 
@@ -126,14 +144,31 @@ profile is `standard`. Otherwise the tool list is unchanged.
 | `fact` | `heading`, `fact` | | A dated observation box (`> **On site, <date>.**`) under `heading`. |
 | `open_question` | `question`, `owner` | | A list item with its owner under the `open_questions` label. |
 
+### Creating a runbook
+
+The name of a runbook comes from the project the conversation is about. A subject
+that names no existing runbook is refused, and the refusal says to repeat with
+`create_runbook=true`; asking explicitly is what keeps a typo from starting a
+runbook. With it, the capture creates `<slug>-runbook/` in the runbook vault, the
+slug taken from the project name (lowercase letters, digits and hyphens) or from
+the registered subject, and writes:
+
+1. the captured file, with its role's title and the entry;
+2. one file per other role that has a title, holding only its title and the
+   `skeleton` label;
+3. the README, titled with `readme_title`, listing every file under the `documents`
+   label.
+
+The captured fact is committed first. A scaffold file that cannot be written is
+left out of the receipt's `scaffold` list, and the next capture on its role creates
+it. `dry_run` shows the whole plan, `scaffold` included, without writing.
+
 ### Routing
 
 Each step refuses rather than guesses, and the refusal lists the candidates:
 
-1. **Runbook.** The subject names one runbook folder. A `runbook` root is created on
-   its first capture if its folder does not exist yet. Otherwise an unknown word never
-   creates a runbook; a registered subject or a folder path may, under the only `parent`
-   root, or under the `parent` root its path names.
+1. **Runbook.** The subject names one runbook folder of the runbook vault, or a new
+   one with `create_runbook=true`.
 2. **Role.** `target_role`, else `phase` for a command, else the template routing.
 3. **File.** The one file whose stem matches the role's pattern. None: the role's
    `stem` is created, if the role has a `title`. Several: refused.
@@ -144,8 +179,9 @@ Each step refuses rather than guesses, and the refusal lists the candidates:
 
 - **Provenance** is one neutral mark per entry, `<measured|said|unverified> YYYY-MM-DD`,
   with no tool, assistant or session named.
-- **Already present** (the same text, whatever its provenance date): nothing is
-  written, the receipt says `duplicate_skipped`.
+- **Already present** (the same text in the same section, whatever its provenance
+  date): nothing is written, the receipt says `duplicate_skipped`. Text present in
+  another section of the file is not detected.
 - **A known symptom with new content** gets a dated `Update` paragraph in its
   section; the existing entry is kept as it was.
 - **A table row** with the same placeholder is replaced in place; the previous
@@ -164,7 +200,7 @@ Each step refuses rather than guesses, and the refusal lists the candidates:
 
 The receipt gives `runbook`, `rel_path`, `role`, `heading`, `action` (`created`,
 `appended`, `updated`, `duplicate_skipped`), `language`, `runbook_created`,
-`written`, and for a write `content_hash`, `operation_id` and `indexed`.
+`scaffold`, `written`, and for a write `content_hash`, `operation_id` and `indexed`.
 
 ### How the habit reaches the model
 
@@ -178,8 +214,8 @@ signals carry that, and none of them costs a client rule file:
   install` never writes it into a client's rules, whose budget (6000 characters for
   Windsurf) the block nearly fills already.
 - **Tool description.** The description of `runbook_capture` repeats when to call it,
-  the three provenance values and the refusal of guesses and secrets, for clients that
-  ignore server instructions.
+  how a project gets its runbook, the three provenance values and the refusal of
+  guesses and secrets, for clients that ignore server instructions.
 - **`session_context`.** With a `subject` that names one existing runbook, the result
   carries `runbook: {path, language}`. It is attached after the sources are fitted and
   dropped when it does not fit, so it never costs a source.
@@ -192,27 +228,21 @@ git working tree, `git diff` shows the capture and `git restore` undoes it.
 
 ## Write boundary
 
-Declaring a root does not make it writable. Runbook writes have their own setting:
-
-| Variable | Default | Role |
-|---|---|---|
-| `DATACRON_RUNBOOK_WRITE_PATHS` | empty | Runbook write allowlist, separated by the OS path separator. **Empty = no runbook is writable.** Only the runbook capture reads it; the generic write tools keep using `DATACRON_WRITE_PATHS` and never read this one. |
-
 A runbook file is writable only when all of these hold, judged after the path is
 resolved (a `..` segment is followed first):
 
-1. it lies inside `DATACRON_RUNBOOK_WRITE_PATHS` and inside the vault;
-2. it lies inside a declared runbook: a `runbook` root, or a child of a `parent` root
-   named by `directory_naming`;
+1. it lies inside `DATACRON_RUNBOOK_VAULT`, itself inside the vault;
+2. its first folder under the runbook vault is named by `directory_naming`;
 3. it is a Markdown file;
-4. it is not under one of the vault's `protected_paths`;
+4. it is not under one of the `protected_paths`;
 5. no folder on its path is `.git`, `confluence-source` or `confluence-updates`.
 
 Rule 5 is fixed: a vault cannot declare it away. Those three generic names are the only
 folder names Datacron knows in advance; every other name, protected ones included, comes
-from the vault. Rules 4 and 5 compare without case on every filesystem. The write itself then goes through the
-ordinary writer, with its lock, its journal, its note admission and its refusal of a
-path that crosses a symbolic link or a junction.
+from your configuration. Rules 4 and 5 compare without case on every filesystem. The
+write itself then goes through the ordinary writer, with its lock, its journal, its note
+admission and its refusal of a path that crosses a symbolic link or a junction. The
+generic write tools never treat the runbook vault as a write path.
 
 Datacron never runs git in a runbook: it writes files, and reviewing the diff and
 committing stay manual.

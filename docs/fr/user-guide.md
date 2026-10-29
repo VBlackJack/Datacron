@@ -71,7 +71,7 @@ sont confinées, atomiques par fichier, historisées et auditées.
 | `revert_note` | Restaure les octets exacts d'une version conservée dans l'historique. |
 | `apply_organization_manifest` | Valide puis applique un bundle local adressé par contenu contenant au moins une opération exacte sur une note et/ou un remplacement exact de la configuration `organization`. |
 
-Quand le vault déclare `runbooks` et que `DATACRON_RUNBOOK_WRITE_PATHS` est défini, le profil
+Quand le vault déclare `runbooks` et que `DATACRON_RUNBOOK_VAULT` est défini, le profil
 standard propose aussi `runbook_capture`, qui range un fait durable dans le runbook du sujet et
 n'écrit nulle part ailleurs. Voir [Runbooks](runbooks.md).
 

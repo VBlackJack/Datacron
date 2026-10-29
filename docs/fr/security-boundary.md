@@ -68,12 +68,13 @@ la racine du vault, même quand il reste dans le vault ; les autres points d'ana
 fichiers fantômes cloud de OneDrive, ne sont pas des liens et sont écrits normalement. Un chemin refusé est rapporté sous la forme relative au vault
 envoyée par le client ; le chemin résolu sur l'hôte n'est journalisé que localement.
 
-Les fichiers de runbook ont une seconde allowlist, distincte, `DATACRON_RUNBOOK_WRITE_PATHS`,
-vide par défaut. Seule la capture de runbook la lit, et elle ne lit jamais
-`DATACRON_WRITE_PATHS` ; les outils d'écriture génériques ne lisent jamais l'allowlist des
-runbooks. Une écriture de runbook doit aussi tomber dans un dossier de runbook déclaré, et elle
-est toujours refusée sous les `runbooks.protected_paths` du vault et sous `.git`,
-`confluence-source` ou `confluence-updates`. Voir [Runbooks](runbooks.md#frontière-décriture).
+Les fichiers de runbook ont une seconde racine d'écriture, distincte, le vault runbooks
+(`DATACRON_RUNBOOK_VAULT`), non définie par défaut et toujours dans le vault servi. Seule la
+capture de runbook y écrit, et elle ne lit jamais `DATACRON_WRITE_PATHS` ; les outils
+d'écriture génériques ne traitent jamais le vault runbooks comme un chemin d'écriture. Une
+écriture de runbook doit aussi tomber dans un dossier nommé comme un runbook, et elle est
+toujours refusée sous les `runbooks.protected_paths` et sous `.git`, `confluence-source` ou
+`confluence-updates`. Voir [Runbooks](runbooks.md#frontière-décriture).
 
 Des adaptateurs de lecture et d'écriture à périmètre médient les opérations filesystem, tandis
 que les résultats d'index, la résolution de chunk, les backlinks, les ressources, les
