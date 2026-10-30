@@ -64,6 +64,7 @@ from datacron.core.config import (
     MEMORY_SUBFOLDER_NAME,
     TOOL_PROFILE_ESSENTIAL,
     OrganizationConfig,
+    RunbooksConfig,
     Settings,
     VaultConfig,
     extra_mount_warnings,
@@ -93,6 +94,11 @@ from datacron.core.protocols import (
     RipgrepWrapper,
     VaultReader,
     VaultWriter,
+)
+from datacron.core.runbook_scope import (
+    RunbookScopeError,
+    default_runbook_vault,
+    runbook_vault_folder,
 )
 from datacron.core.scope import (
     ConjunctiveVaultScope,
@@ -204,6 +210,13 @@ class DatacronApp:
     # The organization block of VAULT.yaml as read at startup; the tag policy that
     # create_note_ai enforces comes from here, not from a read per call.
     organization: OrganizationConfig | None = None
+    # The runbooks block of VAULT.yaml and the writer confined to
+    # DATACRON_RUNBOOK_VAULT. Both are set, or neither: the runbook capture is
+    # registered only then, and no other tool ever receives this writer.
+    runbooks: RunbooksConfig | None = None
+    runbook_writer: VaultWriter | None = None
+    # The resolved runbook vault: DATACRON_RUNBOOK_VAULT, else _runbooks beside _memory.
+    runbook_vault: Path | None = None
 
 
 @final
@@ -426,6 +439,19 @@ def build_app(
             write_policy=write_policy,
         )
     resolved_writer = ScopedVaultWriter(vault_writer, resolved_scope, write_policy)
+    runbook_vault = resolved_settings.runbook_vault or default_runbook_vault(
+        resolved_root, resolved_memory_root
+    )
+    runbook_writer = _build_runbook_writer(
+        resolved_root,
+        resolved_settings,
+        vault_config,
+        runbook_vault=runbook_vault,
+        memory_root=resolved_memory_root,
+        admission_policy=admission_policy,
+        scope=scope,
+        write_policy=write_policy,
+    )
     if ripgrep is None:
         from datacron.indexing.ripgrep import (  # noqa: PLC0415
             RipgrepWrapper as _RipgrepWrapper,
@@ -446,6 +472,9 @@ def build_app(
         settings=resolved_settings,
         vault_root=resolved_root,
         organization=vault_config.organization,
+        runbooks=vault_config.runbooks if runbook_writer is not None else None,
+        runbook_writer=runbook_writer,
+        runbook_vault=runbook_vault if runbook_writer is not None else None,
         vault_reader=resolved_reader,
         chunker=chunker,
         store=store,
@@ -459,6 +488,48 @@ def build_app(
         reconcile_lock=asyncio.Lock(),
         repair_state=RepairState(),
     )
+
+
+def _build_runbook_writer(
+    vault_root: Path,
+    settings: Settings,
+    vault_config: VaultConfig,
+    *,
+    runbook_vault: Path,
+    memory_root: Path | None,
+    admission_policy: NoteAdmissionPolicy,
+    scope: VaultScope | None,
+    write_policy: WritePolicy,
+) -> VaultWriter | None:
+    """Return a writer whose only write root is the runbook vault, or ``None``.
+
+    It is the ordinary writer and scope, built over a copy of the settings whose
+    write paths are the runbook vault alone: the same lock files, operation
+    journal, link refusal and note admission, and a write boundary that never
+    includes ``DATACRON_WRITE_PATHS``. The runbook vault is ``DATACRON_RUNBOOK_VAULT``,
+    else ``_runbooks`` beside ``_memory``. No runbooks block, a runbook vault
+    outside the served vault, or a read-only server means no writer.
+    """
+    if vault_config.runbooks is None or settings.read_only:
+        return None
+    try:
+        runbook_vault_folder(vault_root, runbook_vault, memory_root=memory_root)
+    except RunbookScopeError as exc:
+        # A misconfigured runbook vault must not stop the server: the capture is
+        # simply not offered, and the reason is logged where an operator looks.
+        _LOGGER.warning("runbook capture disabled: %s", exc)
+        return None
+    from datacron.core.vault_writer import FilesystemVaultWriter  # noqa: PLC0415
+
+    runbook_settings = settings.model_copy(update={"write_paths": [runbook_vault]})
+    canonical = SingleTenantVaultScope(vault_root, runbook_settings, admission_policy)
+    runbook_scope: VaultScope = (
+        canonical if scope is None else ConjunctiveVaultScope(canonical, scope)
+    )
+    delegate = FilesystemVaultWriter(
+        vault_root, runbook_settings, vault_config, write_policy=write_policy
+    )
+    return ScopedVaultWriter(delegate, runbook_scope, write_policy)
 
 
 async def _startup_recover_operations(app: DatacronApp) -> None:
@@ -511,6 +582,26 @@ async def _startup_recover_operations(app: DatacronApp) -> None:
         )
 
 
+def server_instructions(app: DatacronApp) -> str:
+    """Return the instructions this server sends at initialization.
+
+    Without the runbook capture they are exactly the protocol block (or the
+    essential profile's text). With it they are the protocol block followed by the
+    runbook annex and nothing else, so the contract and its hash never change and
+    no client rule file pays for the annex.
+    """
+    from datacron.mcp.tools.runbook import (  # noqa: PLC0415
+        RUNBOOK_SERVER_INSTRUCTIONS,
+        runbook_capture_offered,
+    )
+
+    if app.settings.tool_profile == TOOL_PROFILE_ESSENTIAL:
+        return ESSENTIAL_SERVER_INSTRUCTIONS
+    if runbook_capture_offered(app):
+        return f"{SERVER_INSTRUCTIONS}\n{RUNBOOK_SERVER_INSTRUCTIONS}"
+    return SERVER_INSTRUCTIONS
+
+
 def create_server(app: DatacronApp) -> MCPServer[DatacronApp]:
     """Return a fully-wired :class:`MCPServer` bound to ``app``."""
     from datacron.mcp.resources import register_resources  # noqa: PLC0415
@@ -561,11 +652,7 @@ def create_server(app: DatacronApp) -> MCPServer[DatacronApp]:
     server = DatacronMCPServer(
         name=SERVER_NAME,
         version=__version__,
-        instructions=(
-            ESSENTIAL_SERVER_INSTRUCTIONS
-            if app.settings.tool_profile == TOOL_PROFILE_ESSENTIAL
-            else SERVER_INSTRUCTIONS
-        ),
+        instructions=server_instructions(app),
         lifespan=_lifespan,
     )
     if app.secret_redactor.retrieval_enabled(app.settings):

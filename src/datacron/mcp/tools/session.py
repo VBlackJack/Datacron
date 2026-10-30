@@ -42,6 +42,7 @@ from datacron.mcp.tools.payloads import (
     _internal_error_response,
 )
 from datacron.mcp.tools.read import _build_full_payload, _build_section_payload
+from datacron.mcp.tools.runbook import locate_runbook, runbook_capture_offered
 from datacron.mcp.tools.subject_state import load_subject_notes, subject_state_payload
 from datacron.organization.freshness import (
     assess_freshness,
@@ -162,6 +163,8 @@ async def session_context(
         matched_people, loaded_notes = await _load_sources(app, paths, pinned_paths, domain, result)
         result["identity"] = "clarification_required" if matched_people > 1 else "not_resolved"
         _fit_sources(app, result, maximum, loaded_notes)
+        if subject and subject.strip():
+            _attach_runbook(app, subject, result, maximum)
         result["truncated"] = bool(
             result["omitted"] or any(x["truncated"] for x in result["sources"])
         )
@@ -213,6 +216,29 @@ async def _attach_subject_state(
     else:
         result.pop("subject_state")
     return [item.rel_path for item in state.state_notes[:listed]]
+
+
+def _attach_runbook(app: DatacronApp, subject: str, result: dict[str, Any], maximum: int) -> None:
+    """Point at the subject's existing runbook, only with room left after the sources.
+
+    It is attached after the sources are fitted and dropped when it does not fit,
+    so it can never evict a source: a field paid for out of a fixed budget evicted
+    one in a tight session before (test_dual_vault). It is offered only where
+    runbook_capture is, and a subject that names no single existing runbook adds
+    nothing.
+    """
+    if not runbook_capture_offered(app):
+        return
+    try:
+        location = locate_runbook(app, subject)
+    except Exception:
+        _LOGGER.debug("No runbook pointer for session_context", exc_info=True)
+        return
+    if not location.exists:
+        return
+    result["runbook"] = {"path": location.directory, "language": location.template.language}
+    if rendered_size(result) > maximum:
+        result.pop("runbook")
 
 
 def _fit_sources(

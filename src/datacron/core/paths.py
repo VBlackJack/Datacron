@@ -32,6 +32,7 @@ from typing import Final, Literal
 from datacron.core.config import (
     INDEX_DB_FILENAME,
     INDEX_DIR_NAME,
+    MEMORY_ROOT_SUBFOLDERS,
     MEMORY_SUBFOLDER_NAME,
     SIDECAR_DIR_NAME,
     VAULT_CONFIG_FILENAME,
@@ -53,10 +54,13 @@ __all__ = [
     "assert_within_resolved_roots",
     "assert_within_write_paths",
     "canonical_memory_rel_path",
+    "canonical_memory_root_rel_path",
     "effective_extra_read_vaults",
     "effective_memory_root",
     "is_link_stat",
     "is_memory_rel_path",
+    "is_memory_root_folder",
+    "is_memory_root_rel_path",
     "is_within",
     "note_source_vault",
     "read_ulid_mappings",
@@ -421,9 +425,44 @@ def canonical_memory_rel_path(rel_path: str) -> str:
     return f"{MEMORY_SUBFOLDER_NAME}{separator}{rest}"
 
 
+def _memory_root_folder_spelling(name: str) -> str | None:
+    folded = name.casefold()
+    return next((item for item in MEMORY_ROOT_SUBFOLDERS if item.casefold() == folded), None)
+
+
+def is_memory_root_folder(name: str) -> bool:
+    """Return whether a top folder name is one a memory vault serves, case folded."""
+    return _memory_root_folder_spelling(name) is not None
+
+
+def is_memory_root_rel_path(rel_path: str) -> bool:
+    """Return whether ``rel_path`` lies in a folder the memory vault holds.
+
+    That is ``_memory`` and ``_runbooks``. This is where a path lives, not what it
+    means: the memory semantics (organization scope, compaction, the protocol
+    notes) stay with :func:`is_memory_rel_path`, which only ``_memory`` passes.
+    """
+    normalized = rel_path.strip().replace("\\", "/").lstrip("/")
+    return bool(normalized) and is_memory_root_folder(normalized.split("/", 1)[0])
+
+
+def canonical_memory_root_rel_path(rel_path: str) -> str:
+    """Return ``rel_path`` with its memory-vault folder spelled canonically.
+
+    The same rule as :func:`canonical_memory_rel_path`, for every folder the
+    memory vault holds. Any other path is returned unchanged.
+    """
+    normalized = rel_path.replace("\\", "/")
+    first, separator, rest = normalized.partition("/")
+    spelling = _memory_root_folder_spelling(first)
+    if spelling is None:
+        return rel_path
+    return f"{spelling}{separator}{rest}"
+
+
 def note_source_vault(rel_path: str) -> VaultSourceKind:
-    """Return the logical source vault (``"memory"`` or ``"docs"``) for ``rel_path``."""
-    return "memory" if is_memory_rel_path(rel_path) else "docs"
+    """Return the physical source vault (``"memory"`` or ``"docs"``) for ``rel_path``."""
+    return "memory" if is_memory_root_rel_path(rel_path) else "docs"
 
 
 def effective_memory_root(
@@ -504,8 +543,8 @@ def resolve_vault_rel_target(
         memory_root=memory_root,
         settings=settings,
     )
-    if mem_root is not None and is_memory_rel_path(rel_path):
-        return mem_root / canonical_memory_rel_path(rel_path)
+    if mem_root is not None and is_memory_root_rel_path(rel_path):
+        return mem_root / canonical_memory_root_rel_path(rel_path)
     extras = effective_extra_read_vaults(vault_root, settings=settings)
     if extras:
         normalized = rel_path.strip().replace("\\", "/").lstrip("/")

@@ -256,6 +256,7 @@ datacron protocol uninstall --client all
 | `DATACRON_EXTRA_READ_VAULTS` | empty | Optional read-only secondary vault mounts (`prefix=path` separated by the OS path separator or a JSON object). Each prefix becomes a top-level folder of the vault and wins over a docs folder of the same name, compared without case: that docs folder drops out of the walk, the index and search while the mount is configured (its files stay on disk), even when the mount path does not exist. The server logs a warning at startup for such a masked folder and for a mount path that is not an existing folder. A mount that contains, or sits inside, the vault root, the memory root or another mount is refused. |
 | `DATACRON_READ_PATHS` | empty | Read allowlist; the installer sets it to the vault (and memory vault when configured). |
 | `DATACRON_WRITE_PATHS` | empty | Write allowlist; **empty = writing disabled**. |
+| `DATACRON_RUNBOOK_VAULT` | `_runbooks` beside `_memory` | Folder that holds runbooks, one sub-folder per project; asked by interactive setup, written by `datacron setup --runbook-vault`. Only the runbook capture writes there. See [Runbooks](runbooks.md#setting-up-the-runbook-vault). |
 | `DATACRON_MAX_RESULT_COUNT` | `20` | Maximum number of results returned. |
 | `DATACRON_MAX_RESULT_TOKENS` | `8000` | Token budget for search results. |
 | `DATACRON_REPAIR_MIN_INTERVAL_SECONDS` | `30` | Minimum interval between repair-on-read sweeps; `0` = every read. |
@@ -360,11 +361,11 @@ For the next steps, move on to the [user guide](user-guide.md).
   ```bash
   datacron companion --vault /path/to/vault
   ```
-- **Atomic Single-to-Dual Vault Migration (`datacron migrate-memory`)**: copies `.datacron/` and `_memory/` from an existing single vault into a dedicated memory vault, verifies every copied file by SHA-256, rebuilds the FTS5 index across both roots, and reconfigures the detected MCP clients (`--client all --scope user` by default; `--client none` leaves them unchanged). The source copies are kept unless you pass `--cleanup-source`. `--enable-write` / `--no-write` set the write allowlist of the reconfigured clients; omitted, each client keeps its current write setting.
+- **Atomic Single-to-Dual Vault Migration (`datacron migrate-memory`)**: copies `.datacron/`, `_memory/` and `_runbooks/` (when present) from an existing single vault into a dedicated memory vault, verifies every copied file by SHA-256, rebuilds the FTS5 index across both roots, and reconfigures the detected MCP clients (`--client all --scope user` by default; `--client none` leaves them unchanged). The source copies are kept unless you pass `--cleanup-source`. `--enable-write` / `--no-write` set the write allowlist of the reconfigured clients; omitted, each client keeps its current write setting.
 
   **Stop the running MCP clients and Datacron servers first**: a write made during the copy is not carried over. Afterwards, restart the clients, check that they read the memory vault, then remove `.datacron/` and `_memory/` from the documentation vault (or rerun with `--cleanup-source`). With `--client none`, run `datacron setup --memory-vault ...` to point the clients at the new location.
 
-  To remove the kept source later without copying again, run `datacron migrate-memory --vault ... --memory-vault ... --cleanup-only`: it verifies the source `_memory/` against the memory vault (or the copy manifest), then removes the source `.datacron/` and `_memory/`. It changes no client and cannot be combined with `--cleanup-source`, `--client`, `--scope` or the write options.
+  To remove the kept source later without copying again, run `datacron migrate-memory --vault ... --memory-vault ... --cleanup-only`: it verifies the source `_memory/` against the memory vault (or the copy manifest), then removes the source `.datacron/`, `_memory/` and `_runbooks/`. It changes no client and cannot be combined with `--cleanup-source`, `--client`, `--scope` or the write options.
   ```bash
   datacron migrate-memory --vault /path/to/docs --memory-vault /path/to/memory
   ```

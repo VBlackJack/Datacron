@@ -42,6 +42,7 @@ from datacron.bootstrap import BootstrapResult, initialize_vault
 from datacron.core.config import (
     INDEX_DIR_NAME,
     MEMORY_SUBFOLDER_NAME,
+    RUNBOOKS_SUBFOLDER_NAME,
     SIDECAR_DIR_NAME,
     VALID_DURABILITY_MODES,
     VALID_TOOL_PROFILES,
@@ -151,6 +152,7 @@ _ENV_READ_PATHS: Final[str] = ENV_READ_PATHS
 _ENV_WRITE_PATHS: Final[str] = ENV_WRITE_PATHS
 _ENV_DURABILITY: Final[str] = "DATACRON_DURABILITY"
 _ENV_TOOL_PROFILE: Final[str] = "DATACRON_TOOL_PROFILE"
+_ENV_RUNBOOK_VAULT: Final[str] = "DATACRON_RUNBOOK_VAULT"
 _ENV_READ_ONLY: Final[str] = ENV_READ_ONLY
 _ENV_TRUE: Final[str] = "true"
 
@@ -250,6 +252,9 @@ class SetupPlan:
         read_only: ``True`` selects certified read-only mode, ``False``
             removes it from the client config, and ``None`` leaves whatever
             the config already holds.
+        runbook_vault_path: The folder of the vault that holds runbooks, written
+            to the client entry, or ``None`` to leave whatever it already holds.
+            It must lie inside ``vault_path``.
         force: Overwrite an existing ``VAULT.yaml``.
         reset: Remove the generated config and index before setup.
     """
@@ -267,6 +272,7 @@ class SetupPlan:
     durability: str = "best-effort"
     tool_profile: str | None = None
     read_only: bool | None = None
+    runbook_vault_path: Path | None = None
     force: bool = False
     reset: bool = False
 
@@ -293,6 +299,8 @@ class SetupResult:
         tool_profile: The tool profile this run wrote, or ``None`` when it left
             the client config's profile as it was.
         memory_vault_path: Resolved dedicated memory vault root, when configured.
+        runbook_vault_path: The runbook vault the written configs hold, a
+            preserved one included, or ``None`` when there is none.
         client_installs: Per-client registration outcomes for ``client=all``.
         reset_result: Surgical reset outcome, when reset was requested.
         warnings: Non-fatal messages surfaced to the operator.
@@ -309,6 +317,7 @@ class SetupResult:
     durability: str
     memory_vault_path: Path | None = None
     tool_profile: str | None = None
+    runbook_vault_path: Path | None = None
     machine_write_env: MachineWriteEnvResult | None = None
     stdio_config: str | None = None
     client_installs: list[InstallOutcome] = field(default_factory=list)
@@ -342,6 +351,25 @@ def _validate_plan(plan: SetupPlan) -> None:
         raise ValueError("Write paths cannot be combined with an explicit write opt-out.")
     if plan.single_vault and plan.memory_vault_path is not None:
         raise ValueError(t("cli.setup.single_vault_conflict"))
+    if plan.runbook_vault_path is not None and not _runbook_vault_inside(plan):
+        # Its files share the vault's paths, locks and operation journal; a folder
+        # outside the vault would have neither.
+        raise ValueError(
+            f"The runbook vault {plan.runbook_vault_path} must be a folder inside the "
+            f"vault {plan.vault_path}, or {RUNBOOKS_SUBFOLDER_NAME} in the memory vault."
+        )
+
+
+def _runbook_vault_inside(plan: SetupPlan) -> bool:
+    """Return whether the plan's runbook folder lies where the server can serve it."""
+    if plan.runbook_vault_path is None:
+        return True
+    folder = plan.runbook_vault_path.expanduser().resolve()
+    if plan.memory_vault_path is not None:
+        memory = plan.memory_vault_path.expanduser().resolve()
+        if folder.is_relative_to(memory):
+            return folder.is_relative_to(memory / RUNBOOKS_SUBFOLDER_NAME)
+    return folder.is_relative_to(plan.vault_path.expanduser().resolve())
 
 
 def _scopes_for(install_scope: str) -> tuple[str, ...]:
@@ -837,6 +865,7 @@ async def run_setup(plan: SetupPlan) -> SetupResult:
         read_only=effective_read_only,
         durability=plan.durability,
         tool_profile=_effective_tool_profile(written_envs, plan.tool_profile),
+        runbook_vault_path=_effective_runbook_vault(written_envs, plan.runbook_vault_path),
         memory_vault_path=memory_root,
         machine_write_env=machine_write_env,
         stdio_config=stdio_config,
@@ -890,6 +919,17 @@ def _effective_tool_profile(
         return requested
     held = written_envs[0][1].get(_ENV_TOOL_PROFILE)
     return held if isinstance(held, str) else None
+
+
+def _effective_runbook_vault(
+    written_envs: list[tuple[str, Mapping[str, object]]],
+    requested: Path | None,
+) -> Path | None:
+    """Return the runbook vault the written configs hold, preserved values included."""
+    if not written_envs:
+        return None if requested is None else requested.expanduser().resolve()
+    held = written_envs[0][1].get(_ENV_RUNBOOK_VAULT)
+    return Path(held) if isinstance(held, str) and held else None
 
 
 def _env_settings(env: Mapping[str, object]) -> tuple[list[Path], bool]:
@@ -1125,6 +1165,8 @@ def _build_extra_env(
     env: dict[str, str] = {_ENV_DURABILITY: plan.durability}
     if plan.tool_profile is not None:
         env[_ENV_TOOL_PROFILE] = plan.tool_profile
+    if plan.runbook_vault_path is not None:
+        env[_ENV_RUNBOOK_VAULT] = str(plan.runbook_vault_path.expanduser().resolve())
     if memory_root is not None:
         env[_ENV_MEMORY_ROOT] = str(memory_root)
         if vault_root is not None and memory_root != vault_root:

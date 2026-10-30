@@ -32,7 +32,6 @@ from typing import (
 )
 
 from datacron.core.config import (
-    MEMORY_SUBFOLDER_NAME,
     SIDECAR_DIR_NAME,
     Settings,
     VaultConfig,
@@ -50,11 +49,12 @@ from datacron.core.paths import (
     assert_vault_rel_path,
     assert_within_paths,
     assert_within_resolved_roots,
-    canonical_memory_rel_path,
+    canonical_memory_root_rel_path,
     effective_extra_read_vaults,
     effective_memory_root,
     is_link_stat,
-    is_memory_rel_path,
+    is_memory_root_folder,
+    is_memory_root_rel_path,
     sidecar_vault_config,
 )
 from datacron.core.protocols import VaultReader, VaultWriter
@@ -337,10 +337,10 @@ class SingleTenantVaultScope:
         normalized = rel_path.replace("\\", "/")
         parts = PurePosixPath(normalized).parts if normalized else ()
         if self._memory_root is not None and (
-            is_memory_rel_path(rel_path)
+            is_memory_root_rel_path(rel_path)
             or (parts and parts[0].casefold() == SIDECAR_DIR_NAME.casefold())
         ):
-            memory_rel_path = canonical_memory_rel_path(rel_path)
+            memory_rel_path = canonical_memory_root_rel_path(rel_path)
             memory_parts = PurePosixPath(memory_rel_path.replace("\\", "/")).parts
             return self._memory_root, memory_rel_path, memory_parts
         if parts and self._extra_read_by_folded:
@@ -358,21 +358,24 @@ class SingleTenantVaultScope:
                 return Path(prefix, *rel.parts)
         if self._memory_root is not None and resolved.is_relative_to(self._memory_root):
             rel = resolved.relative_to(self._memory_root)
-            if not rel.parts or rel.parts[0].casefold() in {
-                MEMORY_SUBFOLDER_NAME.casefold(),
-                SIDECAR_DIR_NAME.casefold(),
-            }:
+            if (
+                not rel.parts
+                or is_memory_root_folder(rel.parts[0])
+                or rel.parts[0].casefold() == SIDECAR_DIR_NAME.casefold()
+            ):
                 return rel
             raise PathConfinementError(
-                f"Path {resolved} is outside the _memory namespace in {self._memory_root}."
+                f"Path {resolved} is outside the memory vault folders in {self._memory_root}."
             )
         if resolved.is_relative_to(self._vault_root):
             rel = resolved.relative_to(self._vault_root)
             if (
                 self._memory_root is not None
                 and rel.parts
-                and rel.parts[0].casefold()
-                in {MEMORY_SUBFOLDER_NAME.casefold(), SIDECAR_DIR_NAME.casefold()}
+                and (
+                    is_memory_root_folder(rel.parts[0])
+                    or rel.parts[0].casefold() == SIDECAR_DIR_NAME.casefold()
+                )
             ):
                 raise PathConfinementError(
                     f"Path {resolved} in docs vault is masked by memory vault {self._memory_root}."

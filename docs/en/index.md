@@ -24,6 +24,7 @@ a Markdown vault from Claude, without sending the whole vault into the context.
 |---|---|
 | [Vault conventions (SPEC)](spec.md) | Vault contract: `.datacron/` sidecar, frontmatter, trust model, wikilinks, chunks, audit, versioning. |
 | [Vault organization](organization.md) | The `organization` block in `VAULT.yaml`: tags, folders, naming templates, size ceilings, and `datacron reorganize`, which measures the gap read-only. |
+| [Runbooks](runbooks.md) | One runbook per project in the runbook vault (`DATACRON_RUNBOOK_VAULT`), created from the `runbooks` template of `VAULT.yaml` and filled by `runbook_capture`. |
 | [Architecture and public surface](architecture.md) | Technical architecture and exposed surface. |
 | [Freshness contract v1](freshness-contract-v1.md) | Index freshness guarantees. |
 

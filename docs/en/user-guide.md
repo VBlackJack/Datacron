@@ -70,6 +70,10 @@ atomic per file, versioned, and audited.
 | `revert_note` | Restores the exact bytes of a version kept in history. |
 | `apply_organization_manifest` | Validates and then applies a local content-addressed bundle containing at least one exact note operation and/or an exact `organization` configuration replacement. |
 
+When the vault declares `runbooks` and `DATACRON_RUNBOOK_VAULT` is set, the standard
+profile also offers `runbook_capture`, which files a durable fact in the subject's runbook and
+writes nowhere else. See [Runbooks](runbooks.md).
+
 `apply_organization_manifest` always uses two calls. `mode="validate"` authenticates the manifest
 and payloads, checks every CAS, projects the organization report, and returns a
 `confirmation_token` without writing. `mode="apply"` requires that exact token and revalidates the
