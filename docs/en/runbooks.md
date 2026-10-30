@@ -12,7 +12,12 @@ when the project has none yet.
 
 ## Setting up the runbook vault
 
-Choose the runbook vault when you configure Datacron:
+The runbook vault is optional. Without one, runbooks go to `_runbooks`, beside
+`_memory`: in the memory vault when you use one, at the vault root otherwise.
+
+To choose another folder, interactive `datacron setup` asks for it (Enter keeps the
+current setting or the default), the Windows installer has a third, optional folder
+field on its vault page, and the command line takes it directly:
 
 ```powershell
 datacron setup --vault C:\Notes --runbook-vault C:\Notes\Runbooks
@@ -23,13 +28,15 @@ option keeps it. You can also set the variable yourself:
 
 | Variable | Default | Role |
 |---|---|---|
-| `DATACRON_RUNBOOK_VAULT` | unset | The folder of the vault that holds runbooks, one sub-folder per project. **Unset = no runbook is writable** and `runbook_capture` is not offered. |
+| `DATACRON_RUNBOOK_VAULT` | `_runbooks` beside `_memory` | The folder that holds runbooks, one sub-folder per project. |
 
-The runbook vault must lie inside the served vault: its files share the vault's
-paths, locks and operation journal, so a recovery after a crash finds them where
-they were written. A runbook vault outside the vault is refused by `setup`, and the
-server then logs a warning and does not offer the capture. The name of the folder is
-yours; Datacron knows none in advance.
+The runbook vault must lie inside the served vault: any folder of the documentation
+vault, or `_runbooks` (or a folder under it) in the memory vault. Its files then share
+the vault's paths, locks and operation journal, so a recovery after a crash finds them
+where they were written. Another folder is refused by `setup`, and the server logs a
+warning and does not offer the capture. In Dual-Vault mode a `_runbooks` folder of the
+documentation vault is masked by the memory vault's, as `_memory` is. The name of a
+folder you choose is yours; Datacron knows none in advance.
 
 ## The `runbooks` block
 
@@ -117,9 +124,9 @@ runbook files troubleshooting under `50-troubleshooting`, another under
 
 ## Capturing a fact: `runbook_capture`
 
-The tool is registered only when the vault declares `runbooks`,
-`DATACRON_RUNBOOK_VAULT` names a folder inside the vault, the server is not
-read-only, and the tool profile is `standard`. Otherwise the tool list is unchanged.
+The tool is registered only when the vault declares `runbooks`, the runbook vault
+lies inside the served vault, the server is not read-only, and the tool profile is
+`standard`. Otherwise the tool list is unchanged.
 
 | Argument | Meaning |
 |---|---|
@@ -231,7 +238,7 @@ git working tree, `git diff` shows the capture and `git restore` undoes it.
 A runbook file is writable only when all of these hold, judged after the path is
 resolved (a `..` segment is followed first):
 
-1. it lies inside `DATACRON_RUNBOOK_VAULT`, itself inside the vault;
+1. it lies inside the runbook vault, itself inside the served vault;
 2. its first folder under the runbook vault is named by `directory_naming`;
 3. it is a Markdown file;
 4. it is not under one of the `protected_paths`;

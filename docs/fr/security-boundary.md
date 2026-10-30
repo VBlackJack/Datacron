@@ -69,7 +69,7 @@ fichiers fantômes cloud de OneDrive, ne sont pas des liens et sont écrits norm
 envoyée par le client ; le chemin résolu sur l'hôte n'est journalisé que localement.
 
 Les fichiers de runbook ont une seconde racine d'écriture, distincte, le vault runbooks
-(`DATACRON_RUNBOOK_VAULT`), non définie par défaut et toujours dans le vault servi. Seule la
+(`DATACRON_RUNBOOK_VAULT`, sinon `_runbooks` à côté de `_memory`), toujours dans le vault servi. Seule la
 capture de runbook y écrit, et elle ne lit jamais `DATACRON_WRITE_PATHS` ; les outils
 d'écriture génériques ne traitent jamais le vault runbooks comme un chemin d'écriture. Une
 écriture de runbook doit aussi tomber dans un dossier nommé comme un runbook, et elle est

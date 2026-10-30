@@ -13,16 +13,20 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 - **Runbook vault (`DATACRON_RUNBOOK_VAULT`, `datacron setup --runbook-vault`)**: one folder
   inside the served vault holds the runbooks, one `{slug}-runbook` sub-folder per project. It is
-  chosen at setup, kept on a rerun, and is the only place the runbook capture writes; the
-  generic write tools never treat it as a write path. A folder outside the vault is refused by
+  optional: interactive setup and the Windows installer offer to choose it, a rerun keeps it,
+  and without one runbooks go to `_runbooks` beside `_memory`, in the memory vault in Dual-Vault
+  mode, whose `_runbooks` masks the documentation vault's as `_memory` does. It is the only
+  place the runbook capture writes; the generic write tools never treat it as a write path. A
+  folder outside the vault, or a memory-vault folder other than `_runbooks`, is refused by
   `setup`, and the server then logs a warning and does not offer the capture.
+  `datacron migrate-memory` moves `_runbooks` with `_memory`.
 - **Runbook template (`runbooks` in `VAULT.yaml`)**: templates name each file by role, find it by
   the pattern its stem matches, and carry every rendered word in their own language;
   `default_template` and `assignments` pick a runbook's template, `protected_paths` (empty by
   default) lists paths always refused, and `.git`, `confluence-source` and `confluence-updates`
   are always refused. Unknown keys are refused at startup; a vault without the block is unchanged.
 - **`runbook_capture`** (standard profile, registered only when `runbooks` is declared and
-  `DATACRON_RUNBOOK_VAULT` is set): files one durable fact (`error_fix`, `command`,
+  the runbook vault lies inside the served vault): files one durable fact (`error_fix`, `command`,
   `server`, `variable`, `contact`, `decision`, `fact`, `open_question`) in the runbook of the
   project the conversation is about, routed by role pattern to its file and section, with the
   neutral provenance mark
