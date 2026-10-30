@@ -21,17 +21,15 @@ the routing is decided on data the caller has already confined and admitted.
 
 from __future__ import annotations
 
-import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final, final
 
 from datacron.core.config import (
     RUNBOOK_MARKDOWN_SUFFIX,
     RUNBOOK_NAMING_SERVICE,
-    RUNBOOK_NAMING_SLUG,
+    RUNBOOK_SLUG_PATTERN,
     OrganizationConfig,
-    RunbookRoot,
     RunbooksConfig,
     RunbookTemplate,
 )
@@ -49,8 +47,10 @@ __all__ = [
 ]
 
 RUNBOOK_MAX_CANDIDATES: Final[int] = 10
-_SLUG_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _NAMESPACE_SEPARATOR: Final[str] = "/"
+_CREATE_HINT: Final[str] = (
+    "To start the runbook of a project named in the conversation, repeat with create_runbook=true"
+)
 
 
 class RunbookRoutingError(ValueError):
@@ -62,7 +62,6 @@ class RunbookRoutingError(ValueError):
 class RunbookLocation:
     """One runbook folder, existing or to be created from its template."""
 
-    root: RunbookRoot
     template: RunbookTemplate
     directory: str
     slug: str
@@ -90,166 +89,128 @@ def _fold(value: str, *, fold_case: bool) -> str:
     return value.casefold() if fold_case else value
 
 
-def _directory_name(root: RunbookRoot, slug: str) -> str:
-    return root.directory_naming.replace(f"{{{RUNBOOK_NAMING_SLUG}}}", slug)
+def _join(folder: str, name: str) -> str:
+    return f"{folder}/{name}" if folder else name
 
 
-@final
-@dataclass(frozen=True, slots=True)
-class _Known:
-    """A runbook folder found on disk, or declared by a ``runbook`` root."""
-
-    root: RunbookRoot
-    directory: str
-    slug: str
-    exists: bool
-
-
-def _location(runbooks: RunbooksConfig, known: _Known) -> RunbookLocation:
-    return RunbookLocation(
-        root=known.root,
-        template=runbooks.templates[known.root.template],
-        directory=known.directory,
-        slug=known.slug,
-        exists=known.exists,
-    )
-
-
-def _known_runbooks(
-    runbooks: RunbooksConfig, children: Mapping[str, Sequence[str]], *, fold_case: bool
-) -> list[_Known]:
-    """Return every runbook folder: on disk under a parent root, or declared as a root.
-
-    ``children`` maps a parent root to its child folder names, and a ``runbook`` root
-    to its own name when the folder exists. A declared runbook root is always known,
-    existing or not, because declaring it is the vault saying where it goes.
-    """
-    found: list[_Known] = []
-    for root in runbooks.roots:
-        names = children.get(root.folder, ())
-        if root.is_runbook:
-            own_name = root.folder.rsplit(_NAMESPACE_SEPARATOR, 1)[-1]
-            slug = root.own_slug()
-            if slug is not None:
-                exists = any(
-                    _fold(name, fold_case=fold_case) == _fold(own_name, fold_case=fold_case)
-                    for name in names
-                )
-                found.append(_Known(root, root.folder, slug, exists))
-            continue
-        for name in names:
-            slug = root.directory_slug(name, fold_case=fold_case)
-            if slug is not None:
-                found.append(_Known(root, f"{root.folder}/{name}", slug, True))
-    return found
-
-
-def _by_path(
-    reference: str,
-    runbooks: RunbooksConfig,
-    known: list[_Known],
-    *,
-    fold_case: bool,
+def _location(
+    runbooks: RunbooksConfig, folder: str, name: str, slug: str, *, exists: bool
 ) -> RunbookLocation:
-    path = reference.replace("\\", _NAMESPACE_SEPARATOR).strip(_NAMESPACE_SEPARATOR)
-    for item in known:
-        if _fold(item.directory, fold_case=fold_case) == _fold(path, fold_case=fold_case):
-            return _location(runbooks, item)
-    folder, _, name = path.rpartition(_NAMESPACE_SEPARATOR)
-    for root in runbooks.roots:
-        if root.is_runbook:
-            continue
-        if _fold(root.folder, fold_case=fold_case) != _fold(folder, fold_case=fold_case):
-            continue
-        slug = root.directory_slug(name, fold_case=fold_case)
-        if slug is None:
-            break
-        return _location(runbooks, _Known(root, f"{root.folder}/{name}", slug, False))
-    raise RunbookRoutingError(
-        f"subject {reference!r} is not a runbook folder of a declared root; runbook roots: "
-        f"{_candidates([root.folder for root in runbooks.roots])}"
+    return RunbookLocation(
+        template=runbooks.template_for(slug),
+        directory=_join(folder, name),
+        slug=slug,
+        exists=exists,
     )
+
+
+def _new_location(
+    runbooks: RunbooksConfig, folder: str, slug: str, *, create: bool, reference: str
+) -> RunbookLocation:
+    if not create:
+        raise RunbookRoutingError(f"subject {reference!r} has no runbook yet. {_CREATE_HINT}")
+    if not RUNBOOK_SLUG_PATTERN.match(slug):
+        raise RunbookRoutingError(
+            f"subject {reference!r} does not give a usable runbook name ({slug!r}); use "
+            f"lowercase letters, digits and hyphens ({RUNBOOK_SLUG_PATTERN.pattern})"
+        )
+    return _location(runbooks, folder, runbooks.directory_name(slug), slug, exists=False)
 
 
 def resolve_runbook(
     subject: str,
     runbooks: RunbooksConfig,
     organization: OrganizationConfig | None,
-    children: Mapping[str, Sequence[str]],
     *,
+    vault_folder: str,
+    children: Sequence[str],
     fold_case: bool,
+    create: bool = False,
 ) -> RunbookLocation:
     """Return the runbook ``subject`` names, or refuse with the candidates.
 
-    ``subject`` is a runbook folder path (``CPDC/wsus-runbook``), a registered
-    subject (tag, last segment or alias) or the slug of a known runbook.
-    ``children`` maps each declared root folder to the names of its child folders,
-    and each ``runbook`` root to its own name when it exists.
+    ``subject`` is a project name, a registered subject (tag, last segment or
+    alias), or a runbook folder path inside the runbook vault. ``vault_folder`` is
+    the runbook vault, vault-relative; ``children`` are the names of its folders.
 
-    A runbook that does not exist yet is returned with ``exists=False`` only when a
-    ``runbook`` root declares it, or when the subject is a runbook folder path or a
-    registered subject under a ``parent`` root: an unknown word never creates a
-    runbook, so a typo cannot start one.
+    A runbook that does not exist yet is returned with ``exists=False`` only when
+    ``create`` is true: the name of a new runbook comes from the project named in
+    the conversation, and asking for it explicitly is what keeps a typo from
+    starting one.
     """
     reference = subject.strip() if isinstance(subject, str) else ""
     if not reference:
         raise RunbookRoutingError("subject must not be empty")
-    known = _known_runbooks(runbooks, children, fold_case=fold_case)
-    if _NAMESPACE_SEPARATOR in reference.replace("\\", _NAMESPACE_SEPARATOR) and not (
-        matching_subject_tags(reference, organization)
-    ):
-        return _by_path(reference, runbooks, known, fold_case=fold_case)
+    known = [
+        (name, slug)
+        for name in children
+        if (slug := runbooks.directory_slug(name, fold_case=fold_case)) is not None
+    ]
     tags = matching_subject_tags(reference, organization)
+    path = reference.replace("\\", _NAMESPACE_SEPARATOR).strip(_NAMESPACE_SEPARATOR)
+    if _NAMESPACE_SEPARATOR in path and not tags:
+        return _by_path(path, runbooks, vault_folder, known, fold_case=fold_case, create=create)
     if len(tags) > 1:
         raise RunbookRoutingError(
             f"subject {reference!r} is ambiguous; it matches the subjects {_candidates(tags)}"
         )
     slugs = [reference]
     if tags:
-        tag = tags[0]
         registered = next(
             item
             for item in (organization.tags.subjects if organization and organization.tags else ())
-            if item.tag == tag
+            if item.tag == tags[0]
         )
-        slugs = [tag.rsplit(_NAMESPACE_SEPARATOR, 1)[-1], *registered.aliases]
-    wanted = {_fold(slug, fold_case=True) for slug in slugs}
-    matches = [item for item in known if item.slug.casefold() in wanted]
-    if len(matches) == 1:
-        return _location(runbooks, matches[0])
+        slugs = [tags[0].rsplit(_NAMESPACE_SEPARATOR, 1)[-1], *registered.aliases]
+    wanted = {slug.casefold() for slug in slugs}
+    matches = [(name, slug) for name, slug in known if slug.casefold() in wanted]
     if len(matches) > 1:
         raise RunbookRoutingError(
             f"subject {reference!r} matches several runbooks: "
-            f"{_candidates([item.directory for item in matches])}. "
+            f"{_candidates([_join(vault_folder, name) for name, _ in matches])}. "
             "Repeat with the runbook folder path"
         )
-    if not tags:
+    if matches:
+        name, slug = matches[0]
+        return _location(runbooks, vault_folder, name, slug, exists=True)
+    if not create:
         raise RunbookRoutingError(
-            f"subject {reference!r} names no runbook and no registered subject; "
-            f"runbooks: {_candidates([item.directory for item in known])}. Repeat with a known "
-            "runbook, a registered subject, or the folder path of a new runbook"
+            f"subject {reference!r} names no existing runbook; runbooks: "
+            f"{_candidates([_join(vault_folder, name) for name, _ in known])}. {_CREATE_HINT}"
         )
-    slug = slugs[0].casefold()
-    if not _SLUG_PATTERN.match(slug):
-        raise RunbookRoutingError(
-            f"subject {tags[0]!r} does not give a usable runbook name ({slug!r}); repeat with "
-            "the folder path of the new runbook"
-        )
-    parents = [root for root in runbooks.roots if not root.is_runbook]
-    if len(parents) != 1:
-        where = (
-            f"several roots could hold it: {_candidates([root.folder for root in parents])}"
-            if parents
-            else "no root of layout 'parent' can hold a new one; declare its folder as a root"
-        )
-        raise RunbookRoutingError(
-            f"subject {tags[0]!r} has no runbook yet and {where}. Repeat with the folder path "
-            "of the new runbook"
-        )
-    root = parents[0]
-    return _location(
-        runbooks, _Known(root, f"{root.folder}/{_directory_name(root, slug)}", slug, False)
+    return _new_location(
+        runbooks, vault_folder, slugs[0].casefold(), create=create, reference=reference
     )
+
+
+def _by_path(
+    path: str,
+    runbooks: RunbooksConfig,
+    vault_folder: str,
+    known: list[tuple[str, str]],
+    *,
+    fold_case: bool,
+    create: bool,
+) -> RunbookLocation:
+    prefix = f"{vault_folder}{_NAMESPACE_SEPARATOR}" if vault_folder else ""
+    inside = _fold(path, fold_case=fold_case).startswith(_fold(prefix, fold_case=fold_case))
+    name = path[len(prefix) :] if inside else ""
+    if not inside or not name or _NAMESPACE_SEPARATOR in name:
+        raise RunbookRoutingError(
+            f"subject {path!r} is not a runbook folder of the runbook vault "
+            f"({vault_folder or 'the vault root'})"
+        )
+    for known_name, known_slug in known:
+        if _fold(known_name, fold_case=fold_case) == _fold(name, fold_case=fold_case):
+            return _location(runbooks, vault_folder, known_name, known_slug, exists=True)
+    slug = runbooks.directory_slug(name, fold_case=fold_case)
+    if slug is None:
+        raise RunbookRoutingError(
+            f"subject {path!r} is not named like a runbook ({runbooks.directory_naming!r})"
+        )
+    if not create:
+        raise RunbookRoutingError(f"runbook {path!r} does not exist yet. {_CREATE_HINT}")
+    return _location(runbooks, vault_folder, name, slug, exists=False)
 
 
 def resolve_role(kind: str, target_role: str | None, template: RunbookTemplate) -> str:
@@ -300,9 +261,10 @@ def quickref_rel_path(location: RunbookLocation, service: str) -> str:
     if quickref is None:
         raise RunbookRoutingError(f"the template of {location.directory} declares no quickref")
     name = service.strip().casefold() if isinstance(service, str) else ""
-    if not _SLUG_PATTERN.match(name):
+    if not RUNBOOK_SLUG_PATTERN.match(name):
         raise RunbookRoutingError(
-            f"quickref service must be a lowercase name ({_SLUG_PATTERN.pattern}); got {service!r}"
+            "quickref service must be a lowercase name "
+            f"({RUNBOOK_SLUG_PATTERN.pattern}); got {service!r}"
         )
     stem = quickref.naming.replace(f"{{{RUNBOOK_NAMING_SERVICE}}}", name)
     return f"{location.directory}/{quickref.folder}/{stem}{RUNBOOK_MARKDOWN_SUFFIX}"

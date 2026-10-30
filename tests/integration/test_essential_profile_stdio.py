@@ -55,7 +55,7 @@ def _environment(vault: Path, log_dir: Path, profile: str | None) -> dict[str, s
     env["DATACRON_LOG_LEVEL"] = "WARNING"
     env["PYTHONUNBUFFERED"] = "1"
     env.pop("DATACRON_TOOL_PROFILE", None)
-    env.pop("DATACRON_RUNBOOK_WRITE_PATHS", None)
+    env.pop("DATACRON_RUNBOOK_VAULT", None)
     if profile is not None:
         env["DATACRON_TOOL_PROFILE"] = profile
     return env
@@ -113,12 +113,11 @@ async def test_with_runbooks_the_instructions_are_the_block_then_the_annex(
     existing = sidecar.read_text(encoding="utf-8") if sidecar.exists() else ""
     sidecar.write_text(
         existing + "\nrunbooks:\n"
-        "  roots: [{folder: CPDC, template: infra}]\n"
         "  templates:\n"
         "    infra:\n"
         "      language: en\n"
         "      readme: README\n"
-        "      observation_label: On Mets\n"
+        "      observation_label: On site\n"
         "      roles:\n"
         "        troubleshooting: {stem: 50-troubleshooting, match: '^50-troubleshooting$'}\n",
         encoding="utf-8",
@@ -128,7 +127,7 @@ async def test_with_runbooks_the_instructions_are_the_block_then_the_annex(
         args=["-c", _ENTRY_COMMAND],
         env={
             **_environment(vault, tmp_path / "logs", None),
-            "DATACRON_RUNBOOK_WRITE_PATHS": str(vault / "CPDC"),
+            "DATACRON_RUNBOOK_VAULT": str(vault / "Ops"),
         },
     )
     client = Client(

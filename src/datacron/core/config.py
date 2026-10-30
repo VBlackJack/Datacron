@@ -283,11 +283,6 @@ ESSENTIAL_INSTRUCTIONS_MAX_CHARS: Final[int] = 900
 RUNBOOK_EXCLUDED_DIRECTORIES: Final[frozenset[str]] = frozenset(
     {".git", "confluence-source", "confluence-updates"}
 )
-# A root either holds runbooks as children named by directory_naming ("parent"),
-# or is itself one runbook folder ("runbook"), declared one per repository.
-RUNBOOK_LAYOUT_PARENT: Final[str] = "parent"
-RUNBOOK_LAYOUT_RUNBOOK: Final[str] = "runbook"
-RUNBOOK_LAYOUTS: Final[frozenset[str]] = frozenset({RUNBOOK_LAYOUT_PARENT, RUNBOOK_LAYOUT_RUNBOOK})
 RUNBOOK_CAPTURE_KINDS: Final[tuple[str, ...]] = (
     "error_fix",
     "command",
@@ -302,6 +297,7 @@ RUNBOOK_MARKDOWN_SUFFIX: Final[str] = ".md"
 RUNBOOK_NAMING_SLUG: Final[str] = "slug"
 RUNBOOK_NAMING_SERVICE: Final[str] = "service"
 DEFAULT_RUNBOOK_DIRECTORY_NAMING: Final[str] = "{slug}-runbook"
+RUNBOOK_SLUG_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _RUNBOOK_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z][a-z0-9_]*$")
 _RUNBOOK_LANGUAGE_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$"
@@ -1059,83 +1055,121 @@ class RunbookTemplate(BaseModel):
 
 
 @final
-class RunbookRoot(BaseModel):
-    """Where runbooks of one template live.
+class RunbooksConfig(BaseModel):
+    """How runbooks look in the vault folder named by ``DATACRON_RUNBOOK_VAULT``.
 
-    With ``layout: parent`` (the default) the folder's children named by
-    ``directory_naming`` are runbooks. With ``layout: runbook`` the folder is one
-    runbook, and its own name must follow ``directory_naming``: a vault then
-    declares each runbook repository explicitly and nothing beside them.
+    Each child folder of that runbook vault named by ``directory_naming`` is one
+    runbook; ``runbook_capture`` creates a new one there for a project named in
+    conversation. The template of a runbook is ``assignments[slug]`` when the
+    vault assigns one, else ``default_template``. Declaring this block does not make
+    anything writable: without ``DATACRON_RUNBOOK_VAULT`` no runbook is.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    folder: str
     directory_naming: str = DEFAULT_RUNBOOK_DIRECTORY_NAMING
-    template: str
-    layout: str = RUNBOOK_LAYOUT_PARENT
-
-    @field_validator("layout", mode="before")
-    @classmethod
-    def _known_layout(cls, value: object) -> str:
-        if not isinstance(value, str) or value.strip() not in RUNBOOK_LAYOUTS:
-            raise ValueError(f"runbook root layout must be one of {sorted(RUNBOOK_LAYOUTS)}")
-        return value.strip()
-
-    @model_validator(mode="after")
-    def _runbook_folder_is_named_like_one(self) -> RunbookRoot:
-        if self.is_runbook and self.own_slug() is None:
-            raise ValueError(
-                f"runbook root {self.folder!r} has layout 'runbook' but its name does not "
-                f"follow {self.directory_naming!r}"
-            )
-        return self
-
-    @property
-    def is_runbook(self) -> bool:
-        """Return whether the folder is itself one runbook."""
-        return self.layout == RUNBOOK_LAYOUT_RUNBOOK
-
-    def own_slug(self) -> str | None:
-        """Return the slug of the folder's own name, as ``directory_naming`` reads it."""
-        return self.directory_slug(self.folder.rsplit("/", 1)[-1])
-
-    @field_validator("folder", mode="before")
-    @classmethod
-    def _normalize_folder(cls, value: object) -> str:
-        folder = _normalize_vault_folder(value, what="runbook root folder")
-        segments = [segment.casefold() for segment in folder.split("/")]
-        if any(segment in RUNBOOK_EXCLUDED_DIRECTORIES for segment in segments):
-            raise ValueError(
-                f"runbook root folder {folder!r} lies in a directory runbooks never write into"
-            )
-        return folder
+    templates: dict[str, RunbookTemplate]
+    default_template: str | None = None
+    assignments: dict[str, str] = Field(default_factory=dict)
+    # Paths, relative to the runbook vault, the runbook writer always refuses.
+    # Empty by default: the names are the vault's.
+    protected_paths: tuple[str, ...] = ()
 
     @field_validator("directory_naming", mode="before")
     @classmethod
     def _normalize_directory_naming(cls, value: object) -> str:
         if not isinstance(value, str):
-            raise ValueError("runbook directory_naming must be a string")
+            raise ValueError("runbooks directory_naming must be a string")
         naming = value.strip()
         literal = _validate_single_token_naming(
-            naming, RUNBOOK_NAMING_SLUG, what="runbook directory_naming"
+            naming, RUNBOOK_NAMING_SLUG, what="runbooks directory_naming"
         )
-        # Without a literal part every child folder of the root would be a
-        # runbook, and the write scope would be the whole root.
+        # Without a literal part every child folder of the runbook vault would be
+        # a runbook, including folders that were never meant to be one.
         if not literal:
             raise ValueError(
-                "runbook directory_naming needs a literal part besides '{slug}', "
+                "runbooks directory_naming needs a literal part besides '{slug}', "
                 f"such as {DEFAULT_RUNBOOK_DIRECTORY_NAMING!r}"
             )
         return naming
 
-    @field_validator("template", mode="before")
+    @field_validator("templates", mode="before")
     @classmethod
-    def _normalize_template(cls, value: object) -> str:
-        return _normalize_runbook_name(value, what="runbook root template")
+    def _normalize_template_names(cls, value: object) -> object:
+        if not isinstance(value, dict) or not value:
+            raise ValueError("runbooks templates must be a non-empty mapping")
+        return {
+            _normalize_runbook_name(key, what="runbook template name"): item
+            for key, item in value.items()
+        }
+
+    @field_validator("default_template", mode="before")
+    @classmethod
+    def _normalize_default_template(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return _normalize_runbook_name(value, what="runbooks default_template")
+
+    @field_validator("assignments", mode="before")
+    @classmethod
+    def _normalize_assignments(cls, value: object) -> dict[str, str]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("runbooks assignments must map a runbook slug to a template")
+        assignments: dict[str, str] = {}
+        for slug, template in value.items():
+            if not isinstance(slug, str) or not RUNBOOK_SLUG_PATTERN.match(slug.strip()):
+                raise ValueError(
+                    f"runbooks assignments key must be a runbook slug "
+                    f"({RUNBOOK_SLUG_PATTERN.pattern}); got {slug!r}"
+                )
+            assignments[slug.strip()] = _normalize_runbook_name(
+                template, what=f"runbooks assignment of {slug!r}"
+            )
+        return assignments
+
+    @field_validator("protected_paths", mode="before")
+    @classmethod
+    def _normalize_protected_paths(cls, value: object) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("runbooks protected_paths must be a list of relative paths")
+        return tuple(
+            _normalize_vault_folder(item, what="runbooks protected path") for item in value
+        )
+
+    @model_validator(mode="after")
+    def _check_templates(self) -> RunbooksConfig:
+        if self.default_template is None and len(self.templates) > 1:
+            raise ValueError(
+                "runbooks default_template is required when several templates are declared"
+            )
+        if self.default_template is not None and self.default_template not in self.templates:
+            raise ValueError(
+                f"runbooks default_template names the undeclared template {self.default_template!r}"
+            )
+        for slug, template in self.assignments.items():
+            if template not in self.templates:
+                raise ValueError(
+                    f"runbooks assignment of {slug!r} names the undeclared template {template!r}"
+                )
+        return self
+
+    def template_for(self, slug: str) -> RunbookTemplate:
+        """Return the template of the runbook ``slug``: its assignment, else the default."""
+        name = self.assignments.get(slug) or self.default_template or next(iter(self.templates))
+        return self.templates[name]
+
+    def directory_name(self, slug: str) -> str:
+        """Return the folder name of the runbook ``slug``."""
+        return self.directory_naming.replace(f"{{{RUNBOOK_NAMING_SLUG}}}", slug)
 
     def directory_slug(self, name: str, *, fold_case: bool = False) -> str | None:
-        """Return the slug of a child folder named like a runbook, or ``None``."""
+        """Return the slug of a folder named like a runbook, or ``None``."""
         prefix, _, suffix = self.directory_naming.partition(f"{{{RUNBOOK_NAMING_SLUG}}}")
         start, end = len(prefix), len(name) - len(suffix)
         if end <= start:
@@ -1152,79 +1186,14 @@ class RunbookRoot(BaseModel):
             return None
         return name[start:end]
 
-
-@final
-class RunbooksConfig(BaseModel):
-    """Declared runbook roots and templates of a vault.
-
-    Declaring them does not make a runbook writable: writes stay confined to
-    ``DATACRON_RUNBOOK_WRITE_PATHS``, which only the runbook capture honours.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    roots: tuple[RunbookRoot, ...]
-    templates: dict[str, RunbookTemplate]
-    # Vault-relative folders the runbook writer always refuses, whatever
-    # DATACRON_RUNBOOK_WRITE_PATHS says. Empty by default: the names are the vault's.
-    protected_paths: tuple[str, ...] = ()
-
-    @field_validator("protected_paths", mode="before")
-    @classmethod
-    def _normalize_protected_paths(cls, value: object) -> tuple[str, ...]:
-        if value is None:
-            return ()
-        if isinstance(value, str):
-            value = [value]
-        if not isinstance(value, (list, tuple)):
-            raise ValueError("runbooks protected_paths must be a list of vault-relative folders")
-        return tuple(
-            _normalize_vault_folder(item, what="runbooks protected path") for item in value
-        )
-
     def protects(self, parts: Sequence[str]) -> bool:
-        """Return whether vault-relative path ``parts`` lie in a protected path (casefolded)."""
+        """Return whether ``parts``, relative to the runbook vault, lie in a protected path."""
         folded = [part.casefold() for part in parts]
         for protected in self.protected_paths:
             prefix = [segment.casefold() for segment in protected.split("/")]
             if folded[: len(prefix)] == prefix:
                 return True
         return False
-
-    @field_validator("roots", mode="before")
-    @classmethod
-    def _require_roots(cls, value: object) -> object:
-        if not isinstance(value, (list, tuple)) or not value:
-            raise ValueError("runbooks roots must be a non-empty list")
-        return value
-
-    @field_validator("templates", mode="before")
-    @classmethod
-    def _normalize_template_names(cls, value: object) -> object:
-        if not isinstance(value, dict) or not value:
-            raise ValueError("runbooks templates must be a non-empty mapping")
-        return {
-            _normalize_runbook_name(key, what="runbook template name"): item
-            for key, item in value.items()
-        }
-
-    @model_validator(mode="after")
-    def _check_roots(self) -> RunbooksConfig:
-        seen: list[tuple[str, ...]] = []
-        for root in self.roots:
-            if root.template not in self.templates:
-                raise ValueError(
-                    f"runbook root {root.folder!r} names the undeclared template {root.template!r}"
-                )
-            parts = tuple(segment.casefold() for segment in root.folder.split("/"))
-            if self.protects(parts):
-                raise ValueError(f"runbook root {root.folder!r} lies in a protected path")
-            for other in seen:
-                shorter = min(len(parts), len(other))
-                if parts[:shorter] == other[:shorter]:
-                    raise ValueError(f"runbook root {root.folder!r} overlaps another declared root")
-            seen.append(parts)
-        return self
 
 
 class VaultConfig(BaseModel):
@@ -1615,8 +1584,9 @@ class Settings(BaseSettings):
     log_dir: Path = Field(default=DEFAULT_LOG_DIR)
     read_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
     write_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
-    # Honoured by the runbook capture alone; the generic write tools never read it.
-    runbook_write_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
+    # The vault folder that holds runbooks. Only the runbook capture writes there,
+    # and the generic write tools never treat it as a write path.
+    runbook_vault: Path | None = Field(default=None)
     vault_root: Path | None = Field(default=None)
     memory_root: Path | None = Field(default=None)
     extra_read_vaults: Annotated[dict[str, Path], NoDecode] = Field(default_factory=dict)
@@ -1764,7 +1734,7 @@ class Settings(BaseSettings):
             return _split_path_list(value)
         raise TypeError(f"Unsupported type for read_paths: {type(value).__name__}")
 
-    @field_validator("write_paths", "runbook_write_paths", mode="before")
+    @field_validator("write_paths", mode="before")
     @classmethod
     def _parse_write_paths(cls, value: object, info: ValidationInfo) -> list[Path]:
         if value is None or isinstance(value, str):
@@ -1773,7 +1743,7 @@ class Settings(BaseSettings):
             return _split_path_list(value)
         raise TypeError(f"Unsupported type for {info.field_name}: {type(value).__name__}")
 
-    @field_validator("vault_root", "memory_root", mode="before")
+    @field_validator("vault_root", "memory_root", "runbook_vault", mode="before")
     @classmethod
     def _expand_vault_root(cls, value: object) -> Path | None:
         if value is None or value == "":

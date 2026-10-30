@@ -1889,6 +1889,15 @@ def setup(
         "--durability",
         help="Durability mode (best-effort or strict).",
     ),
+    runbook_vault: Path | None = typer.Option(
+        None,
+        "--runbook-vault",
+        help=(
+            "Folder of the vault that holds runbooks, one sub-folder per project; "
+            "runbook_capture creates and fills runbooks there and nowhere else. "
+            "Omitted, a rerun keeps what the client config holds."
+        ),
+    ),
     tool_profile: str | None = typer.Option(
         None,
         "--tool-profile",
@@ -2021,6 +2030,7 @@ def setup(
         durability=resolved_durability,
         tool_profile=None if tool_profile is None else tool_profile.strip().lower(),
         read_only=resolved_read_only,
+        runbook_vault_path=runbook_vault,
         force=force,
         reset=reset,
     )
@@ -2484,9 +2494,11 @@ def _unapplied_suffix(result: SetupResult) -> str:
 
 
 def _render_tool_profile(result: SetupResult, suffix: str) -> None:
-    """Report the tool profile the written configs hold, a preserved one included."""
+    """Report the tool profile and runbook vault the written configs hold, preserved ones too."""
     if result.tool_profile is not None:
         _print(f"  tools:      {result.tool_profile}{suffix}")
+    if result.runbook_vault_path is not None:
+        _print(f"  runbooks:   {result.runbook_vault_path}{suffix}")
 
 
 def _render_unapplied_action(result: SetupResult, suffix: str) -> None:

@@ -11,26 +11,28 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Added
 
-- **Runbook declaration (`runbooks` in `VAULT.yaml`)**: a vault can declare runbook roots
-  (folders whose `{slug}-runbook` children are runbooks) and templates that name each file by
-  role, find it by the pattern its stem matches, and carry every rendered word in their own
-  language. Unknown keys are refused at startup; a vault without the block is unchanged.
-- **`DATACRON_RUNBOOK_WRITE_PATHS`**: a runbook write allowlist separate from
-  `DATACRON_WRITE_PATHS`, empty by default. A runbook file is writable only inside it, inside a
-  declared runbook folder, as Markdown, never under the vault's `runbooks.protected_paths`
-  (empty by default) and never under `.git`, `confluence-source` or `confluence-updates`. A
-  root with `layout: runbook` is itself one runbook, so a vault can declare each runbook
-  repository and nothing beside them.
+- **Runbook vault (`DATACRON_RUNBOOK_VAULT`, `datacron setup --runbook-vault`)**: one folder
+  inside the served vault holds the runbooks, one `{slug}-runbook` sub-folder per project. It is
+  chosen at setup, kept on a rerun, and is the only place the runbook capture writes; the
+  generic write tools never treat it as a write path. A folder outside the vault is refused by
+  `setup`, and the server then logs a warning and does not offer the capture.
+- **Runbook template (`runbooks` in `VAULT.yaml`)**: templates name each file by role, find it by
+  the pattern its stem matches, and carry every rendered word in their own language;
+  `default_template` and `assignments` pick a runbook's template, `protected_paths` (empty by
+  default) lists paths always refused, and `.git`, `confluence-source` and `confluence-updates`
+  are always refused. Unknown keys are refused at startup; a vault without the block is unchanged.
 - **`runbook_capture`** (standard profile, registered only when `runbooks` is declared and
-  `DATACRON_RUNBOOK_WRITE_PATHS` is set): files one durable fact (`error_fix`, `command`,
-  `server`, `variable`, `contact`, `decision`, `fact`, `open_question`) in the subject's runbook,
-  routed by role pattern to its file and section, with the neutral provenance mark
+  `DATACRON_RUNBOOK_VAULT` is set): files one durable fact (`error_fix`, `command`,
+  `server`, `variable`, `contact`, `decision`, `fact`, `open_question`) in the runbook of the
+  project the conversation is about, routed by role pattern to its file and section, with the
+  neutral provenance mark
   `<measured|said|unverified> YYYY-MM-DD`. A present entry is skipped, a known symptom gets a
   dated update, a table row is replaced by its placeholder. It never adds frontmatter to a file
   without one, never writes `origin` or `confidence`, refuses a field that looks like a secret,
-  journals every write through a writer confined to the runbook write paths, and never runs git.
-  `dry_run` returns the plan; `request_id` makes a retry safe. A runbook role gains `title`, the
-  H1 of a file it creates.
+  journals every write through a writer confined to the runbook vault, and never runs git.
+  With `create_runbook=true` a project without a runbook gets `<slug>-runbook/` from the
+  template: the captured file, a titled skeleton file per other role and a README listing them.
+  `dry_run` returns the plan; `request_id` makes a retry safe.
 - **Runbook capture habit**: when `runbook_capture` is offered, the server instructions are the
   memory protocol block followed by one runbook paragraph and nothing else; otherwise they stay
   exactly the protocol block. The memory contract, its version and its hash are unchanged, and

@@ -32,7 +32,7 @@ from datacron.mcp.tools.runbook import _runbook_capture_impl
 from datacron.mcp.tools.session import session_context
 
 _DAY = "2026-10-20"
-_RUNBOOK = "CPDC/wsus-runbook"
+_RUNBOOK = "Ops/mail-runbook"
 _TROUBLESHOOTING = f"{_RUNBOOK}/50-troubleshooting.md"
 _VARIABLES = f"{_RUNBOOK}/90-variables.md"
 _ARCHITECTURE = f"{_RUNBOOK}/00-architecture.md"
@@ -40,23 +40,22 @@ _ARCHITECTURE = f"{_RUNBOOK}/00-architecture.md"
 # truncated source and no room for the pointer, 3000 hold both sources and it.
 _PINNED = [_TROUBLESHOOTING, _VARIABLES]
 _TROUBLESHOOTING_TEXT = (
-    "# Troubleshooting\n\nState: written.\n\n## Symptom: A client stops updating\n\n"
-    "**Cause.** Proxy bypass list.\n\n**Fix.** Add the name.\n\nmeasured 2026-09-01\n"
+    "# Troubleshooting\n\nState: written.\n\n## Symptom: A client stops receiving mail\n\n"
+    "**Cause.** Relay allow list.\n\n**Fix.** Add the host name.\n\nmeasured 2026-09-01\n"
 )
 _VARIABLES_TEXT = (
-    "# Variables\n\n## Servers\n\n| Placeholder | Meaning | On Mets |\n|---|---|---|\n"
-    "| `<UPSTREAM>` | Upstream WSUS server | `tpcpdc03d` |\n"
+    "# Variables\n\n## Servers\n\n| Placeholder | Meaning | On site |\n|---|---|---|\n"
+    "| `<UPSTREAM>` | Primary mail server | `srv-a01` |\n"
 )
 _ARCHITECTURE_TEXT = (
     "---\ntitle: Architecture\nupdated: 2026-09-01T00:00:00+00:00\n---\n# Architecture\n"
 )
 _RUNBOOKS: dict[str, Any] = {
-    "roots": [{"folder": "CPDC", "template": "infra"}],
     "templates": {
         "infra": {
             "language": "en",
             "readme": "README",
-            "observation_label": "On Mets",
+            "observation_label": "On site",
             "roles": {
                 "architecture": {"stem": "00-architecture", "match": r"^\d{2}-architecture$"},
                 "troubleshooting": {
@@ -79,7 +78,10 @@ _RUNBOOKS: dict[str, Any] = {
                 "update": "Update",
                 "placeholder": "Placeholder",
                 "meaning": "Meaning",
-                "value": "On Mets",
+                "value": "On site",
+                "skeleton": "Not captured yet.",
+                "readme_title": "{slug} runbook",
+                "documents": "Documents",
             },
             "routing": {
                 "error_fix": "troubleshooting",
@@ -96,7 +98,7 @@ _ORGANIZATION: dict[str, Any] = {
     "tags": {
         "placement_namespace": "type",
         "subject_namespace": "project",
-        "subjects": ["project/wsus", "project/ad"],
+        "subjects": ["project/mail", "project/dns"],
     },
 }
 _TRACE = re.compile(r"(?i)\b(?:origin|confidence|ai|assistant|claude|session)\b")
@@ -113,6 +115,7 @@ async def _open(
     *,
     runbook_write: bool = True,
     runbooks: dict[str, Any] | None = None,
+    runbook_vault: Path | None = None,
     **overrides: Any,
 ) -> AsyncIterator[DatacronApp]:
     config_path = vault / ".datacron" / "VAULT.yaml"
@@ -131,7 +134,7 @@ async def _open(
     settings = Settings(
         read_paths=[vault],
         write_paths=[vault / "_memory"],
-        runbook_write_paths=[vault / "CPDC"] if runbook_write else [],
+        runbook_vault=(runbook_vault or vault / "Ops") if runbook_write else None,
         vault_root=vault,
         **overrides,
     )
@@ -150,7 +153,7 @@ async def app(tmp_vault: Path) -> AsyncIterator[DatacronApp]:
 
 
 async def _capture(app: DatacronApp, kind: str, evidence: str = "measured", **kwargs: Any) -> Any:
-    subject = kwargs.pop("subject", "wsus")
+    subject = kwargs.pop("subject", "mail")
     return await _runbook_capture_impl(
         app,
         subject=subject,
@@ -203,9 +206,9 @@ async def test_a_new_symptom_is_appended_without_adding_frontmatter(app: Datacro
         app,
         "error_fix",
         fields={
-            "symptom": "Sync fails with 0x80244022",
-            "cause": "IIS pool stopped",
-            "fix": "Start the pool",
+            "symptom": "Queue stalls with error 451",
+            "cause": "Relay service stopped",
+            "fix": "Start the relay service",
         },
     )
 
@@ -216,8 +219,8 @@ async def test_a_new_symptom_is_appended_without_adding_frontmatter(app: Datacro
     text = _read(app, _TROUBLESHOOTING)
     assert text.startswith("# Troubleshooting\n")
     assert text.endswith(
-        "## Symptom: Sync fails with 0x80244022\n\n**Cause.** IIS pool stopped\n\n"
-        "**Fix.** Start the pool\n\nmeasured 2026-10-20\n"
+        "## Symptom: Queue stalls with error 451\n\n**Cause.** Relay service stopped\n\n"
+        "**Fix.** Start the relay service\n\nmeasured 2026-10-20\n"
     )
     assert not _TRACE.search(text)
 
@@ -232,9 +235,9 @@ async def test_the_same_fact_on_another_day_is_skipped_and_nothing_is_written(
         "error_fix",
         "said",
         fields={
-            "symptom": "A client stops updating",
-            "cause": "Proxy bypass list.",
-            "fix": "Add the name.",
+            "symptom": "A client stops receiving mail",
+            "cause": "Relay allow list.",
+            "fix": "Add the host name.",
         },
     )
 
@@ -246,15 +249,15 @@ async def test_a_known_symptom_with_a_new_fix_is_updated_not_duplicated(app: Dat
     receipt = await _capture(
         app,
         "error_fix",
-        fields={"symptom": "a client stops updating", "fix": "Also clear the proxy cache"},
+        fields={"symptom": "a client stops receiving mail", "fix": "Also flush the relay queue"},
     )
 
     text = _read(app, _TROUBLESHOOTING)
     assert receipt["action"] == "updated", receipt
     assert text.count("## Symptom:") == 1
-    assert "**Fix.** Add the name." in text
+    assert "**Fix.** Add the host name." in text
     assert (
-        "**Update, 2026-10-20.** **Cause.** Not captured **Fix.** Also clear the proxy cache "
+        "**Update, 2026-10-20.** **Cause.** Not captured **Fix.** Also flush the relay queue "
         "(measured 2026-10-20)" in text
     )
 
@@ -265,16 +268,16 @@ async def test_a_variable_row_is_replaced_in_place(app: DatacronApp) -> None:
         "server",
         fields={
             "placeholder": "<UPSTREAM>",
-            "meaning": "Upstream WSUS server",
-            "value": "tpcpdc04d",
+            "meaning": "Primary mail server",
+            "value": "srv-a02",
             "heading": "Servers",
         },
     )
 
     text = _read(app, _VARIABLES)
     assert receipt["action"] == "updated", receipt
-    assert "| `<UPSTREAM>` | Upstream WSUS server | `tpcpdc04d` (measured 2026-10-20) |\n" in text
-    assert "tpcpdc03d" not in text
+    assert "| `<UPSTREAM>` | Primary mail server | `srv-a02` (measured 2026-10-20) |\n" in text
+    assert "srv-a01" not in text
 
 
 async def test_a_new_file_is_created_with_its_title_and_no_frontmatter(app: DatacronApp) -> None:
@@ -298,20 +301,83 @@ async def test_a_new_file_is_created_with_its_title_and_no_frontmatter(app: Data
     )
 
 
-async def test_a_registered_subject_without_runbook_starts_one(app: DatacronApp) -> None:
+async def test_a_project_without_runbook_is_refused_unless_creation_is_asked(
+    app: DatacronApp,
+) -> None:
+    receipt = await _capture(
+        app, "error_fix", subject="billing", fields={"symptom": "s", "fix": "f"}
+    )
+
+    assert "create_runbook=true" in receipt["error"]["message"], receipt
+    assert not (app.vault_root / "Ops/billing-runbook").exists()
+
+
+async def test_creating_a_runbook_scaffolds_it_from_the_template(app: DatacronApp) -> None:
+    """The project named in the conversation gets its folder, files and README."""
     receipt = await _capture(
         app,
         "error_fix",
         "unverified",
-        subject="project/ad",
-        fields={"symptom": "Replication stalls", "fix": "Check the site link"},
+        subject="Billing",
+        create_runbook=True,
+        fields={"symptom": "Invoices are late", "fix": "Restart the batch"},
     )
 
-    assert receipt["rel_path"] == "CPDC/ad-runbook/50-troubleshooting.md", receipt
-    assert receipt["runbook_created"] is True
-    assert _read(app, receipt["rel_path"]).startswith(
-        "# Troubleshooting\n\n## Symptom: Replication stalls\n"
+    runbook = "Ops/billing-runbook"
+    assert receipt["rel_path"] == f"{runbook}/50-troubleshooting.md", receipt
+    assert (receipt["action"], receipt["runbook_created"]) == ("created", True)
+    assert sorted(receipt["scaffold"]) == [f"{runbook}/60-escalation.md", f"{runbook}/README.md"]
+    assert _read(app, receipt["rel_path"]) == (
+        "# Troubleshooting\n\n## Symptom: Invoices are late\n\n**Cause.** Not captured\n\n"
+        "**Fix.** Restart the batch\n\nunverified 2026-10-20\n"
     )
+    assert _read(app, f"{runbook}/60-escalation.md") == "# Escalation\n\nNot captured yet.\n"
+    assert _read(app, f"{runbook}/README.md") == (
+        "# billing runbook\n\n## Documents\n\n"
+        "- [50-troubleshooting.md](50-troubleshooting.md): Troubleshooting\n"
+        "- [60-escalation.md](60-escalation.md): Escalation\n"
+    )
+    for name in ("README.md", "50-troubleshooting.md", "60-escalation.md"):
+        text = _read(app, f"{runbook}/{name}")
+        assert not text.startswith("---")
+        assert not _TRACE.search(text)
+
+
+async def test_a_dry_run_of_a_creation_lists_the_scaffold_and_writes_nothing(
+    app: DatacronApp,
+) -> None:
+    plan = await _capture(
+        app,
+        "error_fix",
+        subject="billing",
+        create_runbook=True,
+        dry_run=True,
+        fields={"symptom": "s", "fix": "f"},
+    )
+
+    assert (plan["action"], plan["written"], plan["runbook_created"]) == ("created", False, True)
+    assert "Ops/billing-runbook/README.md" in plan["scaffold"]
+    assert not (app.vault_root / "Ops/billing-runbook").exists()
+
+
+async def test_a_new_runbook_needs_its_scaffold_labels(tmp_vault: Path) -> None:
+    template = dict(_RUNBOOKS["templates"]["infra"])
+    template["labels"] = {
+        key: value
+        for key, value in template["labels"].items()
+        if key not in {"skeleton", "readme_title", "documents"}
+    }
+    async for opened in _open(tmp_vault, runbooks={"templates": {"infra": template}}):
+        receipt = await _capture(
+            opened,
+            "error_fix",
+            subject="billing",
+            create_runbook=True,
+            fields={"symptom": "s", "fix": "f"},
+        )
+
+        assert "declares no label 'skeleton'" in receipt["error"]["message"], receipt
+        assert not (tmp_vault / "Ops/billing-runbook").exists()
 
 
 async def test_a_role_without_title_cannot_create_its_file(app: DatacronApp) -> None:
@@ -337,7 +403,7 @@ async def test_a_measured_capture_refreshes_last_verified_of_a_file_that_has_fro
     assert "last_verified: '2026-10-20'" in text or "last_verified: 2026-10-20" in text
     assert "origin" not in text
     assert "confidence" not in text
-    assert "> **On Mets, 2026-10-20.** Schema version 88 (measured 2026-10-20)" in text
+    assert "> **On site, 2026-10-20.** Schema version 88 (measured 2026-10-20)" in text
 
 
 async def test_an_unverified_capture_leaves_last_verified_alone(app: DatacronApp) -> None:
@@ -390,24 +456,32 @@ async def test_the_generic_writers_still_cannot_write_a_runbook(app: DatacronApp
     assert "Notes" not in _read(app, _TROUBLESHOOTING)
 
 
-async def test_a_runbook_outside_the_runbook_write_paths_is_refused(
+async def test_a_runbook_vault_outside_the_served_vault_disables_the_capture(
+    tmp_vault: Path, tmp_path: Path
+) -> None:
+    async for opened in _open(tmp_vault, runbook_vault=tmp_path / "elsewhere"):
+        assert opened.runbook_writer is None
+        names = {tool.name for tool in await create_server(opened).list_tools()}
+        assert "runbook_capture" not in names
+
+
+async def test_a_protected_path_inside_the_runbook_vault_is_refused_by_the_writer(
     tmp_vault: Path,
 ) -> None:
-    async for opened in _open(tmp_vault):
-        object.__setattr__(
-            opened,
-            "settings",
-            opened.settings.model_copy(update={"runbook_write_paths": [tmp_vault / "Other"]}),
-        )
+    protected = {**_RUNBOOKS, "protected_paths": ["mail-runbook/50-troubleshooting.md"]}
+    async for opened in _open(tmp_vault, runbooks=protected):
+        before = _read(opened, _TROUBLESHOOTING)
+
         receipt = await _capture(opened, "error_fix", fields={"symptom": "s", "fix": "f"})
-        assert "outside DATACRON_RUNBOOK_WRITE_PATHS" in receipt["error"]["message"]
-        assert str(tmp_vault) not in receipt["error"]["message"]
+
+        assert "in a protected path" in receipt["error"]["message"], receipt
+        assert _read(opened, _TROUBLESHOOTING) == before
 
 
 @pytest.mark.parametrize(
     ("kwargs", "fragment"),
     [
-        ({"subject": "wsu"}, "names no runbook"),
+        ({"subject": "mai"}, "names no existing runbook"),
         ({"target_role": "build"}, "not declared"),
         ({"observed_on": "2999-01-01"}, "must not be in the future"),
         ({"source": "  "}, "source must not be empty"),
@@ -425,7 +499,7 @@ async def test_refusals_say_what_to_send_instead(
 
 
 async def test_session_context_points_at_an_existing_runbook(app: DatacronApp) -> None:
-    result = await session_context(app, subject="wsus")
+    result = await session_context(app, subject="mail")
 
     assert result["runbook"] == {"path": _RUNBOOK, "language": "en"}
 
@@ -433,16 +507,16 @@ async def test_session_context_points_at_an_existing_runbook(app: DatacronApp) -
 async def test_session_context_adds_no_pointer_for_a_subject_without_runbook(
     app: DatacronApp,
 ) -> None:
-    assert "runbook" not in await session_context(app, subject="project/ad")
+    assert "runbook" not in await session_context(app, subject="project/dns")
     assert "runbook" not in await session_context(app, subject="nothing-like-it")
 
 
 @pytest.mark.parametrize("budget", [1650, 1800, 2000, 3000, 8000])
 async def test_the_pointer_never_costs_a_source(app: DatacronApp, budget: int) -> None:
     """Sources are fitted first; the pointer only takes room that is left."""
-    with_pointer = await session_context(app, subject="wsus", max_tokens=budget, note_paths=_PINNED)
+    with_pointer = await session_context(app, subject="mail", max_tokens=budget, note_paths=_PINNED)
     object.__setattr__(app, "runbooks", None)
-    without = await session_context(app, subject="wsus", max_tokens=budget, note_paths=_PINNED)
+    without = await session_context(app, subject="mail", max_tokens=budget, note_paths=_PINNED)
 
     assert "error" not in with_pointer
     assert with_pointer["sources"] == without["sources"]
@@ -450,63 +524,8 @@ async def test_the_pointer_never_costs_a_source(app: DatacronApp, budget: int) -
 
 
 async def test_a_budget_that_only_holds_the_sources_drops_the_pointer(app: DatacronApp) -> None:
-    tight = await session_context(app, subject="wsus", max_tokens=1800, note_paths=_PINNED)
+    tight = await session_context(app, subject="mail", max_tokens=1800, note_paths=_PINNED)
 
     assert "error" not in tight
     assert tight["sources"]
     assert "runbook" not in tight
-
-
-# --- one root per runbook repository, protected paths ----------------------------
-
-
-def _per_repository(**extra: Any) -> dict[str, Any]:
-    return {
-        **_RUNBOOKS,
-        "roots": [
-            {"folder": "CPDC/wsus-runbook", "template": "infra", "layout": "runbook"},
-            {"folder": "CPDC/ad-runbook", "template": "infra", "layout": "runbook"},
-        ],
-        **extra,
-    }
-
-
-async def test_runbooks_declared_one_per_repository_are_found_by_slug(tmp_vault: Path) -> None:
-    async for opened in _open(tmp_vault, runbooks=_per_repository()):
-        plan = await _capture(
-            opened, "error_fix", fields={"symptom": "New one", "fix": "x"}, dry_run=True
-        )
-        created = await _capture(
-            opened,
-            "error_fix",
-            "unverified",
-            subject="ad",
-            fields={"symptom": "Replication stalls", "fix": "Check the site link"},
-        )
-
-        assert (plan["runbook"], plan["action"]) == (_RUNBOOK, "appended"), plan
-        assert created["rel_path"] == "CPDC/ad-runbook/50-troubleshooting.md", created
-        assert created["runbook_created"] is True
-
-
-async def test_an_undeclared_sibling_is_neither_found_nor_created(tmp_vault: Path) -> None:
-    async for opened in _open(tmp_vault, runbooks=_per_repository()):
-        receipt = await _capture(
-            opened, "error_fix", subject="CPDC/snc-runbook", fields={"symptom": "s", "fix": "f"}
-        )
-
-        assert "not a runbook folder of a declared root" in receipt["error"]["message"]
-        assert not (tmp_vault / "CPDC/snc-runbook").exists()
-
-
-async def test_a_protected_path_under_an_allowed_root_is_refused_by_the_writer(
-    tmp_vault: Path,
-) -> None:
-    protected = _per_repository(protected_paths=[f"{_RUNBOOK}/50-troubleshooting.md"])
-    async for opened in _open(tmp_vault, runbooks=protected):
-        before = _read(opened, _TROUBLESHOOTING)
-
-        receipt = await _capture(opened, "error_fix", fields={"symptom": "s", "fix": "f"})
-
-        assert "in a protected path" in receipt["error"]["message"], receipt
-        assert _read(opened, _TROUBLESHOOTING) == before

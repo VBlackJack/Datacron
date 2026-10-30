@@ -24,7 +24,7 @@ et maintient un vault Markdown depuis Claude, sans envoyer le vault complet dans
 |---|---|
 | [Conventions du vault (SPEC)](spec.md) | Contrat vault : sidecar `.datacron/`, frontmatter, modèle de confiance, wikilinks, chunks, audit, versioning. |
 | [Organisation du vault](organization.md) | Bloc `organization` de `VAULT.yaml` : tags, dossiers, gabarits de nom, plafonds de taille, et `datacron reorganize` qui mesure l'écart en lecture seule. |
-| [Runbooks](runbooks.md) | Bloc `runbooks` de `VAULT.yaml` : racines de runbooks, gabarits, rôles de fichiers, et la frontière d'écriture dédiée `DATACRON_RUNBOOK_WRITE_PATHS`. |
+| [Runbooks](runbooks.md) | Un runbook par projet dans le vault runbooks (`DATACRON_RUNBOOK_VAULT`), créé depuis le gabarit `runbooks` de `VAULT.yaml` et rempli par `runbook_capture`. |
 | [Architecture et surface publique](architecture.md) | Architecture technique et surface exposée. |
 | [Contrat de fraîcheur v1](freshness-contract-v1.md) | Garanties de fraîcheur de l'index. |
 

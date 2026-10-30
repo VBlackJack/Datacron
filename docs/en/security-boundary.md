@@ -67,11 +67,12 @@ that stays inside the vault; other reparse points, such as OneDrive cloud placeh
 are not links and are written normally. A refused path is reported as the vault-relative path the client sent; the
 resolved host path is only logged locally.
 
-Runbook files have a second, separate allowlist, `DATACRON_RUNBOOK_WRITE_PATHS`, empty by
-default. Only the runbook capture reads it, and it never reads `DATACRON_WRITE_PATHS`; the
-generic write tools never read the runbook allowlist. A runbook write must also fall inside a
-declared runbook folder, and is always refused under the vault's `runbooks.protected_paths`
-and under `.git`, `confluence-source` or `confluence-updates`. See [Runbooks](runbooks.md#write-boundary).
+Runbook files have a second, separate write root, the runbook vault
+(`DATACRON_RUNBOOK_VAULT`), unset by default and always inside the served vault. Only the
+runbook capture writes there, and it never reads `DATACRON_WRITE_PATHS`; the generic write
+tools never treat the runbook vault as a write path. A runbook write must also fall inside a
+folder named like a runbook, and is always refused under `runbooks.protected_paths` and under
+`.git`, `confluence-source` or `confluence-updates`. See [Runbooks](runbooks.md#write-boundary).
 
 Scoped reader and writer adapters mediate filesystem operations, while index results,
 chunk resolution, backlinks, resources, audit metadata, and the fixed ripgrep search root

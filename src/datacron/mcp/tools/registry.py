@@ -926,7 +926,7 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
     if runbook_capture_offered(app):
         # Added after the profile narrowing on purpose: the essential profile and a
         # read-only server never offer it, and a vault without runbooks or without
-        # DATACRON_RUNBOOK_WRITE_PATHS keeps exactly the standard surface.
+        # DATACRON_RUNBOOK_VAULT keeps exactly the standard surface.
         register_runbook_tools(server, app, annotations=_ADDITIVE_WRITE_ANNOTATIONS)
     if app.settings.read_only:
         for tool_name in sorted(MUTATING_TOOL_NAMES & registered):

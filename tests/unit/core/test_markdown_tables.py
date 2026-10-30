@@ -20,53 +20,51 @@ import pytest
 from datacron.core.markdown_sections import SectionStructureError
 from datacron.core.markdown_tables import section_own_text, upsert_table_row
 
-_HEADER = ("Placeholder", "Meaning", "On Mets")
+_HEADER = ("Placeholder", "Meaning", "On site")
 _VARIABLES = (
     "# Variables\n"
     "\n"
     "## Servers\n"
     "\n"
-    "| Placeholder | Meaning | On Mets |\n"
+    "| Placeholder | Meaning | On site |\n"
     "|---|---|---|\n"
-    "| `<UPSTREAM>` | Upstream WSUS server | `tpcpdc03d` |\n"
-    "| `<REPLICA>` | Replica WSUS server | `tpcpdc03v` |\n"
+    "| `<UPSTREAM>` | Primary mail server | `srv-a01` |\n"
+    "| `<REPLICA>` | Secondary mail server | `srv-b01` |\n"
     "\n"
     "## Network\n"
     "\n"
-    "| Placeholder | Meaning | On Mets |\n"
+    "| Placeholder | Meaning | On site |\n"
     "|---|---|---|\n"
-    "| `<DOMAIN>` | AD domain | `ts.mets.fr` |\n"
+    "| `<DOMAIN>` | AD domain | `corp.example` |\n"
 )
 
 
 def test_a_row_is_replaced_by_its_first_cell() -> None:
-    row = ("`<upstream>`", "Upstream WSUS server", "`tpcpdc04d` (measured 2026-10-29)")
+    row = ("`<upstream>`", "Primary mail server", "`srv-a02` (measured 2026-10-29)")
 
     rendered, action = upsert_table_row(_VARIABLES, "Servers", row, _HEADER)
 
     assert action == "replaced"
-    assert (
-        "| `<upstream>` | Upstream WSUS server | `tpcpdc04d` (measured 2026-10-29) |\n" in rendered
-    )
-    assert "tpcpdc03d" not in rendered
+    assert "| `<upstream>` | Primary mail server | `srv-a02` (measured 2026-10-29) |\n" in rendered
+    assert "srv-a01" not in rendered
     assert rendered.count("\n") == _VARIABLES.count("\n")
 
 
 def test_an_identical_row_is_unchanged() -> None:
-    row = ("`<REPLICA>`", "Replica WSUS server", "`tpcpdc03v`")
+    row = ("`<REPLICA>`", "Secondary mail server", "`srv-b01`")
 
     assert upsert_table_row(_VARIABLES, "Servers", row, _HEADER) == (_VARIABLES, "unchanged")
 
 
 def test_a_new_row_follows_the_last_row_of_its_section_only() -> None:
-    row = ("`<LB_A>`", "Load balancer pair", "`lpcpdc01d`")
+    row = ("`<LB_A>`", "Load balancer", "`lb-a01`")
 
     rendered, action = upsert_table_row(_VARIABLES, "Servers", row, _HEADER)
 
     assert action == "appended"
     assert (
-        "| `<REPLICA>` | Replica WSUS server | `tpcpdc03v` |\n"
-        "| `<LB_A>` | Load balancer pair | `lpcpdc01d` |\n\n## Network"
+        "| `<REPLICA>` | Secondary mail server | `srv-b01` |\n"
+        "| `<LB_A>` | Load balancer | `lb-a01` |\n\n## Network"
     ) in rendered
     assert section_own_text(rendered, "Network") == section_own_text(_VARIABLES, "Network")
 
@@ -77,18 +75,18 @@ def test_a_key_in_another_section_is_not_touched() -> None:
     rendered, action = upsert_table_row(_VARIABLES, "Servers", row, _HEADER)
 
     assert action == "appended"
-    assert "`ts.mets.fr`" in rendered
+    assert "`corp.example`" in rendered
 
 
 def test_a_missing_section_is_created_with_its_header() -> None:
-    row = ("`<VIP_A>`", "Virtual IP, site A", "`10.46.122.30`")
+    row = ("`<VIP_A>`", "Virtual IP, site A", "`192.0.2.30`")
 
     rendered, action = upsert_table_row(_VARIABLES, "Load balancing", row, _HEADER)
 
     assert action == "created"
     assert rendered.endswith(
-        "## Load balancing\n\n| Placeholder | Meaning | On Mets |\n| --- | --- | --- |\n"
-        "| `<VIP_A>` | Virtual IP, site A | `10.46.122.30` |\n"
+        "## Load balancing\n\n| Placeholder | Meaning | On site |\n| --- | --- | --- |\n"
+        "| `<VIP_A>` | Virtual IP, site A | `192.0.2.30` |\n"
     )
 
 
@@ -100,7 +98,7 @@ def test_a_section_without_table_receives_one() -> None:
     )
 
     assert action == "appended"
-    assert "No port recorded yet.\n\n| Placeholder | Meaning | On Mets |" in rendered
+    assert "No port recorded yet.\n\n| Placeholder | Meaning | On site |" in rendered
 
 
 def test_line_ends_of_the_note_are_kept() -> None:
