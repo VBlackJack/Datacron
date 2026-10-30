@@ -26,6 +26,7 @@ from pydantic import ValidationError
 
 from datacron.core.config import OrganizationConfig, OrganizationRule, VaultConfig
 from datacron.core.frontmatter import parse
+from datacron.organization.freshness import assess_freshness
 from datacron.organization.planner import (
     DeviationKind,
     OrganizationConfigurationError,
@@ -1027,6 +1028,21 @@ def test_freshness_by_type_reads_unquoted_yaml_dates(tmp_path: Path) -> None:
     assert [(item.status, item.last_verified) for item in plan.type_freshness] == [
         ("stale", "2026-08-01")
     ]
+
+
+def test_freshness_by_type_judges_an_unquoted_integer_like_retrieval(tmp_path: Path) -> None:
+    path = _write(tmp_path, "_memory/facts/digits.md", ["memory/fact"], last_verified=20200101)
+    metadata, _ = parse(path.read_text(encoding="utf-8"))
+
+    plan = plan_organization(tmp_path, _windowed_config(), freshness_by_type=True, today=_TODAY)
+    retrieval = assess_freshness(
+        ["memory/fact"], metadata, _windowed_config().organization, today=_TODAY
+    )
+
+    assert metadata["last_verified"] == 20200101
+    assert plan.type_freshness is not None
+    assert [item.status for item in plan.type_freshness] == ["invalid"]
+    assert retrieval.status.value == "invalid"
 
 
 def test_declaring_windows_does_not_move_the_plan_hash_without_the_option(

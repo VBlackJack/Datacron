@@ -99,7 +99,7 @@ optionnels restent absents tant qu'aucune valeur ne leur est donnée.
 | `created`, `updated` | Datetimes ISO 8601 générés à la création; `updated` change lors d'une mise à jour de frontmatter |
 | `origin` | `ai`, `human` ou `merged` |
 | `confidence` | `high`, `medium`, `low` ou `needs_verification` |
-| `last_verified` | Valeur fournie ou date UTC du jour |
+| `last_verified` | Valeur fournie ; sinon absente pour l'origine `ai`, date UTC du jour pour `human` et `merged` |
 | `supersedes` | Liste d'identifiants de notes entièrement remplacées, vide par défaut |
 | `rejected` | Liste optionnelle de 16 entrées maximum au format `option -- reason` |
 | `tags` | Liste de tags fournie à la création |

@@ -89,8 +89,15 @@ ne reçoit aucun champ `freshness` : chaque source renvoyée le paie sur un budg
 fixe, et un `session_context` serré perdrait sinon une source.
 
 Le signal n'écrit jamais. Seule une session qui a revérifié une note déplace son
-`last_verified`, par `set_frontmatter`. À noter : `create_note_ai` renseigne `last_verified`
-avec la date de création quand l'appel n'en passe pas.
+`last_verified`, par `set_frontmatter`. `create_note_ai` écrit la date que l'appel passe. Sans
+date, une note d'origine `ai` (toute capture `remember`) ne reçoit pas de `last_verified` et se
+lit `unverified` sous un délai : écrire une note n'est pas la vérifier. Une note d'origine
+`human` ou `merged` reçoit toujours la date de création.
+
+**Déclarer un délai exige un serveur à jour.** `review_after_days` est une nouvelle clé de
+règle, et une règle d'organisation refuse toute clé qu'elle ne connaît pas. Un serveur Datacron
+antérieur à ce champ refuse de charger un `VAULT.yaml` qui le déclare, au lieu de l'ignorer :
+mettre à jour chaque serveur qui sert le vault, sur chaque machine, avant d'ajouter la clé.
 
 `folder` est **relatif au vault**, pas à la portée, mais il doit néanmoins résoudre à
 l'intérieur de la portée. Avec `scope: knowledge`, un `folder: knowledge/meetings` est

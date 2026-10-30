@@ -105,6 +105,8 @@ if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
 
 _ULID_CREATE_ATTEMPTS: Final[int] = 5
+# The origin whose captures carry no last_verified unless the caller supplies one.
+_UNVERIFIED_CAPTURE_ORIGIN: Final[str] = "ai"
 _NO_FRONTMATTER_MESSAGE: Final[str] = "note has no frontmatter"
 _AMBIGUOUS_LEADING_BLOCK_MESSAGE: Final[str] = (
     "note opens with a --- block that is not frontmatter; "
@@ -334,10 +336,15 @@ async def _create_note_ai_impl(
                 "updated": now.isoformat(),
                 "origin": cleaned["origin"],
                 "confidence": cleaned["confidence"],
-                "last_verified": cleaned_last_verified or now.date().isoformat(),
                 "supersedes": _clean_string_list(supersedes or []),
                 "tags": cleaned["tags"],
             }
+            # Writing a note is not verifying it: an AI capture gets no date unless the
+            # caller vouches for one, so a review window reads it as unverified.
+            if cleaned_last_verified is not None:
+                frontmatter["last_verified"] = cleaned_last_verified
+            elif cleaned["origin"] != _UNVERIFIED_CAPTURE_ORIGIN:
+                frontmatter["last_verified"] = now.date().isoformat()
             if cleaned_rejected:
                 frontmatter["rejected"] = cleaned_rejected
             content = serialize(frontmatter, body)

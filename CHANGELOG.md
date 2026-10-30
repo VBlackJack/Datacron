@@ -13,7 +13,9 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 - **Per-type review windows**: an organization rule may declare `review_after_days`, read
   strictly (a boolean, a string, a float or a value below 1 is refused at load). The type of a
-  note is the rule that governs it, resolved as for placement.
+  note is the rule that governs it, resolved as for placement. A rule refuses unknown keys, so
+  a server older than this release refuses a `VAULT.yaml` that declares the field: upgrade
+  every server that serves the vault before adding it.
 - **`freshness` in `recall` and `session_context`**: once the vault declares at least one
   window, each result and source carries a verdict, `fresh`, `stale`, `unverified`, `invalid`
   or `not_governed`, with the rule tag, the window, the parsed `last_verified` and its age in
@@ -60,6 +62,15 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   no client rule file receives the paragraph. `session_context` with a `subject` naming one
   existing runbook adds `runbook: {path, language}`, attached after the sources are fitted and
   dropped when it does not fit.
+
+### Changed
+
+- **`create_note_ai` no longer stamps `last_verified` on an AI capture.** Without a supplied
+  date, a note of origin `ai`, which covers every `remember` capture, is written without the
+  key and reads as `unverified` under a review window: writing a note is not verifying it.
+  Notes of origin `human` or `merged` still get the creation date, and a supplied date is
+  written as before. The human library audit now lists such captures under review, which is
+  what they are.
 
 ### Security
 

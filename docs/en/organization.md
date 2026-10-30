@@ -86,8 +86,15 @@ no window gets no `freshness` field at all: every returned source pays for it ou
 response budget, and a tight `session_context` would otherwise lose a source.
 
 The signal never writes. Only a session that has re-verified a note moves its `last_verified`,
-through `set_frontmatter`. Note that `create_note_ai` sets `last_verified` to the creation date
-when the call does not pass one.
+through `set_frontmatter`. `create_note_ai` writes the date the call passes. Without one, a
+note of origin `ai` (every `remember` capture) gets no `last_verified` and reads as
+`unverified` under a window: writing a note is not verifying it. A note of origin `human` or
+`merged` still gets the creation date.
+
+**Declaring a window needs a current server.** `review_after_days` is a new rule key, and an
+organization rule refuses any key it does not know. A Datacron server older than this field
+refuses to load a `VAULT.yaml` that declares it, instead of ignoring it: upgrade every server
+that serves the vault, on every machine, before adding the key.
 
 `folder` is **vault-relative**, not scope-relative, but it must still resolve inside the
 scope. With `scope: knowledge`, a `folder: knowledge/meetings` is valid and a
