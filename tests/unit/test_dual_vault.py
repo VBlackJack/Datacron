@@ -555,3 +555,34 @@ def test_migrate_memory_cleanup_source_cleans_and_keep_source_preserves(
     # 3. Overlapping roots are rejected
     with pytest.raises(MigrationError):
         asyncio.run(migrate_vault_to_dual(docs_keep, docs_keep / "sub-memory"))
+
+
+def test_migrate_memory_moves_runbooks_with_memory(tmp_path: Path) -> None:
+    """A _runbooks left in the docs vault would be masked by the memory vault's."""
+    docs_vault = tmp_path / "single-vault"
+    memory_vault = tmp_path / "memory-vault"
+    (docs_vault / "_memory").mkdir(parents=True)
+    (docs_vault / "_memory" / "INIT.md").write_text("# Init\n", encoding="utf-8")
+    runbook = docs_vault / "_runbooks" / "billing-runbook"
+    runbook.mkdir(parents=True)
+    (runbook / "README.md").write_text("# billing runbook\n", encoding="utf-8")
+    initialize_vault(docs_vault)
+    expected = (runbook / "README.md").read_bytes()
+
+    res = CliRunner().invoke(
+        cli_app,
+        [
+            "migrate-memory",
+            "--vault",
+            str(docs_vault),
+            "--memory-vault",
+            str(memory_vault),
+            "--cleanup-source",
+            "--client",
+            "none",
+        ],
+    )
+
+    assert res.exit_code == 0, res.output
+    assert (memory_vault / "_runbooks" / "billing-runbook" / "README.md").read_bytes() == expected
+    assert not (docs_vault / "_runbooks").exists()

@@ -42,6 +42,7 @@ from datacron.bootstrap import BootstrapResult, initialize_vault
 from datacron.core.config import (
     INDEX_DIR_NAME,
     MEMORY_SUBFOLDER_NAME,
+    RUNBOOKS_SUBFOLDER_NAME,
     SIDECAR_DIR_NAME,
     VALID_DURABILITY_MODES,
     VALID_TOOL_PROFILES,
@@ -350,18 +351,25 @@ def _validate_plan(plan: SetupPlan) -> None:
         raise ValueError("Write paths cannot be combined with an explicit write opt-out.")
     if plan.single_vault and plan.memory_vault_path is not None:
         raise ValueError(t("cli.setup.single_vault_conflict"))
-    if (
-        plan.runbook_vault_path is not None
-        and not plan.runbook_vault_path.expanduser()
-        .resolve()
-        .is_relative_to(plan.vault_path.expanduser().resolve())
-    ):
+    if plan.runbook_vault_path is not None and not _runbook_vault_inside(plan):
         # Its files share the vault's paths, locks and operation journal; a folder
         # outside the vault would have neither.
         raise ValueError(
             f"The runbook vault {plan.runbook_vault_path} must be a folder inside the "
-            f"vault {plan.vault_path}."
+            f"vault {plan.vault_path}, or {RUNBOOKS_SUBFOLDER_NAME} in the memory vault."
         )
+
+
+def _runbook_vault_inside(plan: SetupPlan) -> bool:
+    """Return whether the plan's runbook folder lies where the server can serve it."""
+    if plan.runbook_vault_path is None:
+        return True
+    folder = plan.runbook_vault_path.expanduser().resolve()
+    if plan.memory_vault_path is not None:
+        memory = plan.memory_vault_path.expanduser().resolve()
+        if folder.is_relative_to(memory):
+            return folder.is_relative_to(memory / RUNBOOKS_SUBFOLDER_NAME)
+    return folder.is_relative_to(plan.vault_path.expanduser().resolve())
 
 
 def _scopes_for(install_scope: str) -> tuple[str, ...]:

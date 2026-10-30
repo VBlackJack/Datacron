@@ -35,7 +35,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Final, final
 
 from datacron.core.config import (
-    MEMORY_SUBFOLDER_NAME,
+    MEMORY_ROOT_SUBFOLDERS,
     SIDECAR_DIR_NAME,
     Settings,
     VaultConfig,
@@ -58,7 +58,8 @@ from datacron.core.paths import (
     effective_extra_read_vaults,
     effective_memory_root,
     is_link_stat,
-    is_memory_rel_path,
+    is_memory_root_folder,
+    is_memory_root_rel_path,
     read_ulid_mappings,
     sidecar_dir,
     sidecar_vault_config,
@@ -507,18 +508,14 @@ class FilesystemVaultReader:
                 return str(PurePosixPath(prefix, *rel.parts))
         if self._memory_root is not None and resolved.is_relative_to(self._memory_root):
             rel = resolved.relative_to(self._memory_root)
-            if rel.parts and rel.parts[0].casefold() == MEMORY_SUBFOLDER_NAME.casefold():
+            if rel.parts and is_memory_root_folder(rel.parts[0]):
                 return str(PurePosixPath(*rel.parts))
             raise ValueError(
-                f"Path {resolved} is outside the _memory namespace in {self._memory_root}."
+                f"Path {resolved} is outside the memory vault folders in {self._memory_root}."
             )
         if resolved.is_relative_to(self._vault_root):
             rel = resolved.relative_to(self._vault_root)
-            if (
-                self._memory_root is not None
-                and rel.parts
-                and rel.parts[0].casefold() == MEMORY_SUBFOLDER_NAME.casefold()
-            ):
+            if self._memory_root is not None and rel.parts and is_memory_root_folder(rel.parts[0]):
                 raise ValueError(
                     f"Path {resolved} in docs vault is masked by memory vault {self._memory_root}."
                 )
@@ -679,7 +676,7 @@ class FilesystemVaultReader:
             return True
         if self._memory_root is not None and path.is_relative_to(self._memory_root):
             rel = path.relative_to(self._memory_root)
-            return not rel.parts or (rel.parts[0].casefold() == MEMORY_SUBFOLDER_NAME.casefold())
+            return not rel.parts or is_memory_root_folder(rel.parts[0])
         if not path.is_relative_to(self._vault_root):
             return False
         rel = path.relative_to(self._vault_root)
@@ -688,9 +685,7 @@ class FilesystemVaultReader:
         top_folded = rel.parts[0].casefold()
         if top_folded in self._extra_read_by_folded:
             return False
-        return not (
-            self._memory_root is not None and top_folded == MEMORY_SUBFOLDER_NAME.casefold()
-        )
+        return not (self._memory_root is not None and is_memory_root_folder(top_folded))
 
     def _scope_root(self, folder: str | None) -> Path:
         if folder is None:
@@ -705,7 +700,7 @@ class FilesystemVaultReader:
             return target
         base_root = (
             self._memory_root
-            if self._memory_root is not None and is_memory_rel_path(folder)
+            if self._memory_root is not None and is_memory_root_rel_path(folder)
             else self._vault_root
         )
         target = (base_root / folder).resolve()
@@ -728,9 +723,10 @@ class FilesystemVaultReader:
         self._collect_markdown_paths_into(root, results)
         if root == self._vault_root:
             if self._memory_root is not None:
-                memory_subtree = self._memory_root / MEMORY_SUBFOLDER_NAME
-                if memory_subtree.is_dir() and not _is_linked_directory(memory_subtree):
-                    self._collect_markdown_paths_into(memory_subtree, results)
+                for subfolder in MEMORY_ROOT_SUBFOLDERS:
+                    memory_subtree = self._memory_root / subfolder
+                    if memory_subtree.is_dir() and not _is_linked_directory(memory_subtree):
+                        self._collect_markdown_paths_into(memory_subtree, results)
             for extra_root in self._extra_read_vaults.values():
                 if extra_root.is_dir() and not _is_linked_directory(extra_root):
                     self._collect_markdown_paths_into(extra_root, results)
@@ -761,10 +757,7 @@ class FilesystemVaultReader:
                 continue
             if is_directory:
                 if directory == self._vault_root and (
-                    (
-                        self._memory_root is not None
-                        and entry.name.casefold() == MEMORY_SUBFOLDER_NAME.casefold()
-                    )
+                    (self._memory_root is not None and is_memory_root_folder(entry.name))
                     or entry.name.casefold() in self._extra_read_by_folded
                 ):
                     continue

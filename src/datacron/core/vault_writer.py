@@ -43,7 +43,7 @@ from datacron.core.batch_transaction import (
 )
 from datacron.core.config import (
     CANONICAL_ULID_PATTERN,
-    MEMORY_SUBFOLDER_NAME,
+    MEMORY_ROOT_SUBFOLDERS,
     SIDECAR_DIR_NAME,
     ULID_LENGTH,
     Settings,
@@ -71,8 +71,10 @@ from datacron.core.paths import (
     PathConfinementError,
     assert_vault_rel_path,
     assert_within_write_paths,
+    canonical_memory_root_rel_path,
     effective_memory_root,
-    is_memory_rel_path,
+    is_memory_root_folder,
+    is_memory_root_rel_path,
     read_ulid_mappings,
     resolve_vault_rel_target,
     sidecar_dir,
@@ -1603,7 +1605,7 @@ class FilesystemVaultWriter:
         )
 
     def _anchor_for_rel_path(self, rel_path: str) -> Path:
-        if self._memory_root is not None and is_memory_rel_path(rel_path):
+        if self._memory_root is not None and is_memory_root_rel_path(rel_path):
             return self._memory_root
         return self._vault_root
 
@@ -1646,13 +1648,14 @@ class FilesystemVaultWriter:
             except ValueError:
                 rel_memory = None
             if rel_memory is not None:
-                if (
-                    rel_memory.parts
-                    and rel_memory.parts[0].casefold() == MEMORY_SUBFOLDER_NAME.casefold()
-                ):
-                    return Path(MEMORY_SUBFOLDER_NAME, *rel_memory.parts[1:])
+                if rel_memory.parts and is_memory_root_folder(rel_memory.parts[0]):
+                    return Path(
+                        canonical_memory_root_rel_path(rel_memory.parts[0]),
+                        *rel_memory.parts[1:],
+                    )
                 raise PathConfinementError(
-                    f"Path {plain_target} is outside the memory subfolder in {self._memory_root}."
+                    f"Path {plain_target} is outside the memory vault folders in "
+                    f"{self._memory_root}."
                 )
         try:
             rel_vault = plain_target.relative_to(strip_extended_length_prefix(self._vault_root))
@@ -1663,10 +1666,10 @@ class FilesystemVaultWriter:
         if (
             self._memory_root is not None
             and rel_vault.parts
-            and rel_vault.parts[0].casefold() == MEMORY_SUBFOLDER_NAME.casefold()
+            and is_memory_root_folder(rel_vault.parts[0])
         ):
             raise PathConfinementError(
-                f"Path {plain_target} cannot target {MEMORY_SUBFOLDER_NAME} in the docs vault "
+                f"Path {plain_target} cannot target {rel_vault.parts[0]} in the docs vault "
                 f"when memory_root {self._memory_root} is active."
             )
         return rel_vault
@@ -1783,9 +1786,10 @@ class FilesystemVaultWriter:
     def _ulid_exists_in_frontmatter(self, note_id: str) -> bool:
         roots: list[Path] = [self._vault_root]
         if self._memory_root is not None:
-            mem_sub = self._memory_root / MEMORY_SUBFOLDER_NAME
-            if mem_sub.is_dir():
-                roots.append(mem_sub)
+            for subfolder in MEMORY_ROOT_SUBFOLDERS:
+                mem_sub = self._memory_root / subfolder
+                if mem_sub.is_dir():
+                    roots.append(mem_sub)
         for extra_root in (self._settings.extra_read_vaults or {}).values():
             resolved_extra = extra_root.expanduser().resolve()
             if resolved_extra.is_dir() and resolved_extra not in roots:
@@ -1802,7 +1806,7 @@ class FilesystemVaultWriter:
                         self._memory_root is not None
                         and scan_root == self._vault_root
                         and current_path == self._vault_root
-                        and name.casefold() == MEMORY_SUBFOLDER_NAME.casefold()
+                        and is_memory_root_folder(name)
                     )
                 )
                 for filename in filenames:

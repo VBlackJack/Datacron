@@ -45,7 +45,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
-from datacron.core.config import MEMORY_SUBFOLDER_NAME, VaultConfig, load_vault_config
+from datacron.core.config import MEMORY_ROOT_SUBFOLDERS, VaultConfig, load_vault_config
 from datacron.core.frontmatter import (
     FrontmatterError,
     build_tiered_alias_index,
@@ -406,7 +406,7 @@ def _iter_markdown(
             for name in sorted(dirnames)
             if name not in _SKIPPED_DIRECTORIES
             and not name.startswith(".")
-            and not (memory_root is not None and current == root and name == MEMORY_SUBFOLDER_NAME)
+            and not (memory_root is not None and current == root and name in MEMORY_ROOT_SUBFOLDERS)
             and not (current == root and name.casefold() in extra_folded)
         ]
         paths.extend(
@@ -414,9 +414,10 @@ def _iter_markdown(
             for filename in sorted(filenames)
             if filename.lower().endswith(".md")
         )
-    if memory_root is not None:
-        mem_sub = memory_root / MEMORY_SUBFOLDER_NAME
-        if mem_sub.is_dir():
+    for mem_sub in (
+        [memory_root / name for name in MEMORY_ROOT_SUBFOLDERS] if memory_root is not None else []
+    ):
+        if memory_root is not None and mem_sub.is_dir():
             for current_raw, dirnames, filenames in os.walk(mem_sub):
                 current = Path(current_raw)
                 dirnames[:] = [

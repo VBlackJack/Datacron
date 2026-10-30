@@ -72,6 +72,9 @@
       "memory_vault_explain_1": "Dual-Vault mode separates your documentation vault from Datacron's sidecar (.datacron/) and agent memory (_memory/).",
       "memory_vault_explain_2": "Default: disabled (empty), which keeps everything inside the main vault.",
       "memory_vault_explain_3": "Enter a directory path to store .datacron/ and _memory/ in a dedicated memory vault.",
+      "runbook_vault_explain_1": "Runbooks are kept one folder per project, created and filled by runbook_capture.",
+      "runbook_vault_explain_2": "Default: empty, which keeps the current setting or uses _runbooks beside _memory.",
+      "runbook_vault_prompt": "Runbooks folder inside the vault (leave empty for the default)",
       "memory_vault_prompt": "Memory vault path (leave empty for single-vault)",
       "memory_vault_kept": "Kept the dedicated memory vault {path} named by the existing client entry. Pass --single-vault to return to Single-Vault.",
       "single_vault_conflict": "--single-vault cannot be combined with --memory-vault or --dual-vault."

@@ -149,6 +149,7 @@ class _SetupPrompt(StrEnum):
 
     VAULT = "vault"
     MEMORY_VAULT = "memory-vault"
+    RUNBOOK_VAULT = "runbook-vault"
     RESET = "reset"
     CLIENT = "client"
     SCOPE = "scope"
@@ -185,6 +186,10 @@ _SETUP_PROMPT_EXPLANATIONS: Final[dict[_SetupPrompt, tuple[str, ...]]] = {
         t("cli.setup.memory_vault_explain_1"),
         t("cli.setup.memory_vault_explain_2"),
         t("cli.setup.memory_vault_explain_3"),
+    ),
+    _SetupPrompt.RUNBOOK_VAULT: (
+        t("cli.setup.runbook_vault_explain_1"),
+        t("cli.setup.runbook_vault_explain_2"),
     ),
     _SetupPrompt.RESET: (
         "Reset removes this vault's Datacron configuration and generated index before setup.",
@@ -1964,6 +1969,7 @@ def setup(
         assume_yes=assume_yes,
         single_vault=single_vault,
     )
+    resolved_runbook_vault = _prompt_runbook_vault(runbook_vault, assume_yes=assume_yes)
     if reset and not assume_yes:
         _explain(_SetupPrompt.RESET)
         if not typer.confirm(
@@ -2030,7 +2036,7 @@ def setup(
         durability=resolved_durability,
         tool_profile=None if tool_profile is None else tool_profile.strip().lower(),
         read_only=resolved_read_only,
-        runbook_vault_path=runbook_vault,
+        runbook_vault_path=resolved_runbook_vault,
         force=force,
         reset=reset,
     )
@@ -2276,6 +2282,21 @@ def _prompt_memory_vault(
     if not answer:
         return None
     return _guard_vault_target(Path(answer).expanduser().resolve())
+
+
+def _prompt_runbook_vault(runbook_vault: Path | None, *, assume_yes: bool) -> Path | None:
+    """Resolve an explicit or interactively chosen runbook folder; ``None`` keeps the default.
+
+    The folder is optional. Left empty, the client entry keeps what it holds, and
+    without any the server files runbooks in ``_runbooks`` beside ``_memory``.
+    """
+    if runbook_vault is not None:
+        return runbook_vault.expanduser().resolve()
+    if assume_yes:
+        return None
+    _explain(_SetupPrompt.RUNBOOK_VAULT)
+    answer = typer.prompt(t("cli.setup.runbook_vault_prompt"), default="").strip()
+    return Path(answer).expanduser().resolve() if answer else None
 
 
 def _prompt_vault(vault: Path | None, assume_yes: bool) -> Path:

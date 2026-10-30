@@ -209,3 +209,16 @@ def test_dual_vault_memory_field_is_exposed_and_wired() -> None:
     assert "MemoryVaultPath := NormalizePathEntry(SelectedMemoryVaultPath);" in body
     assert "' --memory-vault ' + QuotedArgument(MemoryVaultPath)" in body
     assert "Parameters := Parameters + ' --no-write';" in body
+
+
+def test_optional_runbook_folder_is_exposed_and_wired() -> None:
+    """The wizard offers an optional runbooks folder and hands it to setup only when set."""
+    body = _source()
+    assert "english.RunbookVaultLabel=" in body
+    assert "french.RunbookVaultLabel=" in body
+    assert "VaultPage.Add(CustomMessage('RunbookVaultLabel'));" in body
+    assert "RunbookVaultPath := NormalizePathEntry(SelectedRunbookVaultPath);" in body
+    assert "if RunbookVaultPath <> '' then\n    Parameters := Parameters + ' --runbook-vault '" in (
+        body.replace("\r\n", "\n")
+    )
+    assert "CommandLineValue('RUNBOOKVAULT')" in body

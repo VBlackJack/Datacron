@@ -26,6 +26,7 @@ import yaml
 from datacron.core.config import Settings
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
+from datacron.indexing.reconcile import reconcile
 from datacron.mcp.server import DatacronApp, build_app, create_server
 from datacron.mcp.tools import _append_journal_impl
 from datacron.mcp.tools.runbook import _runbook_capture_impl
@@ -188,9 +189,9 @@ async def test_the_tool_is_offered_only_when_runbooks_and_their_write_paths_exis
 
 @pytest.mark.parametrize(
     ("runbook_write", "overrides"),
-    [(False, {}), (True, {"read_only": True}), (True, {"tool_profile": "essential"})],
+    [(True, {"read_only": True}), (True, {"tool_profile": "essential"})],
 )
-async def test_the_tool_is_absent_without_paths_on_a_read_only_server_and_in_essential(
+async def test_the_tool_is_absent_on_a_read_only_server_and_in_essential(
     tmp_vault: Path, runbook_write: bool, overrides: dict[str, Any]
 ) -> None:
     async for opened in _open(tmp_vault, runbook_write=runbook_write, **overrides):
@@ -529,3 +530,91 @@ async def test_a_budget_that_only_holds_the_sources_drops_the_pointer(app: Datac
     assert "error" not in tight
     assert tight["sources"]
     assert "runbook" not in tight
+
+
+# --- default runbook vault: _runbooks beside _memory -------------------------------
+
+
+async def test_without_a_setting_runbooks_go_to_runbooks_beside_memory(tmp_vault: Path) -> None:
+    async for opened in _open(tmp_vault, runbook_write=False):
+        receipt = await _capture(
+            opened,
+            "error_fix",
+            "unverified",
+            subject="billing",
+            create_runbook=True,
+            fields={"symptom": "Invoices are late", "fix": "Restart the batch"},
+        )
+
+        assert opened.runbook_vault == (tmp_vault / "_runbooks").resolve()
+        assert receipt["rel_path"] == "_runbooks/billing-runbook/50-troubleshooting.md", receipt
+        assert (tmp_vault / "_runbooks/billing-runbook/50-troubleshooting.md").is_file()
+
+
+async def _dual_vault_app(tmp_path: Path) -> AsyncIterator[DatacronApp]:
+    docs = tmp_path / "docs"
+    memory = tmp_path / "memory"
+    (docs / "_runbooks" / "billing-runbook").mkdir(parents=True)
+    # Masked by the memory vault: neither read, indexed nor written.
+    (docs / "_runbooks" / "billing-runbook" / "old.md").write_text(
+        "# Old\n\nInvoices from the docs vault.\n", encoding="utf-8"
+    )
+    (memory / "_memory").mkdir(parents=True)
+    (memory / ".datacron").mkdir()
+    (memory / ".datacron" / "VAULT.yaml").write_text(
+        yaml.safe_dump({"runbooks": _RUNBOOKS}, sort_keys=False), encoding="utf-8"
+    )
+    settings = Settings(
+        vault_root=docs,
+        memory_root=memory,
+        read_paths=[docs, memory],
+        write_paths=[memory / "_memory"],
+    )
+    store = SQLiteFTS5Store()
+    await store.open(memory / ".datacron" / "index" / "datacron.db")
+    try:
+        yield build_app(settings=settings, vault_root=docs, chunker=MarkdownChunker(), store=store)
+    finally:
+        await store.close()
+
+
+async def test_with_a_memory_vault_runbooks_live_beside_its_memory(tmp_path: Path) -> None:
+    """The default _runbooks is in the memory vault, and a docs folder of that name is masked."""
+    async for opened in _dual_vault_app(tmp_path):
+        receipt = await _capture(
+            opened,
+            "error_fix",
+            "unverified",
+            subject="billing",
+            create_runbook=True,
+            fields={"symptom": "Invoices are late", "fix": "Restart the batch"},
+        )
+
+        assert opened.runbook_vault == (tmp_path / "memory" / "_runbooks").resolve()
+        assert receipt["rel_path"] == "_runbooks/billing-runbook/50-troubleshooting.md", receipt
+        assert receipt["indexed"] is True
+        written = tmp_path / "memory" / "_runbooks" / "billing-runbook" / "50-troubleshooting.md"
+        assert written.is_file()
+        assert not (
+            tmp_path / "docs" / "_runbooks" / "billing-runbook" / "50-troubleshooting.md"
+        ).exists()
+        await reconcile(opened.store, opened.vault_reader, opened.chunker, mtime_gate=False)
+        hits = await opened.store.search("Invoices", limit=5)
+        assert {hit.chunk.note_rel_path for hit in hits} == {
+            "_runbooks/billing-runbook/50-troubleshooting.md"
+        }
+
+
+async def test_a_memory_vault_folder_other_than_runbooks_is_refused(tmp_path: Path) -> None:
+    async for opened in _dual_vault_app(tmp_path):
+        assert opened.runbook_writer is not None
+    other = Settings(
+        vault_root=tmp_path / "docs",
+        memory_root=tmp_path / "memory",
+        read_paths=[tmp_path / "docs", tmp_path / "memory"],
+        runbook_vault=tmp_path / "memory" / "notes",
+    )
+    app = build_app(settings=other, vault_root=tmp_path / "docs")
+
+    assert app.runbook_writer is None
+    assert "runbook_capture" not in {tool.name for tool in await create_server(app).list_tools()}

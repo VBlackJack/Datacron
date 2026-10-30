@@ -14,10 +14,11 @@
 """Write boundary of the runbook capture.
 
 A runbook file is writable only when every one of these holds, once its path is
-resolved: it lies inside the runbook vault (``DATACRON_RUNBOOK_VAULT``), which
-itself lies inside the served vault; its first folder under the runbook vault is
-named like a runbook; it is outside the protected paths the vault declares and
-outside every excluded directory; and it is a Markdown file. The generic write
+resolved: it lies inside the runbook vault (``DATACRON_RUNBOOK_VAULT``, else
+``_runbooks`` beside ``_memory``), which itself lies inside the served vault;
+its first folder under the runbook vault is named like a runbook; it is outside
+the protected paths the vault declares and outside every excluded directory; and
+it is a Markdown file. The generic write
 tools never consult this module, and the runbook capture never consults
 ``DATACRON_WRITE_PATHS``: each boundary is audited on its own.
 """
@@ -32,14 +33,21 @@ from datacron.core.case_folding import filesystem_folds_case
 from datacron.core.config import (
     RUNBOOK_EXCLUDED_DIRECTORIES,
     RUNBOOK_MARKDOWN_SUFFIX,
+    RUNBOOKS_SUBFOLDER_NAME,
     RunbooksConfig,
 )
-from datacron.core.paths import is_within
+from datacron.core.paths import (
+    canonical_memory_root_rel_path,
+    is_memory_root_folder,
+    is_memory_root_rel_path,
+    is_within,
+)
 
 __all__ = [
     "RunbookScopeError",
     "RunbookTarget",
     "admit_runbook_write",
+    "default_runbook_vault",
     "runbook_vault_folder",
 ]
 
@@ -66,24 +74,56 @@ class RunbookTarget:
     resolved: Path
 
 
-def runbook_vault_folder(vault_root: Path, runbook_vault: Path) -> str:
+def default_runbook_vault(vault_root: Path, memory_root: Path | None) -> Path:
+    """Return the runbook vault used when none is configured: ``_runbooks`` beside ``_memory``.
+
+    ``_memory`` lives in the memory vault when one is configured, at the vault root
+    otherwise, and ``_runbooks`` sits next to it either way.
+    """
+    return (memory_root or vault_root).expanduser().resolve() / RUNBOOKS_SUBFOLDER_NAME
+
+
+def runbook_vault_folder(
+    vault_root: Path, runbook_vault: Path, *, memory_root: Path | None = None
+) -> str:
     """Return the runbook vault as a vault-relative folder, or refuse it.
 
     The runbook vault must lie inside the served vault: its files then share the
     vault's paths, locks and operation journal, and a recovery after a crash
-    resolves them where they were written. The vault root itself is accepted,
-    since only folders named like a runbook are ever written.
+    resolves them where they were written. In the memory vault only
+    ``_runbooks`` (or a folder under it) is served; in the docs vault any folder
+    is, the vault root itself included, except the ones the memory vault masks.
     """
     root = vault_root.expanduser().resolve()
     folder = runbook_vault.expanduser().resolve()
+    memory = memory_root.expanduser().resolve() if memory_root is not None else None
+    if memory is not None and is_within(folder, memory):
+        parts = folder.relative_to(memory).parts
+        if not parts or parts[0].casefold() != RUNBOOKS_SUBFOLDER_NAME.casefold():
+            raise RunbookScopeError(
+                f"DATACRON_RUNBOOK_VAULT in the memory vault must be {RUNBOOKS_SUBFOLDER_NAME} "
+                f"or a folder under it; {runbook_vault} is not"
+            )
+        return PurePosixPath(RUNBOOKS_SUBFOLDER_NAME, *parts[1:]).as_posix()
     if not is_within(folder, root):
         raise RunbookScopeError(
             "DATACRON_RUNBOOK_VAULT must be a folder inside the served vault; "
             f"{runbook_vault} is not"
         )
     parts = folder.relative_to(root).parts
+    if memory is not None and parts and is_memory_root_folder(parts[0]):
+        raise RunbookScopeError(
+            f"DATACRON_RUNBOOK_VAULT {runbook_vault} is masked by the memory vault {memory}"
+        )
     # The vault root itself is the empty folder, not ".", so paths join without a dot.
     return PurePosixPath(*parts).as_posix() if parts else ""
+
+
+def _physical(rel_path: str, *, vault_root: Path, memory_root: Path | None) -> Path:
+    """Map a vault-relative path to the root that holds it, as the writer maps it."""
+    if memory_root is not None and is_memory_root_rel_path(rel_path):
+        return memory_root / canonical_memory_root_rel_path(rel_path)
+    return vault_root / rel_path
 
 
 def admit_runbook_write(
@@ -92,6 +132,7 @@ def admit_runbook_write(
     vault_root: Path,
     runbook_vault: Path | None,
     runbooks: RunbooksConfig,
+    memory_root: Path | None = None,
 ) -> RunbookTarget:
     """Return the runbook target of ``path`` or raise :class:`RunbookScopeError`.
 
@@ -105,10 +146,10 @@ def admit_runbook_write(
         raise RunbookScopeError(
             f"runbook write refused: {given!r}; DATACRON_RUNBOOK_VAULT is unset"
         )
+    folder = runbook_vault_folder(vault_root, runbook_vault, memory_root=memory_root)
     candidate = Path(path)
     if not candidate.is_absolute():
-        candidate = vault_root / candidate
-    runbook_vault_folder(vault_root, runbook_vault)
+        candidate = _physical(str(path), vault_root=vault_root, memory_root=memory_root)
     resolved = candidate.expanduser().resolve()
     base = runbook_vault.expanduser().resolve()
     if not is_within(resolved, base) or resolved == base:
@@ -135,9 +176,8 @@ def admit_runbook_write(
             f"runbook write refused: {parts[0]!r} is not named like a runbook "
             f"({runbooks.directory_naming!r})"
         )
-    root = vault_root.expanduser().resolve()
     return RunbookTarget(
-        directory=PurePosixPath(*(base / parts[0]).relative_to(root).parts).as_posix(),
+        directory=PurePosixPath(*(part for part in (folder, parts[0]) if part)).as_posix(),
         slug=slug,
         relative=PurePosixPath(*parts[1:]).as_posix(),
         resolved=resolved,
