@@ -95,8 +95,11 @@ async def _open_app(tmp_vault: Path, policy: dict[str, Any]) -> AsyncIterator[Da
         opened = build_app(
             settings=settings, vault_root=tmp_vault, chunker=MarkdownChunker(), store=store
         )
+        # An AI capture with no supplied date, as remember writes it, must read as
+        # unverified: writing a note is not verifying it.
         for rel_path, tags, verified in (
             (_FRESH_FACT, ["memory/fact"], "2026-09-25"),
+            (_UNVERIFIED_FACT, ["memory/fact"], None),
             (_STALE_PROJECT, ["memory/project"], "2026-06-01"),
             (_UNTYPED, ["kind/misc"], "2026-09-01"),
         ):
@@ -111,14 +114,6 @@ async def _open_app(tmp_vault: Path, policy: dict[str, Any]) -> AsyncIterator[Da
                 last_verified=verified,
             )
             assert "error" not in created, created
-        # create_note_ai stamps last_verified with the real run date when none is
-        # given, so a never-verified note can only come from outside that tool.
-        unverified = tmp_vault / _UNVERIFIED_FACT
-        unverified.write_text(
-            "---\ntitle: Quasar\ntags:\n- memory/fact\n---\n"
-            "# Quasar\n\n## Calibration\n\nQuasar calibration notes.\n",
-            encoding="utf-8",
-        )
         yield opened
     finally:
         await store.close()

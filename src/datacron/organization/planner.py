@@ -185,9 +185,11 @@ class OrganizationNoteSnapshot:
     wikilink_targets: tuple[str, ...] = ()
     fence_lines: int = 0
     last_verified: str | None = None
-    # The value as written, kept so a by-type review can tell an unreadable date
-    # from a missing one; ``last_verified`` above folds both into ``None``.
-    last_verified_raw: str | None = None
+    # The value as parsed, kept so a by-type review can tell an unreadable date
+    # from a missing one; ``last_verified`` above folds both into ``None``. It
+    # stays the YAML object: rendering it as text first would turn an unquoted
+    # integer such as 20200101 into a date retrieval refuses.
+    last_verified_raw: object = None
 
     @property
     def fence_balanced(self) -> bool:
@@ -582,7 +584,7 @@ def snapshot_note(
         wikilink_targets=wikilink_targets,
         fence_lines=fence_lines,
         last_verified=frontmatter_day(metadata.get(LAST_VERIFIED_KEY)),
-        last_verified_raw=None if raw_verified is None else str(raw_verified),
+        last_verified_raw=raw_verified,
     )
 
 

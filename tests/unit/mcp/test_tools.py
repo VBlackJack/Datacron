@@ -1738,7 +1738,7 @@ class TestCreateNoteAi:
         assert "rejected" not in metadata
         assert isinstance(metadata["created"], str)
         assert metadata["created"] == metadata["updated"]
-        assert isinstance(metadata["last_verified"], str)
+        assert "last_verified" not in metadata
         assert "durabletoken" in body
         assert stat_calls == 0
 
@@ -1750,6 +1750,48 @@ class TestCreateNoteAi:
         fetched = await _get_note_impl(writable_app, id_or_path=rel_path, fmt="full")
         assert fetched["id"] == result["created"]["id"]
         assert fetched["rel_path"] == rel_path
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("origin", "supplied", "expected"),
+        [
+            ("ai", None, None),
+            ("ai", "2026-10-01", "2026-10-01"),
+            ("human", "2026-10-01", "2026-10-01"),
+            ("human", None, "today"),
+            ("merged", None, "today"),
+        ],
+    )
+    async def test_only_an_ai_capture_is_left_without_last_verified(
+        self,
+        writable_app: DatacronApp,
+        tmp_vault: Path,
+        origin: str,
+        supplied: str | None,
+        expected: str | None,
+    ) -> None:
+        from datacron.mcp.tools import _create_note_ai_impl
+
+        rel_path = f"_memory/facts/verified-{origin}-{supplied is None}.md"
+        result = await _create_note_ai_impl(
+            writable_app,
+            rel_path=rel_path,
+            title="Verification stamp",
+            body="# Verification stamp\n\nbody\n",
+            origin=origin,
+            confidence="medium",
+            tags=["memory"],
+            last_verified=supplied,
+        )
+
+        assert "error" not in result
+        metadata, _ = parse((tmp_vault / rel_path).read_text(encoding="utf-8"))
+        if expected is None:
+            assert "last_verified" not in metadata
+        elif expected == "today":
+            assert str(metadata["last_verified"]) == metadata["created"][:10]
+        else:
+            assert str(metadata["last_verified"]) == expected
 
     @pytest.mark.asyncio
     async def test_rejected_options_are_written_and_read_back_exactly(

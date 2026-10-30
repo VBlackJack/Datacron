@@ -92,7 +92,7 @@ absent until given a value.
 | `created`, `updated` | ISO 8601 datetimes generated at creation; `updated` changes on a frontmatter update |
 | `origin` | `ai`, `human`, or `merged` |
 | `confidence` | `high`, `medium`, `low`, or `needs_verification` |
-| `last_verified` | Supplied value or the current UTC date |
+| `last_verified` | Supplied value; otherwise absent for origin `ai`, the current UTC date for `human` and `merged` |
 | `supersedes` | List of identifiers for fully replaced notes, empty by default |
 | `rejected` | Optional list of at most 16 entries in `option -- reason` format |
 | `tags` | List of tags supplied at creation |
