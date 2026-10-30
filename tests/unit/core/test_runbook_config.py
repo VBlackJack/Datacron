@@ -330,7 +330,17 @@ def test_a_protected_path_is_refused_inside_the_runbook_vault(vault: Path) -> No
             "Ops/mail-runbook/secrets/notes.md",
             protected_paths=["mail-runbook/secrets"],
         )
+    # The protected path is compared without case: a differently cased spelling of
+    # the protected folder, inside the runbook folder, is refused on every filesystem.
     with pytest.raises(RunbookScopeError, match="in a protected path"):
+        _admit(
+            vault,
+            "Ops/mail-runbook/Secrets/notes.md",
+            protected_paths=["mail-runbook/SECRETS"],
+        )
+    # A differently cased runbook vault is another folder where case matters and
+    # the same folder where it does not; either way the write is refused.
+    with pytest.raises(RunbookScopeError):
         _admit(
             vault,
             "ops/MAIL-runbook/Secrets/notes.md",
