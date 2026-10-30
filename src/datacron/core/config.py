@@ -189,6 +189,11 @@ DEFAULT_EXCLUDED_FILES: Final[tuple[str, ...]] = ()
 
 SIDECAR_DIR_NAME: Final[str] = ".datacron"
 MEMORY_SUBFOLDER_NAME: Final[str] = "_memory"
+# The default runbook vault, beside _memory: in the memory vault when one is
+# configured, at the vault root otherwise.
+RUNBOOKS_SUBFOLDER_NAME: Final[str] = "_runbooks"
+# The top folders a memory vault serves. Anything else under it is refused.
+MEMORY_ROOT_SUBFOLDERS: Final[tuple[str, ...]] = (MEMORY_SUBFOLDER_NAME, RUNBOOKS_SUBFOLDER_NAME)
 INDEX_DIR_NAME: Final[str] = "index"
 INDEX_DB_FILENAME: Final[str] = "datacron.db"
 HISTORY_DIR_NAME: Final[str] = "history"
@@ -1399,7 +1404,8 @@ def validate_extra_vault_prefix(raw_prefix: object) -> str:
         or ":" in prefix
         or prefix.startswith(".")
         or any(char.isspace() for char in prefix)
-        or prefix.casefold() in {MEMORY_SUBFOLDER_NAME.casefold(), SIDECAR_DIR_NAME.casefold()}
+        or prefix.casefold()
+        in {name.casefold() for name in (*MEMORY_ROOT_SUBFOLDERS, SIDECAR_DIR_NAME)}
     ):
         raise ValueError(
             f"extra_read_vaults prefix must be a single safe folder name; got {raw_prefix!r}"

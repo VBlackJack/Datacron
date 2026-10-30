@@ -318,7 +318,7 @@ def test_setup_reset_refusal_makes_no_changes(tmp_path: Path) -> None:
     result = _runner.invoke(
         app,
         ["setup", "--vault", str(tmp_path), "--reset", "--client", "none", "--no-index"],
-        input="n\n",
+        input="\nn\n",
     )
 
     assert result.exit_code == 0, result.output

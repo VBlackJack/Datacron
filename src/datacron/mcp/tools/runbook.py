@@ -54,7 +54,12 @@ from datacron.core.markdown_headings import markdown_headings, split_markdown_li
 from datacron.core.markdown_sections import append_entry_to_heading
 from datacron.core.markdown_tables import section_own_text, upsert_table_row
 from datacron.core.operation_log import OperationContext
-from datacron.core.paths import PathConfinementError, assert_within_paths
+from datacron.core.paths import (
+    PathConfinementError,
+    assert_within_paths,
+    effective_memory_root,
+    resolve_vault_rel_target,
+)
 from datacron.core.runbook_scope import (
     RunbookScopeError,
     admit_runbook_write,
@@ -218,12 +223,21 @@ def _readable_directory(app: DatacronApp, path: Path) -> bool:
     return True
 
 
+def _memory_root(app: DatacronApp) -> Path | None:
+    return effective_memory_root(app.vault_root, settings=app.settings)
+
+
+def _physical(app: DatacronApp, rel_path: str) -> Path:
+    """Return where a vault-relative runbook path lives: memory vault or docs vault."""
+    return resolve_vault_rel_target(app.vault_root, rel_path, settings=app.settings)
+
+
 def _runbook_vault(app: DatacronApp) -> tuple[Path, str]:
     """Return the runbook vault and its vault-relative folder, or refuse."""
-    vault = app.settings.runbook_vault
+    vault = app.runbook_vault
     if vault is None:
         raise RunbookRoutingError(_REFUSAL_NOT_CONFIGURED)
-    return vault, runbook_vault_folder(app.vault_root, vault)
+    return vault, runbook_vault_folder(app.vault_root, vault, memory_root=_memory_root(app))
 
 
 def _child_folders(app: DatacronApp) -> list[str]:
@@ -257,7 +271,7 @@ def locate_runbook(app: DatacronApp, subject: str, *, create: bool = False) -> R
 
 
 def _file_stems(app: DatacronApp, location: RunbookLocation) -> list[str]:
-    folder = app.vault_root / location.directory
+    folder = _physical(app, location.directory)
     if not location.exists or not _readable_directory(app, folder):
         return []
     suffix = RUNBOOK_MARKDOWN_SUFFIX
@@ -497,8 +511,9 @@ async def _runbook_capture_impl(
             admit_runbook_write(
                 rel_path,
                 vault_root=app.vault_root,
-                runbook_vault=app.settings.runbook_vault,
+                runbook_vault=app.runbook_vault,
                 runbooks=runbooks,
+                memory_root=_memory_root(app),
             )
         entry = render_entry(
             kind,
@@ -509,7 +524,7 @@ async def _runbook_capture_impl(
             redactor=app.secret_redactor,
         )
         current = (
-            _read_exact(app.vault_root / target_file.rel_path)
+            _read_exact(_physical(app, target_file.rel_path))
             if target_file.exists
             else _new_file(location.template, target_file.role)
         )

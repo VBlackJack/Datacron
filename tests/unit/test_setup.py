@@ -760,7 +760,7 @@ def test_cli_setup_interactive_explains_prompts_without_changing_defaults(
     result = _runner.invoke(
         app,
         ["setup", "--no-index"],
-        input="\n\n\n\nno\nno\nno\n",
+        input="\n\n\n\n\nno\nno\nno\n",
     )
 
     assert result.exit_code == 0, result.output
@@ -797,7 +797,7 @@ def test_cli_setup_interactive_explains_write_boundaries(
             "--enable-write",
             "--no-index",
         ],
-        input="\n\nno\nno\nno\n",
+        input="\n\n\nno\nno\nno\n",
     )
 
     assert result.exit_code == 0, result.output
@@ -859,7 +859,7 @@ def test_cli_setup_reset_confirmation_is_explained(tmp_path: Path) -> None:
             "--reset",
             "--no-index",
         ],
-        input="no\n",
+        input="\nno\n",
     )
 
     assert result.exit_code == 0, result.output
@@ -1416,7 +1416,8 @@ def _interactive_rerun(vault: Path, answers: str) -> Any:
             "best-effort",
             "--no-index",
         ],
-        input=answers,
+        # The optional runbooks folder is asked first; Enter keeps the default.
+        input="\n" + answers,
     )
 
 
@@ -1635,3 +1636,64 @@ def test_setup_refuses_a_runbook_vault_outside_the_vault(
     assert result.exit_code != 0
     assert "must be a folder inside the vault" in result.output
     assert not config.exists()
+
+
+def test_setup_interactive_offers_an_optional_runbook_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = tmp_path / "vault"
+    (vault / "Ops").mkdir(parents=True)
+    config = _existing_cursor_entry(
+        tmp_path, monkeypatch, {"DATACRON_VAULT_ROOT": str(vault.resolve())}
+    )
+
+    result = _runner.invoke(
+        app,
+        [
+            "setup",
+            "--vault",
+            str(vault),
+            "--client",
+            "all",
+            "--scope",
+            "user",
+            "--durability",
+            "best-effort",
+            "--no-index",
+        ],
+        input=f"{vault / 'Ops'}\n\n\n\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Runbooks folder inside the vault" in result.output
+    assert _written_env(config)["DATACRON_RUNBOOK_VAULT"] == str((vault / "Ops").resolve())
+
+
+def test_setup_plan_accepts_runbooks_in_the_memory_vault_and_nothing_else_there(
+    tmp_path: Path,
+) -> None:
+    vault = tmp_path / "docs"
+    memory = tmp_path / "memory"
+    vault.mkdir()
+    memory.mkdir()
+
+    accepted = SetupPlan(
+        vault_path=vault,
+        memory_vault_path=memory,
+        client=CLIENT_NONE,
+        build_index=False,
+        runbook_vault_path=memory / "_runbooks",
+    )
+    asyncio.run(run_setup(accepted))
+    with pytest.raises(ValueError, match="_runbooks in the memory vault"):
+        asyncio.run(
+            run_setup(
+                SetupPlan(
+                    vault_path=vault,
+                    memory_vault_path=memory,
+                    client=CLIENT_NONE,
+                    build_index=False,
+                    runbook_vault_path=memory / "notes",
+                )
+            )
+        )

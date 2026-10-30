@@ -12,7 +12,13 @@ gabarit quand le projet n'en a pas encore.
 
 ## Configurer le vault runbooks
 
-Choisissez le vault runbooks lors de la configuration de Datacron :
+Le vault runbooks est facultatif. Sans lui, les runbooks vont dans `_runbooks`, à côté
+de `_memory` : dans le vault mémoire si vous en utilisez un, à la racine du vault sinon.
+
+Pour choisir un autre dossier, `datacron setup` en mode interactif le demande (Entrée
+conserve le réglage actuel ou le défaut), l'installateur Windows a un troisième champ
+de dossier, facultatif, sur sa page des vaults, et la ligne de commande le prend
+directement :
 
 ```powershell
 datacron setup --vault C:\Notes --runbook-vault C:\Notes\Runbooks
@@ -23,13 +29,16 @@ exécution sans l'option le conserve. Vous pouvez aussi définir la variable vou
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `DATACRON_RUNBOOK_VAULT` | non définie | Le dossier du vault qui contient les runbooks, un sous-dossier par projet. **Non définie = aucun runbook inscriptible**, et `runbook_capture` n'est pas proposé. |
+| `DATACRON_RUNBOOK_VAULT` | `_runbooks` à côté de `_memory` | Le dossier qui contient les runbooks, un sous-dossier par projet. |
 
-Le vault runbooks doit se trouver dans le vault servi : ses fichiers partagent les
-chemins, les verrous et le journal d'opérations du vault, si bien qu'une reprise après
-incident les retrouve là où ils ont été écrits. Un vault runbooks hors du vault est
-refusé par `setup`, et le serveur journalise alors un avertissement et ne propose pas
-la capture. Le nom du dossier vous appartient ; Datacron n'en connaît aucun d'avance.
+Le vault runbooks doit se trouver dans le vault servi : n'importe quel dossier du vault
+de documentation, ou `_runbooks` (ou un dossier en dessous) dans le vault mémoire. Ses
+fichiers partagent alors les chemins, les verrous et le journal d'opérations du vault,
+si bien qu'une reprise après incident les retrouve là où ils ont été écrits. Un autre
+dossier est refusé par `setup`, et le serveur journalise un avertissement et ne propose
+pas la capture. En mode Dual-Vault, un dossier `_runbooks` du vault de documentation est
+masqué par celui du vault mémoire, comme `_memory`. Le nom d'un dossier que vous
+choisissez vous appartient ; Datacron n'en connaît aucun d'avance.
 
 ## Le bloc `runbooks`
 
@@ -118,9 +127,9 @@ autre dans `70-troubleshooting`, et les deux répondent à
 
 ## Capturer un fait : `runbook_capture`
 
-L'outil n'est enregistré que si le vault déclare `runbooks`, que
-`DATACRON_RUNBOOK_VAULT` désigne un dossier du vault, que le serveur n'est pas en
-lecture seule et que le profil d'outils est `standard`. Sinon, la liste des outils ne
+L'outil n'est enregistré que si le vault déclare `runbooks`, que le vault runbooks se
+trouve dans le vault servi, que le serveur n'est pas en lecture seule et que le profil
+d'outils est `standard`. Sinon, la liste des outils ne
 change pas.
 
 | Argument | Sens |
@@ -236,7 +245,7 @@ la défait.
 Un fichier de runbook n'est inscriptible que si toutes ces conditions tiennent,
 jugées après résolution du chemin (un segment `..` est suivi d'abord) :
 
-1. il est dans `DATACRON_RUNBOOK_VAULT`, lui-même dans le vault ;
+1. il est dans le vault runbooks, lui-même dans le vault servi ;
 2. son premier dossier sous le vault runbooks est nommé selon `directory_naming` ;
 3. c'est un fichier Markdown ;
 4. il n'est sous aucun des `protected_paths` ;

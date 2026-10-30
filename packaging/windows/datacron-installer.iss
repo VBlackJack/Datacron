@@ -69,6 +69,7 @@ english.VaultPageDescription=Choose the folder(s) Datacron should serve.
 english.VaultPageSubCaption=You can start with an empty folder and add Markdown notes later. Optional Dual-Vault mode: leave the second field empty to keep everything in one folder, or pick a dedicated Memory Vault folder so Datacron stores .datacron/ and _memory/ separately while keeping your documentation folder untouched.
 english.PrimaryVaultLabel=Primary documentation vault:
 english.MemoryVaultLabel=Dedicated Memory Vault (optional Dual-Vault mode - leave empty for Single-Vault):
+english.RunbookVaultLabel=Runbooks folder, inside one of the vaults above (optional - leave empty for _runbooks beside _memory):
 english.IndexNow=Index this vault now
 english.WritePageCaption=Allow note writing
 english.WritePageDescription=Choose whether your AI assistants can create notes.
@@ -99,6 +100,7 @@ french.VaultPageDescription=Choisissez le ou les dossiers que Datacron doit serv
 french.VaultPageSubCaption=Vous pouvez commencer avec un dossier vide et ajouter des notes Markdown plus tard. Mode Dual-Vault (optionnel) : laissez le second champ vide pour tout garder dans un seul dossier, ou choisissez un dossier Vault Memoire dedie pour que Datacron y stocke .datacron/ et _memory/ separement sans toucher a votre dossier de documentation.
 french.PrimaryVaultLabel=Vault de documentation principal :
 french.MemoryVaultLabel=Vault Memoire dedie (mode Dual-Vault optionnel - laisser vide pour un vault unique) :
+french.RunbookVaultLabel=Dossier des runbooks, dans l'un des vaults ci-dessus (optionnel - laisser vide pour _runbooks a cote de _memory) :
 french.IndexNow=Indexer ce vault maintenant
 french.WritePageCaption=Autoriser l'ecriture de notes
 french.WritePageDescription=Choisissez si vos assistants IA peuvent creer des notes.
@@ -133,6 +135,7 @@ const
   InstallerStateKey = 'Software\Datacron';
   InstallerVaultValue = 'VaultRoot';
   InstallerMemoryVaultValue = 'MemoryVaultRoot';
+  InstallerRunbookVaultValue = 'RunbookVaultRoot';
   InstallerWriteValue = 'WriteToolsEnabled';
   InstallerWriteEnvValue = 'WriteEnvAdded';
   UserEnvironmentKey = 'Environment';
@@ -148,9 +151,11 @@ var
   IndexNowCheckBox: TNewCheckBox;
   PreviousVaultPath: String;
   PreviousMemoryVaultPath: String;
+  PreviousRunbookVaultPath: String;
   LastDetectedVaultPath: String;
   VaultPath: String;
   MemoryVaultPath: String;
+  RunbookVaultPath: String;
   ExistingConfigDetected: Boolean;
   SetupFailed: Boolean;
   PathsPrepared: Boolean;
@@ -224,6 +229,21 @@ begin
   end
   else
     Result := Trim(VaultPage.Values[1]);
+end;
+
+function SelectedRunbookVaultPath: String;
+begin
+  { Optional: empty lets datacron setup keep what the client entry holds, and
+    the server then uses _runbooks beside _memory. A silent run reuses the
+    recorded folder unless /RUNBOOKVAULT= names another. }
+  if WizardSilent then
+  begin
+    Result := CommandLineValue('RUNBOOKVAULT');
+    if Result = '' then
+      Result := Trim(PreviousRunbookVaultPath);
+  end
+  else
+    Result := Trim(VaultPage.Values[2]);
 end;
 
 function EffectiveVaultPath: String;
@@ -380,6 +400,7 @@ procedure InitializeWizard;
 var
   InitialPath: String;
   InitialMemoryPath: String;
+  InitialRunbookPath: String;
   PreviousWriteChoice: String;
 begin
   { The switch chooses which option the page opens on; the operator still decides. }
@@ -390,6 +411,7 @@ begin
   UnregisterWarning := False;
   PreviousVaultPath := '';
   PreviousMemoryVaultPath := '';
+  PreviousRunbookVaultPath := '';
   RegQueryStringValue(
     HKCU,
     InstallerStateKey,
@@ -402,6 +424,12 @@ begin
     InstallerMemoryVaultValue,
     PreviousMemoryVaultPath
   );
+  RegQueryStringValue(
+    HKCU,
+    InstallerStateKey,
+    InstallerRunbookVaultValue,
+    PreviousRunbookVaultPath
+  );
 
   InitialPath := CommandLineValue('VAULT');
   if InitialPath = '' then
@@ -412,6 +440,10 @@ begin
   InitialMemoryPath := CommandLineValue('MEMORYVAULT');
   if InitialMemoryPath = '' then
     InitialMemoryPath := Trim(PreviousMemoryVaultPath);
+
+  InitialRunbookPath := CommandLineValue('RUNBOOKVAULT');
+  if InitialRunbookPath = '' then
+    InitialRunbookPath := Trim(PreviousRunbookVaultPath);
 
   VaultPage := CreateInputDirPage(
     wpWelcome,
@@ -425,15 +457,17 @@ begin
   VaultPage.Values[0] := InitialPath;
   VaultPage.Add(CustomMessage('MemoryVaultLabel'));
   VaultPage.Values[1] := InitialMemoryPath;
+  VaultPage.Add(CustomMessage('RunbookVaultLabel'));
+  VaultPage.Values[2] := InitialRunbookPath;
 
   IndexNowCheckBox := TNewCheckBox.Create(VaultPage);
   IndexNowCheckBox.Parent := VaultPage.Surface;
   IndexNowCheckBox.Caption := CustomMessage('IndexNow');
   IndexNowCheckBox.Checked := True;
   IndexNowCheckBox.Top :=
-    VaultPage.Edits[1].Top + VaultPage.Edits[1].Height + ScaleY(16);
-  IndexNowCheckBox.Left := VaultPage.Edits[1].Left;
-  IndexNowCheckBox.Width := VaultPage.Edits[1].Width;
+    VaultPage.Edits[2].Top + VaultPage.Edits[2].Height + ScaleY(16);
+  IndexNowCheckBox.Left := VaultPage.Edits[2].Left;
+  IndexNowCheckBox.Width := VaultPage.Edits[2].Width;
 
   ReinstallPage := CreateInputOptionPage(
     VaultPage.ID,
@@ -475,6 +509,7 @@ begin
   LastDetectedVaultPath := '';
   VaultPath := '';
   MemoryVaultPath := '';
+  RunbookVaultPath := '';
   SetupFailed := False;
   PathsPrepared := False;
 end;
@@ -562,8 +597,10 @@ begin
     quoted safely at all and is refused. }
   VaultPath := NormalizePathEntry(SelectedVaultPath);
   MemoryVaultPath := NormalizePathEntry(SelectedMemoryVaultPath);
+  RunbookVaultPath := NormalizePathEntry(SelectedRunbookVaultPath);
   PathsPrepared := True;
-  if (Pos('"', VaultPath) > 0) or (Pos('"', MemoryVaultPath) > 0) then
+  if (Pos('"', VaultPath) > 0) or (Pos('"', MemoryVaultPath) > 0) or
+     (Pos('"', RunbookVaultPath) > 0) then
   begin
     Result := CustomMessage('VaultQuoteRejected');
     Exit;
@@ -829,6 +866,13 @@ begin
     )
   else
     RegDeleteValue(HKCU, InstallerStateKey, InstallerMemoryVaultValue);
+  if RunbookVaultPath <> '' then
+    RegWriteStringValue(
+      HKCU,
+      InstallerStateKey,
+      InstallerRunbookVaultValue,
+      RunbookVaultPath
+    );
 
   ResetConfiguration := ResetConfigurationRequested;
   { User scope only: project scope writes five client configs and their backups
@@ -840,6 +884,8 @@ begin
     Parameters := Parameters + ' --memory-vault ' + QuotedArgument(MemoryVaultPath)
   else if SingleVaultRequested then
     Parameters := Parameters + ' --single-vault';
+  if RunbookVaultPath <> '' then
+    Parameters := Parameters + ' --runbook-vault ' + QuotedArgument(RunbookVaultPath);
   if ResetConfiguration then
     Parameters := Parameters + ' --reset';
   if not ShouldIndexNow then

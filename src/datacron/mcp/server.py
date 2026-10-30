@@ -95,7 +95,11 @@ from datacron.core.protocols import (
     VaultReader,
     VaultWriter,
 )
-from datacron.core.runbook_scope import RunbookScopeError, runbook_vault_folder
+from datacron.core.runbook_scope import (
+    RunbookScopeError,
+    default_runbook_vault,
+    runbook_vault_folder,
+)
 from datacron.core.scope import (
     ConjunctiveVaultScope,
     NoteAdmissionPolicy,
@@ -211,6 +215,8 @@ class DatacronApp:
     # registered only then, and no other tool ever receives this writer.
     runbooks: RunbooksConfig | None = None
     runbook_writer: VaultWriter | None = None
+    # The resolved runbook vault: DATACRON_RUNBOOK_VAULT, else _runbooks beside _memory.
+    runbook_vault: Path | None = None
 
 
 @final
@@ -433,10 +439,15 @@ def build_app(
             write_policy=write_policy,
         )
     resolved_writer = ScopedVaultWriter(vault_writer, resolved_scope, write_policy)
+    runbook_vault = resolved_settings.runbook_vault or default_runbook_vault(
+        resolved_root, resolved_memory_root
+    )
     runbook_writer = _build_runbook_writer(
         resolved_root,
         resolved_settings,
         vault_config,
+        runbook_vault=runbook_vault,
+        memory_root=resolved_memory_root,
         admission_policy=admission_policy,
         scope=scope,
         write_policy=write_policy,
@@ -463,6 +474,7 @@ def build_app(
         organization=vault_config.organization,
         runbooks=vault_config.runbooks if runbook_writer is not None else None,
         runbook_writer=runbook_writer,
+        runbook_vault=runbook_vault if runbook_writer is not None else None,
         vault_reader=resolved_reader,
         chunker=chunker,
         store=store,
@@ -483,23 +495,25 @@ def _build_runbook_writer(
     settings: Settings,
     vault_config: VaultConfig,
     *,
+    runbook_vault: Path,
+    memory_root: Path | None,
     admission_policy: NoteAdmissionPolicy,
     scope: VaultScope | None,
     write_policy: WritePolicy,
 ) -> VaultWriter | None:
-    """Return a writer whose only write root is DATACRON_RUNBOOK_VAULT, or ``None``.
+    """Return a writer whose only write root is the runbook vault, or ``None``.
 
     It is the ordinary writer and scope, built over a copy of the settings whose
     write paths are the runbook vault alone: the same lock files, operation
     journal, link refusal and note admission, and a write boundary that never
-    includes ``DATACRON_WRITE_PATHS``. No runbooks block, no runbook vault, a
-    runbook vault outside the served vault, or a read-only server means no writer.
+    includes ``DATACRON_WRITE_PATHS``. The runbook vault is ``DATACRON_RUNBOOK_VAULT``,
+    else ``_runbooks`` beside ``_memory``. No runbooks block, a runbook vault
+    outside the served vault, or a read-only server means no writer.
     """
-    runbook_vault = settings.runbook_vault
-    if vault_config.runbooks is None or runbook_vault is None or settings.read_only:
+    if vault_config.runbooks is None or settings.read_only:
         return None
     try:
-        runbook_vault_folder(vault_root, runbook_vault)
+        runbook_vault_folder(vault_root, runbook_vault, memory_root=memory_root)
     except RunbookScopeError as exc:
         # A misconfigured runbook vault must not stop the server: the capture is
         # simply not offered, and the reason is logged where an operator looks.

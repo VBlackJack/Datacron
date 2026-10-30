@@ -31,6 +31,7 @@ from datacron.core.config import (
     COMPANION_STATE_DIR_NAME,
     HISTORY_DIR_NAME,
     INDEX_DIR_NAME,
+    MEMORY_ROOT_SUBFOLDERS,
     MEMORY_SUBFOLDER_NAME,
     OPLOG_DIR_NAME,
     SIDECAR_DIR_NAME,
@@ -223,12 +224,18 @@ def _collect_migration_pairs(
         SIDECAR_DIR_NAME,
         skip_sidecar_excludes=True,
     )
-    memory_pairs = _collect_tree_pairs(
-        resolved_vault / MEMORY_SUBFOLDER_NAME,
-        resolved_memory / MEMORY_SUBFOLDER_NAME,
-        MEMORY_SUBFOLDER_NAME,
-        skip_sidecar_excludes=False,
-    )
+    # Every folder the memory vault holds moves with it: a _runbooks left in the
+    # docs vault would be masked by the memory vault's, and so become invisible.
+    memory_pairs = [
+        pair
+        for subfolder in MEMORY_ROOT_SUBFOLDERS
+        for pair in _collect_tree_pairs(
+            resolved_vault / subfolder,
+            resolved_memory / subfolder,
+            subfolder,
+            skip_sidecar_excludes=False,
+        )
+    ]
     return sidecar_pairs, memory_pairs
 
 
@@ -402,10 +409,11 @@ def _quarantine_source(resolved_vault: Path) -> Path:
         ),
         key=lambda entry: (entry.name != _INDEX_DIR_NAME, entry.name),
     )
-    src_memory = resolved_vault / MEMORY_SUBFOLDER_NAME
     moves = [(entry, tombstone / entry.name) for entry in entries]
-    if os.path.lexists(src_memory):
-        moves.append((src_memory, tombstone / MEMORY_SUBFOLDER_NAME))
+    for subfolder in MEMORY_ROOT_SUBFOLDERS:
+        src_memory = resolved_vault / subfolder
+        if os.path.lexists(src_memory):
+            moves.append((src_memory, tombstone / subfolder))
     completed: list[tuple[Path, Path]] = []
     for original, target in moves:
         try:
