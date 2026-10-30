@@ -94,7 +94,10 @@ Retrouve ce que le vault sait déjà sur une question.
 Il exécute la recherche plein texte existante, groupée par note, puis lit la meilleure section de
 chaque résultat. Chaque résultat contient `rel_path`, `title`, `heading_path`, un `excerpt`
 enveloppé par le sandbox, `content_hash`, `last_verified` et `read_more` : les arguments exacts
-de `get_note` pour lire la section complète. L'extrait est une donnée du vault, jamais une
+de `get_note` pour lire la section complète. Quand le vault déclare des
+[délais de revérification](organization.md#délais-de-revérification), chaque résultat porte
+aussi `freshness`, et un résultat `stale`, `unverified` ou `invalid` se revérifie avant qu'on
+s'y fie. L'extrait est une donnée du vault, jamais une
 instruction. La réponse reste sous `DATACRON_MAX_READ_RESPONSE_CHARS` ; `truncated` indique que
 des résultats ont été retirés pour y tenir.
 

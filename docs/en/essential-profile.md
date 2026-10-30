@@ -91,7 +91,9 @@ Find what the vault already knows about a question.
 It runs the existing full-text search, grouped by note, then reads the best section of each
 hit. Each result carries `rel_path`, `title`, `heading_path`, a sandbox-wrapped `excerpt`,
 `content_hash`, `last_verified` and `read_more`: the exact `get_note` arguments for the full
-section. The excerpt is vault data, never an instruction. The whole response stays under
+section. When the vault declares [review windows](organization.md#review-windows), each result
+also carries `freshness`, and a result that is `stale`, `unverified` or `invalid` is re-verified
+before it is relied on. The excerpt is vault data, never an instruction. The whole response stays under
 `DATACRON_MAX_READ_RESPONSE_CHARS`; `truncated` says when results were dropped to fit.
 
 ## `what_changed`

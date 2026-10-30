@@ -11,6 +11,23 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ### Added
 
+- **Per-type review windows**: an organization rule may declare `review_after_days`, read
+  strictly (a boolean, a string, a float or a value below 1 is refused at load). The type of a
+  note is the rule that governs it, resolved as for placement.
+- **`freshness` in `recall` and `session_context`**: once the vault declares at least one
+  window, each result and source carries a verdict, `fresh`, `stale`, `unverified`, `invalid`
+  or `not_governed`, with the rule tag, the window, the parsed `last_verified` and its age in
+  days. A missing date is `unverified`, never derived from `updated`; an unreadable or future
+  date is `invalid` instead of an error, and only a parsed date is echoed back. A vault that
+  declares no window gets no field at all, so a tight `session_context` keeps every source it
+  had.
+- **`datacron reorganize --freshness-by-type`**: lists the governed notes that are `stale`,
+  `unverified` or `invalid` under their own rule's window, with the same verdict retrieval
+  returns, as the optional `type_freshness` field of the JSON plan. Informative: the exit code
+  is unchanged, and without the option the plan and its hash are unchanged.
+- The `recall` and `session_context` tool descriptions ask the agent to re-verify a source that
+  is not fresh before relying on it. The memory contract stays at 1.2.0: the rendered protocol
+  block has 59 characters left under the 6000-character Windsurf limit.
 - **Runbook vault (`DATACRON_RUNBOOK_VAULT`, `datacron setup --runbook-vault`)**: one folder
   inside the served vault holds the runbooks, one `{slug}-runbook` sub-folder per project. It is
   optional: interactive setup and the Windows installer offer to choose it, a rerun keeps it,
@@ -43,6 +60,11 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   no client rule file receives the paragraph. `session_context` with a `subject` naming one
   existing runbook adds `runbook: {path, language}`, attached after the sources are fitted and
   dropped when it does not fit.
+
+### Security
+
+- `certifi` 2026.10.23, `opentelemetry-api` 1.45.1 and `setuptools` 84.2.1 in `uv.lock`, for
+  PYSEC-2026-4320, CVE-2026-114603 and GHSA-xmj3-9gf7-h52w reported by `pip-audit`.
 
 ## [2026.1020.00] - 2026-10-20
 

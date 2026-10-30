@@ -61,8 +61,33 @@ measures nothing.
 | `folder` | yes | - | The expected folder, vault-relative. |
 | `naming` | no | `{slug}` | Filename template. |
 | `max_kb` | no | no ceiling | Maximum size, strictly positive integer. |
+| `review_after_days` | no | no window | Days a `last_verified` date stays fresh for notes of this type, strictly positive integer. |
 
 **`max_kb` counts in kibibytes of 1024 bytes.** `max_kb: 80` therefore allows 81920 bytes.
+
+### Review windows
+
+`review_after_days` gives a note type a review window. The type of a note is the rule that
+governs it, resolved exactly as for placement: the first declared rule whose tag the note
+carries. Once at least one rule declares a window, `recall` results and `session_context`
+sources carry a `freshness` object:
+
+| Status | Meaning |
+|---|---|
+| `fresh` | `last_verified` is at most `review_after_days` days old. |
+| `stale` | `last_verified` is older than the window. |
+| `unverified` | The type has a window but the note has no `last_verified`. `updated` is never used instead: an edit is not a verification. |
+| `invalid` | `last_verified` is not a usable date, or lies more than one day in the future. Only a parsed date is ever echoed back. |
+| `not_governed` | No rule governs the note, or its rule declares no window. Rendered as the status alone. |
+
+Apart from `not_governed`, the object also carries `rule_tag`, `review_after_days`,
+`last_verified` and `age_days`, measured against the UTC calendar date. A vault that declares
+no window gets no `freshness` field at all: every returned source pays for it out of a fixed
+response budget, and a tight `session_context` would otherwise lose a source.
+
+The signal never writes. Only a session that has re-verified a note moves its `last_verified`,
+through `set_frontmatter`. Note that `create_note_ai` sets `last_verified` to the creation date
+when the call does not pass one.
 
 `folder` is **vault-relative**, not scope-relative, but it must still resolve inside the
 scope. With `scope: knowledge`, a `folder: knowledge/meetings` is valid and a
@@ -320,6 +345,7 @@ datacron reorganize --vault /path/to/vault --dry-run
 datacron reorganize --vault /path/to/vault --dry-run --json
 datacron reorganize --vault /path/to/vault --dry-run --kind NAMING
 datacron reorganize --vault /path/to/vault --dry-run --freshness-days 60
+datacron reorganize --vault /path/to/vault --dry-run --freshness-by-type
 ```
 
 | Option | Purpose |
@@ -329,6 +355,7 @@ datacron reorganize --vault /path/to/vault --dry-run --freshness-days 60
 | `--json` | Stable machine-readable report instead of text. |
 | `--kind` | Restrict the report to one kind: `WRONG_FOLDER`, `NAMING`, `OVER_SIZE`, `UNGOVERNED`, `UNKNOWN_TAG`, `TAG_CARDINALITY`, `NO_STATE_NOTE`, `UNLINKED` or `UNBALANCED_FENCE`. |
 | `--freshness-days N` | Also list the state notes whose `last_verified` is missing or older than `N` days (positive integer). Informative: the exit code is unchanged. |
+| `--freshness-by-type` | Also list the governed notes that are `stale`, `unverified` or `invalid` under the `review_after_days` of their own rule. Informative: the exit code is unchanged. |
 
 `--dry-run` must be passed explicitly. Omitted, the command refuses to run. An unknown
 `--kind` value lists the expected values.
@@ -340,6 +367,15 @@ A session that verifies a state note sets its `last_verified` frontmatter key. W
 `last_verified` is missing, or older than `N` days relative to the run date (UTC calendar
 date). A note verified exactly `N` days ago is not listed. The list is sorted by path and
 never changes the exit code: it is a reading aid, not a deviation.
+
+### Freshness by type
+
+`--freshness-by-type` applies the [review windows](#review-windows) to every governed note,
+with the same verdict `recall` and `session_context` return. It lists the notes that are
+`stale`, `unverified` or `invalid`, sorted by path; fresh notes and types without a window are
+left out. Like `--freshness-days`, it never changes the exit code, and it is absent from the
+plan when the option is not passed, so declaring a window never moves the plan hash that binds
+a manifest. The two options combine.
 
 With no rule declared, the command does not report an error: it states there is nothing to
 measure.
@@ -381,12 +417,20 @@ Freshness (older than 60 days): 2
   knowledge/subjects/beta/beta.md (project/beta, never verified)
 ```
 
+With `--freshness-by-type`, a block lists each note that needs re-verification:
+
+```text
+Freshness by type (review_after_days): 2
+  knowledge/facts/cache-policy.md (memory/fact, stale, 43 of 30 days)
+  knowledge/facts/retry-budget.md (memory/fact, unverified, window 30 days)
+```
+
 ## The JSON contract
 
 `--json` emits a document whose schema is identified by `organization-plan-v2`. The
 serialization is deterministic: two-space indentation, sorted keys, non-ASCII characters
 preserved as-is. Version 2 adds the three folder and fence counters and the optional
-`freshness` field; every field of version 1 keeps its meaning.
+`freshness` and `type_freshness` fields; every field of version 1 keeps its meaning.
 
 | Field | Content |
 |---|---|
@@ -400,6 +444,7 @@ preserved as-is. Version 2 adds the three folder and fence counters and the opti
 | `deviations` | Gap list: `rel_path`, `kind`, `tag`, `detail`, `expected` |
 | `skipped` | Unreadable notes: `rel_path`, `reason` |
 | `freshness` | Present only with `--freshness-days`: `rel_path`, `tag`, `last_verified`, `age_days` (`null` when the date is missing) |
+| `type_freshness` | Present only with `--freshness-by-type`: `rel_path`, `tag`, `status`, `review_after_days`, `last_verified`, `age_days` (`null` unless `stale`) |
 
 The identity `scanned = governed + unmatched + skipped` always holds: a note the planner
 cannot read is scanned, then skipped, and is neither governed nor unmatched. A folder

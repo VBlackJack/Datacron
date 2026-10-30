@@ -41,6 +41,9 @@ _CLEAN_MESSAGE: Final[str] = "No deviation found."
 _FRESHNESS_HEADING: Final[str] = "Freshness (older than {days} days): {count}"
 _FRESHNESS_MISSING: Final[str] = "never verified"
 _FRESHNESS_AGE: Final[str] = "{age} days"
+_TYPE_FRESHNESS_HEADING: Final[str] = "Freshness by type (review_after_days): {count}"
+_TYPE_FRESHNESS_STALE: Final[str] = "{status}, {age} of {window} days"
+_TYPE_FRESHNESS_OTHER: Final[str] = "{status}, window {window} days"
 _KIND_COLUMN_WIDTH: Final[int] = max(len(kind.value) for kind in DeviationKind)
 
 
@@ -73,10 +76,27 @@ def _freshness_lines(plan: OrganizationPlan) -> list[str]:
     return lines
 
 
+def _type_freshness_lines(plan: OrganizationPlan) -> list[str]:
+    """Render the by-type freshness block, when the plan carries one."""
+    if plan.type_freshness is None:
+        return []
+    lines = [_TYPE_FRESHNESS_HEADING.format(count=len(plan.type_freshness))]
+    for item in plan.type_freshness:
+        detail = (
+            _TYPE_FRESHNESS_OTHER.format(status=item.status, window=item.review_after_days)
+            if item.age_days is None
+            else _TYPE_FRESHNESS_STALE.format(
+                status=item.status, age=item.age_days, window=item.review_after_days
+            )
+        )
+        lines.append(f"  {item.rel_path} ({item.tag}, {detail})")
+    return lines
+
+
 def render_text(plan: OrganizationPlan) -> str:
     """Render a plan as a compact operator-facing report."""
     if plan.scope is None:
-        return "\n".join([_NO_RULES_MESSAGE, *_freshness_lines(plan)])
+        return "\n".join([_NO_RULES_MESSAGE, *_freshness_lines(plan), *_type_freshness_lines(plan)])
 
     lines: list[str] = [
         f"{_SUMMARY_HEADING} for {plan.vault_root}",
@@ -88,6 +108,7 @@ def render_text(plan: OrganizationPlan) -> str:
     if plan.skipped:
         lines.append(f"  {'skipped':<{_KIND_COLUMN_WIDTH}} {len(plan.skipped)}")
     lines.extend(_freshness_lines(plan))
+    lines.extend(_type_freshness_lines(plan))
 
     if not plan.deviations:
         lines.append(_CLEAN_MESSAGE)

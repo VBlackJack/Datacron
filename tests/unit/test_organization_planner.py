@@ -30,6 +30,7 @@ from datacron.organization.planner import (
     DeviationKind,
     OrganizationConfigurationError,
     OrganizationPlan,
+    hash_organization_plan,
     plan_organization,
     snapshot_note,
 )
@@ -978,3 +979,86 @@ def test_vault_without_rules_still_answers_the_freshness_option(tmp_path: Path) 
     text = render_text(plan)
     assert text.startswith("No organization rules")
     assert text.endswith("Freshness (older than 60 days): 0")
+
+
+def _windowed_config(*, fact_window: int | None = 30) -> VaultConfig:
+    fact_rule: dict[str, object] = {"tag": "memory/fact", "folder": "_memory/facts"}
+    if fact_window is not None:
+        fact_rule["review_after_days"] = fact_window
+    return VaultConfig.model_validate(
+        {
+            "organization": {
+                "scope": "_memory",
+                "rules": [
+                    fact_rule,
+                    {"tag": "memory/journal", "folder": "_memory/journal"},
+                ],
+            }
+        }
+    )
+
+
+def test_freshness_by_type_lists_only_notes_that_need_reverification(tmp_path: Path) -> None:
+    _write(tmp_path, "_memory/facts/fresh.md", ["memory/fact"], last_verified="2026-09-01")
+    _write(tmp_path, "_memory/facts/stale.md", ["memory/fact"], last_verified="2026-08-01")
+    _write(tmp_path, "_memory/facts/never.md", ["memory/fact"])
+    _write(tmp_path, "_memory/facts/typo.md", ["memory/fact"], last_verified="2026-02-30")
+    _write(tmp_path, "_memory/journal/old.md", ["memory/journal"], last_verified="2020-01-01")
+
+    plan = plan_organization(tmp_path, _windowed_config(), freshness_by_type=True, today=_TODAY)
+
+    assert plan.type_freshness is not None
+    assert plan.has_deviations is False
+    assert [(item.rel_path, item.status, item.age_days) for item in plan.type_freshness] == [
+        ("_memory/facts/never.md", "unverified", None),
+        ("_memory/facts/stale.md", "stale", 43),
+        ("_memory/facts/typo.md", "invalid", None),
+    ]
+    assert {item.tag for item in plan.type_freshness} == {"memory/fact"}
+    assert {item.review_after_days for item in plan.type_freshness} == {30}
+
+
+def test_freshness_by_type_reads_unquoted_yaml_dates(tmp_path: Path) -> None:
+    _write(tmp_path, "_memory/facts/dated.md", ["memory/fact"], last_verified=date(2026, 8, 1))
+
+    plan = plan_organization(tmp_path, _windowed_config(), freshness_by_type=True, today=_TODAY)
+
+    assert plan.type_freshness is not None
+    assert [(item.status, item.last_verified) for item in plan.type_freshness] == [
+        ("stale", "2026-08-01")
+    ]
+
+
+def test_declaring_windows_does_not_move_the_plan_hash_without_the_option(
+    tmp_path: Path,
+) -> None:
+    """The plan hash binds manifests; a review window is not an organization change."""
+    _write(tmp_path, "_memory/facts/stale.md", ["memory/fact"], last_verified="2026-08-01")
+
+    windowed = plan_organization(tmp_path, _windowed_config(), today=_TODAY)
+    windowless = plan_organization(tmp_path, _windowed_config(fact_window=None), today=_TODAY)
+
+    assert windowed.type_freshness is None
+    assert "type_freshness" not in json.loads(render_json(windowed))
+    assert hash_organization_plan(windowed) == hash_organization_plan(windowless)
+
+
+def test_freshness_by_type_text_block_and_empty_vault(tmp_path: Path) -> None:
+    _write(tmp_path, "_memory/facts/stale.md", ["memory/fact"], last_verified="2026-08-01")
+    _write(tmp_path, "_memory/facts/never.md", ["memory/fact"])
+
+    text = render_text(
+        plan_organization(tmp_path, _windowed_config(), freshness_by_type=True, today=_TODAY)
+    )
+    empty = plan_organization(
+        tmp_path / "missing",
+        VaultConfig.model_validate({}),
+        freshness_by_type=True,
+        today=_TODAY,
+    )
+
+    assert "Freshness by type (review_after_days): 2" in text
+    assert "_memory/facts/stale.md (memory/fact, stale, 43 of 30 days)" in text
+    assert "_memory/facts/never.md (memory/fact, unverified, window 30 days)" in text
+    assert empty.type_freshness == ()
+    assert json.loads(render_json(empty))["type_freshness"] == []

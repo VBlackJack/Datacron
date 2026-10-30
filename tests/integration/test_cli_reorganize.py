@@ -22,6 +22,7 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -684,3 +685,40 @@ def test_outgoing_non_rule_link_is_never_scanned(
     payload: Mapping[str, object] = json.loads(result.stdout)
     assert payload["scanned"] == 0
     assert payload["governed"] == 0
+
+
+def test_freshness_by_type_option_uses_each_rule_window(
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    payload: dict[str, Any] = {"vault_id": "test-vault", **_ORGANIZATION}
+    payload["organization"] = {
+        **payload["organization"],
+        "rules": [
+            {**rule, "review_after_days": 30} if rule["tag"] == "memory/fact" else rule
+            for rule in payload["organization"]["rules"]
+        ],
+    }
+    (tmp_path / "_memory").mkdir(parents=True, exist_ok=True)
+    _write_config(tmp_path, payload)
+    _write_state_note(tmp_path, "_memory/facts/2026-08-29-stale.md", last_verified="2020-01-01")
+    _write_state_note(tmp_path, "_memory/facts/2026-08-29-never.md", last_verified=None)
+
+    text = runner.invoke(
+        app, ["reorganize", "--dry-run", "--freshness-by-type", "--vault", str(tmp_path)]
+    )
+    as_json = runner.invoke(
+        app,
+        ["reorganize", "--dry-run", "--json", "--freshness-by-type", "--vault", str(tmp_path)],
+    )
+    plain = runner.invoke(app, ["reorganize", "--dry-run", "--json", "--vault", str(tmp_path)])
+
+    assert text.exit_code == 0
+    assert "Freshness by type (review_after_days): 2" in text.stdout
+    assert as_json.exit_code == 0
+    listed = json.loads(as_json.stdout)["type_freshness"]
+    assert [(item["rel_path"], item["status"]) for item in listed] == [
+        ("_memory/facts/2026-08-29-never.md", "unverified"),
+        ("_memory/facts/2026-08-29-stale.md", "stale"),
+    ]
+    assert "type_freshness" not in json.loads(plain.stdout)

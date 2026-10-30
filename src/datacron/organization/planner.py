@@ -53,6 +53,7 @@ from datacron.core.paths import (
 from datacron.core.scope import NoteAdmissionError, SingleTenantVaultScope
 from datacron.core.vault import SKIPPED_FOLDERS, NoteAdmissionPolicy
 from datacron.indexing.wikilinks import extract_wikilink_targets
+from datacron.organization.freshness import FreshnessStatus, assess_freshness
 from datacron.organization.rules import matches_naming, resolve_rule
 from datacron.organization.subject_state import (
     LAST_VERIFIED_KEY,
@@ -75,6 +76,7 @@ __all__ = [
     "OrganizationNoteSnapshot",
     "OrganizationPlan",
     "SkippedNote",
+    "TypeFreshnessEntry",
     "hash_organization_plan",
     "organization_plan_mapping",
     "plan_organization",
@@ -183,6 +185,9 @@ class OrganizationNoteSnapshot:
     wikilink_targets: tuple[str, ...] = ()
     fence_lines: int = 0
     last_verified: str | None = None
+    # The value as written, kept so a by-type review can tell an unreadable date
+    # from a missing one; ``last_verified`` above folds both into ``None``.
+    last_verified_raw: str | None = None
 
     @property
     def fence_balanced(self) -> bool:
@@ -213,6 +218,19 @@ class FreshnessEntry:
 
 @final
 @dataclass(frozen=True, slots=True)
+class TypeFreshnessEntry:
+    """One governed note that is stale, unverified or invalid for its type's window."""
+
+    rel_path: str
+    tag: str
+    status: str
+    review_after_days: int
+    last_verified: str | None
+    age_days: int | None
+
+
+@final
+@dataclass(frozen=True, slots=True)
 class OrganizationPlan:
     """The full read-only result of one planning pass.
 
@@ -230,6 +248,9 @@ class OrganizationPlan:
     skipped: tuple[SkippedNote, ...]
     freshness_days: int | None = None
     freshness: tuple[FreshnessEntry, ...] | None = None
+    # Same contract as ``freshness``: present only when requested, outside the
+    # manifest projection, and never a deviation.
+    type_freshness: tuple[TypeFreshnessEntry, ...] | None = None
 
     @property
     def has_deviations(self) -> bool:
@@ -279,6 +300,18 @@ def organization_plan_mapping(plan: OrganizationPlan) -> dict[str, object]:
                 "age_days": item.age_days,
             }
             for item in plan.freshness
+        ]
+    if plan.type_freshness is not None:
+        mapping["type_freshness"] = [
+            {
+                "rel_path": item.rel_path,
+                "tag": item.tag,
+                "status": item.status,
+                "review_after_days": item.review_after_days,
+                "last_verified": item.last_verified,
+                "age_days": item.age_days,
+            }
+            for item in plan.type_freshness
         ]
     return mapping
 
@@ -538,6 +571,7 @@ def snapshot_note(
     """
     normalized = _normalize_line_endings(body)
     fence_lines, wikilink_targets = _scan_body(normalized)
+    raw_verified = metadata.get(LAST_VERIFIED_KEY)
     return OrganizationNoteSnapshot(
         rel_path=rel_path,
         size_bytes=size_bytes,
@@ -548,6 +582,7 @@ def snapshot_note(
         wikilink_targets=wikilink_targets,
         fence_lines=fence_lines,
         last_verified=frontmatter_day(metadata.get(LAST_VERIFIED_KEY)),
+        last_verified_raw=None if raw_verified is None else str(raw_verified),
     )
 
 
@@ -717,6 +752,44 @@ def _freshness(
     return tuple(sorted(entries, key=lambda item: item.rel_path))
 
 
+def _type_freshness(
+    notes: Iterable[OrganizationNoteSnapshot],
+    organization: OrganizationConfig,
+    *,
+    today: date,
+) -> tuple[TypeFreshnessEntry, ...]:
+    """List governed notes that need re-verification under their type's window.
+
+    The verdict comes from the same function retrieval uses, so ``recall`` and
+    this report never disagree on a note. Fresh and ungoverned notes are left out.
+    """
+    entries: list[TypeFreshnessEntry] = []
+    for note in notes:
+        verdict = assess_freshness(
+            note.tags,
+            {LAST_VERIFIED_KEY: note.last_verified_raw},
+            organization,
+            today=today,
+        )
+        if (
+            verdict.status in {FreshnessStatus.FRESH, FreshnessStatus.NOT_GOVERNED}
+            or verdict.rule_tag is None
+            or verdict.review_after_days is None
+        ):
+            continue
+        entries.append(
+            TypeFreshnessEntry(
+                rel_path=note.rel_path,
+                tag=verdict.rule_tag,
+                status=verdict.status.value,
+                review_after_days=verdict.review_after_days,
+                last_verified=verdict.last_verified,
+                age_days=verdict.age_days,
+            )
+        )
+    return tuple(sorted(entries, key=lambda item: item.rel_path))
+
+
 def _plan_snapshots(
     *,
     vault_root: Path,
@@ -725,6 +798,7 @@ def _plan_snapshots(
     target_folders: Mapping[str, str],
     notes: Iterable[OrganizationNoteSnapshot],
     freshness_days: int | None = None,
+    freshness_by_type: bool = False,
     today: date | None = None,
 ) -> OrganizationPlan:
     """Evaluate normalized note metadata without materializing note prose."""
@@ -733,6 +807,7 @@ def _plan_snapshots(
     subject_rule_tags = _subject_rule_tags(organization)
     subject_folders: dict[str, list[OrganizationNoteSnapshot]] = {}
     state_notes: list[tuple[OrganizationNoteSnapshot, str]] = []
+    governed_notes: list[OrganizationNoteSnapshot] = []
     scanned = 0
     governed = 0
     unmatched = 0
@@ -775,6 +850,7 @@ def _plan_snapshots(
         )
         if note.is_state_note:
             state_notes.append((note, rule.tag))
+        governed_notes.append(note)
         if rule.tag in subject_rule_tags and folder == expected_folder:
             subject_folders.setdefault(rule.tag, []).append(note)
     for rule in organization.rules:
@@ -788,13 +864,17 @@ def _plan_snapshots(
                     organization,
                 )
             )
+    run_date = today if today is not None else _utc_today()
     freshness: tuple[FreshnessEntry, ...] | None = None
     if freshness_days is not None:
         freshness = _freshness(
             state_notes,
             freshness_days=freshness_days,
-            today=today if today is not None else _utc_today(),
+            today=run_date,
         )
+    type_freshness = (
+        _type_freshness(governed_notes, organization, today=run_date) if freshness_by_type else None
+    )
     return OrganizationPlan(
         vault_root=str(vault_root.expanduser().resolve()),
         scope=scope,
@@ -805,6 +885,7 @@ def _plan_snapshots(
         skipped=tuple(sorted(skipped, key=lambda item: item.rel_path)),
         freshness_days=freshness_days,
         freshness=freshness,
+        type_freshness=type_freshness,
     )
 
 
@@ -931,6 +1012,7 @@ def plan_organization(
     *,
     settings: Settings | None = None,
     freshness_days: int | None = None,
+    freshness_by_type: bool = False,
     today: date | None = None,
 ) -> OrganizationPlan:
     """Measure the gap between a vault and the organization intent it declares.
@@ -942,7 +1024,8 @@ def plan_organization(
     ``freshness_days`` adds the informative freshness list, measured against
     ``today`` (the UTC calendar date when omitted). A vault without rules still
     answers the option, with an empty list, so the JSON field is present
-    whenever the caller asked for it.
+    whenever the caller asked for it. ``freshness_by_type`` does the same for
+    every governed note, against the ``review_after_days`` of its own rule.
     """
     organization = config.organization
     if organization is None or not organization.rules:
@@ -956,6 +1039,7 @@ def plan_organization(
             skipped=(),
             freshness_days=freshness_days,
             freshness=None if freshness_days is None else (),
+            type_freshness=() if freshness_by_type else None,
         )
 
     context = _prepare_context(vault_root, config, settings or get_settings())
@@ -999,5 +1083,6 @@ def plan_organization(
         target_folders=context.target_folders,
         notes=snapshots,
         freshness_days=freshness_days,
+        freshness_by_type=freshness_by_type,
         today=today,
     )

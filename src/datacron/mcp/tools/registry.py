@@ -159,6 +159,8 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
             "pages before relying on incomplete context."
             " Send known_contract_hash only when that exact contract is already in"
             " context; a match returns its identity without repeating instructions."
+            " A source whose freshness status is stale, unverified or invalid must be"
+            " re-verified before you rely on it."
         ),
         annotations=_READ_ANNOTATIONS,
     )
