@@ -44,7 +44,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
 _DEMO_VAULT = Path(__file__).parents[1] / "fixtures" / "demo-vault"
-_GET_NOTE_OUTPUT_SCHEMA_SHA256 = "eaae5c8e598603b56ab09fb618a8ea1a60fed451e23660e81ba085a0af0d0c79"
+_GET_NOTE_OUTPUT_SCHEMA_SHA256 = "ee76078c617ba6d3e7131e888564b84baf157d6eaea395503786748c2eb0ceaf"
 
 
 @pytest.fixture

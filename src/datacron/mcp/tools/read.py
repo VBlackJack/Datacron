@@ -62,6 +62,7 @@ from datacron.mcp.tools.retrieval import (
     protect_note_title,
 )
 from datacron.mcp.tools.search import _repair_clock, _repair_index_on_read
+from datacron.organization.freshness import freshness_payload, utc_today
 
 if TYPE_CHECKING:
     from datacron.mcp.server import DatacronApp
@@ -273,6 +274,7 @@ async def _get_note_impl(
     limit: int | None = None,
     heading_path: list[str] | None = None,
     heading_occurrence: int | None = None,
+    with_freshness: bool = True,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     validation_error = _validate_get_note_request(fmt=fmt, offset=offset, limit=limit)
@@ -319,16 +321,24 @@ async def _get_note_impl(
         return _internal_error_response("get_note", started, id_or_path=id_or_path, fmt=fmt)
 
     try:
+        # One verdict per read, computed before any builder fits the page to the budget.
+        freshness = _note_freshness(app, note) if with_freshness else None
         payload = (
             _build_section_payload(
-                app, note, heading_path, heading_occurrence, offset=offset, limit=limit
+                app,
+                note,
+                heading_path,
+                heading_occurrence,
+                offset=offset,
+                limit=limit,
+                freshness=freshness,
             )
             if heading_path is not None
-            else _build_map_payload(app, note, offset=offset, limit=limit)
+            else _build_map_payload(app, note, offset=offset, limit=limit, freshness=freshness)
             if fmt == "map"
-            else _build_metadata_payload(app, note, offset=offset, limit=limit)
+            else _build_metadata_payload(app, note, offset=offset, limit=limit, freshness=freshness)
             if fmt == "metadata"
-            else _build_full_payload(app, note, offset=offset, limit=limit)
+            else _build_full_payload(app, note, offset=offset, limit=limit, freshness=freshness)
         )
     except ValueError as exc:
         return _error_response("get_note", exc, started, id_or_path=id_or_path, fmt=fmt)
@@ -345,6 +355,11 @@ async def _get_note_impl(
         truncated=bool(payload.get("truncated", False)),
     )
     return payload
+
+
+def _note_freshness(app: DatacronApp, note: Note) -> dict[str, Any] | None:
+    """The review verdict ``get_note`` attaches, or ``None`` in a vault without windows."""
+    return freshness_payload(note.tags, note.frontmatter, app.organization, today=utc_today())
 
 
 def _validate_section_request(
@@ -381,6 +396,7 @@ def _build_section_payload(
     *,
     offset: int,
     limit: int | None,
+    freshness: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     lines = split_markdown_lines(note.content)
     headings = markdown_headings(lines)
@@ -427,7 +443,13 @@ def _build_section_payload(
         "line_end": line_end,
     }
     return _build_full_payload(
-        app, note, offset=offset, limit=limit, retrieval_content=content, section=section
+        app,
+        note,
+        offset=offset,
+        limit=limit,
+        retrieval_content=content,
+        section=section,
+        freshness=freshness,
     )
 
 
@@ -514,12 +536,17 @@ def _retrieval_note_metadata(app: DatacronApp, note: Note) -> dict[str, Any]:
     return sanitize_payload_strings(metadata)
 
 
+_PADDED_GET_NOTE_KEYS = tuple(key for key in GetNoteOutput.__annotations__ if key != "freshness")
+
+
 def _serialized_chars(payload: dict[str, Any]) -> int:
     # MCP's text block uses indented JSON. ASCII escaping is conservative for Unicode.
-    # Its structured model also fills absent optional fields with null.
+    # Its structured model also fills absent optional fields with null, except
+    # ``freshness``, which stays absent without a verdict (a real one is counted
+    # because the payload wins in the merge).
     normalized = payload
     if payload.get("format") in _VALID_FORMATS:
-        normalized = {**dict.fromkeys(GetNoteOutput.__annotations__), **payload}
+        normalized = {**dict.fromkeys(_PADDED_GET_NOTE_KEYS), **payload}
     elif "notes" in payload:
         normalized = {
             **payload,
@@ -627,7 +654,12 @@ def _fit_text_page(
 
 
 def _build_metadata_payload(
-    app: DatacronApp, note: Note, *, offset: int, limit: int | None
+    app: DatacronApp,
+    note: Note,
+    *,
+    offset: int,
+    limit: int | None,
+    freshness: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text = json.dumps(to_jsonable_python(_retrieval_note_metadata(app, note)), ensure_ascii=False)
     start = min(offset, len(text))
@@ -644,6 +676,8 @@ def _build_metadata_payload(
         "limit_applied": applied,
         **_note_provenance(app, note.rel_path),
     }
+    if freshness is not None:
+        payload["freshness"] = freshness
     return _fit_text_page(
         app, payload, text[start : start + applied], key="metadata_json", wrapped=False
     )
@@ -847,6 +881,7 @@ async def _resolve_chunk_payload(app: DatacronApp, id_or_path: str) -> dict[str,
         safe_chunk,
         prev_chunk_id=prev_chunk_id,
         next_chunk_id=next_chunk_id,
+        freshness=_note_freshness(app, note),
     )
 
 
@@ -868,6 +903,7 @@ def _build_full_payload(
     limit: int | None,
     retrieval_content: str | None = None,
     section: dict[str, Any] | None = None,
+    freshness: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     max_tokens = app.settings.get_note_max_tokens
     max_chars = max_tokens * TOKEN_ESTIMATE_CHARS_PER_TOKEN
@@ -910,6 +946,8 @@ def _build_full_payload(
     }
     if section is not None:
         payload["section"] = section
+    if freshness is not None:
+        payload["freshness"] = freshness
     return _fit_text_page(
         app, payload, content, key="content", wrapped=True, source=retrieval_content
     )
@@ -922,8 +960,9 @@ def _build_chunk_payload(
     *,
     prev_chunk_id: str | None,
     next_chunk_id: str | None,
+    freshness: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "format": "chunk",
         "chunk_id": _redact_retrieval_text(app, chunk.chunk_id),
         "note_id": chunk.note_id,
@@ -953,10 +992,18 @@ def _build_chunk_payload(
         ),
         **_note_provenance(app, chunk.note_rel_path),
     }
+    if freshness is not None:
+        payload["freshness"] = freshness
+    return payload
 
 
 def _build_map_payload(
-    app: DatacronApp, note: Note, *, offset: int = 0, limit: int | None = None
+    app: DatacronApp,
+    note: Note,
+    *,
+    offset: int = 0,
+    limit: int | None = None,
+    freshness: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # One heading parse serves the map, the chunk protection and the title protection.
     selected_headings = markdown_headings(split_markdown_lines(note.content))
@@ -1013,4 +1060,6 @@ def _build_map_payload(
     }
     if omitted_title:
         payload["metadata_truncated"] = True
+    if freshness is not None:
+        payload["freshness"] = freshness
     return _fit_list_page(app, payload, "headings")

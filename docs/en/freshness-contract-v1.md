@@ -14,7 +14,9 @@ Datacron reference implementation is `sha256_bytes(path.read_bytes())`.
 `get_note` returns this digest under `note_content_hash` and keeps `content_hash` as a
 compatible alias. It also returns `content_hash_contract` with the value
 `freshness-contract-v1`. An autonomous consumer can apply this specification locally: Cortex
-never calls Datacron at runtime to decide its own freshness.
+never calls Datacron at runtime to decide its own freshness. This content-hash contract is
+unrelated to the `freshness` review verdict that `get_note`, `recall` and `session_context`
+return when the vault declares review windows.
 
 The shared manifest `tests/fixtures/freshness-contract-v1.json` contains the Base64 vectors
 for LF, CRLF, BOM, and Unicode NFD. The tests write them in binary before hashing.

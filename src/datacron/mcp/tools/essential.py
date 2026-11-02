@@ -614,11 +614,16 @@ async def _recall_item(
             fmt="full",
             limit=ESSENTIAL_RECALL_EXCERPT_MAX_CHARS,
             heading_path=trail,
+            with_freshness=False,
         )
     if not trail or "error" in payload:
         # No usable section: read the opening page of the note, capped like a section.
         payload = await _get_note_impl(
-            app, id_or_path=rel_path, fmt="full", limit=ESSENTIAL_RECALL_EXCERPT_MAX_CHARS
+            app,
+            id_or_path=rel_path,
+            fmt="full",
+            limit=ESSENTIAL_RECALL_EXCERPT_MAX_CHARS,
+            with_freshness=False,
         )
         read_more = {"tool": "get_note", "id_or_path": rel_path, "heading_path": None}
         trail = []

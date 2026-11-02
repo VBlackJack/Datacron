@@ -289,7 +289,9 @@ def register_tools(server: MCPServer[Any], app: Any) -> None:
             "rendered heading ancestry "
             "including its subtree; repeated paths require a 1-based heading_occurrence. "
             "Section reads require full format and a note input, include source line spans "
-            "and the original note hash, and paginate relative to the redacted section."
+            "and the original note hash, and paginate relative to the redacted section. "
+            "Every format carries the same freshness as recall when the vault declares "
+            "review windows."
         ),
         annotations=_READ_ANNOTATIONS,
     )

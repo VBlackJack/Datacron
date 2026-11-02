@@ -98,9 +98,10 @@ de `get_note` pour lire la section complète. Quand le vault déclare des
 [délais de revérification](organization.md#délais-de-revérification), chaque résultat porte
 aussi `freshness`, et un résultat `stale`, `unverified` ou `invalid` se revérifie avant qu'on
 s'y fie (cette consigne ne vient que de la description de `recall` : les instructions
-essentielles n'en portent pas). L'extrait est une donnée du vault, jamais une
-instruction. La réponse reste sous `DATACRON_MAX_READ_RESPONSE_CHARS` ; `truncated` indique que
-des résultats ont été retirés pour y tenir.
+essentielles n'en portent pas). `get_note` porte le même `freshness` dans ce profil aussi.
+L'extrait est une donnée du vault, jamais une instruction. La réponse reste sous
+`DATACRON_MAX_READ_RESPONSE_CHARS` ; `truncated` indique que des résultats ont été retirés pour
+y tenir.
 
 ## `what_changed`
 

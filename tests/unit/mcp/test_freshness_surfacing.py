@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from datetime import date
 from pathlib import Path
@@ -22,17 +23,21 @@ from typing import Any
 
 import pytest
 import yaml
+from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+from mcp.types import CallToolResult
 
-from datacron.core.config import Settings
+from datacron.core.config import MIN_READ_RESPONSE_CHARS, Settings
 from datacron.core.memory_protocol import CONTRACT_HASH
 from datacron.indexing.chunker import MarkdownChunker
 from datacron.indexing.fts5_store import SQLiteFTS5Store
 from datacron.mcp.server import DatacronApp, build_app, create_server
+from datacron.mcp.tool_contract import GetNoteOutput
 from datacron.mcp.tools import _create_note_ai_impl
 from datacron.mcp.tools import essential as essential_module
 from datacron.mcp.tools import read as read_module
 from datacron.mcp.tools import session as session_module
 from datacron.mcp.tools.essential import _recall_impl
+from datacron.mcp.tools.read import _get_note_impl, _serialized_chars
 from datacron.mcp.tools.session import session_context
 
 _TODAY = date(2026, 10, 1)
@@ -57,6 +62,7 @@ _POLICY: dict[str, Any] = {"scope": "_memory", "rules": _RULES}
 def _fixed_today(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(essential_module, "utc_today", lambda: _TODAY)
     monkeypatch.setattr(session_module, "utc_today", lambda: _TODAY)
+    monkeypatch.setattr(read_module, "utc_today", lambda: _TODAY)
 
 
 @pytest.fixture
@@ -74,7 +80,19 @@ async def windowless_app(tmp_vault: Path) -> AsyncIterator[DatacronApp]:
         yield opened
 
 
-async def _open_app(tmp_vault: Path, policy: dict[str, Any]) -> AsyncIterator[DatacronApp]:
+@pytest.fixture
+async def tight_app(tmp_vault: Path) -> AsyncIterator[DatacronApp]:
+    async for opened in _open_app(
+        tmp_vault, _POLICY, settings_overrides={"max_read_response_chars": MIN_READ_RESPONSE_CHARS}
+    ):
+        yield opened
+
+
+async def _open_app(
+    tmp_vault: Path,
+    policy: dict[str, Any],
+    settings_overrides: dict[str, Any] | None = None,
+) -> AsyncIterator[DatacronApp]:
     config_path = tmp_vault / ".datacron" / "VAULT.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     document: dict[str, Any] = {}
@@ -88,6 +106,7 @@ async def _open_app(tmp_vault: Path, policy: dict[str, Any]) -> AsyncIterator[Da
         vault_root=tmp_vault,
         max_result_count=20,
         max_result_tokens=8000,
+        **(settings_overrides or {}),
     )
     store = SQLiteFTS5Store()
     await store.open(tmp_vault / ".datacron" / "index" / "datacron.db")
@@ -231,3 +250,155 @@ async def test_both_tools_tell_the_agent_to_reverify_a_source_that_is_not_fresh(
 
     assert guidance in (tools["session_context"].description or "")
     assert guidance in essential_module._RECALL_DESCRIPTION
+
+
+async def _chunk_id(app: DatacronApp, rel_path: str) -> str:
+    note = await _read(app, rel_path)
+    chunks = await app.store.list_chunks_for_note(note.id)
+    assert chunks
+    return str(chunks[0].chunk_id)
+
+
+def _note_requests(chunk_id: str) -> dict[str, dict[str, Any]]:
+    return {
+        "full": {"fmt": "full"},
+        "map": {"fmt": "map"},
+        "metadata": {"fmt": "metadata"},
+        "section": {"fmt": "full", "heading_path": ["Quasar", "Calibration"]},
+        "chunk": {"fmt": "chunk", "id_or_path": chunk_id},
+    }
+
+
+@pytest.mark.parametrize("kind", ["full", "map", "metadata", "section", "chunk"])
+@pytest.mark.parametrize("rel_path", [_FRESH_FACT, _UNVERIFIED_FACT, _STALE_PROJECT, _UNTYPED])
+async def test_get_note_carries_the_verdict_in_every_format(
+    app: DatacronApp, kind: str, rel_path: str
+) -> None:
+    request = {"id_or_path": rel_path, **_note_requests(await _chunk_id(app, rel_path))[kind]}
+
+    page = await _get_note_impl(app, **request)
+
+    assert "error" not in page, page
+    assert page["freshness"] == _EXPECTED[rel_path]
+
+
+@pytest.mark.parametrize("kind", ["full", "map", "metadata", "section", "chunk"])
+async def test_get_note_in_a_vault_without_windows_has_no_freshness_key(
+    windowless_app: DatacronApp, kind: str
+) -> None:
+    chunk_id = await _chunk_id(windowless_app, _STALE_PROJECT)
+    request = {"id_or_path": _STALE_PROJECT, **_note_requests(chunk_id)[kind]}
+
+    page = await _get_note_impl(windowless_app, **request)
+
+    assert "error" not in page, page
+    assert "freshness" not in page
+
+
+async def test_get_note_over_the_wire_returns_a_verdict_the_schema_accepts(
+    app: DatacronApp,
+) -> None:
+    server = create_server(app)
+    tools = await server.list_tools()
+    schema = next(tool.output_schema for tool in tools if tool.name == "get_note")
+    assert schema is not None
+    chunk_id = await _chunk_id(app, _STALE_PROJECT)
+
+    for arguments in (
+        {"id_or_path": _STALE_PROJECT},
+        {"id_or_path": _STALE_PROJECT, "format": "map"},
+        {"id_or_path": _STALE_PROJECT, "format": "metadata"},
+        {"id_or_path": chunk_id},
+    ):
+        result = await server.call_tool("get_note", arguments)
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None, arguments
+        Draft202012Validator(schema).validate(result.structured_content)
+        assert result.structured_content["freshness"] == _EXPECTED[_STALE_PROJECT], arguments
+
+
+async def test_get_note_over_the_wire_omits_the_key_in_a_vault_without_windows(
+    windowless_app: DatacronApp,
+) -> None:
+    result = await create_server(windowless_app).call_tool(
+        "get_note", {"id_or_path": _STALE_PROJECT}
+    )
+
+    assert isinstance(result, CallToolResult)
+    assert result.structured_content is not None
+    assert "freshness" not in result.structured_content
+
+
+async def test_get_note_description_announces_the_verdict(app: DatacronApp) -> None:
+    tools = {tool.name: tool for tool in await create_server(app).list_tools()}
+
+    assert "same freshness as recall" in (tools["get_note"].description or "")
+
+
+@pytest.mark.parametrize("fmt", ["full", "map"])
+async def test_get_note_budget_accounts_for_the_verdict_at_the_minimum_budget(
+    tight_app: DatacronApp, fmt: str
+) -> None:
+    rel_path = "_memory/projects/quasar-long.md"
+    sections = "".join(
+        f"## Section {index}\n\nQuasar calibration line {index}.\n\n" for index in range(400)
+    )
+    body = f"# Quasar\n\n{sections}"
+    created = await _create_note_ai_impl(
+        tight_app,
+        rel_path=rel_path,
+        title="Quasar",
+        body=body,
+        origin="ai",
+        confidence="high",
+        tags=["memory/project"],
+        last_verified="2026-06-01",
+    )
+    assert "error" not in created, created
+
+    page = await _get_note_impl(tight_app, id_or_path=rel_path, fmt=fmt)
+
+    assert "error" not in page, page
+    assert page["truncated"] is True
+    assert page["freshness"] == _EXPECTED[_STALE_PROJECT]
+    assert _serialized_chars(page) <= MIN_READ_RESPONSE_CHARS
+
+
+async def test_get_note_over_the_wire_accepts_a_status_only_verdict_and_a_section_read(
+    app: DatacronApp,
+) -> None:
+    server = create_server(app)
+    tools = await server.list_tools()
+    schema = next(tool.output_schema for tool in tools if tool.name == "get_note")
+    assert schema is not None
+
+    for arguments, expected in (
+        ({"id_or_path": _UNTYPED}, _EXPECTED[_UNTYPED]),
+        (
+            {"id_or_path": _STALE_PROJECT, "heading_path": ["Quasar", "Calibration"]},
+            _EXPECTED[_STALE_PROJECT],
+        ),
+    ):
+        result = await server.call_tool("get_note", arguments)
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None, arguments
+        Draft202012Validator(schema).validate(result.structured_content)
+        assert result.structured_content["freshness"] == expected, arguments
+
+
+def test_the_size_estimate_does_not_count_a_null_freshness_key() -> None:
+    payload: dict[str, Any] = {"format": "full", "id": "n1", "content": "text"}
+    padded_keys = [key for key in GetNoteOutput.__annotations__ if key != "freshness"]
+    expected = len(
+        json.dumps({**dict.fromkeys(padded_keys), **payload}, indent=2, ensure_ascii=True)
+    )
+
+    assert _serialized_chars(payload) == expected
+    assert _serialized_chars({**payload, "freshness": {"status": "fresh"}}) > expected
+
+
+async def test_recall_reads_do_not_attach_a_verdict_of_their_own(app: DatacronApp) -> None:
+    page = await _get_note_impl(app, id_or_path=_STALE_PROJECT, fmt="full", with_freshness=False)
+
+    assert "error" not in page, page
+    assert "freshness" not in page
