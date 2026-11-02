@@ -21,8 +21,13 @@ dies at start-up with "cannot enable executable stack". Nothing in the interpret
 executable stack, so the flag is cleared in place (one 4-byte field, no layout change) on the
 interpreter the bundler runs on, and the bundler's table of contents is checked afterwards.
 
-Two subcommands: ``clear <dir>...`` patches every ELF64 little-endian file under the given
-directories, and ``check-toc <PKG-00.toc>`` fails when a collected binary still requests it.
+Only shared objects (``ET_DYN``) are patched: they are what ``dlopen`` and the bundle's
+bootloader load, while no executable of the interpreter is bundled. A file that is busy
+(``ETXTBSY``, for example the running interpreter, which is a PIE and so also ``ET_DYN``) is
+skipped with a warning.
+
+Two subcommands: ``clear <dir>...`` patches every ELF64 little-endian shared object under the
+given directories, and ``check-toc <PKG-00.toc>`` fails when a collected binary still requests it.
 Standard library only, so it runs before anything is installed.
 """
 
@@ -30,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import errno
 import os
 import struct
 import sys
@@ -131,11 +137,16 @@ def requests_exec_stack(path: Path) -> bool:
 
 
 def clear_exec_stack(path: Path) -> bool:
-    """Clear ``PF_X`` in place and verify it; return True when the file was changed."""
-    found = _find_stack_flags(path)
-    if found is None or not found[1] & PF_X:
+    """Clear ``PF_X`` of a shared object in place and verify it; True when it was changed.
+
+    Other ELF types (``ET_EXEC`` and the rest) are left alone even when they carry the flag.
+    """
+    layout = _read_layout(path)
+    if layout is None or layout[0] != ET_DYN or layout[1] is None:
         return False
-    offset, flags = found
+    offset, flags = layout[1]
+    if not flags & PF_X:
+        return False
     with path.open("r+b") as handle:
         handle.seek(offset)
         handle.write(_U32.pack(flags & ~PF_X))
@@ -163,7 +174,14 @@ def _walk_files(roots: Sequence[Path]) -> Iterator[Path]:
 def run_clear(roots: Sequence[Path]) -> int:
     """Patch every ELF64 object under ``roots``; print each patched path."""
     for path in _walk_files(roots):
-        if clear_exec_stack(path):
+        try:
+            changed = clear_exec_stack(path)
+        except OSError as error:
+            if error.errno != errno.ETXTBSY:
+                raise
+            print(f"warning: file is busy, not patched: {path}", file=sys.stderr)
+            continue
+        if changed:
             print(f"cleared executable stack: {path}")
             continue
         layout = _read_layout(path)

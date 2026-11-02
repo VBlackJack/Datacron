@@ -15,11 +15,13 @@
 
 from __future__ import annotations
 
+import errno
 import importlib.util
 import struct
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -248,3 +250,40 @@ def test_clear_warns_but_does_not_fail_on_a_shared_object_without_a_stack_header
     (tmp_path / "libnostack.so").write_bytes(_elf64((_PT_LOAD, _PF_R)))
     assert _mod.main(["clear", str(tmp_path)]) == 0
     assert "warning" in capsys.readouterr().err
+
+
+def test_clear_leaves_an_et_exec_with_the_flag_untouched(tmp_path: Path) -> None:
+    exe = tmp_path / "python3.11"
+    content = _elf64((_mod.PT_GNU_STACK, _PF_R | _mod.PF_X), e_type=_ET_EXEC)
+    exe.write_bytes(content)
+    assert _mod.main(["clear", str(tmp_path)]) == 0
+    assert exe.read_bytes() == content
+
+
+def _busy_on_write(monkeypatch: pytest.MonkeyPatch, code: int) -> None:
+    real_open = Path.open
+
+    def fake_open(self: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        if mode == "r+b":
+            raise OSError(code, "simulated")
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+
+def test_clear_warns_and_continues_when_a_file_is_busy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "busy.so").write_bytes(_rwe_stack())
+    _busy_on_write(monkeypatch, errno.ETXTBSY)
+    assert _mod.main(["clear", str(tmp_path)]) == 0
+    assert "busy.so" in capsys.readouterr().err
+
+
+def test_clear_still_raises_on_any_other_write_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "locked.so").write_bytes(_rwe_stack())
+    _busy_on_write(monkeypatch, errno.EACCES)
+    with pytest.raises(OSError, match="simulated"):
+        _mod.main(["clear", str(tmp_path)])
