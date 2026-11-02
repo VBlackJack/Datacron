@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.1102.01] - 2026-11-02
+
 ### Fixed
 
 - **Linux binary refused on glibc 2.41 and newer**: the bundled libpython requested an
