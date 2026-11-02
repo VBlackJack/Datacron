@@ -73,7 +73,8 @@ ne mesure rien.
 `review_after_days` donne un délai de revérification à un type de note. Le type d'une note est
 la règle qui la gouverne, résolue exactement comme pour le rangement : la première règle
 déclarée dont la note porte le tag. Dès qu'au moins une règle déclare un délai, les résultats
-de `recall` et les sources de `session_context` portent un objet `freshness` :
+de `recall`, les sources de `session_context` et les lectures `get_note` (tous les formats,
+lectures de chunk comprises) portent un objet `freshness` :
 
 | Statut | Sens |
 |---|---|
@@ -86,7 +87,11 @@ de `recall` et les sources de `session_context` portent un objet `freshness` :
 Hors `not_governed`, l'objet porte aussi `rule_tag`, `review_after_days`, `last_verified` et
 `age_days`, mesuré par rapport à la date calendaire UTC. Un vault qui ne déclare aucun délai
 ne reçoit aucun champ `freshness` : chaque source renvoyée le paie sur un budget de réponse
-fixe, et un `session_context` serré perdrait sinon une source.
+fixe, et un `session_context` serré perdrait sinon une source. Dans `get_note`, le champ
+compte dans `DATACRON_MAX_READ_RESPONSE_CHARS` comme tout autre.
+
+Une note lue depuis un montage de lecture supplémentaire est jugée selon les règles du vault
+principal, dans les trois outils.
 
 Le signal n'écrit jamais. Seule une session qui a revérifié une note déplace son
 `last_verified`, par `set_frontmatter`. Le contrat mémoire (1.3.0) le demande à l'agent pour

@@ -40,8 +40,12 @@ retourné par le serveur.
 
 `DATACRON_MAX_READ_RESPONSE_CHARS` borne le JSON complet de `get_note` et `list_notes`,
 enveloppes et échappement compris. Le défaut est de 131072 caractères, le minimum de
-4096. Le plafond de tokens du corps reste distinct. Une liste peut contenir moins
-de notes que demandé ; suivez `next_offset` pour continuer.
+4096. Le plafond de tokens du corps reste distinct. Quand le vault déclare des
+[délais de revérification](organization.md#délais-de-revérification), l'objet `freshness`
+d'une lecture `get_note` compte dans ce budget : une lecture complète ou de section réduit sa
+page de corps pour lui faire place, une carte renvoie moins de lignes de titres et une lecture
+de métadonnées un `metadata_json` plus court. Une liste peut contenir moins de notes que
+demandé ; suivez `next_offset` pour continuer.
 
 Les métadonnées trop grandes sont remplacées par des champs vides et
 `metadata_truncated: true`. Lisez-les avec `get_note`, `format: "metadata"` :

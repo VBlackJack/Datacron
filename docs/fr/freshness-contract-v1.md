@@ -15,7 +15,9 @@ de reference Datacron est `sha256_bytes(path.read_bytes())`.
 `get_note` retourne ce digest sous `note_content_hash` et conserve `content_hash`
 comme alias compatible. Il retourne aussi `content_hash_contract` avec la valeur
 `freshness-contract-v1`. Un consommateur autonome peut appliquer cette specification
-localement: Cortex n'appelle jamais Datacron au runtime pour decider de sa fraicheur.
+localement: Cortex n'appelle jamais Datacron au runtime pour decider de sa fraicheur. Ce
+contrat de hash de contenu n'a aucun rapport avec le verdict de revérification `freshness` que
+renvoient `get_note`, `recall` et `session_context` quand le vault déclare des délais.
 
 Le manifeste partage `tests/fixtures/freshness-contract-v1.json` contient les vecteurs
 Base64 pour LF, CRLF, BOM et Unicode NFD. Les tests les ecrivent en binaire avant le hash.

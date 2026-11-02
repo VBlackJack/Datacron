@@ -69,8 +69,8 @@ measures nothing.
 
 `review_after_days` gives a note type a review window. The type of a note is the rule that
 governs it, resolved exactly as for placement: the first declared rule whose tag the note
-carries. Once at least one rule declares a window, `recall` results and `session_context`
-sources carry a `freshness` object:
+carries. Once at least one rule declares a window, `recall` results, `session_context`
+sources and `get_note` reads (every format, chunk reads included) carry a `freshness` object:
 
 | Status | Meaning |
 |---|---|
@@ -83,7 +83,11 @@ sources carry a `freshness` object:
 Apart from `not_governed`, the object also carries `rule_tag`, `review_after_days`,
 `last_verified` and `age_days`, measured against the UTC calendar date. A vault that declares
 no window gets no `freshness` field at all: every returned source pays for it out of a fixed
-response budget, and a tight `session_context` would otherwise lose a source.
+response budget, and a tight `session_context` would otherwise lose a source. In `get_note`
+the field counts in `DATACRON_MAX_READ_RESPONSE_CHARS` like any other.
+
+A note read from an extra read mount is judged by the rules of the primary vault, in all three
+tools.
 
 The signal never writes. Only a session that has re-verified a note moves its `last_verified`,
 through `set_frontmatter`. The memory contract (1.3.0) tells the agent to do so for the standard

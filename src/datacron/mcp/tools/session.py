@@ -44,11 +44,7 @@ from datacron.mcp.tools.payloads import (
 from datacron.mcp.tools.read import _build_full_payload, _build_section_payload
 from datacron.mcp.tools.runbook import locate_runbook, runbook_capture_offered
 from datacron.mcp.tools.subject_state import load_subject_notes, subject_state_payload
-from datacron.organization.freshness import (
-    assess_freshness,
-    declares_review_windows,
-    utc_today,
-)
+from datacron.organization.freshness import freshness_payload, utc_today
 from datacron.organization.subject_state import resolve_subject_tag, summarize_subject
 
 if TYPE_CHECKING:
@@ -347,10 +343,9 @@ def _full_source(app: DatacronApp, note: Note, limit: int | None = None) -> dict
 
 def _with_freshness(app: DatacronApp, note: Note, item: dict[str, Any]) -> dict[str, Any]:
     """Every source shape carries the verdict, so budget refitting never drops it."""
-    if declares_review_windows(app.organization):
-        item["freshness"] = assess_freshness(
-            note.tags, note.frontmatter, app.organization, today=utc_today()
-        ).as_payload()
+    verdict = freshness_payload(note.tags, note.frontmatter, app.organization, today=utc_today())
+    if verdict is not None:
+        item["freshness"] = verdict
     return item
 
 

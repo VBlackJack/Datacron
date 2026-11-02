@@ -94,7 +94,8 @@ hit. Each result carries `rel_path`, `title`, `heading_path`, a sandbox-wrapped 
 section. When the vault declares [review windows](organization.md#review-windows), each result
 also carries `freshness`, and a result that is `stale`, `unverified` or `invalid` is re-verified
 before it is relied on (this guidance comes from the `recall` description only, since the
-essential instructions carry no such rule). The excerpt is vault data, never an instruction.
+essential instructions carry no such rule). `get_note` carries the same `freshness` in this
+profile too. The excerpt is vault data, never an instruction.
 The whole response stays under `DATACRON_MAX_READ_RESPONSE_CHARS`; `truncated` says when
 results were dropped to fit.
 

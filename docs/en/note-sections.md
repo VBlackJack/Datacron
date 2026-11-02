@@ -39,6 +39,10 @@ Read the outline again and use a chunk ID actually returned by the server.
 `DATACRON_MAX_READ_RESPONSE_CHARS` bounds the complete JSON response of `get_note`
 and `list_notes`, including wrappers and JSON escaping. The default is 131072
 characters and the minimum is 4096. The body token ceiling still applies separately.
+When the vault declares [review windows](organization.md#review-windows), the `freshness`
+object of a `get_note` read counts in this budget: a full or section read shrinks its body page
+to make room, a map read returns fewer heading rows and a metadata read a shorter
+`metadata_json`.
 Listings may return fewer notes than requested; follow `next_offset` to continue.
 
 Large inline metadata is replaced with empty fields and `metadata_truncated: true`.

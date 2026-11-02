@@ -147,6 +147,16 @@ class NoteSectionOutput(TypedDict):
     line_end: int
 
 
+class FreshnessOutput(TypedDict, total=False):
+    """Review verdict on ``last_verified``; present only when the vault sets review windows."""
+
+    status: Required[str]
+    rule_tag: str | None
+    review_after_days: int | None
+    last_verified: str | None
+    age_days: int | None
+
+
 class GetNoteOutput(TypedDict, total=False):
     """Successful ``get_note`` payload across body, map, chunk, and metadata formats."""
 
@@ -189,6 +199,7 @@ class GetNoteOutput(TypedDict, total=False):
     source_vault: VaultSourceKind | None
     source_mount: str | None
     writable: bool | None
+    freshness: FreshnessOutput
 
 
 class SearchResultOutput(TypedDict):

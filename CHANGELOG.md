@@ -16,9 +16,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   note is the rule that governs it, resolved as for placement. A rule refuses unknown keys, so
   a server older than this release refuses a `VAULT.yaml` that declares the field: upgrade
   every server that serves the vault before adding it.
-- **`freshness` in `recall` and `session_context`**: once the vault declares at least one
-  window, each result and source carries a verdict, `fresh`, `stale`, `unverified`, `invalid`
-  or `not_governed`, with the rule tag, the window, the parsed `last_verified` and its age in
+- **`freshness` in `recall`, `session_context` and `get_note`**: once the vault declares at
+  least one window, each result, source and `get_note` read (full, map, metadata, section and
+  chunk formats) carries a verdict, `fresh`, `stale`, `unverified`, `invalid` or
+  `not_governed`, with the rule tag, the window, the parsed `last_verified` and its age in
   days. A missing date is `unverified`, never derived from `updated`; an unreadable or future
   date is `invalid` instead of an error, and only a parsed date is echoed back. A vault that
   declares no window gets no field at all, so a tight `session_context` keeps every source it

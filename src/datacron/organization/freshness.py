@@ -37,6 +37,7 @@ __all__ = [
     "FreshnessStatus",
     "assess_freshness",
     "declares_review_windows",
+    "freshness_payload",
     "utc_today",
 ]
 
@@ -162,3 +163,20 @@ def assess_freshness(
         last_verified=day,
         age_days=age_days,
     )
+
+
+def freshness_payload(
+    tags: Iterable[str],
+    frontmatter: Mapping[str, object],
+    config: OrganizationConfig | None,
+    *,
+    today: date,
+) -> dict[str, Any] | None:
+    """The verdict mapping a retrieval tool attaches, or ``None`` when it attaches none.
+
+    A vault that declares no review window gets no ``freshness`` field at all, so a
+    missing field and a ``None`` result mean the same thing to every caller.
+    """
+    if not declares_review_windows(config):
+        return None
+    return assess_freshness(tags, frontmatter, config, today=today).as_payload()
