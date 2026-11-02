@@ -9,6 +9,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+## [2026.1102.00] - 2026-11-02
+
 ### Added
 
 - **Per-type review windows**: an organization rule may declare `review_after_days`, read
@@ -61,8 +63,8 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   `dry_run` returns the plan; `request_id` makes a retry safe.
 - **Runbook capture habit**: when `runbook_capture` is offered, the server instructions are the
   memory protocol block followed by one runbook paragraph and nothing else; otherwise they stay
-  exactly the protocol block. The memory contract, its version and its hash are unchanged, and
-  no client rule file receives the paragraph. `session_context` with a `subject` naming one
+  exactly the protocol block. The paragraph stays outside the memory contract and its hash,
+  and no client rule file receives it. `session_context` with a `subject` naming one
   existing runbook adds `runbook: {path, language}`, attached after the sources are fitted and
   dropped when it does not fit.
 
