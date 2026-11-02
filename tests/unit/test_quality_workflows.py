@@ -251,3 +251,28 @@ def test_every_action_and_tool_is_pinned(name: str) -> None:
                 for tool in ("twine", "pip-audit"):
                     if f"--from {tool}" in line or f"--with {tool}" in line:
                         assert re.search(rf"{tool}==\d+(?:\.\d+)+", line), line
+
+
+_EXECSTACK_SCRIPT = "scripts/clear_execstack.py"
+_LINUX_GUARD = "runner.os == 'Linux'"
+
+
+def test_linux_build_clears_and_verifies_the_executable_stack_around_pyinstaller() -> None:
+    """The bundled libpython must be patched before PyInstaller and checked after it."""
+    steps = _workflow("release.yml")["jobs"]["build"]["steps"]
+    names = [step.get("name") for step in steps]
+    build = names.index("Build standalone executable")
+    smoke = names.index("Smoke-test the executable")
+
+    clear = next(i for i, s in enumerate(steps) if "clear_execstack.py clear" in s.get("run", ""))
+    check = next(i for i, s in enumerate(steps) if "check-toc" in s.get("run", ""))
+    assert clear < build < check < smoke
+
+    for index in (clear, check):
+        assert steps[index]["if"] == _LINUX_GUARD
+        assert steps[index]["shell"] == "bash"
+        assert _EXECSTACK_SCRIPT in steps[index]["run"]
+        assert "uv run --frozen --extra build python" in steps[index]["run"]
+    assert "sys.base_prefix" in steps[clear]["run"]
+    assert ".venv" in steps[clear]["run"]
+    assert "build/datacron/PKG-00.toc" in steps[check]["run"]

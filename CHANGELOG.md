@@ -9,6 +9,14 @@ prefixed with `v` (e.g. `v2026.0714.00`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux binary refused on glibc 2.41 and newer**: the bundled libpython requested an
+  executable stack, which those loaders refuse, so the binary failed at start-up with "cannot
+  enable executable stack". The release build now clears that request on the interpreter before
+  bundling and verifies the bundle contents. The v2026.1020.00 Linux binary bundled the same
+  libpython (measured in its build log) and is likely affected.
+
 ## [2026.1102.00] - 2026-11-02
 
 ### Added
