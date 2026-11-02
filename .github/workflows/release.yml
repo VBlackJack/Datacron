@@ -62,6 +62,13 @@ jobs:
           python -m pip install uv==0.11.3
           uv sync --frozen --extra build --python 3.12
 
+      - name: Clear the executable-stack request from the bundled interpreter
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          prefix="$(uv run --frozen --extra build python -c 'import sys; print(sys.base_prefix)')"
+          uv run --frozen --extra build python scripts/clear_execstack.py clear "$prefix" .venv
+
       - name: Build standalone executable
         shell: bash
         run: |
@@ -73,6 +80,13 @@ jobs:
             --hidden-import pydantic_settings \
             --hidden-import truststore \
             packaging/datacron_launcher.py
+
+      - name: Verify no bundled library requests an executable stack
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          uv run --frozen --extra build python scripts/clear_execstack.py \
+            check-toc build/datacron/PKG-00.toc
 
       - name: Smoke-test the executable
         shell: bash
