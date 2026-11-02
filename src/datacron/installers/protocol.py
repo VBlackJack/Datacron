@@ -645,8 +645,8 @@ def _install_block(path: Path, *, max_chars: int | None = None) -> bool:
         start, end = span
         updated = f"{text[:start]}{rendered}{text[end:]}"
     if max_chars is not None and len(updated) > max_chars:
-        # Say how far over, and by whose bytes. The protocol block alone is within
-        # 100 characters of this client's whole budget, so for most users the
+        # Say how far over, and by whose bytes. The protocol block alone takes most
+        # of this client's whole budget, so for most users the
         # answer is not "shorten your rules" but "this client cannot hold both",
         # and a bare limit message sent them looking for their own text to cut.
         raise ProtocolInstallError(

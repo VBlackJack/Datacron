@@ -64,7 +64,9 @@ verified. A growing count means the state note is behind; fold the newer notes, 
 When the vault declares [review windows](organization.md#review-windows) per note type, every
 `session_context` source and every `recall` result carries a `freshness` object. A source that
 is `stale`, `unverified` or `invalid` is re-verified before it is relied on; once re-verified,
-set its `last_verified` with `set_frontmatter`.
+set its `last_verified` with `set_frontmatter`. The memory contract (1.3.0) carries this guidance
+for the standard profile; a missing `freshness` field is no verdict. The essential profile gets
+it from the `recall` description only.
 
 ## Enrich people and preserve commitments
 

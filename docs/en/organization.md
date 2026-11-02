@@ -86,10 +86,11 @@ no window gets no `freshness` field at all: every returned source pays for it ou
 response budget, and a tight `session_context` would otherwise lose a source.
 
 The signal never writes. Only a session that has re-verified a note moves its `last_verified`,
-through `set_frontmatter`. `create_note_ai` writes the date the call passes. Without one, a
-note of origin `ai` (every `remember` capture) gets no `last_verified` and reads as
-`unverified` under a window: writing a note is not verifying it. A note of origin `human` or
-`merged` still gets the creation date.
+through `set_frontmatter`. The memory contract (1.3.0) tells the agent to do so for the standard
+profile; the essential profile gets that guidance from the `recall` description only.
+`create_note_ai` writes the date the call passes. Without one, a note of origin `ai` (every
+`remember` capture) gets no `last_verified` and reads as `unverified` under a window: writing
+a note is not verifying it. A note of origin `human` or `merged` still gets the creation date.
 
 **Declaring a window needs a current server.** `review_after_days` is a new rule key, and an
 organization rule refuses any key it does not know. A Datacron server older than this field

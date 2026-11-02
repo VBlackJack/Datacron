@@ -126,8 +126,8 @@ are never touched.**
 ## 8. Windsurf: the global rules limit
 
 Windsurf accepts at most 6000 characters in its global rules file, and the Datacron memory
-protocol block alone takes about 5900 of them. If you already have global rules in Windsurf,
-the installer registers Datacron but reports that the memory instructions could not be
-installed in every client: Windsurf's rules file is left untouched, and the Datacron tools still
-work there. The
+protocol block alone takes about 5800 of them, leaving about 200 for your own rules. If you
+already have global rules in Windsurf, the installer registers Datacron but reports that the
+memory instructions could not be installed in every client: Windsurf's rules file is left
+untouched, and the Datacron tools still work there. The
 [FAQ explains what happens and how to free the space](faq.md#why-did-the-memory-protocol-install-fail-for-windsurf).

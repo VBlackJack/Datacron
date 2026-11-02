@@ -66,7 +66,9 @@ plus récentes, puis poser `last_verified`. Huit notes d'état au plus sont list
 Quand le vault déclare des [délais de revérification](organization.md#délais-de-revérification)
 par type de note, chaque source de `session_context` et chaque résultat de `recall` porte un
 objet `freshness`. Une source `stale`, `unverified` ou `invalid` se revérifie avant qu'on s'y
-fie ; une fois revérifiée, poser son `last_verified` avec `set_frontmatter`.
+fie ; une fois revérifiée, poser son `last_verified` avec `set_frontmatter`. Le contrat
+mémoire (1.3.0) porte cette consigne pour le profil standard ; un champ `freshness` absent
+n'est pas un verdict. Le profil essentiel ne la reçoit que par la description de `recall`.
 
 ## Compléter les personnes et les engagements
 

@@ -89,8 +89,8 @@ installations, but its `<YOUR_VAULT>` placeholders must be replaced in the MCP e
 ## Why did the memory protocol install fail for Windsurf?
 
 Windsurf keeps its global rules in `~/.codeium/windsurf/memories/global_rules.md` and accepts at
-most 6000 characters in that file. The Datacron protocol block alone takes about 5900 of them, so
-fewer than 100 characters remain for your own rules. As soon as the file already holds more than
+most 6000 characters in that file. The Datacron protocol block alone takes about 5800 of them, so
+about 200 characters remain for your own rules. As soon as the file already holds more than
 that, the install is refused for Windsurf.
 
 What happens:
@@ -104,7 +104,7 @@ What happens:
 
 To free the space, move your own global rules out of `global_rules.md`, for example into a
 workspace rule under `.windsurf/rules/` of the project that needs them, until the file holds
-less than about 60 characters of your text. Then run the install again:
+less than about 200 characters of your text. Then run the install again:
 
 ```bash
 datacron protocol install --client windsurf
