@@ -223,9 +223,11 @@ async def test_a_vault_without_review_windows_gets_no_freshness_field(
 async def test_both_tools_tell_the_agent_to_reverify_a_source_that_is_not_fresh(
     app: DatacronApp,
 ) -> None:
-    """The guidance lives in the tool descriptions: the contract has no room left."""
+    """The recall description carries the guidance for the essential profile."""
     tools = {tool.name: tool for tool in await create_server(app).list_tools()}
-    guidance = "stale, unverified or invalid must be re-verified"
+    guidance = (
+        "freshness is stale, unverified or invalid before relying on it, then set last_verified"
+    )
 
     assert guidance in (tools["session_context"].description or "")
     assert guidance in essential_module._RECALL_DESCRIPTION

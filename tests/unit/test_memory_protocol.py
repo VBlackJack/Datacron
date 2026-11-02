@@ -26,7 +26,7 @@ from datacron.cli import app
 from datacron.core.memory_protocol import CONTRACT_HASH, CONTRACT_TEXT, PROTOCOL_BLOCK
 from datacron.installers.protocol import install_memory_protocol
 from datacron.installers.protocol_status import protocol_status
-from datacron.mcp.server import SERVER_INSTRUCTIONS
+from datacron.mcp.server import ESSENTIAL_SERVER_INSTRUCTIONS, SERVER_INSTRUCTIONS
 from datacron.mcp.tools.runbook import RUNBOOK_SERVER_INSTRUCTIONS
 
 
@@ -35,6 +35,19 @@ def test_shared_kernel_hash_and_client_ceiling() -> None:
     assert SERVER_INSTRUCTIONS == PROTOCOL_BLOCK
     assert sha256(CONTRACT_TEXT.encode()).hexdigest() == CONTRACT_HASH
     assert len(PROTOCOL_BLOCK) < 6000
+
+
+def test_contract_carries_the_reverify_guidance_for_the_standard_profile() -> None:
+    """The standard profile reads the freshness rule in the contract, the essential one not."""
+    sentence = (
+        "Re-verify a source whose freshness is stale, unverified or invalid before relying "
+        "on it, then set last_verified; a missing freshness field is no verdict."
+    )
+    assert sentence in CONTRACT_TEXT
+    assert sentence in SERVER_INSTRUCTIONS
+    assert sentence not in ESSENTIAL_SERVER_INSTRUCTIONS
+    assert "user preferences" in CONTRACT_TEXT
+    assert "Supersede or invalidate outdated facts" in CONTRACT_TEXT
 
 
 def test_the_runbook_annex_stays_out_of_the_installed_contract() -> None:

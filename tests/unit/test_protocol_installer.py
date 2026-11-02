@@ -105,6 +105,9 @@ def test_install_and_uninstall_are_idempotent_and_reversible(
 _USER_RULES_RESERVE_CHARS = 1500
 """Room a user's own global rules need beside the protocol block."""
 
+_CONTRACT_1_3_RESERVE_CHARS = 150
+"""Windsurf room that contract 1.3.0 gained by folding duplicated rules away."""
+
 
 def test_cursor_install_returns_manual_instructions_without_creating_home_file(
     fake_home: Path,
@@ -810,8 +813,8 @@ def test_protocol_block_has_single_marked_source() -> None:
 def test_the_protocol_block_leaves_a_client_room_for_its_own_rules() -> None:
     """A block that fills the budget makes the install fail for every real user.
 
-    Windsurf's global rules file holds 6000 characters and the rendered block is
-    within a hundred of that, so anyone with existing rules cannot install. This
+    Windsurf's global rules file holds 6000 characters and the rendered block takes
+    most of that, so anyone with substantial existing rules cannot install. This
     pins the shape of the problem rather than the current number: the block must
     leave a named reserve, and when it does not, that is a product decision about
     what the protocol says, not a test to loosen.
@@ -828,6 +831,16 @@ def test_the_protocol_block_leaves_a_client_room_for_its_own_rules() -> None:
             "(Why did the memory protocol install fail for Windsurf?) and in "
             "docs/en/installation-windows.md section 8"
         )
+
+
+def test_the_windsurf_reserve_keeps_the_room_gained_by_contract_1_3_0() -> None:
+    """Pin the room contract 1.3.0 gained, not the exact number.
+
+    Folding duplicated rules away moved the Windsurf reserve from 59 characters to
+    about 200. A later addition that eats that room again must fail here.
+    """
+    rendered = PROTOCOL_BLOCK.replace("\n", "\r\n")
+    assert _WINDSURF_GLOBAL_RULE_MAX_CHARS - len(rendered) >= _CONTRACT_1_3_RESERVE_CHARS
 
 
 @pytest.mark.parametrize(

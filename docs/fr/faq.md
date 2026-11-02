@@ -96,7 +96,7 @@ est une alternative manuelle pour les installations Python, mais ses placeholder
 
 Windsurf garde ses règles globales dans `~/.codeium/windsurf/memories/global_rules.md` et
 n'accepte pas plus de 6000 caractères dans ce fichier. Le bloc de protocole Datacron en occupe
-à lui seul environ 5900 : il reste moins de 100 caractères pour tes propres règles. Dès que le
+à lui seul environ 5800 : il reste environ 200 caractères pour tes propres règles. Dès que le
 fichier en contient davantage, l'installation est refusée pour Windsurf.
 
 Ce qui se passe :
@@ -110,7 +110,7 @@ Ce qui se passe :
 
 Pour libérer la place, sors tes propres règles globales de `global_rules.md`, par exemple dans
 une règle d'espace de travail sous `.windsurf/rules/` du projet qui en a besoin, jusqu'à ce que le
-fichier contienne moins d'environ 60 caractères de ton texte. Relance ensuite l'installation :
+fichier contienne moins d'environ 200 caractères de ton texte. Relance ensuite l'installation :
 
 ```bash
 datacron protocol install --client windsurf

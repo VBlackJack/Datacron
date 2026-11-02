@@ -89,10 +89,12 @@ ne reçoit aucun champ `freshness` : chaque source renvoyée le paie sur un budg
 fixe, et un `session_context` serré perdrait sinon une source.
 
 Le signal n'écrit jamais. Seule une session qui a revérifié une note déplace son
-`last_verified`, par `set_frontmatter`. `create_note_ai` écrit la date que l'appel passe. Sans
-date, une note d'origine `ai` (toute capture `remember`) ne reçoit pas de `last_verified` et se
-lit `unverified` sous un délai : écrire une note n'est pas la vérifier. Une note d'origine
-`human` ou `merged` reçoit toujours la date de création.
+`last_verified`, par `set_frontmatter`. Le contrat mémoire (1.3.0) le demande à l'agent pour
+le profil standard ; le profil essentiel ne reçoit cette consigne que par la description de
+`recall`. `create_note_ai` écrit la date que l'appel passe. Sans date, une note d'origine
+`ai` (toute capture `remember`) ne reçoit pas de `last_verified` et se lit `unverified` sous
+un délai : écrire une note n'est pas la vérifier. Une note d'origine `human` ou `merged`
+reçoit toujours la date de création.
 
 **Déclarer un délai exige un serveur à jour.** `review_after_days` est une nouvelle clé de
 règle, et une règle d'organisation refuse toute clé qu'elle ne connaît pas. Un serveur Datacron

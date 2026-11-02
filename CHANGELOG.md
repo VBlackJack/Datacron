@@ -28,8 +28,10 @@ prefixed with `v` (e.g. `v2026.0714.00`).
   returns, as the optional `type_freshness` field of the JSON plan. Informative: the exit code
   is unchanged, and without the option the plan and its hash are unchanged.
 - The `recall` and `session_context` tool descriptions ask the agent to re-verify a source that
-  is not fresh before relying on it. The memory contract stays at 1.2.0: the rendered protocol
-  block has 59 characters left under the 6000-character Windsurf limit.
+  is not fresh before relying on it. Memory contract 1.3.0 carries the same re-verification
+  guidance; four legacy bullets and one sentence that repeated another rule were folded away, so
+  the Windsurf block leaves about 200 characters instead of 59. Installed copies read as outdated
+  until `datacron protocol install` is rerun.
 - **Runbook vault (`DATACRON_RUNBOOK_VAULT`, `datacron setup --runbook-vault`)**: one folder
   inside the served vault holds the runbooks, one `{slug}-runbook` sub-folder per project. It is
   optional: interactive setup and the Windows installer offer to choose it, a rerun keeps it,
